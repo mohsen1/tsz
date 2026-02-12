@@ -593,9 +593,18 @@ impl LspServer {
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
-        let parser = doc.parser.as_ref().expect("parser exists after ensure_parsed");
-        let binder = doc.binder.as_ref().expect("binder exists after ensure_parsed");
-        let line_map = doc.line_map.as_ref().expect("line_map exists after ensure_parsed");
+        let parser = doc
+            .parser
+            .as_ref()
+            .expect("parser exists after ensure_parsed");
+        let binder = doc
+            .binder
+            .as_ref()
+            .expect("binder exists after ensure_parsed");
+        let line_map = doc
+            .line_map
+            .as_ref()
+            .expect("line_map exists after ensure_parsed");
 
         let provider = GoToDefinition::new(
             parser.get_arena(),
@@ -624,9 +633,18 @@ impl LspServer {
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
-        let parser = doc.parser.as_ref().expect("parser exists after ensure_parsed");
-        let binder = doc.binder.as_ref().expect("binder exists after ensure_parsed");
-        let line_map = doc.line_map.as_ref().expect("line_map exists after ensure_parsed");
+        let parser = doc
+            .parser
+            .as_ref()
+            .expect("parser exists after ensure_parsed");
+        let binder = doc
+            .binder
+            .as_ref()
+            .expect("binder exists after ensure_parsed");
+        let line_map = doc
+            .line_map
+            .as_ref()
+            .expect("line_map exists after ensure_parsed");
 
         let provider = TypeDefinitionProvider::new(
             parser.get_arena(),
@@ -655,9 +673,18 @@ impl LspServer {
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
-        let parser = doc.parser.as_ref().expect("parser exists after ensure_parsed");
-        let binder = doc.binder.as_ref().expect("binder exists after ensure_parsed");
-        let line_map = doc.line_map.as_ref().expect("line_map exists after ensure_parsed");
+        let parser = doc
+            .parser
+            .as_ref()
+            .expect("parser exists after ensure_parsed");
+        let binder = doc
+            .binder
+            .as_ref()
+            .expect("binder exists after ensure_parsed");
+        let line_map = doc
+            .line_map
+            .as_ref()
+            .expect("line_map exists after ensure_parsed");
 
         let finder = FindReferences::new(
             parser.get_arena(),
@@ -692,8 +719,14 @@ impl LspServer {
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
-        let parser = doc.parser.as_ref().expect("parser exists after ensure_parsed");
-        let line_map = doc.line_map.as_ref().expect("line_map exists after ensure_parsed");
+        let parser = doc
+            .parser
+            .as_ref()
+            .expect("parser exists after ensure_parsed");
+        let line_map = doc
+            .line_map
+            .as_ref()
+            .expect("line_map exists after ensure_parsed");
 
         let provider = DocumentSymbolProvider::new(parser.get_arena(), line_map, &doc.content);
 
@@ -733,8 +766,14 @@ impl LspServer {
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
-        let parser = doc.parser.as_ref().expect("parser exists after ensure_parsed");
-        let line_map = doc.line_map.as_ref().expect("line_map exists after ensure_parsed");
+        let parser = doc
+            .parser
+            .as_ref()
+            .expect("parser exists after ensure_parsed");
+        let line_map = doc
+            .line_map
+            .as_ref()
+            .expect("line_map exists after ensure_parsed");
 
         let provider = SelectionRangeProvider::new(parser.get_arena(), line_map, &doc.content);
 
@@ -757,9 +796,18 @@ impl LspServer {
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_parsed(&uri);
 
-        let parser = doc.parser.as_ref().expect("parser exists after ensure_parsed");
-        let binder = doc.binder.as_ref().expect("binder exists after ensure_parsed");
-        let line_map = doc.line_map.as_ref().expect("line_map exists after ensure_parsed");
+        let parser = doc
+            .parser
+            .as_ref()
+            .expect("parser exists after ensure_parsed");
+        let binder = doc
+            .binder
+            .as_ref()
+            .expect("binder exists after ensure_parsed");
+        let line_map = doc
+            .line_map
+            .as_ref()
+            .expect("line_map exists after ensure_parsed");
 
         let provider = CodeLensProvider::new(
             parser.get_arena(),
