@@ -1533,6 +1533,13 @@ impl<'a> Printer<'a> {
         // - Named arrays use `<name>_1` (doesn't consume from counter)
         // - Names are checked against all identifiers in the source file
 
+        // CRITICAL: Pre-register the loop variable BEFORE emitting the initialization expression
+        // This ensures that references to shadowed variables in the array initializer get renamed.
+        // For example: `for (let v of [v])` where inner v shadows outer v
+        // We need to register inner v as v_1 BEFORE emitting [v] so the reference becomes [v_1]
+        self.ctx.block_scope_state.enter_scope();
+        self.pre_register_for_of_loop_variable(for_in_of.initializer);
+
         // Generate index name: first for-of gets `_i`, subsequent ones use global counter
         let index_name = if !self.first_for_of_emitted {
             self.first_for_of_emitted = true;
@@ -1601,8 +1608,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Enter a new scope for the loop body to track variable shadowing
-        self.ctx.block_scope_state.enter_scope();
+        // Scope was already entered above (before emitting the initialization expression)
 
         self.emit_for_of_value_binding_array_es5(for_in_of.initializer, &array_name, &index_name);
         self.write_line();
@@ -1684,6 +1690,78 @@ impl<'a> Printer<'a> {
             self.write(result_name);
             self.write(".value");
             self.write_semicolon();
+        }
+    }
+
+    /// Pre-register loop variables before emitting the for-of initialization expression.
+    /// This ensures that references to outer variables with the same name get properly renamed.
+    ///
+    /// For example: `for (let v of [v])` where inner v shadows outer v
+    /// We register inner v as v_1, so when we emit [v], it becomes [v_1]
+    fn pre_register_for_of_loop_variable(&mut self, initializer: NodeIndex) {
+        if initializer.is_none() {
+            return;
+        }
+
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+
+        // Handle variable declaration list: `for (let v of ...)`
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            if let Some(decl_list) = self.arena.get_variable(init_node) {
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        self.pre_register_binding_name(decl.name);
+                    }
+                }
+            }
+        } else {
+            // Direct binding pattern or identifier
+            self.pre_register_binding_name(initializer);
+        }
+    }
+
+    /// Pre-register a binding name (identifier or pattern) in the current scope
+    fn pre_register_binding_name(&mut self, name_idx: NodeIndex) {
+        if name_idx.is_none() {
+            return;
+        }
+
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        // Simple identifier: register it directly
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                let original_name = self.arena.resolve_identifier_text(ident);
+                self.ctx.block_scope_state.register_variable(original_name);
+            }
+        }
+        // Destructuring patterns: extract all binding identifiers
+        else if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+                for &elem_idx in &pattern.elements.nodes {
+                    if let Some(elem_node) = self.arena.get(elem_idx)
+                        && let Some(elem) = self.arena.get_binding_element(elem_node)
+                    {
+                        self.pre_register_binding_name(elem.name);
+                    }
+                }
+            }
+        } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+                for &elem_idx in &pattern.elements.nodes {
+                    if let Some(elem_node) = self.arena.get(elem_idx)
+                        && let Some(elem) = self.arena.get_binding_element(elem_node)
+                    {
+                        self.pre_register_binding_name(elem.name);
+                    }
+                }
+            }
         }
     }
 
@@ -1788,7 +1866,8 @@ impl<'a> Printer<'a> {
                             }
                             first = false;
 
-                            // Handle variable shadowing: register the variable and emit renamed version
+                            // Handle variable shadowing: get the pre-registered renamed name
+                            // (variable was already registered in pre_register_for_of_loop_variable)
                             if let Some(ident_node) = self.arena.get(decl.name) {
                                 if ident_node.kind == SyntaxKind::Identifier as u16 {
                                     if let Some(ident) = self.arena.get_identifier(ident_node) {
@@ -1797,7 +1876,8 @@ impl<'a> Printer<'a> {
                                         let emitted_name = self
                                             .ctx
                                             .block_scope_state
-                                            .register_variable(original_name);
+                                            .get_emitted_name(original_name)
+                                            .unwrap_or_else(|| original_name.to_string());
                                         self.write(&emitted_name);
                                     } else {
                                         self.emit(decl.name);
