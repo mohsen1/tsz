@@ -25,7 +25,7 @@
 //! - ✅ Clear separation of concerns
 
 use crate::transforms::helpers::HelpersNeeded;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 
@@ -332,6 +332,10 @@ pub struct TransformContext {
     /// Helper usage derived during lowering (optional).
     helpers: HelpersNeeded,
     helpers_populated: bool,
+    /// Function body block nodes that need `var _this = this;` at the start.
+    /// When an arrow function captures `this`, the enclosing non-arrow function's
+    /// body block is added here so the emitter knows to inject the capture statement.
+    this_capture_scopes: FxHashSet<NodeIndex>,
 }
 
 impl TransformContext {
@@ -341,6 +345,7 @@ impl TransformContext {
             directives: FxHashMap::default(),
             helpers: HelpersNeeded::default(),
             helpers_populated: false,
+            this_capture_scopes: FxHashSet::default(),
         }
     }
 
@@ -378,6 +383,16 @@ impl TransformContext {
     /// Iterate over all registered directives.
     pub fn iter(&self) -> impl Iterator<Item = (&NodeIndex, &TransformDirective)> {
         self.directives.iter()
+    }
+
+    /// Mark a function body block as needing `var _this = this;` at the start.
+    pub fn mark_this_capture_scope(&mut self, body_idx: NodeIndex) {
+        self.this_capture_scopes.insert(body_idx);
+    }
+
+    /// Check if a function body block needs `var _this = this;` at the start.
+    pub fn needs_this_capture(&self, body_idx: NodeIndex) -> bool {
+        self.this_capture_scopes.contains(&body_idx)
     }
 
     /// Check if a node has a transform directive

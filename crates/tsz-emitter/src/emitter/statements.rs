@@ -10,13 +10,16 @@ impl<'a> Printer<'a> {
     // Statements
     // =========================================================================
 
-    pub(super) fn emit_block(&mut self, node: &Node) {
+    pub(super) fn emit_block(&mut self, node: &Node, idx: NodeIndex) {
         let Some(block) = self.arena.get_block(node) else {
             return;
         };
 
+        // Check if this block needs `var _this = this;` injection
+        let needs_this_capture = self.transforms.needs_this_capture(idx);
+
         // Empty blocks: check for comments inside and preserve original format
-        if block.statements.nodes.is_empty() {
+        if block.statements.nodes.is_empty() && !needs_this_capture {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_pos = self.find_token_end_before_trivia(node.pos, node.end);
             // Check if there are comments inside the block (between { and })
@@ -50,8 +53,10 @@ impl<'a> Printer<'a> {
         // Single-line blocks: preserve single-line formatting from source.
         // tsc only emits single-line blocks when the original source was single-line.
         // It never collapses multi-line blocks to single lines.
+        // (But not when we need to inject `var _this = this;` — that forces multi-line.)
         let is_single_statement = block.statements.nodes.len() == 1;
-        let should_emit_single_line = is_single_statement && self.is_single_line(node);
+        let should_emit_single_line =
+            is_single_statement && self.is_single_line(node) && !needs_this_capture;
 
         if should_emit_single_line {
             self.write("{ ");
@@ -64,6 +69,12 @@ impl<'a> Printer<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+
+        // Inject `var _this = this;` at the start of the block for arrow function _this capture
+        if needs_this_capture {
+            self.write("var _this = this;");
+            self.write_line();
+        }
 
         for &stmt_idx in &block.statements.nodes {
             // Emit leading comments before this statement

@@ -873,7 +873,7 @@ impl<'a> Printer<'a> {
                 dependencies,
             } => {
                 if let Some(source) = self.arena.get_source_file(node) {
-                    self.emit_module_wrapper(&format, dependencies.as_ref(), node, source);
+                    self.emit_module_wrapper(&format, dependencies.as_ref(), node, source, idx);
                     return;
                 }
 
@@ -1251,7 +1251,7 @@ impl<'a> Printer<'a> {
                 dependencies,
             } => {
                 if let Some(source) = self.arena.get_source_file(node) {
-                    self.emit_module_wrapper(format, dependencies.as_ref(), node, source);
+                    self.emit_module_wrapper(format, dependencies.as_ref(), node, source, idx);
                     return;
                 }
 
@@ -1339,7 +1339,7 @@ impl<'a> Printer<'a> {
                 && self.file_is_module(&source.statements)
             {
                 let dependencies = self.collect_module_dependencies(&source.statements.nodes);
-                self.emit_module_wrapper(&format, &dependencies, node, source);
+                self.emit_module_wrapper(&format, &dependencies, node, source, idx);
                 return;
             }
         }
@@ -1571,7 +1571,7 @@ impl<'a> Printer<'a> {
 
             // Block
             k if k == syntax_kind_ext::BLOCK => {
-                self.emit_block(node);
+                self.emit_block(node, idx);
             }
 
             // If statement
@@ -1904,7 +1904,7 @@ impl<'a> Printer<'a> {
 
             // Source file
             k if k == syntax_kind_ext::SOURCE_FILE => {
-                self.emit_source_file(node);
+                self.emit_source_file(node, idx);
             }
 
             // Other tokens and keywords - emit their text
@@ -1945,7 +1945,7 @@ impl<'a> Printer<'a> {
     // Source File
     // =========================================================================
 
-    fn emit_source_file(&mut self, node: &Node) {
+    fn emit_source_file(&mut self, node: &Node, source_idx: NodeIndex) {
         let Some(source) = self.arena.get_source_file(node) else {
             return;
         };
@@ -2190,6 +2190,12 @@ impl<'a> Printer<'a> {
                 self.write(";");
                 self.write_line();
             }
+        }
+
+        // Emit `var _this = this;` for top-level arrow functions that capture `this`
+        if self.transforms.needs_this_capture(source_idx) {
+            self.write("var _this = this;");
+            self.write_line();
         }
 
         // Save position for hoisted temp var declarations (assignment destructuring).

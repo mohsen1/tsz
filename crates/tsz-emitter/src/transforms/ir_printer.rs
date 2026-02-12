@@ -1583,31 +1583,18 @@ impl<'a> IRPrinter<'a> {
         _node: &Node,
         func: &tsz_parser::parser::node::FunctionData,
         _node_idx: NodeIndex,
-        captures_this: bool,
-        captures_arguments: bool,
-        class_alias: Option<String>,
+        _captures_this: bool,
+        _captures_arguments: bool,
+        _class_alias: Option<String>,
     ) {
         use tsz_parser::parser::syntax_kind_ext;
 
-        // Determine capture wrapper and the capture variable name
-        let captures_any = captures_this || captures_arguments;
-        let capture_var = class_alias.as_deref().unwrap_or("_this");
+        // Arrow functions are transformed to regular function expressions.
+        // `this` capture is handled by `var _this = this;` at the enclosing
+        // function scope. The lowering pass marks `this` references with
+        // SubstituteThis to emit `_this` instead.
 
-        if captures_any {
-            self.write("(function (");
-            if captures_this {
-                self.write(capture_var);
-            }
-            if captures_this && captures_arguments {
-                self.write(", ");
-            }
-            if captures_arguments {
-                self.write("_arguments");
-            }
-            self.write(") { return ");
-        } else {
-            self.write("function (");
-        }
+        self.write("function ");
 
         // Parameters
         self.write("(");
@@ -1640,28 +1627,6 @@ impl<'a> IRPrinter<'a> {
             self.write("{ return ");
             self.emit_node(&IRNode::ASTRef(func.body));
             self.write("; }");
-        }
-
-        // Close capture wrapper
-        if captures_any {
-            self.write("; })");
-            self.write("(");
-            if captures_this {
-                if class_alias.is_some() {
-                    // For class aliases, emit the alias directly (e.g., _a)
-                    self.write(capture_var);
-                } else {
-                    // For regular this capture, emit 'this'
-                    self.write("this");
-                }
-            }
-            if captures_this && captures_arguments {
-                self.write(", ");
-            }
-            if captures_arguments {
-                self.write("arguments");
-            }
-            self.write(")");
         }
     }
 }

@@ -87,6 +87,15 @@ pub struct LoweringPass<'a> {
     current_class_alias: Option<String>,
     /// True when visiting the left side of a destructuring assignment
     in_assignment_target: bool,
+    /// True when inside a class body in ES5 mode.
+    /// Arrow functions inside class members should NOT propagate _this capture
+    /// to the enclosing scope because the class IIFE creates its own scope
+    /// and class_es5_ir handles _this capture independently.
+    in_es5_class: bool,
+    /// Stack of enclosing non-arrow function body node indices.
+    /// When an arrow function captures `this`, the top of this stack is the
+    /// scope that needs `var _this = this;`.
+    enclosing_function_bodies: Vec<NodeIndex>,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -107,13 +116,22 @@ impl<'a> LoweringPass<'a> {
             in_static_context: false,
             current_class_alias: None,
             in_assignment_target: false,
+            in_es5_class: false,
+            enclosing_function_bodies: Vec::new(),
         }
     }
 
     /// Run the lowering pass on a source file and return the transform context
     pub fn run(mut self, source_file: NodeIndex) -> TransformContext {
         self.init_module_state(source_file);
+        // Push source file as the top-level _this capture scope
+        if self.ctx.target_es5 {
+            self.enclosing_function_bodies.push(source_file);
+        }
         self.visit(source_file);
+        if self.ctx.target_es5 {
+            self.enclosing_function_bodies.pop();
+        }
         self.maybe_wrap_module(source_file);
         self.transforms.mark_helpers_populated();
         self.transforms
@@ -327,7 +345,13 @@ impl<'a> LoweringPass<'a> {
                         self.visit(param_idx);
                     }
                     if !method.body.is_none() {
+                        if self.ctx.target_es5 {
+                            self.enclosing_function_bodies.push(method.body);
+                        }
                         self.visit(method.body);
+                        if self.ctx.target_es5 {
+                            self.enclosing_function_bodies.pop();
+                        }
                     }
                 }
             }
@@ -342,7 +366,13 @@ impl<'a> LoweringPass<'a> {
                         self.visit(param_idx);
                     }
                     if !ctor.body.is_none() {
+                        if self.ctx.target_es5 {
+                            self.enclosing_function_bodies.push(ctor.body);
+                        }
                         self.visit(ctor.body);
+                        if self.ctx.target_es5 {
+                            self.enclosing_function_bodies.pop();
+                        }
                     }
                 }
             }
@@ -358,7 +388,13 @@ impl<'a> LoweringPass<'a> {
                         self.visit(param_idx);
                     }
                     if !accessor.body.is_none() {
+                        if self.ctx.target_es5 {
+                            self.enclosing_function_bodies.push(accessor.body);
+                        }
                         self.visit(accessor.body);
+                        if self.ctx.target_es5 {
+                            self.enclosing_function_bodies.pop();
+                        }
                     }
                 }
             }
@@ -368,7 +404,13 @@ impl<'a> LoweringPass<'a> {
                         self.visit(param_idx);
                     }
                     if !func.body.is_none() {
+                        if self.ctx.target_es5 {
+                            self.enclosing_function_bodies.push(func.body);
+                        }
                         self.visit(func.body);
+                        if self.ctx.target_es5 {
+                            self.enclosing_function_bodies.pop();
+                        }
                     }
                 }
             }
@@ -1020,6 +1062,19 @@ impl<'a> LoweringPass<'a> {
         let prev_in_static = self.in_static_context;
         let prev_class_alias = self.current_class_alias.take();
 
+        // In ES5 mode, class members are emitted inside a class IIFE.
+        // Arrow functions in property initializers/methods should NOT propagate
+        // _this capture to the enclosing scope — the class_es5_ir handles
+        // _this capture independently within the constructor/method bodies.
+        let prev_in_es5_class = self.in_es5_class;
+        let prev_capture_level = self.this_capture_level;
+        let prev_args_capture_level = self.arguments_capture_level;
+        if self.ctx.target_es5 {
+            self.in_es5_class = true;
+            self.this_capture_level = 0;
+            self.arguments_capture_level = 0;
+        }
+
         // Visit children (members) with static context tracking
         for &member_idx in &class.members.nodes {
             // Check if this member is static
@@ -1042,6 +1097,13 @@ impl<'a> LoweringPass<'a> {
         self.current_class_is_derived = prev_is_derived;
         self.in_static_context = prev_in_static;
         self.current_class_alias = prev_class_alias;
+
+        // Restore _this capture state (undo the class barrier)
+        if self.ctx.target_es5 {
+            self.in_es5_class = prev_in_es5_class;
+            self.this_capture_level = prev_capture_level;
+            self.arguments_capture_level = prev_args_capture_level;
+        }
     }
 
     fn lower_function_declaration(
@@ -1149,7 +1211,14 @@ impl<'a> LoweringPass<'a> {
         }
 
         if !func.body.is_none() {
+            // Track this function body as a potential _this capture scope
+            if self.ctx.target_es5 {
+                self.enclosing_function_bodies.push(func.body);
+            }
             self.visit(func.body);
+            if self.ctx.target_es5 {
+                self.enclosing_function_bodies.pop();
+            }
         }
 
         // Restore in_constructor state
@@ -1336,9 +1405,18 @@ impl<'a> LoweringPass<'a> {
             }
 
             // If this arrow function captures 'this', increment the capture level
-            // so that nested 'this' references get substituted
+            // so that nested 'this' references get substituted.
+            // Also mark the enclosing function body so the emitter inserts
+            // `var _this = this;` at the start of that scope.
+            // But NOT when inside an ES5 class — class_es5_ir handles _this
+            // capture independently within constructor/method bodies.
             if captures_this {
                 self.this_capture_level += 1;
+                if !self.in_es5_class {
+                    if let Some(&enclosing_body) = self.enclosing_function_bodies.last() {
+                        self.transforms.mark_this_capture_scope(enclosing_body);
+                    }
+                }
             }
 
             // If this arrow function captures 'arguments', increment the capture level
@@ -1391,7 +1469,13 @@ impl<'a> LoweringPass<'a> {
             self.visit(param_idx);
         }
         if !ctor.body.is_none() {
+            if self.ctx.target_es5 {
+                self.enclosing_function_bodies.push(ctor.body);
+            }
             self.visit(ctor.body);
+            if self.ctx.target_es5 {
+                self.enclosing_function_bodies.pop();
+            }
         }
 
         // Restore state
@@ -1517,7 +1601,14 @@ impl<'a> LoweringPass<'a> {
         }
 
         if !func.body.is_none() {
+            // Track this function body as a potential _this capture scope
+            if self.ctx.target_es5 {
+                self.enclosing_function_bodies.push(func.body);
+            }
             self.visit(func.body);
+            if self.ctx.target_es5 {
+                self.enclosing_function_bodies.pop();
+            }
         }
 
         // Restore in_constructor state
