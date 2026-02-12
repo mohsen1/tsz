@@ -1529,6 +1529,19 @@ impl<'a> CheckerState<'a> {
             // Track that this function body uses `arguments` (for JS implicit rest params)
             self.ctx.js_body_uses_arguments = true;
 
+            // TS2815: 'arguments' cannot be referenced in property initializers
+            // or class static initialization blocks. Must check BEFORE regular
+            // function body check because arrow functions are transparent.
+            if self.is_arguments_in_class_initializer_or_static_block(idx) {
+                use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::ARGUMENTS_CANNOT_BE_REFERENCED_IN_PROPERTY_INITIALIZERS_OR_CLASS_STATIC_INITIALI,
+                    diagnostic_codes::ARGUMENTS_CANNOT_BE_REFERENCED_IN_PROPERTY_INITIALIZERS_OR_CLASS_STATIC_INITIALI,
+                );
+                return TypeId::ERROR;
+            }
+
             use tsz_common::common::ScriptTarget;
             let is_es5_or_lower = matches!(
                 self.ctx.compiler_options.target,
