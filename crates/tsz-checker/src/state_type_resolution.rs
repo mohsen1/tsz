@@ -359,6 +359,9 @@ impl<'a> CheckerState<'a> {
                 // Skip in heritage clauses: `class C extends Array {}` is valid
                 if !self.is_direct_heritage_type_reference(idx) {
                     self.error_generic_type_requires_type_arguments_at(name, 1, idx);
+                    // Return ERROR to prevent cascading assignment errors (TS2322)
+                    // when using Array without type arguments
+                    return TypeId::ERROR;
                 }
                 return self.resolve_array_type_reference(name, type_name_idx, type_ref);
             }
