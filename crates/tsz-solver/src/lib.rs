@@ -127,6 +127,9 @@ mod mapped_key_remap_tests;
 #[path = "tests/intersection_distributivity_tests.rs"]
 mod intersection_distributivity_tests;
 #[cfg(test)]
+#[path = "tests/intersection_type_param_tests.rs"]
+mod intersection_type_param_tests;
+#[cfg(test)]
 #[path = "tests/template_expansion_tests.rs"]
 mod template_expansion_tests;
 #[cfg(test)]

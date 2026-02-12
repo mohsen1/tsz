@@ -844,6 +844,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        // Special case: T & SomeType <: T
+        // If target is a type parameter and it appears as a member of the intersection,
+        // the intersection is a more specific version (T with null/undefined excluded)
+        // and is assignable to the type parameter.
+        // This handles the common pattern: T & {} to exclude null/undefined from T.
+        // NOTE: This code path is rarely reached because check_subtype_inner has an
+        // earlier check when target is a type parameter (line 2575). This code exists
+        // for cases where the intersection check happens via other paths.
+
         // Intersection <: Target requires AT LEAST ONE member to be subtype
         let member_list = self.checker.interner.type_list(TypeListId(list_id));
         for &member in member_list.iter() {
@@ -2549,6 +2558,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(_t_info) = type_param_info(self.interner, target) {
+            // Special case: T & SomeType <: T
+            // If source is an intersection containing the target type parameter,
+            // the intersection is a more specific version (excluding null/undefined)
+            // and is assignable. This handles the common pattern: T & {} <: T.
+            if let Some(members) = intersection_list_id(self.interner, source) {
+                let member_list = self.interner.type_list(members);
+                for &member in member_list.iter() {
+                    if member == target {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+
             // A concrete type is never a subtype of an opaque type parameter.
             // The type parameter T could be instantiated as any type satisfying its constraint,
             // so we cannot guarantee that source <: T unless source is never/any (handled above).
