@@ -3481,6 +3481,9 @@ impl BinderState {
                 }
                 // Update current_scope to point to the local symbol (shadowing)
                 self.current_scope.set(name.to_string(), sym_id);
+                // CRITICAL: Also update file_locals to shadow lib symbol in file-level scope
+                // This ensures symbol resolution finds the local symbol instead of the lib one
+                self.file_locals.set(name.to_string(), sym_id);
                 self.node_symbols.insert(declaration.0, sym_id);
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 return sym_id;
