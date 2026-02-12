@@ -164,6 +164,63 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if assignment target is a function and emit TS2630 error.
+    ///
+    /// TypeScript does not allow direct assignment to functions:
+    /// ```typescript
+    /// function foo() {}
+    /// foo = bar;  // Error TS2630: Cannot assign to 'foo' because it is a function.
+    /// ```
+    ///
+    /// This check helps catch common mistakes where users try to reassign function names.
+    pub(crate) fn check_function_assignment(&mut self, target_idx: NodeIndex) {
+        let inner = self.skip_parenthesized_expression(target_idx);
+
+        // Only check identifiers - property access like obj.fn = x is allowed
+        let Some(node) = self.ctx.arena.get(inner) else {
+            return;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return;
+        }
+
+        // Get the identifier name
+        let Some(id_data) = self.ctx.arena.get_identifier(node) else {
+            return;
+        };
+        let name = &id_data.escaped_text;
+
+        // Look up the symbol for this identifier
+        let sym_id = self.ctx.binder.node_symbols.get(&inner.0).copied();
+        let Some(sym_id) = sym_id else {
+            return;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+
+        // Check if this symbol is a function
+        if symbol.flags & symbol_flags::FUNCTION != 0 {
+            use crate::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+            let message = format_message(
+                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
+                &[name],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                file: self.ctx.file_name.clone(),
+                start: node.pos,
+                length: node.end.saturating_sub(node.pos),
+                message_text: message,
+                category: DiagnosticCategory::Error,
+                code: diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
+                related_information: Vec::new(),
+            });
+        }
+    }
+
     /// Check an assignment expression (=).
     ///
     /// ## Contextual Typing:
@@ -193,6 +250,10 @@ impl<'a> CheckerState<'a> {
         // TS2588: Cannot assign to 'x' because it is a constant.
         // Check early - if this fires, skip type assignability checks (tsc behavior).
         let is_const = self.check_const_assignment(left_idx);
+
+        // TS2630: Cannot assign to 'x' because it is a function.
+        // This check must come after valid assignment target check but before type checking.
+        self.check_function_assignment(left_idx);
 
         // Set destructuring flag when LHS is an object/array pattern to suppress
         // TS1117 (duplicate property) checks in destructuring targets.
