@@ -1890,7 +1890,30 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             });
-            let is_lib_symbol = self.ctx.binder.symbol_arenas.contains_key(&sym_id);
+            // Only use the is_lib_symbol fallback when the per-declaration check
+            // couldn't determine the arena origin (i.e. no declaration_arenas entry
+            // AND the declaration exists in the current arena). The is_lib_symbol
+            // flag is set for ALL symbols that were merged during multi-file
+            // compilation, including user-defined interfaces. Using it unconditionally
+            // causes user interfaces to skip merge_interface_heritage_types, which
+            // loses inherited call/construct signatures (TS2345 false positives).
+            let is_lib_symbol = if has_out_of_arena_decl {
+                false // Already determined cross-arena by per-decl check
+            } else {
+                // When all declarations are in the current arena, check if any
+                // actually maps to an InterfaceDeclaration node. User-defined
+                // interfaces will have real interface nodes; cross-arena collisions
+                // will have NodeIndexes that point to unrelated nodes. Only fall
+                // back to lib resolution when there's no real interface decl.
+                let has_real_interface_decl = declarations.iter().any(|&decl_idx| {
+                    self.ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|node| self.ctx.arena.get_interface(node))
+                        .is_some()
+                });
+                !has_real_interface_decl && self.ctx.binder.symbol_arenas.contains_key(&sym_id)
+            };
             if (has_out_of_arena_decl || is_lib_symbol)
                 && !self.ctx.lib_contexts.is_empty()
                 && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
