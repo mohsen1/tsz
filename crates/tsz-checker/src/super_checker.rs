@@ -720,6 +720,50 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn is_additional_super_call_after_first_root_level_super_statement(
+        &self,
+        idx: NodeIndex,
+        ctor_idx: NodeIndex,
+    ) -> bool {
+        let Some(ctor_node) = self.ctx.arena.get(ctor_idx) else {
+            return false;
+        };
+        let Some(ctor) = self.ctx.arena.get_constructor(ctor_node) else {
+            return false;
+        };
+        if ctor.body.is_none() {
+            return false;
+        }
+
+        let Some(body_node) = self.ctx.arena.get(ctor.body) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        let Some(first_super_stmt) = block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find(|&stmt| self.is_super_call_statement(stmt))
+        else {
+            return false;
+        };
+
+        let Some(first_super_stmt_node) = self.ctx.arena.get(first_super_stmt) else {
+            return false;
+        };
+        let Some(super_node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        super_node.pos > first_super_stmt_node.pos
+            && !self.is_descendant_of_node(idx, first_super_stmt)
+            && idx != first_super_stmt
+    }
+
     /// Find the enclosing class by walking up the parent chain.
     ///
     /// This is more reliable than relying on `enclosing_class` which may not be set
@@ -983,6 +1027,13 @@ impl<'a> CheckerState<'a> {
             && self.is_in_constructor(idx)
             && !self.is_super_in_nested_function(idx)
         {
+            if let Some(ctor_idx) = self.enclosing_constructor_node(idx)
+                && self
+                    .is_additional_super_call_after_first_root_level_super_statement(idx, ctor_idx)
+            {
+                return;
+            }
+
             let diagnostic_node = self.enclosing_constructor_node(idx).unwrap_or(idx);
 
             if !self.is_super_call_root_level_statement_in_constructor(idx) {
