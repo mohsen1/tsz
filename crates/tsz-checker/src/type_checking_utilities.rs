@@ -2157,50 +2157,46 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a type contains any array types (for TS2538 validation).
-    pub(crate) fn type_contains_array_type(&self, type_id: TypeId) -> bool {
-        use tsz_solver::TypeKey;
+    /// Check if a type cannot be used as an index type (TS2538).
+    pub(crate) fn type_is_invalid_index_type(&self, type_id: TypeId) -> bool {
+        use tsz_solver::{IntrinsicKind, LiteralValue, TypeKey};
 
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Array(_)) => true,
-            Some(TypeKey::Union(list_id)) => self
-                .ctx
-                .types
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.type_contains_array_type(member)),
-            Some(TypeKey::Intersection(list_id)) => self
-                .ctx
-                .types
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.type_contains_array_type(member)),
-            _ => false,
-        }
-    }
-
-    /// Check if a type is or contains bigint (for TS2538 validation).
-    pub(crate) fn type_contains_bigint(&self, type_id: TypeId) -> bool {
-        use tsz_solver::{LiteralValue, TypeKey};
-
-        if type_id == TypeId::BIGINT {
-            return true;
+        if matches!(
+            type_id,
+            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+        ) {
+            return false;
         }
 
         match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::BigInt(_))) => true,
-            Some(TypeKey::Union(list_id)) => self
+            Some(TypeKey::Intrinsic(kind)) => matches!(
+                kind,
+                IntrinsicKind::Void
+                    | IntrinsicKind::Null
+                    | IntrinsicKind::Undefined
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Object
+                    | IntrinsicKind::Function
+            ),
+            Some(TypeKey::Literal(value)) => {
+                matches!(value, LiteralValue::Boolean(_) | LiteralValue::BigInt(_))
+            }
+            Some(TypeKey::Array(_))
+            | Some(TypeKey::Tuple(_))
+            | Some(TypeKey::Object(_))
+            | Some(TypeKey::ObjectWithIndex(_))
+            | Some(TypeKey::Function(_))
+            | Some(TypeKey::Callable(_)) => true,
+            Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => self
                 .ctx
                 .types
                 .type_list(list_id)
                 .iter()
-                .any(|&member| self.type_contains_bigint(member)),
-            Some(TypeKey::Intersection(list_id)) => self
-                .ctx
-                .types
-                .type_list(list_id)
-                .iter()
-                .any(|&member| self.type_contains_bigint(member)),
+                .any(|&member| self.type_is_invalid_index_type(member)),
+            Some(TypeKey::TypeParameter(info)) => info
+                .constraint
+                .is_some_and(|constraint| self.type_is_invalid_index_type(constraint)),
             _ => false,
         }
     }

@@ -22,10 +22,18 @@ struct ClassMemberInfo {
     name: String,
     type_id: TypeId,
     name_idx: NodeIndex,
+    visibility: MemberVisibility,
     is_method: bool,
     is_static: bool,
     is_accessor: bool,
     is_abstract: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MemberVisibility {
+    Public,
+    Protected,
+    Private,
 }
 
 // =============================================================================
@@ -49,6 +57,13 @@ impl<'a> CheckerState<'a> {
                 if skip_private && self.has_private_modifier(&prop.modifiers) {
                     return None;
                 }
+                let visibility = if self.has_private_modifier(&prop.modifiers) {
+                    MemberVisibility::Private
+                } else if self.has_protected_modifier(&prop.modifiers) {
+                    MemberVisibility::Protected
+                } else {
+                    MemberVisibility::Public
+                };
                 let is_static = self.has_static_modifier(&prop.modifiers);
                 let prop_type = if !prop.type_annotation.is_none() {
                     self.get_type_from_type_node(prop.type_annotation)
@@ -62,6 +77,7 @@ impl<'a> CheckerState<'a> {
                     name,
                     type_id: prop_type,
                     name_idx: prop.name,
+                    visibility,
                     is_method: false,
                     is_static,
                     is_accessor: false,
@@ -74,6 +90,13 @@ impl<'a> CheckerState<'a> {
                 if skip_private && self.has_private_modifier(&method.modifiers) {
                     return None;
                 }
+                let visibility = if self.has_private_modifier(&method.modifiers) {
+                    MemberVisibility::Private
+                } else if self.has_protected_modifier(&method.modifiers) {
+                    MemberVisibility::Protected
+                } else {
+                    MemberVisibility::Public
+                };
                 let is_static = self.has_static_modifier(&method.modifiers);
                 use tsz_solver::FunctionShape;
                 let signature = self.call_signature_from_method(method);
@@ -91,6 +114,7 @@ impl<'a> CheckerState<'a> {
                     name,
                     type_id: method_type,
                     name_idx: method.name,
+                    visibility,
                     is_method: true,
                     is_static,
                     is_accessor: false,
@@ -103,6 +127,13 @@ impl<'a> CheckerState<'a> {
                 if skip_private && self.has_private_modifier(&accessor.modifiers) {
                     return None;
                 }
+                let visibility = if self.has_private_modifier(&accessor.modifiers) {
+                    MemberVisibility::Private
+                } else if self.has_protected_modifier(&accessor.modifiers) {
+                    MemberVisibility::Protected
+                } else {
+                    MemberVisibility::Public
+                };
                 let is_static = self.has_static_modifier(&accessor.modifiers);
                 let accessor_type = if !accessor.type_annotation.is_none() {
                     self.get_type_from_type_node(accessor.type_annotation)
@@ -114,6 +145,7 @@ impl<'a> CheckerState<'a> {
                     name,
                     type_id: accessor_type,
                     name_idx: accessor.name,
+                    visibility,
                     is_method: false,
                     is_static,
                     is_accessor: true,
@@ -126,6 +158,13 @@ impl<'a> CheckerState<'a> {
                 if skip_private && self.has_private_modifier(&accessor.modifiers) {
                     return None;
                 }
+                let visibility = if self.has_private_modifier(&accessor.modifiers) {
+                    MemberVisibility::Private
+                } else if self.has_protected_modifier(&accessor.modifiers) {
+                    MemberVisibility::Protected
+                } else {
+                    MemberVisibility::Public
+                };
                 let is_static = self.has_static_modifier(&accessor.modifiers);
                 let accessor_type = accessor
                     .parameters
@@ -145,6 +184,7 @@ impl<'a> CheckerState<'a> {
                     name,
                     type_id: accessor_type,
                     name_idx: accessor.name,
+                    visibility,
                     is_method: false,
                     is_static,
                     is_accessor: true,
@@ -291,16 +331,26 @@ impl<'a> CheckerState<'a> {
         // Track names that already had TS2610/TS2611 emitted (avoid duplicate for get+set pairs)
         let mut accessor_mismatch_reported: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
+        let mut class_extends_error_reported = false;
 
         // Check each member in the derived class
         for &member_idx in &class_data.members.nodes {
             let Some(info) = self.extract_class_member_info(member_idx, false) else {
                 continue;
             };
-            let (member_name, member_type, member_name_idx, is_method, is_static, is_accessor) = (
+            let (
+                member_name,
+                member_type,
+                member_name_idx,
+                member_visibility,
+                is_method,
+                is_static,
+                is_accessor,
+            ) = (
                 info.name,
                 info.type_id,
                 info.name_idx,
+                info.visibility,
                 info.is_method,
                 info.is_static,
                 info.is_accessor,
@@ -310,6 +360,60 @@ impl<'a> CheckerState<'a> {
             // Private fields are scoped to the class that declares them and
             // do NOT participate in the inheritance hierarchy
             if member_name.starts_with('#') {
+                continue;
+            }
+
+            // Find matching member including private/protected members to detect
+            // class-level visibility/branding incompatibilities (TS2415).
+            let base_any_info = {
+                let mut found = None;
+                for &base_member_idx in &base_class.members.nodes {
+                    if let Some(info) = self.extract_class_member_info(base_member_idx, false)
+                        && info.name == member_name
+                        && info.is_static == is_static
+                    {
+                        found = Some(info);
+                        break;
+                    }
+                }
+                if found.is_none() {
+                    found = self.find_member_in_class_chain(
+                        base_idx,
+                        &member_name,
+                        is_static,
+                        0,
+                        false,
+                    );
+                }
+                found
+            };
+
+            if let Some(base_any_info) = base_any_info
+                && self
+                    .class_member_visibility_conflicts(member_visibility, base_any_info.visibility)
+            {
+                if !class_extends_error_reported {
+                    if is_static {
+                        self.error_at_node(
+                            class_data.name,
+                            &format!(
+                                "Class static side '{}' incorrectly extends base class static side '{}'.",
+                                derived_class_name, base_class_name
+                            ),
+                            diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
+                        );
+                    } else {
+                        self.error_at_node(
+                            class_data.name,
+                            &format!(
+                                "Class '{}' incorrectly extends base class '{}'.",
+                                derived_class_name, base_class_name
+                            ),
+                            diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
+                        );
+                    }
+                    class_extends_error_reported = true;
+                }
                 continue;
             }
 
@@ -327,7 +431,8 @@ impl<'a> CheckerState<'a> {
                 }
                 // If not found in direct base, walk up the ancestor chain
                 if found.is_none() {
-                    found = self.find_member_in_class_chain(base_idx, &member_name, is_static, 0);
+                    found =
+                        self.find_member_in_class_chain(base_idx, &member_name, is_static, 0, true);
                 }
                 found
             };
@@ -473,7 +578,9 @@ impl<'a> CheckerState<'a> {
         _iface_idx: NodeIndex,
         iface_data: &tsz_parser::parser::node::InterfaceData,
     ) {
-        use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+        use tsz_parser::parser::syntax_kind_ext::{
+            CALL_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
+        };
         use tsz_solver::{TypeSubstitution, instantiate_type};
 
         // Get heritage clauses (extends)
@@ -516,6 +623,22 @@ impl<'a> CheckerState<'a> {
             let type_id = self.get_type_of_interface_member(member_idx);
             derived_members.push((name, type_id, member_idx, kind));
         }
+
+        let mut derived_member_names: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
+        for (member_name, _, _, _) in &derived_members {
+            derived_member_names.insert(member_name.clone());
+        }
+        for &member_idx in &iface_data.members.nodes {
+            if let Some(member_node) = self.ctx.arena.get(member_idx)
+                && member_node.kind == CALL_SIGNATURE
+            {
+                derived_member_names.insert(String::from("__call__"));
+            }
+        }
+
+        let mut inherited_member_sources: rustc_hash::FxHashMap<String, (String, TypeId)> =
+            rustc_hash::FxHashMap::default();
 
         // Process each heritage clause (extends)
         for &clause_idx in &heritage_clauses.nodes {
@@ -575,6 +698,110 @@ impl<'a> CheckerState<'a> {
                     {
                         base_iface_indices.push(decl_idx);
                     }
+                }
+
+                for &base_iface_idx in &base_iface_indices {
+                    let Some(base_node) = self.ctx.arena.get(base_iface_idx) else {
+                        continue;
+                    };
+                    let Some(base_iface) = self.ctx.arena.get_interface(base_node) else {
+                        continue;
+                    };
+
+                    let (base_type_params, base_type_param_updates) =
+                        self.push_type_parameters(&base_iface.type_parameters);
+
+                    let mut base_type_args = Vec::new();
+                    if let Some(args) = type_arguments {
+                        for &arg_idx in &args.nodes {
+                            base_type_args.push(self.get_type_from_type_node(arg_idx));
+                        }
+                    }
+
+                    if base_type_args.len() < base_type_params.len() {
+                        for param in base_type_params.iter().skip(base_type_args.len()) {
+                            let fallback = param
+                                .default
+                                .or(param.constraint)
+                                .unwrap_or(TypeId::UNKNOWN);
+                            base_type_args.push(fallback);
+                        }
+                    }
+                    if base_type_args.len() > base_type_params.len() {
+                        base_type_args.truncate(base_type_params.len());
+                    }
+
+                    let base_substitution = TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &base_type_params,
+                        &base_type_args,
+                    );
+
+                    for &base_member_idx in &base_iface.members.nodes {
+                        let Some(base_member_node) = self.ctx.arena.get(base_member_idx) else {
+                            continue;
+                        };
+
+                        let (member_key, member_type) = if base_member_node.kind == CALL_SIGNATURE {
+                            (
+                                String::from("__call__"),
+                                instantiate_type(
+                                    self.ctx.types,
+                                    self.get_type_of_node(base_member_idx),
+                                    &base_substitution,
+                                ),
+                            )
+                        } else if base_member_node.kind == METHOD_SIGNATURE
+                            || base_member_node.kind == PROPERTY_SIGNATURE
+                        {
+                            let Some(sig) = self.ctx.arena.get_signature(base_member_node) else {
+                                continue;
+                            };
+                            let Some(name) = self.get_property_name(sig.name) else {
+                                continue;
+                            };
+                            (
+                                name,
+                                instantiate_type(
+                                    self.ctx.types,
+                                    self.get_type_of_interface_member_simple(base_member_idx),
+                                    &base_substitution,
+                                ),
+                            )
+                        } else {
+                            continue;
+                        };
+
+                        if derived_member_names.contains(&member_key) {
+                            continue;
+                        }
+
+                        if let Some((prev_base_name, prev_member_type)) =
+                            inherited_member_sources.get(&member_key)
+                        {
+                            if prev_base_name != &base_name {
+                                let incompatible = !self
+                                    .is_assignable_to(member_type, *prev_member_type)
+                                    || !self.is_assignable_to(*prev_member_type, member_type);
+                                if incompatible {
+                                    self.error_at_node(
+                                        iface_data.name,
+                                        &format!(
+                                            "Interface '{}' cannot simultaneously extend types '{}' and '{}'.",
+                                            derived_name, prev_base_name, base_name
+                                        ),
+                                        diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
+                                    );
+                                    return;
+                                }
+                            }
+                        } else {
+                            inherited_member_sources
+                                .insert(member_key, (base_name.clone(), member_type));
+                        }
+                    }
+
+                    self.pop_type_parameters(base_type_param_updates);
                 }
 
                 // If the base is not an interface, check if it's a class with private/protected members (TS2430)
@@ -1584,13 +1811,20 @@ impl<'a> CheckerState<'a> {
         target_name: &str,
         target_is_static: bool,
         _depth: usize,
+        skip_private: bool,
     ) -> Option<ClassMemberInfo> {
         use tsz_solver::recursion::{RecursionGuard, RecursionProfile};
 
         // Create a recursion guard for cycle detection
         let mut guard = RecursionGuard::with_profile(RecursionProfile::CheckerRecursion);
 
-        self.find_member_in_class_chain_impl(class_idx, target_name, target_is_static, &mut guard)
+        self.find_member_in_class_chain_impl(
+            class_idx,
+            target_name,
+            target_is_static,
+            skip_private,
+            &mut guard,
+        )
     }
 
     /// Internal implementation of find_member_in_class_chain with recursion guard.
@@ -1599,6 +1833,7 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         target_name: &str,
         target_is_static: bool,
+        skip_private: bool,
         guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
     ) -> Option<ClassMemberInfo> {
         use tsz_solver::recursion::RecursionResult;
@@ -1623,7 +1858,7 @@ impl<'a> CheckerState<'a> {
 
         // Search direct members
         for &member_idx in &class_data.members.nodes {
-            if let Some(info) = self.extract_class_member_info(member_idx, true) {
+            if let Some(info) = self.extract_class_member_info(member_idx, skip_private) {
                 if info.name == target_name && info.is_static == target_is_static {
                     // Found it! Leave guard before returning
                     guard.leave(class_idx);
@@ -1670,6 +1905,7 @@ impl<'a> CheckerState<'a> {
                 base_idx,
                 target_name,
                 target_is_static,
+                skip_private,
                 guard,
             );
 
@@ -1680,6 +1916,22 @@ impl<'a> CheckerState<'a> {
 
         guard.leave(class_idx);
         None
+    }
+
+    fn class_member_visibility_conflicts(
+        &self,
+        derived_visibility: MemberVisibility,
+        base_visibility: MemberVisibility,
+    ) -> bool {
+        matches!(
+            (derived_visibility, base_visibility),
+            (MemberVisibility::Private, MemberVisibility::Private)
+                | (MemberVisibility::Private, MemberVisibility::Protected)
+                | (MemberVisibility::Private, MemberVisibility::Public)
+                | (MemberVisibility::Protected, MemberVisibility::Public)
+                | (MemberVisibility::Public, MemberVisibility::Private)
+                | (MemberVisibility::Protected, MemberVisibility::Private)
+        )
     }
 
     /// Count required (non-optional, non-rest, no-initializer) parameters in a
