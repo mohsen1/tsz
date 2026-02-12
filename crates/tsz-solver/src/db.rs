@@ -696,11 +696,12 @@ impl QueryDatabase for TypeInterner {
         self.is_assignable_to_with_flags(source, target, 0)
     }
 
-    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, _flags: u16) -> bool {
-        // Default implementation: use CompatChecker
-        // TODO: Apply flags to CompatChecker once it supports apply_flags
+    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
         use crate::compat::CompatChecker;
         let mut checker = CompatChecker::new(self);
+        if flags != 0 {
+            checker.apply_flags(flags);
+        }
         checker.is_assignable(source, target)
     }
 
@@ -1159,8 +1160,6 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
-        // Task A: Use passed flags instead of hardcoded 0,0
-        // TODO: Configure SubtypeChecker with these flags
         let key = RelationCacheKey::subtype(source, target, flags, 0);
         // Handle poisoned locks gracefully
         let cached = match self.subtype_cache.read() {

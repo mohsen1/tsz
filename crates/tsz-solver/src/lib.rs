@@ -117,7 +117,9 @@ mod enum_nominality;
 mod intersection_union_tests;
 // lawyer_tests: loaded from lawyer.rs
 // lower_tests: loaded from lower.rs
-// mapped_key_remap_tests: TODO: Fix API mismatches (TypeId::TYPE_PARAM, keyof, etc.)
+#[cfg(test)]
+#[path = "tests/mapped_key_remap_tests.rs"]
+mod mapped_key_remap_tests;
 // narrowing_tests: loaded from narrowing.rs
 // operations_tests: loaded from operations.rs
 // subtype_tests: loaded from subtype.rs

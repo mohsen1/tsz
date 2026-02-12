@@ -72,7 +72,12 @@ impl<'a> CheckerState<'a> {
     fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
         use tsz_solver::TypeKey;
         match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Mapped(_) | TypeKey::Conditional(_) | TypeKey::Application(_)) => {
+            Some(
+                TypeKey::Mapped(_)
+                | TypeKey::Conditional(_)
+                | TypeKey::Application(_)
+                | TypeKey::Lazy(_),
+            ) => {
                 let evaluated = self.judge_evaluate(type_id);
                 if evaluated != type_id {
                     return evaluated;
@@ -876,6 +881,31 @@ impl<'a> CheckerState<'a> {
                         )
                     };
                     type_stack.push(assign_type);
+                    continue;
+                }
+
+                // For ||/&& and ??, propagate contextual type from the left operand
+                // to the right operand. This enables contextual typing of callbacks:
+                //   declare let f: null | ((x: string) => void);
+                //   let g = f || (x => { ... }); // x should be typed as string
+                if op_kind == SyntaxKind::BarBarToken as u16
+                    || op_kind == SyntaxKind::QuestionQuestionToken as u16
+                    || op_kind == SyntaxKind::AmpersandAmpersandToken as u16
+                {
+                    let left_type = self.get_type_of_node(left_idx);
+                    // Use left type (minus null/undefined) as contextual type for right
+                    let prev_context = self.ctx.contextual_type;
+                    let non_nullish = self.ctx.types.remove_nullish(left_type);
+                    if non_nullish != TypeId::NEVER && non_nullish != TypeId::UNKNOWN {
+                        self.ctx.contextual_type = Some(non_nullish);
+                    }
+                    let right_type = self.get_type_of_node(right_idx);
+                    self.ctx.contextual_type = prev_context;
+
+                    // Now push both types and the operator for the visited path
+                    type_stack.push(left_type);
+                    type_stack.push(right_type);
+                    stack.push((node_idx, true));
                     continue;
                 }
 
@@ -1995,6 +2025,7 @@ impl<'a> CheckerState<'a> {
                     // Set contextual type for method
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
+                        let ctx_type = self.evaluate_contextual_type(ctx_type);
                         self.ctx.contextual_type =
                             self.ctx.types.contextual_property_type(ctx_type, &name);
                     }
