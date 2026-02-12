@@ -356,6 +356,10 @@ pub enum IRNode {
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
 
+    /// Reference to an original AST node with constrained source range.
+    /// Used when the parser's node.end extends into a parent block's closing brace.
+    ASTRefRange(NodeIndex, u32),
+
     // =========================================================================
     // Module IR Nodes
     // =========================================================================

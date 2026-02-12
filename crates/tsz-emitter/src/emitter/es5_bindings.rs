@@ -15,8 +15,9 @@ impl<'a> Printer<'a> {
         };
 
         // Pre-register all variable names in this declaration list to handle shadowing.
-        // Only do this for let/const (block-scoped) — var declarations can be redeclared
-        // in the same scope without renaming.
+        // For let/const: use register_variable (renames for any scope conflict including current)
+        // For var: use register_var_declaration (only renames for parent scope conflicts,
+        // allowing same-scope redeclarations like `var cl; var cl = Point();`)
         let flags = node.flags as u32;
         let is_block_scoped = (flags & tsz_parser::parser::node_flags::LET != 0)
             || (flags & tsz_parser::parser::node_flags::CONST != 0);
@@ -26,6 +27,14 @@ impl<'a> Printer<'a> {
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 {
                     self.pre_register_binding_name(decl.name);
+                }
+            }
+        } else {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.pre_register_var_binding_name(decl.name);
                 }
             }
         }
@@ -1999,19 +2008,15 @@ impl<'a> Printer<'a> {
 
         // Only handle variable declaration list: `for (let v of ...)`
         // Do NOT handle bare identifiers: `for (v of ...)` - those are assignments, not declarations
-        // Skip var declarations — var redeclarations don't need renaming
+        // Note: Pre-register for both var and let/const in for-of loops because loop
+        // temporaries (e.g., a_1 for array copy) create naming conflicts that must be avoided.
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            let flags = init_node.flags as u32;
-            let is_block_scoped = (flags & tsz_parser::parser::node_flags::LET != 0)
-                || (flags & tsz_parser::parser::node_flags::CONST != 0);
-            if is_block_scoped {
-                if let Some(decl_list) = self.arena.get_variable(init_node) {
-                    for &decl_idx in &decl_list.declarations.nodes {
-                        if let Some(decl_node) = self.arena.get(decl_idx)
-                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                        {
-                            self.pre_register_binding_name(decl.name);
-                        }
+            if let Some(decl_list) = self.arena.get_variable(init_node) {
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        self.pre_register_binding_name(decl.name);
                     }
                 }
             }
@@ -2055,6 +2060,47 @@ impl<'a> Printer<'a> {
                         && let Some(elem) = self.arena.get_binding_element(elem_node)
                     {
                         self.pre_register_binding_name(elem.name);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pre-register a var binding name. Uses `register_var_declaration` which allows
+    /// same-scope redeclarations but renames for parent-scope conflicts.
+    fn pre_register_var_binding_name(&mut self, name_idx: NodeIndex) {
+        if name_idx.is_none() {
+            return;
+        }
+
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                let original_name = self.arena.resolve_identifier_text(ident);
+                self.ctx
+                    .block_scope_state
+                    .register_var_declaration(original_name);
+            }
+        } else if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+                for &elem_idx in &pattern.elements.nodes {
+                    if let Some(elem_node) = self.arena.get(elem_idx)
+                        && let Some(elem) = self.arena.get_binding_element(elem_node)
+                    {
+                        self.pre_register_var_binding_name(elem.name);
+                    }
+                }
+            }
+        } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+                for &elem_idx in &pattern.elements.nodes {
+                    if let Some(elem_node) = self.arena.get(elem_idx)
+                        && let Some(elem) = self.arena.get_binding_element(elem_node)
+                    {
+                        self.pre_register_var_binding_name(elem.name);
                     }
                 }
             }

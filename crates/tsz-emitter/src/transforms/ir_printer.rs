@@ -936,6 +936,28 @@ impl<'a> IRPrinter<'a> {
                 self.write("undefined");
             }
 
+            IRNode::ASTRefRange(idx, max_end) => {
+                // Like ASTRef but with a constrained end position.
+                // Used when a statement's node.end extends into a parent block's closing brace.
+                if let Some(arena) = self.arena
+                    && let Some(text) = self.source_text
+                    && let Some(node) = arena.get(*idx)
+                {
+                    let start = node.pos as usize;
+                    let end = std::cmp::min(*max_end as usize, text.len());
+                    let end = std::cmp::min(end, node.end as usize);
+                    if start < end {
+                        let raw = &text[start..end];
+                        let trimmed = raw.trim();
+                        if !trimmed.is_empty() {
+                            self.write(trimmed);
+                            return;
+                        }
+                    }
+                }
+                self.write("undefined");
+            }
+
             // CommonJS Module Transform Specific
             IRNode::UseStrict => {
                 self.write("\"use strict\";");
