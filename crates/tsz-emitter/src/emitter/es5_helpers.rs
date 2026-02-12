@@ -238,7 +238,7 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_object_literal_method_value_es5(&mut self, method: &MethodDeclData) {
         if method.body.is_none() {
-            self.write("function () {}");
+            self.write("function () { }");
             return;
         }
 

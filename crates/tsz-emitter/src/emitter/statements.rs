@@ -15,7 +15,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Empty blocks: check for comments inside, then preserve original format
+        // Empty blocks: check for comments inside, then emit appropriately
         if block.statements.nodes.is_empty() {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_pos = self.find_token_end_before_trivia(node.pos, node.end);
@@ -32,14 +32,11 @@ impl<'a> Printer<'a> {
                 self.emit_comments_before_pos(closing_brace_pos);
                 self.decrease_indent();
                 self.write("}");
-            } else if self.is_single_line(node) {
-                // Single-line empty block: { }
-                self.write("{ }");
             } else {
-                // Multi-line empty block: {\n}
-                self.write("{");
-                self.write_line();
-                self.write("}");
+                // Empty block without comments: always emit as { } on one line
+                // This matches TypeScript's behavior - empty blocks are always single-line
+                // (function bodies, method bodies, catch blocks, etc.)
+                self.write("{ }");
             }
             // Trailing comments are handled by the calling context
             // (class member loop, statement loop, etc.)
