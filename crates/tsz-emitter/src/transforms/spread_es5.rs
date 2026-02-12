@@ -448,7 +448,7 @@ impl<'a> ES5SpreadTransformer<'a> {
     /// Build an Object.assign or __assign chain
     fn build_assign_chain(&self, segments: Vec<ObjectSegment>) -> Option<IRNode> {
         if segments.is_empty() {
-            return Some(IRNode::ObjectLiteral(vec![]));
+            return Some(IRNode::empty_object());
         }
 
         let assign_fn = if self.options.use_assign_helper {
@@ -458,11 +458,11 @@ impl<'a> ES5SpreadTransformer<'a> {
         };
 
         // Start with empty object
-        let mut result = IRNode::ObjectLiteral(vec![]);
+        let mut result = IRNode::empty_object();
 
         for segment in segments {
             let arg = match segment {
-                ObjectSegment::Literal(props) => IRNode::ObjectLiteral(props),
+                ObjectSegment::Literal(props) => IRNode::object(props),
                 ObjectSegment::Spread(expr) => expr,
             };
             result = IRNode::call(assign_fn.clone(), vec![result, arg]);

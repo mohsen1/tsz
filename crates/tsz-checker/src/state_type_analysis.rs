@@ -1366,20 +1366,28 @@ impl<'a> CheckerState<'a> {
         if delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = self.get_symbol_globally(sym_id)
         {
-            let mut decl_candidates = symbol.declarations.clone();
-            if !symbol.value_declaration.is_none() {
-                decl_candidates.push(symbol.value_declaration);
-            }
-
-            for decl_idx in decl_candidates {
-                if decl_idx.is_none() {
-                    continue;
+            // For INTERFACE symbols whose primary arena is already the current arena,
+            // do NOT scan per-declaration arenas for delegation. Interfaces split across
+            // multiple lib files (e.g., RegExp in es5 + es2015.symbol.wellknown) cause
+            // ping-pong between arenas until the depth limit, resulting in ERROR.
+            // The INTERFACE block in compute_type_of_symbol handles multi-arena merging
+            // correctly via resolve_lib_type_by_name.
+            if symbol.flags & symbol_flags::INTERFACE == 0 {
+                let mut decl_candidates = symbol.declarations.clone();
+                if !symbol.value_declaration.is_none() {
+                    decl_candidates.push(symbol.value_declaration);
                 }
-                if let Some(arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
-                    && !std::ptr::eq(arena.as_ref(), self.ctx.arena)
-                {
-                    delegate_arena = Some(arena.as_ref());
-                    break;
+
+                for decl_idx in decl_candidates {
+                    if decl_idx.is_none() {
+                        continue;
+                    }
+                    if let Some(arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                        && !std::ptr::eq(arena.as_ref(), self.ctx.arena)
+                    {
+                        delegate_arena = Some(arena.as_ref());
+                        break;
+                    }
                 }
             }
         }

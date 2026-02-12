@@ -1184,9 +1184,9 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 if let Some(obj) = self.arena.get_literal_expr(node) {
                     let props = self.convert_object_properties(&obj.elements.nodes);
-                    IRNode::ObjectLiteral(props)
+                    IRNode::object(props)
                 } else {
-                    IRNode::ObjectLiteral(vec![])
+                    IRNode::empty_object()
                 }
             }
 
