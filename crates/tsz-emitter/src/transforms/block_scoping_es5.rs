@@ -110,6 +110,57 @@ impl BlockScopeState {
         emitted_name
     }
 
+    /// Register a `var` declaration in the current scope.
+    /// Unlike `register_variable`, this does NOT rename for same-scope redeclarations
+    /// (since `var` allows redeclaration). It only renames when the name exists in a
+    /// PARENT scope, e.g. `var a = 0` inside a for-of body where `a` exists in the outer scope.
+    pub fn register_var_declaration(&mut self, original_name: &str) -> String {
+        // If already registered in current scope, reuse that name (var redeclaration)
+        if let Some(current) = self.scope_stack.last() {
+            if let Some(existing) = current.get(original_name) {
+                return existing.clone();
+            }
+        }
+
+        // Check ONLY parent scopes (skip current) for conflicts
+        let needs_rename = self
+            .scope_stack
+            .iter()
+            .rev()
+            .skip(1) // skip current scope
+            .any(|scope| scope.contains_key(original_name));
+
+        let emitted_name = if needs_rename {
+            // Find a unique suffix by checking both existing scopes and reserved names
+            let mut suffix = self.rename_counter + 1;
+            loop {
+                let candidate = format!("{}_{}", original_name, suffix);
+                if !self.reserved_names.contains(&candidate)
+                    && !self
+                        .scope_stack
+                        .iter()
+                        .any(|scope| scope.values().any(|v| v == &candidate))
+                {
+                    self.rename_counter = suffix;
+                    break candidate;
+                }
+                suffix += 1;
+                if suffix > self.rename_counter + 1000 {
+                    break format!("{}_{}", original_name, suffix);
+                }
+            }
+        } else {
+            original_name.to_string()
+        };
+
+        // Register in current scope
+        if let Some(current_scope) = self.scope_stack.last_mut() {
+            current_scope.insert(original_name.to_string(), emitted_name.clone());
+        }
+
+        emitted_name
+    }
+
     /// Reserve a name to prevent it from being used in variable renaming
     /// This should be called for temp variables like _i, _a, a_1, etc.
     pub fn reserve_name(&mut self, name: String) {
@@ -441,6 +492,53 @@ mod tests {
         assert_eq!(state.register_variable("a"), "a_1");
 
         state.exit_scope();
+        state.exit_scope();
+    }
+
+    #[test]
+    fn test_var_redeclaration_same_scope() {
+        let mut state = BlockScopeState::new();
+
+        state.enter_scope();
+        // First var declaration
+        assert_eq!(state.register_var_declaration("cl"), "cl");
+        // Redeclaration in same scope — should NOT rename
+        assert_eq!(state.register_var_declaration("cl"), "cl");
+        // Third redeclaration — still no rename
+        assert_eq!(state.register_var_declaration("cl"), "cl");
+
+        state.exit_scope();
+    }
+
+    #[test]
+    fn test_var_declaration_parent_scope_conflict() {
+        let mut state = BlockScopeState::new();
+
+        state.enter_scope();
+        // Outer scope has `a`
+        assert_eq!(state.register_variable("a"), "a");
+
+        state.enter_scope();
+        // Reserve a_1 (like for-of loop temp)
+        state.reserve_name("a_1".to_string());
+
+        // var a in inner scope — should rename to a_2 (skip reserved a_1)
+        assert_eq!(state.register_var_declaration("a"), "a_2");
+
+        state.exit_scope();
+        state.exit_scope();
+    }
+
+    #[test]
+    fn test_var_declaration_no_parent_conflict() {
+        let mut state = BlockScopeState::new();
+
+        state.enter_scope();
+        // No parent scope — should not rename
+        assert_eq!(state.register_var_declaration("x"), "x");
+        // Redeclaration in same scope — should not rename
+        assert_eq!(state.register_var_declaration("x"), "x");
+
         state.exit_scope();
     }
 }

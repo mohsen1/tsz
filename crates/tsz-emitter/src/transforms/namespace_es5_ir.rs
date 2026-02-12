@@ -590,6 +590,22 @@ impl<'a> NamespaceES5Transformer<'a> {
             }
         }
 
+        // Find the position of the closing '}' of the module block.
+        // The last statement's node.end may extend into this brace, so we
+        // constrain ASTRef nodes to not include it.
+        let body_close_pos = if let Some(text) = self.source_text {
+            let mut pos = body_node.end as usize;
+            while pos > body_node.pos as usize {
+                pos -= 1;
+                if text.as_bytes().get(pos) == Some(&b'}') {
+                    break;
+                }
+            }
+            pos as u32
+        } else {
+            body_node.end.saturating_sub(1)
+        };
+
         // Check if it's a module block
         if let Some(block_data) = self.arena.get_module_block(body_node)
             && let Some(ref stmts) = block_data.statements
@@ -627,6 +643,13 @@ impl<'a> NamespaceES5Transformer<'a> {
                             continue;
                         }
                     }
+                    // Constrain ASTRef nodes so their source text doesn't extend
+                    // into the module block's closing brace.
+                    let ir = if let IRNode::ASTRef(idx) = ir {
+                        IRNode::ASTRefRange(idx, body_close_pos)
+                    } else {
+                        ir
+                    };
                     result.push(ir);
 
                     // Check for trailing comment on the same line as this statement.

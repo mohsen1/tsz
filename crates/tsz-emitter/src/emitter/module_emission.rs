@@ -1119,11 +1119,21 @@ impl<'a> Printer<'a> {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {
                     k if k == syntax_kind_ext::IMPORT_DECLARATION
-                        || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                         || k == syntax_kind_ext::EXPORT_DECLARATION
                         || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
                     {
                         return true;
+                    }
+                    // import equals: only `import x = require("mod")` makes this a module,
+                    // NOT `import x = M.A` (namespace alias, not a module indicator)
+                    k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                        if let Some(import_data) = self.arena.get_import_decl(node) {
+                            if let Some(spec_node) = self.arena.get(import_data.module_specifier) {
+                                if spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE {
+                                    return true;
+                                }
+                            }
+                        }
                     }
                     // Check for export modifier on any declaration type
                     k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
@@ -1380,10 +1390,18 @@ impl<'a> Printer<'a> {
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx) {
                 match node.kind {
-                    k if k == syntax_kind_ext::IMPORT_DECLARATION
-                        || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION =>
-                    {
+                    k if k == syntax_kind_ext::IMPORT_DECLARATION => {
                         return true;
+                    }
+                    // import equals: only `import x = require("mod")` is module syntax
+                    k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                        if let Some(import_data) = self.arena.get_import_decl(node) {
+                            if let Some(spec_node) = self.arena.get(import_data.module_specifier) {
+                                if spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE {
+                                    return true;
+                                }
+                            }
+                        }
                     }
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                         return true;

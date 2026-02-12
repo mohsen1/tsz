@@ -1407,6 +1407,30 @@ impl<'a> LoweringPass<'a> {
         if !matches!(final_directive, TransformDirective::Identity) {
             self.transforms.insert(idx, final_directive);
         }
+
+        // Recurse into namespace body to detect helpers needed by nested declarations
+        // (e.g., classes with extends need __extends, async functions need __awaiter)
+        self.visit_module_body(module_decl.body);
+    }
+
+    /// Recursively visit module/namespace body statements to detect helper requirements
+    fn visit_module_body(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return;
+        };
+
+        if let Some(block_data) = self.arena.get_module_block(body_node) {
+            if let Some(ref stmts) = block_data.statements {
+                for &stmt_idx in &stmts.nodes {
+                    self.visit(stmt_idx);
+                }
+            }
+        } else if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            // Nested namespace: `namespace A.B { ... }` — recurse into inner body
+            if let Some(inner_module) = self.arena.get_module(body_node) {
+                self.visit_module_body(inner_module.body);
+            }
+        }
     }
 
     /// Visit a function declaration
