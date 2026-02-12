@@ -1277,13 +1277,19 @@ impl<'a> CheckerState<'a> {
         // Get the target file's binder
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
 
-        // Look up the export in the target binder's module_exports
-        // The module_exports map is keyed by both file name and specifier,
-        // so we try the file name first (which is more reliable)
-        // Try to find the export in the target binder's module_exports
-        // The module_exports is keyed by file paths and specifiers
-        // Only check first entry which should be the file's exports
-        if let Some((_file_key, exports_table)) = target_binder.module_exports.iter().next() {
+        // Resolve the target file's canonical module key (source file path)
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+
+        // Look up the export in the target binder's module_exports.
+        // Prefer canonical file key, then module specifier fallback.
+        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name) {
+            if let Some(sym_id) = exports_table.get(export_name) {
+                return Some(sym_id);
+            }
+        }
+
+        if let Some(exports_table) = target_binder.module_exports.get(module_specifier) {
             if let Some(sym_id) = exports_table.get(export_name) {
                 return Some(sym_id);
             }
@@ -1392,14 +1398,27 @@ impl<'a> CheckerState<'a> {
 
         let target_file_idx = self.ctx.resolve_import_target(module_specifier)?;
         let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
-        // Try to find exports in the target binder's module_exports
-        // First, try the specifier itself
-        if let Some(exports) = target_binder.module_exports.get(module_specifier) {
-            return Some(exports.clone());
+        // Try to find exports in the target binder's module_exports.
+        // Prefer canonical file key first.
+        if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
+            let mut combined = exports.clone();
+            let mut visited = rustc_hash::FxHashSet::default();
+            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            return Some(combined);
         }
 
-        // Try iterating through module_exports to find matching file
+        // Fallback to module specifier key.
+        if let Some(exports) = target_binder.module_exports.get(module_specifier) {
+            let mut combined = exports.clone();
+            let mut visited = rustc_hash::FxHashSet::default();
+            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            return Some(combined);
+        }
+
+        // Last resort: preserve existing behavior for unusual binder states.
         if let Some((_, exports_table)) = target_binder.module_exports.iter().next() {
             let mut combined = exports_table.clone();
             // Also collect exports from re-export chains

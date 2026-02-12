@@ -1356,9 +1356,36 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        let opt_symbol_arena = self.ctx.binder.symbol_arenas.get(&sym_id);
-        if let Some(symbol_arena) = opt_symbol_arena
-            && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
+        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref());
+
+        if delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
+            && let Some(symbol) = self.get_symbol_globally(sym_id)
+        {
+            let mut decl_candidates = symbol.declarations.clone();
+            if !symbol.value_declaration.is_none() {
+                decl_candidates.push(symbol.value_declaration);
+            }
+
+            for decl_idx in decl_candidates {
+                if decl_idx.is_none() {
+                    continue;
+                }
+                if let Some(arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                    && !std::ptr::eq(arena.as_ref(), self.ctx.arena)
+                {
+                    delegate_arena = Some(arena.as_ref());
+                    break;
+                }
+            }
+        }
+
+        if let Some(symbol_arena) = delegate_arena
+            && !std::ptr::eq(symbol_arena, self.ctx.arena)
         {
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
@@ -1384,7 +1411,7 @@ impl<'a> CheckerState<'a> {
             // create deep call stacks, and CheckerState is too large to stack-allocate
             // at every level without risking stack overflow.
             let mut checker = Box::new(CheckerState::with_parent_cache(
-                symbol_arena.as_ref(),
+                symbol_arena,
                 self.ctx.binder,
                 self.ctx.types,
                 self.ctx.file_name.clone(),

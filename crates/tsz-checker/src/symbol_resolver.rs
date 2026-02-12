@@ -632,10 +632,14 @@ impl<'a> CheckerState<'a> {
         if node.kind == SyntaxKind::Identifier as u16 {
             return match self.resolve_identifier_symbol_in_type_position(idx) {
                 TypeSymbolResolution::Type(sym_id) => {
-                    let Some(sym_id) = self.resolve_alias_symbol(sym_id, visited_aliases) else {
-                        return TypeSymbolResolution::NotFound;
-                    };
-                    TypeSymbolResolution::Type(sym_id)
+                    // Preserve unresolved alias symbols in type position.
+                    // `import X = require("...")` aliases may not resolve to a concrete
+                    // target symbol, but `X` is still a valid namespace-like type query
+                    // anchor (e.g., `typeof X.Member`).
+                    let resolved = self
+                        .resolve_alias_symbol(sym_id, visited_aliases)
+                        .unwrap_or(sym_id);
+                    TypeSymbolResolution::Type(resolved)
                 }
                 other => other,
             };
@@ -663,6 +667,89 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::NotFound;
         }
 
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                return TypeSymbolResolution::NotFound;
+            };
+
+            let left_sym = match self.resolve_qualified_symbol_inner_in_type_position(
+                access.expression,
+                visited_aliases,
+                depth + 1,
+            ) {
+                TypeSymbolResolution::Type(sym_id) => sym_id,
+                other => return other,
+            };
+
+            let left_sym = self
+                .resolve_alias_symbol(left_sym, visited_aliases)
+                .unwrap_or(left_sym);
+
+            let right_name = match self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .map(|ident| ident.escaped_text.as_str())
+            {
+                Some(name) => name,
+                None => return TypeSymbolResolution::NotFound,
+            };
+
+            let lib_binders = self.get_lib_binders();
+            let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders)
+            else {
+                return TypeSymbolResolution::NotFound;
+            };
+
+            if let Some(exports) = left_symbol.exports.as_ref()
+                && let Some(member_sym) = exports.get(right_name)
+            {
+                let is_value_only = (self
+                    .alias_resolves_to_value_only(member_sym, Some(right_name))
+                    || self.symbol_is_value_only(member_sym, Some(right_name)))
+                    && !self.symbol_is_type_only(member_sym, Some(right_name));
+                if is_value_only {
+                    return TypeSymbolResolution::ValueOnly(member_sym);
+                }
+                let member_sym = self
+                    .resolve_alias_symbol(member_sym, visited_aliases)
+                    .unwrap_or(member_sym);
+                return TypeSymbolResolution::Type(member_sym);
+            }
+
+            if let Some(ref module_specifier) = left_symbol.import_module
+                && let Some(reexported_sym) = self.resolve_reexported_member_symbol(
+                    module_specifier,
+                    right_name,
+                    visited_aliases,
+                )
+            {
+                let is_value_only = (self
+                    .alias_resolves_to_value_only(reexported_sym, Some(right_name))
+                    || self.symbol_is_value_only(reexported_sym, Some(right_name)))
+                    && !self.symbol_is_type_only(reexported_sym, Some(right_name));
+                if is_value_only {
+                    return TypeSymbolResolution::ValueOnly(reexported_sym);
+                }
+                return TypeSymbolResolution::Type(reexported_sym);
+            }
+
+            if let Some(reexported_sym) =
+                self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
+            {
+                let is_value_only = (self
+                    .alias_resolves_to_value_only(reexported_sym, Some(right_name))
+                    || self.symbol_is_value_only(reexported_sym, Some(right_name)))
+                    && !self.symbol_is_type_only(reexported_sym, Some(right_name));
+                if is_value_only {
+                    return TypeSymbolResolution::ValueOnly(reexported_sym);
+                }
+                return TypeSymbolResolution::Type(reexported_sym);
+            }
+
+            return TypeSymbolResolution::NotFound;
+        }
+
         if node.kind != tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
             return TypeSymbolResolution::NotFound;
         }
@@ -679,9 +766,9 @@ impl<'a> CheckerState<'a> {
             TypeSymbolResolution::Type(sym_id) => sym_id,
             other => return other,
         };
-        let Some(left_sym) = self.resolve_alias_symbol(left_sym, visited_aliases) else {
-            return TypeSymbolResolution::NotFound;
-        };
+        let left_sym = self
+            .resolve_alias_symbol(left_sym, visited_aliases)
+            .unwrap_or(left_sym);
         let right_name = match self
             .ctx
             .arena
@@ -698,22 +785,20 @@ impl<'a> CheckerState<'a> {
         let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) else {
             return TypeSymbolResolution::NotFound;
         };
-        let Some(exports) = left_symbol.exports.as_ref() else {
-            return TypeSymbolResolution::NotFound;
-        };
-
         // First try direct exports
-        if let Some(member_sym) = exports.get(right_name) {
+        if let Some(exports) = left_symbol.exports.as_ref()
+            && let Some(member_sym) = exports.get(right_name)
+        {
             let is_value_only = (self.alias_resolves_to_value_only(member_sym, Some(right_name))
                 || self.symbol_is_value_only(member_sym, Some(right_name)))
                 && !self.symbol_is_type_only(member_sym, Some(right_name));
             if is_value_only {
                 return TypeSymbolResolution::ValueOnly(member_sym);
             }
-            let Some(member_sym) = self.resolve_alias_symbol(member_sym, visited_aliases) else {
-                return TypeSymbolResolution::NotFound;
-            };
-            return TypeSymbolResolution::Type(member_sym);
+            return TypeSymbolResolution::Type(
+                self.resolve_alias_symbol(member_sym, visited_aliases)
+                    .unwrap_or(member_sym),
+            );
         }
 
         // If not found in direct exports, check for re-exports
@@ -730,6 +815,19 @@ impl<'a> CheckerState<'a> {
                 }
                 return TypeSymbolResolution::Type(reexported_sym);
             }
+        }
+
+        if let Some(reexported_sym) =
+            self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
+        {
+            let is_value_only = (self
+                .alias_resolves_to_value_only(reexported_sym, Some(right_name))
+                || self.symbol_is_value_only(reexported_sym, Some(right_name)))
+                && !self.symbol_is_type_only(reexported_sym, Some(right_name));
+            if is_value_only {
+                return TypeSymbolResolution::ValueOnly(reexported_sym);
+            }
+            return TypeSymbolResolution::Type(reexported_sym);
         }
 
         TypeSymbolResolution::NotFound
@@ -752,7 +850,11 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == SyntaxKind::Identifier as u16 {
             let sym_id = self.resolve_identifier_symbol(idx)?;
-            return self.resolve_alias_symbol(sym_id, visited_aliases);
+            // Preserve alias symbols when alias resolution has no concrete target
+            // (e.g., `import X = require("...")` namespace-like aliases).
+            return self
+                .resolve_alias_symbol(sym_id, visited_aliases)
+                .or(Some(sym_id));
         }
 
         if node.kind == SyntaxKind::StringLiteral as u16
@@ -765,13 +867,60 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            let left_sym =
+                self.resolve_qualified_symbol_inner(access.expression, visited_aliases, depth + 1)?;
+            let left_sym = self
+                .resolve_alias_symbol(left_sym, visited_aliases)
+                .unwrap_or(left_sym);
+            let right_name = self
+                .ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .map(|ident| ident.escaped_text.as_str())?;
+
+            let lib_binders = self.get_lib_binders();
+            let left_symbol = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(left_sym, &lib_binders)?;
+
+            if let Some(exports) = left_symbol.exports.as_ref()
+                && let Some(member_sym) = exports.get(right_name)
+            {
+                return Some(
+                    self.resolve_alias_symbol(member_sym, visited_aliases)
+                        .unwrap_or(member_sym),
+                );
+            }
+
+            if let Some(ref module_specifier) = left_symbol.import_module {
+                return self.resolve_reexported_member_symbol(
+                    module_specifier,
+                    right_name,
+                    visited_aliases,
+                );
+            }
+
+            if let Some(reexported_sym) =
+                self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
+            {
+                return Some(reexported_sym);
+            }
+
+            return None;
+        }
+
         if node.kind != tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
             return None;
         }
 
         let qn = self.ctx.arena.get_qualified_name(node)?;
         let left_sym = self.resolve_qualified_symbol_inner(qn.left, visited_aliases, depth + 1)?;
-        let left_sym = self.resolve_alias_symbol(left_sym, visited_aliases)?;
+        let left_sym = self
+            .resolve_alias_symbol(left_sym, visited_aliases)
+            .unwrap_or(left_sym);
         let right_name = self
             .ctx
             .arena
@@ -779,12 +928,20 @@ impl<'a> CheckerState<'a> {
             .and_then(|node| self.ctx.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
 
-        let left_symbol = self.ctx.binder.get_symbol(left_sym)?;
-        let exports = left_symbol.exports.as_ref()?;
+        let lib_binders = self.get_lib_binders();
+        let left_symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(left_sym, &lib_binders)?;
 
         // First try direct exports
-        if let Some(member_sym) = exports.get(right_name) {
-            return self.resolve_alias_symbol(member_sym, visited_aliases);
+        if let Some(exports) = left_symbol.exports.as_ref()
+            && let Some(member_sym) = exports.get(right_name)
+        {
+            return Some(
+                self.resolve_alias_symbol(member_sym, visited_aliases)
+                    .unwrap_or(member_sym),
+            );
         }
 
         // If not found in direct exports, check for re-exports
@@ -795,6 +952,51 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(reexported_sym);
             }
+        }
+
+        if let Some(reexported_sym) =
+            self.resolve_member_from_import_equals_alias(left_sym, right_name, visited_aliases)
+        {
+            return Some(reexported_sym);
+        }
+
+        None
+    }
+
+    fn resolve_member_from_import_equals_alias(
+        &self,
+        alias_sym: SymbolId,
+        member_name: &str,
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<SymbolId> {
+        let symbol = self.ctx.binder.get_symbol(alias_sym)?;
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return None;
+        }
+
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|idx| !idx.is_none())
+                .unwrap_or(NodeIndex::NONE)
+        };
+
+        if !decl_idx.is_none()
+            && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            && let Some(import) = self.ctx.arena.get_import_decl(decl_node)
+            && let Some(module_specifier) =
+                self.get_require_module_specifier(import.module_specifier)
+        {
+            return self.resolve_reexported_member_symbol(
+                &module_specifier,
+                member_name,
+                visited_aliases,
+            );
         }
 
         None

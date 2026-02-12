@@ -112,7 +112,7 @@ impl<'a> CheckerState<'a> {
                         if is_predicate {
                             self.return_type_and_predicate(sig.type_annotation)
                         } else {
-                            (self.get_type_of_node(sig.type_annotation), None)
+                            (self.get_type_from_type_node(sig.type_annotation), None)
                         }
                     } else {
                         // Return UNKNOWN instead of ANY for missing return type annotation
@@ -145,7 +145,7 @@ impl<'a> CheckerState<'a> {
                         if is_predicate {
                             self.return_type_and_predicate(sig.type_annotation)
                         } else {
-                            (self.get_type_of_node(sig.type_annotation), None)
+                            (self.get_type_from_type_node(sig.type_annotation), None)
                         }
                     } else {
                         // Return UNKNOWN instead of ANY for missing return type annotation
@@ -170,7 +170,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(id_data) = self.ctx.arena.get_identifier(name_node)
                 {
                     let type_id = if !sig.type_annotation.is_none() {
-                        self.get_type_of_node(sig.type_annotation)
+                        self.get_type_from_type_node(sig.type_annotation)
                     } else {
                         TypeId::ANY
                     };
@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let key_type = if !param_data.type_annotation.is_none() {
-                    self.get_type_of_node(param_data.type_annotation)
+                    self.get_type_from_type_node(param_data.type_annotation)
                 } else {
                     TypeId::ANY
                 };
@@ -259,7 +259,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let value_type = if !index_sig.type_annotation.is_none() {
-                    self.get_type_of_node(index_sig.type_annotation)
+                    self.get_type_from_type_node(index_sig.type_annotation)
                 } else {
                     TypeId::ANY
                 };
