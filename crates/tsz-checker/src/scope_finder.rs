@@ -524,6 +524,65 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // Class Field / Static Block Arguments Check (TS2815)
+    // =========================================================================
+
+    /// Check if `arguments` at `idx` is inside a class property initializer
+    /// or static block, without a regular function boundary in between.
+    ///
+    /// Arrow functions are transparent (they don't create their own `arguments`),
+    /// so `() => arguments` in a field initializer is still TS2815.
+    /// Regular functions (function expressions, methods, constructors, accessors)
+    /// create their own `arguments` binding, so the check stops there.
+    pub(crate) fn is_arguments_in_class_initializer_or_static_block(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut iterations = 0;
+        while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                match node.kind {
+                    // Regular function boundaries create their own `arguments` — stop
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || k == syntax_kind_ext::METHOD_DECLARATION
+                        || k == syntax_kind_ext::CONSTRUCTOR
+                        || k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        return false;
+                    }
+                    // Arrow functions are transparent — continue walking
+                    k if k == syntax_kind_ext::ARROW_FUNCTION => {}
+                    // Class field initializer — TS2815
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        return true;
+                    }
+                    // Static block — TS2815
+                    k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                        return true;
+                    }
+                    // Source file — stop
+                    k if k == syntax_kind_ext::SOURCE_FILE => {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
+    // =========================================================================
     // Computed Property Enclosure
     // =========================================================================
 
