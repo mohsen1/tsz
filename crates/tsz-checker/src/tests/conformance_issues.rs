@@ -217,6 +217,28 @@ class C implements number {}
 }
 
 #[test]
+fn test_indirect_class_cycle_reports_all_ts2506_errors() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class C extends E { foo: string; }
+class D extends C { bar: string; }
+class E extends D { baz: number; }
+
+class C2<T> extends E2<T> { foo: T; }
+class D2<T> extends C2<T> { bar: T; }
+class E2<T> extends D2<T> { baz: T; }
+        "#,
+    );
+
+    let ts2506_count = diagnostics.iter().filter(|(code, _)| *code == 2506).count();
+    assert_eq!(
+        ts2506_count, 6,
+        "Expected TS2506 on all six classes in the two cycles. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_unresolved_import_namespace_access_suppresses_ts2708() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

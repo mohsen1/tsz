@@ -59,7 +59,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 if let Some(parent_sym) = self.resolve_heritage_symbol(expr_idx) {
                     // Check for direct self-reference
                     if parent_sym == current_sym {
-                        self.error_circular_class_inheritance(expr_idx, class_idx);
+                        self.error_circular_class_inheritance_for_symbol(current_sym);
                         return Err(()); // Signal to skip type checking
                     }
                     parent_symbols.push(parent_sym);
@@ -70,7 +70,10 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         // Check for cycles using simple DFS traversal on the InheritanceGraph
         // This is more reliable than using transitive closure, which can be incomplete
         if self.detects_cycle_dfs(current_sym, &parent_symbols) {
-            self.error_circular_class_inheritance(class_idx, class_idx);
+            let cycle_symbols = self.collect_cycle_symbols(current_sym, &parent_symbols);
+            for sym in cycle_symbols {
+                self.error_circular_class_inheritance_for_symbol(sym);
+            }
             return Err(());
         }
 
@@ -131,6 +134,60 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         }
 
         visited.remove(&child);
+        false
+    }
+
+    /// Collect all symbols participating in the detected cycle.
+    ///
+    /// The cycle is formed when adding `current -> parents` and at least one parent can
+    /// already reach `current` through existing inheritance edges.
+    fn collect_cycle_symbols(
+        &self,
+        current: SymbolId,
+        parents: &[SymbolId],
+    ) -> FxHashSet<SymbolId> {
+        let mut cycle = FxHashSet::default();
+        cycle.insert(current);
+
+        for &parent in parents {
+            let mut visited = FxHashSet::default();
+            let mut path = Vec::new();
+            if self.find_path_to_target(parent, current, &mut visited, &mut path) {
+                for sym in path {
+                    cycle.insert(sym);
+                }
+            }
+        }
+
+        cycle
+    }
+
+    /// Find a path from `node` to `target` in the existing inheritance graph.
+    /// Appends symbols on the successful path into `path`.
+    fn find_path_to_target(
+        &self,
+        node: SymbolId,
+        target: SymbolId,
+        visited: &mut FxHashSet<SymbolId>,
+        path: &mut Vec<SymbolId>,
+    ) -> bool {
+        if node == target {
+            path.push(node);
+            return true;
+        }
+
+        if !visited.insert(node) {
+            return false;
+        }
+
+        let parents = self.ctx.inheritance_graph.get_parents(node);
+        for &parent in &parents {
+            if self.find_path_to_target(parent, target, visited, path) {
+                path.push(node);
+                return true;
+            }
+        }
+
         false
     }
 
@@ -220,5 +277,45 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 related_information: Vec::new(),
             });
         }
+    }
+
+    /// Emit TS2506 for a class symbol, using the class name node as error span when available.
+    fn error_circular_class_inheritance_for_symbol(&mut self, sym_id: SymbolId) {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+
+        let Some(&class_idx) = symbol.declarations.iter().find(|&&decl_idx| {
+            self.ctx.arena.get(decl_idx).is_some_and(|node| {
+                node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
+            })
+        }) else {
+            return;
+        };
+
+        let error_node_idx = self
+            .ctx
+            .arena
+            .get(class_idx)
+            .and_then(|node| self.ctx.arena.get_class(node))
+            .map(|class| class.name)
+            .filter(|name| !name.is_none())
+            .unwrap_or(class_idx);
+
+        let Some((start, end)) = self.ctx.get_node_span(error_node_idx) else {
+            return;
+        };
+
+        // Avoid duplicate TS2506 at the same location.
+        if self.ctx.diagnostics.iter().any(|diag| {
+            diag.code
+                == diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION
+                && diag.start == start
+        }) {
+            return;
+        }
+
+        self.error_circular_class_inheritance(error_node_idx, class_idx);
+        let _ = end;
     }
 }
