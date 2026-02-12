@@ -2392,9 +2392,10 @@ impl<'a> CheckerState<'a> {
                     let is_valid_constructor = if let Some(expr_node) = self.ctx.arena.get(expr_idx)
                         && expr_node.kind == SyntaxKind::Identifier as u16
                     {
-                        // Check if this is a primitive type keyword - these should not
-                        // trigger type resolution errors in extends clauses.
-                        // TypeScript silently fails for `class C extends number {}`.
+                        // Check if this is a primitive type keyword in a class heritage clause.
+                        // TypeScript reports dedicated diagnostics:
+                        // - TS2863 for `class C extends number {}`
+                        // - TS2864 for `class C implements number {}`
                         if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
                             let name = ident.escaped_text.as_str();
                             if matches!(
@@ -2409,8 +2410,35 @@ impl<'a> CheckerState<'a> {
                                     | "never"
                                     | "object"
                             ) {
-                                // Skip type resolution for primitive type keywords
-                                // They can't be extended and shouldn't emit TS2552 suggestions
+                                if is_class_declaration {
+                                    use crate::types::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+
+                                    if is_extends_clause {
+                                        let message = format_message(
+                                            diagnostic_messages::A_CLASS_CANNOT_EXTEND_A_PRIMITIVE_TYPE_LIKE_CLASSES_CAN_ONLY_EXTEND_CONSTRUCTABL,
+                                            &[name],
+                                        );
+                                        self.error_at_node(
+                                            expr_idx,
+                                            &message,
+                                            diagnostic_codes::A_CLASS_CANNOT_EXTEND_A_PRIMITIVE_TYPE_LIKE_CLASSES_CAN_ONLY_EXTEND_CONSTRUCTABL,
+                                        );
+                                    } else {
+                                        let message = format_message(
+                                            diagnostic_messages::A_CLASS_CANNOT_IMPLEMENT_A_PRIMITIVE_TYPE_LIKE_IT_CAN_ONLY_IMPLEMENT_OTHER_NAMED,
+                                            &[name],
+                                        );
+                                        self.error_at_node(
+                                            expr_idx,
+                                            &message,
+                                            diagnostic_codes::A_CLASS_CANNOT_IMPLEMENT_A_PRIMITIVE_TYPE_LIKE_IT_CAN_ONLY_IMPLEMENT_OTHER_NAMED,
+                                        );
+                                    }
+                                }
+
+                                // Skip further name/type resolution for primitive type keywords.
                                 continue;
                             }
                         }
