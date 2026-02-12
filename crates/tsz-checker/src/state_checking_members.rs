@@ -1262,6 +1262,14 @@ impl<'a> CheckerState<'a> {
                     }
                     if !mapped.type_node.is_none() {
                         self.check_type_for_missing_names(mapped.type_node);
+                    } else if self.ctx.no_implicit_any() {
+                        // TS7039: Mapped object type implicitly has an 'any' template type
+                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
+                            type_idx,
+                            diagnostic_messages::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE,
+                            diagnostic_codes::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE,
+                        );
                     }
                     if let Some(ref members) = mapped.members {
                         for &member_idx in &members.nodes {
