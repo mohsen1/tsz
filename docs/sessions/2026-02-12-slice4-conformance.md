@@ -50,8 +50,8 @@ let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_bind
 **Impact**: +2 tests passing (though TS2318 issue persists - may need deeper lib symbol merging investigation)
 
 ## Final State
-- Pass rate: 1672/3123 (53.5%)
-- Improvement: +3 tests (+0.1 percentage points)
+- Pass rate: 1670/3123 (53.5%)
+- Improvement: +1 test (within test variance margin)
 
 ## Error Code Trends (Final)
 ```
@@ -82,24 +82,57 @@ let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_bind
 - But exports maps may still reference lib binder IDs
 - `get_symbol_with_libs` handles this with fast path for merged symbols
 
+## Additional Investigations
+
+### TS6053 (File not found) - 104 missing
+- **Issue**: Triple-slash reference paths not emitting file-not-found errors
+- **Code exists**: `check_triple_slash_references` in `state_checking.rs:2967-3073`
+- **Called**: Line 164 in source file checking
+- **Root cause**: Logic exists but may not properly match virtual files from multi-file tests
+  - Test pattern: `// @filename: declaration.d.ts` creates virtual file
+  - Reference: `///<reference path="declaration.d.ts" />` should find it
+  - May be path matching issue between virtual file names and reference paths
+- **Impact**: 104 tests, many JSX-related with react.d.ts references
+
+### Type Parameter Scoping in Heritage Clauses
+- **Issue**: `interface Foo2<T> extends Base2<T>` emits extra TS2304 for T
+- **Tests affected**: interfaceWithPropertyThatIsPrivateInBaseType.ts (and variant)
+- **Root cause**: Type parameter T not in scope when resolving Base2<T> in heritage clause
+- **Pattern**: Close-to-passing tests (diff=1), need to suppress TS2304 for type params in heritage
+
+### TS1005 Parse Errors
+- **Issue**: 85 false positive parse errors
+- **Example**: `interface Foo extends Foo` emits TS1005 instead of TS1176/TS2310
+- **Root cause**: Parser rejecting valid (but erroneous) syntax instead of parsing and letting checker validate
+- **Pattern**: Self-referencing interfaces treated as parse errors
+
 ## Next Steps
 
 ### High Priority
-1. **Investigate TS2318 persistence**: Despite the fix, 83 JSX tests still fail with TS2318
-   - May need to trace symbol export lookups during lib merge
-   - Check if exports maps are properly updated with merged symbol IDs
+1. **TS6053 missing**: Investigate virtual file path matching in `check_triple_slash_references`
+   - Check if all_arenas properly includes multi-file test virtual files
+   - Trace path matching logic (absolute vs relative, stem matching)
+   - 104 tests affected, relatively isolated fix
 
-2. **TS1005 parse errors**: 85 false positive parse errors
-   - Many in JSX (type assertions vs JSX tags ambiguity)
-   - Some semantic errors reported as parse errors (self-referencing interfaces)
+2. **Type parameter scoping**: Ensure heritage clause type arguments have access to interface's type params
+   - Multiple close-to-passing tests (each diff=1)
+   - Clear pattern to fix
 
-3. **TS2339 false positives**: 139 property access errors (increased from 121)
-   - May be related to namespace member lookups
-   - Could be side effect of changes or test variance
+3. **TS2318 persistence**: Despite qualified name fix, 83 JSX tests still fail
+   - Deeper lib symbol merge investigation needed
+   - May require tracing at runtime with tsz-tracing skill
 
 ### Medium Priority
-4. **TS2304 false positives**: 118 name resolution errors
-5. **TS2322 missing**: 112 tests need assignability errors we don't emit
+4. **TS1005 parse errors**: 85 false positives
+   - Parser architecture change to accept more syntax
+   - Lower priority due to complexity
+
+5. **TS2339/TS2304 false positives**: ~138 each
+   - May improve with symbol resolution fixes
+   - Need pattern analysis
+
+6. **TS2322 missing**: 112 tests need assignability errors we don't emit
+   - Requires assignability checker improvements
 
 ## Commits
 - `48068e4ff`: fix: use cross-binder lookup for qualified type name resolution
