@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_build_info_roundtrip() {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let path = temp.path().join("test.tsbuildinfo");
 
         let mut build_info = BuildInfo::new();
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_change_tracker() {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
 
         // Create test files
         let file1 = temp.path().join("file1.ts");
@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     fn test_build_info_builder() {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let file = temp.path().join("test.ts");
         std::fs::write(&file, "export const x = 1;").unwrap();
 
@@ -714,7 +714,7 @@ mod tests {
     fn test_build_info_version_mismatch_returns_none() {
         use tempfile::TempDir;
 
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let path = temp.path().join("test.tsbuildinfo");
 
         // Create a build info with wrong version
@@ -734,7 +734,7 @@ mod tests {
     fn test_build_info_compiler_version_mismatch_returns_none() {
         use tempfile::TempDir;
 
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let path = temp.path().join("test.tsbuildinfo");
 
         // Create a build info with wrong compiler version
@@ -757,7 +757,7 @@ mod tests {
     fn test_build_info_valid_versions_returns_some() {
         use tempfile::TempDir;
 
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let path = temp.path().join("test.tsbuildinfo");
 
         // Create a valid build info
@@ -773,7 +773,7 @@ mod tests {
         let result = BuildInfo::load(&path).unwrap();
         assert!(result.is_some(), "Valid build info should return Some");
 
-        let loaded = result.unwrap();
+        let loaded = result.expect("operation should succeed in test");
         assert_eq!(loaded.version, BUILD_INFO_VERSION);
         assert_eq!(loaded.compiler_version, env!("CARGO_PKG_VERSION"));
     }
