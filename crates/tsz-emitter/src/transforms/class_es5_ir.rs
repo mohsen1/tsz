@@ -1112,7 +1112,16 @@ impl<'a> ES5ClassTransformer<'a> {
                         generator_body: Box::new(generator_body),
                     }]
                 } else {
-                    self.convert_block_body(method_data.body)
+                    let mut method_body = self.convert_block_body(method_data.body);
+
+                    // Check if method needs `var _this = this;` capture
+                    let needs_this_capture = self.constructor_needs_this_capture(method_data.body);
+                    if needs_this_capture {
+                        // Insert `var _this = this;` at the start of method body
+                        method_body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+                    }
+
+                    method_body
                 };
 
                 // Extract leading JSDoc comment
@@ -1197,14 +1206,25 @@ impl<'a> ES5ClassTransformer<'a> {
             .get(accessor_data.body)
             .map(|n| (n.pos as u32, n.end as u32));
 
+        let body = if accessor_data.body.is_none() {
+            vec![]
+        } else {
+            let mut body = self.convert_block_body(accessor_data.body);
+
+            // Check if getter needs `var _this = this;` capture
+            let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
+            if needs_this_capture {
+                // Insert `var _this = this;` at the start of getter body
+                body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            }
+
+            body
+        };
+
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: vec![],
-            body: if accessor_data.body.is_none() {
-                vec![]
-            } else {
-                self.convert_block_body(accessor_data.body)
-            },
+            body,
             is_expression_body: false,
             body_source_range,
         })
@@ -1222,14 +1242,25 @@ impl<'a> ES5ClassTransformer<'a> {
             .get(accessor_data.body)
             .map(|n| (n.pos as u32, n.end as u32));
 
+        let body = if accessor_data.body.is_none() {
+            vec![]
+        } else {
+            let mut body = self.convert_block_body(accessor_data.body);
+
+            // Check if setter needs `var _this = this;` capture
+            let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
+            if needs_this_capture {
+                // Insert `var _this = this;` at the start of setter body
+                body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            }
+
+            body
+        };
+
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: params,
-            body: if accessor_data.body.is_none() {
-                vec![]
-            } else {
-                self.convert_block_body(accessor_data.body)
-            },
+            body,
             is_expression_body: false,
             body_source_range,
         })
