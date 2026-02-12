@@ -837,6 +837,7 @@ impl ParserState {
                 if !self.is_token(SyntaxKind::SemicolonToken)
                     && !self.is_token(SyntaxKind::CloseBraceToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.is_token(SyntaxKind::Unknown)
                 {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
@@ -894,7 +895,7 @@ impl ParserState {
 
         // Check for empty declaration list: var ;
         // TSC emits TS1123 "Variable declaration list cannot be empty"
-        if declarations.is_empty() {
+        if declarations.is_empty() && !self.is_token(SyntaxKind::Unknown) {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Variable declaration list cannot be empty.",

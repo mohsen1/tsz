@@ -881,3 +881,75 @@ type T = [A?, name: B, ...rest: string[]];
         parser.get_diagnostics()
     );
 }
+
+#[test]
+fn test_argument_list_recovery_on_return_keyword() {
+    let source = r#"
+const x = fn(
+  return
+);
+const y = 1;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
+
+    assert!(
+        ts1109_count >= 1,
+        "Expected at least 1 TS1109 for malformed argument list, got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts1005_count <= 2,
+        "Expected limited TS1005 cascade for malformed argument list, got {} diagnostics: {diagnostics:?}",
+        ts1005_count
+    );
+}
+
+#[test]
+fn test_invalid_unicode_escape_in_var_no_extra_semicolon_error() {
+    let source = r#"var arg\uxxxx"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
+    let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
+
+    assert!(
+        ts1127_count >= 1,
+        "Expected TS1127 for invalid unicode escape, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1005_count, 0,
+        "Expected no extra TS1005 for invalid unicode escape, got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_invalid_unicode_escape_as_variable_name_no_var_decl_cascade() {
+    let source = r#"var \u0031a;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1127_count = diagnostics.iter().filter(|d| d.code == 1127).count();
+    let ts1123_count = diagnostics.iter().filter(|d| d.code == 1123).count();
+    let ts1134_count = diagnostics.iter().filter(|d| d.code == 1134).count();
+
+    assert!(
+        ts1127_count >= 1,
+        "Expected TS1127 for invalid unicode escape, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1123_count, 0,
+        "Expected no TS1123 variable declaration cascade, got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1134_count, 0,
+        "Expected no TS1134 variable declaration cascade, got diagnostics: {diagnostics:?}"
+    );
+}

@@ -1307,6 +1307,11 @@ impl ParserState {
         let mut args = Vec::new();
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
+            if self.is_argument_list_recovery_boundary() {
+                self.error_expression_expected();
+                break;
+            }
+
             if self.is_token(SyntaxKind::DotDotDotToken) {
                 let spread_start = self.token_pos();
                 self.next_token();
@@ -1349,6 +1354,35 @@ impl ParserState {
         }
 
         self.make_node_list(args)
+    }
+
+    /// Returns true for statement-only keywords that should stop argument parsing
+    /// during recovery to avoid cascading diagnostics.
+    fn is_argument_list_recovery_boundary(&self) -> bool {
+        matches!(
+            self.token(),
+            SyntaxKind::ReturnKeyword
+                | SyntaxKind::BreakKeyword
+                | SyntaxKind::ContinueKeyword
+                | SyntaxKind::ThrowKeyword
+                | SyntaxKind::TryKeyword
+                | SyntaxKind::CatchKeyword
+                | SyntaxKind::FinallyKeyword
+                | SyntaxKind::IfKeyword
+                | SyntaxKind::ForKeyword
+                | SyntaxKind::WhileKeyword
+                | SyntaxKind::DoKeyword
+                | SyntaxKind::SwitchKeyword
+                | SyntaxKind::VarKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::WithKeyword
+                | SyntaxKind::DebuggerKeyword
+                | SyntaxKind::CaseKeyword
+                | SyntaxKind::DefaultKeyword
+                | SyntaxKind::ElseKeyword
+                | SyntaxKind::EndOfFileToken
+        )
     }
 
     /// Parse primary expression
