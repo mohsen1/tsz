@@ -2377,6 +2377,7 @@ impl<'a> CheckerState<'a> {
                 is_declared,
                 in_static_property_initializer: false,
                 in_static_method: false,
+                has_super_call_in_current_constructor: false,
                 cached_instance_this_type: None,
                 type_param_names: class_type_param_names,
             });
@@ -2457,6 +2458,7 @@ impl<'a> CheckerState<'a> {
             is_declared: false,
             in_static_property_initializer: false,
             in_static_method: false,
+            has_super_call_in_current_constructor: false,
             cached_instance_this_type: None,
             type_param_names: class_type_param_names,
         });

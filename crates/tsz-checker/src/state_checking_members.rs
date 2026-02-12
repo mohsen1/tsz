@@ -975,6 +975,112 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn is_method_member_in_class_hierarchy(
+        &self,
+        class_idx: NodeIndex,
+        name: &str,
+        is_static: bool,
+    ) -> Option<bool> {
+        use rustc_hash::FxHashSet;
+
+        let mut current = class_idx;
+        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
+
+        while visited.insert(current) {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return None;
+            };
+            let Some(class) = self.ctx.arena.get_class(node) else {
+                return None;
+            };
+
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+
+                match member_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                            continue;
+                        };
+                        if self.has_static_modifier(&method.modifiers) != is_static {
+                            continue;
+                        }
+                        if let Some(method_name) = self.get_property_name(method.name)
+                            && method_name == name
+                        {
+                            return Some(true);
+                        }
+                    }
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        if self.has_static_modifier(&prop.modifiers) != is_static {
+                            continue;
+                        }
+                        if let Some(prop_name) = self.get_property_name(prop.name)
+                            && prop_name == name
+                        {
+                            return Some(false);
+                        }
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                            continue;
+                        };
+                        if self.has_static_modifier(&accessor.modifiers) != is_static {
+                            continue;
+                        }
+                        if let Some(accessor_name) = self.get_property_name(accessor.name)
+                            && accessor_name == name
+                        {
+                            return Some(false);
+                        }
+                    }
+                    k if k == syntax_kind_ext::CONSTRUCTOR => {
+                        if is_static {
+                            continue;
+                        }
+                        let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                            continue;
+                        };
+                        if ctor.body.is_none() {
+                            continue;
+                        }
+                        for &param_idx in &ctor.parameters.nodes {
+                            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                continue;
+                            };
+                            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                continue;
+                            };
+                            if !self.has_parameter_property_modifier(&param.modifiers) {
+                                continue;
+                            }
+                            if let Some(param_name) = self.get_property_name(param.name)
+                                && param_name == name
+                            {
+                                return Some(false);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let Some(base_idx) = self.get_base_class_idx(current) else {
+                return None;
+            };
+            current = base_idx;
+        }
+
+        None
+    }
+
     /// Recursively check a type node for parameter properties in function types.
     /// Function types (like `(x: T) => R` or `new (x: T) => R`) cannot have parameter properties.
     /// Walk a type node and emit TS2304 for unresolved type names inside complex types.
@@ -2339,7 +2445,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a constructor declaration.
     pub(crate) fn check_constructor_declaration(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -2407,6 +2513,7 @@ impl<'a> CheckerState<'a> {
         // Set in_constructor flag for abstract property checks (error 2715)
         if let Some(ref mut class_info) = self.ctx.enclosing_class {
             class_info.in_constructor = true;
+            class_info.has_super_call_in_current_constructor = false;
         }
 
         // Check constructor body
@@ -2427,6 +2534,30 @@ impl<'a> CheckerState<'a> {
             self.push_return_type(instance_type);
             self.check_statement(ctor.body);
             self.pop_return_type();
+
+            // TS2377: Constructors for derived classes must contain a super() call.
+            let requires_super = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .and_then(|info| self.ctx.arena.get(info.class_idx))
+                .and_then(|class_node| self.ctx.arena.get_class(class_node))
+                .map(|class| self.class_has_base(class))
+                .unwrap_or(false);
+            let has_super_call = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .map(|info| info.has_super_call_in_current_constructor)
+                .unwrap_or(false);
+
+            if requires_super && !has_super_call {
+                self.error_at_node(
+                    member_idx,
+                    diagnostic_messages::CONSTRUCTORS_FOR_DERIVED_CLASSES_MUST_CONTAIN_A_SUPER_CALL,
+                    diagnostic_codes::CONSTRUCTORS_FOR_DERIVED_CLASSES_MUST_CONTAIN_A_SUPER_CALL,
+                );
+            }
         }
 
         // Reset in_constructor flag

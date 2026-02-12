@@ -245,57 +245,6 @@ impl<'a> CheckerState<'a> {
     // Super Expression Validation
     // =========================================================================
 
-    /// Check if super is in a static property initializer.
-    ///
-    /// Returns true if super is inside a static property declaration's initializer.
-    fn is_in_static_property_initializer(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-
-        while let Some(ext) = self.ctx.arena.get_extended(current) {
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                break;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                break;
-            };
-
-            // Arrow functions capture the class context
-            if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
-                current = parent_idx;
-                continue;
-            }
-
-            // Regular functions create a new scope - super is not valid inside them
-            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            {
-                return false;
-            }
-
-            // Found a property declaration
-            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                // Check if it's static
-                if let Some(prop) = self.ctx.arena.get_property_decl(parent_node) {
-                    if self.has_static_modifier(&prop.modifiers) {
-                        return true;
-                    }
-                }
-            }
-
-            // Found a class - stop searching
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                break;
-            }
-
-            current = parent_idx;
-        }
-
-        false
-    }
-
     /// Check if super is in a constructor.
     ///
     /// Returns true if super is inside a constructor declaration.
@@ -323,6 +272,65 @@ impl<'a> CheckerState<'a> {
             }
 
             // Found a class - stop searching
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    fn is_super_property_before_super_call_in_constructor(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                let Some(ctor) = self.ctx.arena.get_constructor(parent_node) else {
+                    return false;
+                };
+                if ctor.body.is_none() {
+                    return false;
+                }
+
+                let Some(body_node) = self.ctx.arena.get(ctor.body) else {
+                    return false;
+                };
+                let Some(block) = self.ctx.arena.get_block(body_node) else {
+                    return false;
+                };
+
+                let Some(first_super_stmt) = block
+                    .statements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .find(|&stmt| self.is_super_call_statement(stmt))
+                else {
+                    return false;
+                };
+
+                let Some(super_stmt_node) = self.ctx.arena.get(first_super_stmt) else {
+                    return false;
+                };
+                let Some(super_expr_node) = self.ctx.arena.get(idx) else {
+                    return false;
+                };
+
+                return super_expr_node.pos < super_stmt_node.pos;
+            }
+
             if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             {
@@ -416,6 +424,30 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(false);
 
+        let is_super_property_access = parent_info
+            .as_ref()
+            .map(|(_, parent_node)| {
+                parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            })
+            .unwrap_or(false);
+
+        if !is_super_call && !is_super_property_access {
+            self.error_at_node(
+                idx,
+                diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+                diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+            );
+            return;
+        }
+
+        if is_super_call
+            && self.is_in_constructor(idx)
+            && let Some(ref mut class_info) = self.ctx.enclosing_class
+        {
+            class_info.has_super_call_in_current_constructor = true;
+        }
+
         // Find the enclosing class by walking up the parent chain
         // This works even during type computation when `enclosing_class` is not yet set
         let class_idx = match self.find_enclosing_class(idx) {
@@ -452,14 +484,6 @@ impl<'a> CheckerState<'a> {
             .map(|class| self.class_has_base(class))
             .unwrap_or(false);
 
-        let is_super_property_access = parent_info
-            .as_ref()
-            .map(|(_, parent_node)| {
-                parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            })
-            .unwrap_or(false);
-
         // TS2335: super can only be referenced in a derived class
         if !has_base_class {
             self.error_at_node(
@@ -470,18 +494,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS2337/TS17011: Super calls are not permitted outside constructors
-        // This includes super() in static property initializers
+        // TS2337: Super calls are not permitted outside constructors
         if is_super_call {
-            // TS17011: super() is not allowed in static property initializers
-            if self.is_in_static_property_initializer(idx) {
-                self.error_at_node(
-                    idx,
-                    diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
-                    diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
-                );
-                return;
-            }
             if !self.is_in_constructor(idx) {
                 self.error_at_node(
                     idx,
@@ -500,6 +514,19 @@ impl<'a> CheckerState<'a> {
                 );
                 return;
             }
+        }
+
+        // TS17011: super property access before super() call in derived constructors.
+        if is_super_property_access
+            && self.is_in_constructor(idx)
+            && self.is_super_property_before_super_call_in_constructor(idx)
+        {
+            self.error_at_node(
+                idx,
+                diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+            );
+            return;
         }
 
         // TS2336/TS2660: super property access must be in constructor, method, accessor, or property initializer

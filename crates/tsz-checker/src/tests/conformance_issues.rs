@@ -225,6 +225,72 @@ class Derived extends Base<number> {
     );
 }
 
+#[test]
+fn test_derived_constructor_without_super_reports_ts2377() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base {}
+
+class Derived extends Base {
+    constructor() {}
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2377),
+        "Expected TS2377 for derived constructor missing super() call. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_super_property_before_super_call_reports_ts17011() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base {
+    method() {}
+}
+
+class Derived extends Base {
+    constructor() {
+        super.method();
+        super();
+    }
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 17011),
+        "Expected TS17011 for super property access before super() call. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_super_property_access_reports_ts2340() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base {
+    value = 1;
+}
+
+class Derived extends Base {
+    method() {
+        return super.value;
+    }
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2340),
+        "Expected TS2340 for super property access to non-method member. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
 /// Issue: Overly aggressive strict null checking
 ///
 /// From: neverReturningFunctions1.ts
