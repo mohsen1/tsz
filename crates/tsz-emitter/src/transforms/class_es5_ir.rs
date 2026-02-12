@@ -2374,7 +2374,7 @@ impl<'a> AstToIr<'a> {
                 .iter()
                 .filter_map(|&p| self.convert_object_property(p))
                 .collect();
-            IRNode::ObjectLiteral(props)
+            IRNode::object(props)
         } else {
             IRNode::ASTRef(idx)
         }
