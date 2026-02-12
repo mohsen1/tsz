@@ -416,7 +416,6 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_object_literal(&mut self, node: &Node) {
-        eprintln!("[DEBUG] emit_object_literal CALLED");
         let Some(obj) = self.arena.get_literal_expr(node) else {
             return;
         };
@@ -430,15 +429,6 @@ impl<'a> Printer<'a> {
 
         // Check if source had a trailing comma after the last element
         let has_trailing_comma = self.has_trailing_comma_in_source(node, &obj.elements.nodes);
-
-        // Debug: Check source text availability and single-line detection
-        let has_source = self.source_text.is_some();
-        let is_single = self.is_single_line(node);
-        let elem_count = obj.elements.nodes.len();
-        eprintln!(
-            "[DEBUG] emit_object_literal: has_source={}, is_single={}, elem_count={}, pos={}..{}",
-            has_source, is_single, elem_count, node.pos, node.end
-        );
 
         // Preserve single-line formatting from source
         if self.is_single_line(node) || obj.elements.nodes.len() == 1 {
