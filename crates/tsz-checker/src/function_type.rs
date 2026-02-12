@@ -995,7 +995,9 @@ impl<'a> CheckerState<'a> {
                 }
                 return TypeId::ERROR;
             }
-            if self.is_namespace_value_type(object_type) {
+            if self.is_namespace_value_type(object_type)
+                && !self.is_enum_instance_property_access(object_type, access.expression)
+            {
                 if !access.question_dot_token && !property_name.starts_with('#') {
                     self.error_property_not_exist_at(property_name, original_object_type, idx);
                 }

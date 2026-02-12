@@ -3432,6 +3432,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a property access is on an enum instance value (not the enum object).
+    ///
+    /// Returns `true` when the object type is an enum type AND the expression
+    /// is NOT a direct reference to the enum declaration. This distinguishes:
+    /// - `x.toString()` where `x: Foo` → true (enum instance, should resolve apparent type)
+    /// - `Foo.nonExistent` → false (direct enum reference, should error)
+    pub(crate) fn is_enum_instance_property_access(
+        &self,
+        object_type: TypeId,
+        expression: NodeIndex,
+    ) -> bool {
+        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+
+        // Only applies to enum types
+        if !matches!(
+            classify_namespace_member(self.ctx.types, object_type),
+            NamespaceMemberKind::Enum(_)
+        ) {
+            return false;
+        }
+
+        // Check if the expression is a direct reference to an enum declaration
+        if let Some(sym_id) = self.resolve_identifier_symbol(expression)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & symbol_flags::ENUM) != 0
+        {
+            // Direct enum reference (e.g., `Foo.toString()`) - NOT an instance access
+            return false;
+        }
+
+        // The expression is a variable/parameter/property with an enum type
+        // (e.g., `x.toString()` where `let x: Foo`)
+        true
+    }
+
     /// Get the namespace name if the type is a namespace/module type.
     ///
     /// This function checks if a type is a reference to a namespace or module

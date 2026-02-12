@@ -1737,6 +1737,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
+            // Enum values inherit methods from their structural member type
+            // (number for numeric enums, string for string enums)
+            TypeKey::Enum(_def_id, member_type) => {
+                self.resolve_property_access_inner(member_type, prop_name, prop_atom)
+            }
+
             _ => {
                 // Unknown type key - try apparent members before giving up
                 let prop_atom =
