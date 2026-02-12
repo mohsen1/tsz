@@ -459,35 +459,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Find the class declaration containing a computed property name.
-    ///
-    /// Walks up from a computed property to find the containing class member,
-    /// then finds the class declaration.
-    ///
-    /// Returns Some(NodeIndex) if the parent is a class, None otherwise.
-    #[allow(dead_code)]
-    pub(crate) fn find_class_for_computed_property(
-        &self,
-        computed_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let mut current = computed_idx;
-        while !current.is_none() {
-            let ext = self.ctx.arena.get_extended(current)?;
-            let parent = ext.parent;
-            if parent.is_none() {
-                return None;
-            }
-            let parent_node = self.ctx.arena.get(parent)?;
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                return Some(parent);
-            }
-            current = parent;
-        }
-        None
-    }
-
     // =========================================================================
     // Heritage Clause Enclosure
     // =========================================================================
@@ -580,32 +551,5 @@ impl<'a> CheckerState<'a> {
             current = parent_idx;
         }
         false
-    }
-
-    /// Find the class or interface declaration containing a heritage clause.
-    ///
-    /// Given a heritage clause node, returns the parent CLASS_DECLARATION,
-    /// CLASS_EXPRESSION, or INTERFACE_DECLARATION.
-    ///
-    /// Returns Some(NodeIndex) if the parent is a class/interface, None otherwise.
-    #[allow(dead_code)]
-    pub(crate) fn find_class_for_heritage_clause(
-        &self,
-        heritage_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
-        let ext = self.ctx.arena.get_extended(heritage_idx)?;
-        let parent = ext.parent;
-        if parent.is_none() {
-            return None;
-        }
-        let parent_node = self.ctx.arena.get(parent)?;
-        if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-        {
-            Some(parent)
-        } else {
-            None
-        }
     }
 }
