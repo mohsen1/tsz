@@ -93,6 +93,8 @@ pub struct ES5ClassTransformer<'a> {
     private_accessors: Vec<PrivateAccessorInfo>,
     /// Transform directives from LoweringPass
     transforms: Option<TransformContext>,
+    /// Source text for extracting comments
+    source_text: Option<&'a str>,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -104,12 +106,82 @@ impl<'a> ES5ClassTransformer<'a> {
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
             transforms: None,
+            source_text: None,
         }
     }
 
     /// Set transform directives from LoweringPass
     pub fn set_transforms(&mut self, transforms: TransformContext) {
         self.transforms = Some(transforms);
+    }
+
+    /// Set source text for comment extraction
+    pub fn set_source_text(&mut self, source_text: &'a str) {
+        self.source_text = Some(source_text);
+    }
+
+    /// Extract leading JSDoc comment from a node (if any).
+    /// Returns the comment text including the /** ... */ delimiters.
+    fn extract_leading_comment(&self, node: &tsz_parser::parser::node::Node) -> Option<String> {
+        let source_text = self.source_text?;
+
+        // Scan backwards from node.pos to find the start of this member's section
+        // We need to go back far enough to include any JSDoc comments
+        let bytes = source_text.as_bytes();
+        let mut search_pos = node.pos as usize;
+
+        // Scan back to find opening brace or end of previous member
+        let mut brace_depth = 0;
+        while search_pos > 0 {
+            let ch = bytes[search_pos - 1];
+
+            // Track brace depth (we're scanning backwards, so braces are reversed)
+            if ch == b'}' {
+                brace_depth += 1;
+            } else if ch == b'{' {
+                if brace_depth == 0 {
+                    // Found the opening brace of the class body - stop here
+                    break;
+                }
+                brace_depth -= 1;
+            }
+
+            // Also stop at semicolons at depth 0 (end of previous member)
+            if ch == b';' && brace_depth == 0 {
+                break;
+            }
+
+            search_pos -= 1;
+
+            // Safety limit: don't scan back more than 1000 chars
+            if node.pos as usize - search_pos > 1000 {
+                search_pos = node.pos.saturating_sub(1000) as usize;
+                break;
+            }
+        }
+
+        // Get comments starting from the beginning of this member's "section"
+        let comments = crate::emitter::get_leading_comment_ranges(source_text, search_pos);
+
+        // Find the last JSDoc-style comment that ends before or at node.pos
+        for comment in comments.iter().rev() {
+            // Only consider comments that end before or at the node's start
+            if comment.end > node.pos {
+                continue;
+            }
+
+            let comment_text = &source_text[comment.pos as usize..comment.end as usize];
+            // Check if it's a JSDoc comment (starts with /** not just /*)
+            if comment_text.starts_with("/**") && !comment_text.starts_with("/***") {
+                return Some(comment_text.to_string());
+            }
+            // Also accept regular block comments for now
+            if comment_text.starts_with("/*") && !comment_text.starts_with("/**") {
+                return Some(comment_text.to_string());
+            }
+        }
+
+        None
     }
 
     /// Convert an AST statement to IR (avoids ASTRef when possible)
@@ -1008,6 +1080,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     self.convert_block_body(method_data.body)
                 };
 
+                // Extract leading JSDoc comment
+                let leading_comment = self.extract_leading_comment(member_node);
+
                 // ClassName.prototype.methodName = function () { body };
                 body.push(IRNode::PrototypeMethod {
                     class_name: self.class_name.clone(),
@@ -1019,6 +1094,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         is_expression_body: false,
                         body_source_range,
                     }),
+                    leading_comment,
                 });
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
@@ -1189,6 +1265,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     .get(method_data.body)
                     .map(|body_node| (body_node.pos as u32, body_node.end as u32));
 
+                // Extract leading JSDoc comment
+                let leading_comment = self.extract_leading_comment(member_node);
+
                 // ClassName.methodName = function () { body };
                 body.push(IRNode::StaticMethod {
                     class_name: self.class_name.clone(),
@@ -1200,6 +1279,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         is_expression_body: false,
                         body_source_range,
                     }),
+                    leading_comment,
                 });
             } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                 let Some(prop_data) = self.arena.get_property_decl(member_node) else {
@@ -2518,6 +2598,7 @@ mod tests {
                 && node.kind == syntax_kind_ext::CLASS_DECLARATION
             {
                 let mut transformer = ES5ClassTransformer::new(&parser.arena);
+                transformer.set_source_text(source);
                 if let Some(ir) = transformer.transform_class_to_ir(stmt_idx) {
                     let mut printer = IRPrinter::with_arena(&parser.arena);
                     printer.set_source_text(source);
