@@ -222,10 +222,22 @@ This may be part of a broader pattern where type annotations in certain contexts
 
 ## Status
 
-**Status**: Investigation complete, root cause identified
-**Next**: Locate type reference checking code and add arrow function support
-**Complexity**: Medium - need to understand type checking traversal
-**Risk**: Low - adding checks is additive, unlikely to break existing functionality
+**Status**: ✅ RESOLVED - Fix implemented and committed
+**Commit**: 10c0698 "fix: emit TS2304 for undefined types in arrow function signatures"
+**Branch**: claude/analyze-dry-violations-bRCVs
+**Tests**: All unit tests passing (2372/2372), ParameterList5 conformance tests now pass
+
+### Solution Implemented
+
+Added explicit validation in `TypeNodeChecker::get_type_from_function_type` to check TYPE_REFERENCE nodes before delegating to TypeLowering:
+
+1. Collects function type's own type parameters (e.g., `<T>` in `<T>(x: T) => T`)
+2. Checks if type names are built-in types (void, number, string, etc.)
+3. Checks if type names are local/global type parameters
+4. Checks if type names exist in file or lib binders
+5. Emits TS2304 for truly undefined types
+
+Also added TYPE_REFERENCE routing in `state_type_environment.rs` to ensure top-level type references use CheckerState's diagnostic-emitting path.
 
 ---
 
