@@ -12,7 +12,7 @@ fn test_sanitize_module_name() {
 #[test]
 fn test_emit_commonjs_preamble() {
     let mut output = String::new();
-    emit_commonjs_preamble(&mut output).unwrap();
+    emit_commonjs_preamble(&mut output).expect("emit to buffer should succeed");
     assert!(output.contains("\"use strict\";"));
     assert!(output.contains("Object.defineProperty(exports, \"__esModule\""));
 }
@@ -20,14 +20,14 @@ fn test_emit_commonjs_preamble() {
 #[test]
 fn test_emit_exports_init() {
     let mut output = String::new();
-    emit_exports_init(&mut output, &["foo".to_string(), "bar".to_string()]).unwrap();
+    emit_exports_init(&mut output, &["foo".to_string(), "bar".to_string()]).expect("emit to buffer should succeed");
     assert_eq!(output, "exports.foo = exports.bar = void 0;\n");
 }
 
 #[test]
 fn test_emit_exports_init_empty() {
     let mut output = String::new();
-    emit_exports_init(&mut output, &[]).unwrap();
+    emit_exports_init(&mut output, &[]).expect("emit to buffer should succeed");
     assert!(output.is_empty(), "Expected no output for empty exports");
 }
 
@@ -62,7 +62,7 @@ fn test_collect_export_names_with_parsed_ast() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -90,7 +90,7 @@ fn test_collect_export_names_with_destructuring() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -114,7 +114,7 @@ fn test_collect_export_names_with_default_export() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -137,7 +137,7 @@ fn test_collect_export_names_with_default_class_export() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -160,7 +160,7 @@ fn test_collect_export_names_with_named_exports() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -184,7 +184,7 @@ fn test_collect_export_names_ignores_type_only_specifiers() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -208,7 +208,7 @@ fn test_collect_export_names_ignores_type_only_named_exports() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -231,7 +231,7 @@ fn test_collect_export_names_with_multiple_named_exports() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -255,7 +255,7 @@ fn test_collect_export_names_with_export_import_equals() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -279,7 +279,7 @@ fn test_collect_export_names_ignores_type_only_declarations() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -302,7 +302,7 @@ fn test_collect_export_names_ignores_declare_exports() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -325,7 +325,7 @@ fn test_collect_export_names_ignores_reexports() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -348,7 +348,7 @@ fn test_collect_export_names_ignores_default_reexport() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
@@ -371,7 +371,7 @@ fn test_collect_export_names_ignores_const_enum() {
 
     let Some(source_file) = parser
         .arena
-        .get_source_file(parser.arena.get(root).unwrap())
+        .get_source_file(parser.arena.get(root).expect("root node must exist in arena"))
     else {
         panic!("Failed to get source file");
     };
