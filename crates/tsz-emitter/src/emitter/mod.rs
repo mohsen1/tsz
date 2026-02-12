@@ -137,6 +137,7 @@ struct TemplateParts {
     expressions: Vec<NodeIndex>,
 }
 
+#[allow(dead_code)]
 enum EmitDirective {
     Identity,
     ES5Class {
@@ -178,6 +179,9 @@ enum EmitDirective {
     },
     ES5ArrayLiteral {
         array_literal: NodeIndex,
+    },
+    ES5CallSpread {
+        call_expr: NodeIndex,
     },
     ES5VariableDeclarationList {
         decl_list: NodeIndex,
@@ -873,6 +877,11 @@ impl<'a> Printer<'a> {
                 self.emit_node_default(node, idx);
             }
 
+            EmitDirective::ES5CallSpread { call_expr } => {
+                // Emit as-is for now (spread call handling is done elsewhere)
+                self.emit_node_default(node, call_expr);
+            }
+
             EmitDirective::Chain(directives) => {
                 self.emit_chained_directives(node, idx, directives.as_slice());
             }
@@ -1177,6 +1186,11 @@ impl<'a> Printer<'a> {
                     return;
                 }
 
+                self.emit_chained_previous(node, idx, directives, index);
+            }
+            EmitDirective::ES5CallSpread { call_expr: _ } => {
+                // TODO: Implement emit_call_expression_es5_spread
+                // For now, emit as-is (spread will be handled by ES5 transforms)
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5VariableDeclarationList { decl_list } => {
