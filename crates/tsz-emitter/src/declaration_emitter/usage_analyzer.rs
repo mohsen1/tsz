@@ -769,7 +769,12 @@ impl<'a> UsageAnalyzer<'a> {
                     self.analyze_entity_name(type_query.expr_name);
                     self.in_value_pos = false; // Restore after
 
-                    // TODO: Walk type arguments
+                    // Walk type arguments (e.g., typeof X<A, B>)
+                    if let Some(ref type_args) = type_query.type_arguments {
+                        for &arg_idx in &type_args.nodes {
+                            self.analyze_type_node(arg_idx);
+                        }
+                    }
                 }
             }
 
