@@ -1341,8 +1341,49 @@ impl<'a> CheckerContext<'a> {
     pub fn get_or_create_def_id(&self, sym_id: SymbolId) -> DefId {
         use tsz_solver::def::DefinitionInfo;
 
-        if let Some(&def_id) = self.symbol_to_def.borrow().get(&sym_id) {
-            return def_id;
+        let existing_def_id = self.symbol_to_def.borrow().get(&sym_id).copied();
+        if let Some(def_id) = existing_def_id {
+            // Validate cached mapping to guard against cross-binder SymbolId collisions.
+            // In multi-file/lib flows, the same raw SymbolId can refer to different symbols
+            // in different binders; stale mappings can make Lazy(def) point to the wrong symbol.
+            let mapped_symbol = self
+                .binder
+                .symbols
+                .get(sym_id)
+                .or_else(|| {
+                    self.lib_contexts
+                        .iter()
+                        .find_map(|lib_ctx| lib_ctx.binder.symbols.get(sym_id))
+                })
+                .or_else(|| {
+                    self.all_binders.as_ref().and_then(|binders| {
+                        binders.iter().find_map(|binder| binder.symbols.get(sym_id))
+                    })
+                });
+
+            let is_valid_mapping = if let (Some(info), Some(sym)) =
+                (self.definition_store.get(def_id), mapped_symbol)
+            {
+                let def_name = self.types.resolve_atom_ref(info.name);
+                def_name.as_ref() == sym.escaped_name
+                    && info.file_id.is_none_or(|fid| fid == sym.decl_file_idx)
+            } else {
+                false
+            };
+
+            if is_valid_mapping {
+                return def_id;
+            }
+
+            self.symbol_to_def.borrow_mut().remove(&sym_id);
+            if self
+                .def_to_symbol
+                .borrow()
+                .get(&def_id)
+                .is_some_and(|mapped| *mapped == sym_id)
+            {
+                self.def_to_symbol.borrow_mut().remove(&def_id);
+            }
         }
 
         // Get symbol info to create DefinitionInfo

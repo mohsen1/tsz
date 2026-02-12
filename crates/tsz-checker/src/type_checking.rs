@@ -340,9 +340,7 @@ impl<'a> CheckerState<'a> {
             if let Some(member) = self.ctx.arena.get_named_tuple_member(elem_node) {
                 self.check_type_for_missing_names(member.type_node);
             }
-            return;
         }
-        self.check_type_for_missing_names(elem_idx);
     }
 
     /// Check type parameters for missing type names.
@@ -3601,8 +3599,8 @@ impl<'a> CheckerState<'a> {
         let mut variable_declarations: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
 
         // Track destructuring patterns for TS6198.
-        // Map from binding pattern NodeIndex to (total_count, unused_count).
-        let mut destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
+        // Map from binding pattern NodeIndex to (total_elements, unused_elements).
+        let destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
 
         // First pass: identify ALL import symbols and track them by import declaration.
         // This includes both used and unused imports.
@@ -3643,6 +3641,8 @@ impl<'a> CheckerState<'a> {
         // to distinguish `var x, y;` (2 decls) from `const {a, b} = obj;` (1 decl with multiple bindings)
         let mut var_decl_list_children: HashMap<NodeIndex, HashSet<NodeIndex>> = HashMap::new();
         let mut unused_var_decls: HashSet<NodeIndex> = HashSet::new();
+        let mut pattern_children: HashMap<NodeIndex, HashSet<NodeIndex>> = HashMap::new();
+        let mut unused_pattern_elements: HashSet<NodeIndex> = HashSet::new();
 
         for (_sym_id, _name) in &symbols_to_check {
             let sym_id = *_sym_id;
@@ -3689,6 +3689,16 @@ impl<'a> CheckerState<'a> {
                     if !is_used {
                         unused_var_decls.insert(var_decl_node_idx);
                     }
+
+                    if let Some(pattern_idx) = self.find_parent_binding_pattern(decl_idx) {
+                        pattern_children
+                            .entry(pattern_idx)
+                            .or_default()
+                            .insert(decl_idx);
+                        if !is_used {
+                            unused_pattern_elements.insert(decl_idx);
+                        }
+                    }
                 }
             }
         }
@@ -3701,43 +3711,6 @@ impl<'a> CheckerState<'a> {
                 .filter(|n| unused_var_decls.contains(n))
                 .count();
             variable_declarations.insert(*var_decl_list_idx, (total_count, unused_count));
-        }
-
-        // Third pass: track destructuring patterns (for TS6198)
-        for (_sym_id, _name) in &symbols_to_check {
-            let sym_id = *_sym_id;
-            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                continue;
-            };
-            let flags = symbol.flags;
-
-            let is_var = (flags
-                & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::FUNCTION_SCOPED_VARIABLE))
-                != 0;
-            if !is_var {
-                continue;
-            }
-
-            let decl_idx = if !symbol.value_declaration.is_none() {
-                symbol.value_declaration
-            } else if let Some(&first) = symbol.declarations.first() {
-                first
-            } else {
-                continue;
-            };
-
-            if self.is_parameter_declaration(decl_idx) {
-                continue;
-            }
-
-            if let Some(pattern_idx) = self.find_parent_binding_pattern(decl_idx) {
-                let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
-                let entry = destructuring_patterns.entry(pattern_idx).or_insert((0, 0));
-                entry.0 += 1;
-                if !is_used {
-                    entry.1 += 1;
-                }
-            }
         }
 
         for (sym_id, name) in symbols_to_check {

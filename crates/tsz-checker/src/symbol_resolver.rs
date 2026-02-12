@@ -280,6 +280,7 @@ impl<'a> CheckerState<'a> {
         let result = self.resolve_identifier_symbol_inner(idx);
         if let Some(sym_id) = result {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+            trace!(sym_id = %sym_id.0, idx = %idx.0, "resolve_identifier_symbol: marked referenced");
         }
         result
     }
@@ -374,9 +375,12 @@ impl<'a> CheckerState<'a> {
                         "Found symbol in lib_context"
                     );
                     if !should_skip_lib_symbol(lib_sym_id) {
-                        // Use file binder's sym_id for correct ID space after lib merge
-                        let file_sym_id =
-                            self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                        // Use file binder's sym_id for correct ID space after lib merge.
+                        // Never return lib-context SymbolIds directly: they may collide with
+                        // unrelated symbols in the current binder ID space.
+                        let Some(file_sym_id) = self.ctx.binder.file_locals.get(name) else {
+                            continue;
+                        };
                         trace!(
                             name = name,
                             file_sym_id = ?file_sym_id,
@@ -394,6 +398,18 @@ impl<'a> CheckerState<'a> {
             final_result = ?result,
             "Symbol resolution final result"
         );
+
+        if let Some(sym_id) = result
+            && let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+        {
+            trace!(
+                ident_name = ?ident_name,
+                sym_id = sym_id.0,
+                sym_name = sym.escaped_name.as_str(),
+                sym_flags = sym.flags,
+                "Symbol resolution resolved metadata"
+            );
+        }
         result
     }
 
@@ -444,9 +460,11 @@ impl<'a> CheckerState<'a> {
             for lib_ctx in &self.ctx.lib_contexts {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
                     // After lib merge, the file binder has the same symbols with
-                    // potentially different IDs. Use file binder's ID for returns
-                    // to avoid cross-ID-space confusion.
-                    let sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                    // potentially different IDs. Use file binder's ID for returns,
+                    // and skip symbols not present in current binder ID space.
+                    let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
+                        continue;
+                    };
                     if !should_skip_lib_symbol(sym_id) {
                         // Check flags using lib binder (lib_sym_id is valid in lib binder)
                         let flags = lib_ctx
@@ -578,6 +596,22 @@ impl<'a> CheckerState<'a> {
                 let mut visited_aliases = Vec::new();
                 if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                 {
+                    let target_flags = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(target_sym_id, &lib_binders)
+                        .map(|s| s.flags)
+                        .unwrap_or(0);
+                    let target_is_namespace_module = (target_flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0;
+                    let target_is_value_only = (self
+                        .alias_resolves_to_value_only(target_sym_id, None)
+                        || self.symbol_is_value_only(target_sym_id, None))
+                        && !self.symbol_is_type_only(target_sym_id, None);
+                    if target_is_value_only && !target_is_namespace_module {
+                        return TypeSymbolResolution::ValueOnly(target_sym_id);
+                    }
                     return TypeSymbolResolution::Type(target_sym_id);
                 }
             }

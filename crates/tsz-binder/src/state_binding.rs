@@ -1543,6 +1543,62 @@ impl BinderState {
                                     .or_else(|| self.file_locals.get(target_name))
                             {
                                 exported_symbols.push(("export=".to_string(), sym_id));
+
+                                // Also expose members of the export-assignment target for
+                                // named import compatibility (e.g. `export = alias; import { f }`).
+                                let mut target_sym_id = sym_id;
+
+                                if let Some(target_sym) = self.symbols.get(sym_id)
+                                    && (target_sym.flags & symbol_flags::ALIAS) != 0
+                                {
+                                    let decl_idx = if !target_sym.value_declaration.is_none() {
+                                        target_sym.value_declaration
+                                    } else {
+                                        target_sym
+                                            .declarations
+                                            .first()
+                                            .copied()
+                                            .unwrap_or(NodeIndex::NONE)
+                                    };
+
+                                    if !decl_idx.is_none()
+                                        && let Some(decl_node) = arena.get(decl_idx)
+                                        && decl_node.kind
+                                            == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                        && let Some(import_decl) = arena.get_import_decl(decl_node)
+                                    {
+                                        let module_ref = import_decl.module_specifier;
+                                        if let Some(module_ref_node) = arena.get(module_ref)
+                                            && module_ref_node.kind
+                                                != SyntaxKind::StringLiteral as u16
+                                            && let Some(ref_name) =
+                                                self.get_identifier_name(arena, module_ref)
+                                            && let Some(resolved) = self
+                                                .current_scope
+                                                .get(ref_name)
+                                                .or_else(|| self.file_locals.get(ref_name))
+                                        {
+                                            target_sym_id = resolved;
+                                        }
+                                    }
+                                }
+
+                                if let Some(target_symbol) = self.symbols.get(target_sym_id) {
+                                    if let Some(exports) = target_symbol.exports.as_ref() {
+                                        for (export_name, &export_sym_id) in exports.iter() {
+                                            if export_name != "export=" {
+                                                exported_symbols
+                                                    .push((export_name.clone(), export_sym_id));
+                                            }
+                                        }
+                                    }
+                                    if let Some(members) = target_symbol.members.as_ref() {
+                                        for (member_name, &member_sym_id) in members.iter() {
+                                            exported_symbols
+                                                .push((member_name.clone(), member_sym_id));
+                                        }
+                                    }
+                                }
                             }
                         }
                         syntax_kind_ext::EXPORT_DECLARATION => {
@@ -1772,6 +1828,12 @@ impl BinderState {
             return self.symbols.get(id);
         }
 
+        // Prefer local symbols first so source-file declarations can shadow
+        // lib symbols even when SymbolId values collide.
+        if let Some(sym) = self.symbols.get(id) {
+            return Some(sym);
+        }
+
         // Legacy path (for backward compatibility when lib_symbols_merged is false):
         // If this is a lib symbol ID, check lib binders first to avoid
         // collision with local symbols at the same index
@@ -1781,11 +1843,6 @@ impl BinderState {
                     return Some(sym);
                 }
             }
-        }
-
-        // Try local symbols
-        if let Some(sym) = self.symbols.get(id) {
-            return Some(sym);
         }
 
         // Finally try lib binders for any remaining cases
@@ -1810,6 +1867,12 @@ impl BinderState {
             return self.symbols.get(id);
         }
 
+        // Prefer local symbols first so source-file declarations can shadow
+        // lib symbols even when SymbolId values collide.
+        if let Some(sym) = self.symbols.get(id) {
+            return Some(sym);
+        }
+
         // Legacy path (for backward compatibility when lib_symbols_merged is false):
         // Prefer lib binders when the ID is known to originate from libs
         if self.lib_symbol_ids.contains(&id) {
@@ -1818,11 +1881,6 @@ impl BinderState {
                     return Some(sym);
                 }
             }
-        }
-
-        // First try local symbols
-        if let Some(sym) = self.symbols.get(id) {
-            return Some(sym);
         }
 
         // Then try lib binders

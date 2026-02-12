@@ -71,6 +71,89 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check whether a named import can be satisfied via `export =` target members.
+    fn has_named_export_via_export_equals(
+        &self,
+        exports_table: &tsz_binder::SymbolTable,
+        import_name: &str,
+    ) -> bool {
+        let Some(export_equals_sym) = exports_table.get("export=") else {
+            return false;
+        };
+
+        let lib_binders: Vec<_> = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .map(|lc| std::sync::Arc::clone(&lc.binder))
+            .collect();
+
+        let resolved_export_equals = if let Some(export_sym) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(export_equals_sym, &lib_binders)
+            && (export_sym.flags & symbol_flags::ALIAS) != 0
+        {
+            let mut visited_aliases = Vec::new();
+            self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
+                .unwrap_or(export_equals_sym)
+        } else {
+            export_equals_sym
+        };
+
+        let Some(target_symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(resolved_export_equals, &lib_binders)
+        else {
+            return false;
+        };
+
+        let mut candidate_symbol_ids = vec![resolved_export_equals];
+
+        // For `export = alias` where `alias` comes from `import alias = Namespace`,
+        // resolve the namespace target explicitly so named imports can see members.
+        if (target_symbol.flags & symbol_flags::ALIAS) != 0 {
+            let decl_idx = if !target_symbol.value_declaration.is_none() {
+                target_symbol.value_declaration
+            } else if let Some(&first_decl) = target_symbol.declarations.first() {
+                first_decl
+            } else {
+                NodeIndex::NONE
+            };
+
+            if !decl_idx.is_none()
+                && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
+            {
+                let module_ref = import_decl.module_specifier;
+                if let Some(module_ref_node) = self.ctx.arena.get(module_ref)
+                    && module_ref_node.kind != SyntaxKind::StringLiteral as u16
+                    && let Some(target_id) = self.resolve_qualified_symbol(module_ref)
+                {
+                    candidate_symbol_ids.push(target_id);
+                }
+            }
+        }
+
+        candidate_symbol_ids.into_iter().any(|sym_id| {
+            self.ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .is_some_and(|symbol| {
+                    symbol
+                        .exports
+                        .as_ref()
+                        .is_some_and(|exports| exports.has(import_name))
+                        || symbol
+                            .members
+                            .as_ref()
+                            .is_some_and(|members| members.has(import_name))
+                })
+        })
+    }
+
     // =========================================================================
     // Import Member Validation
     // =========================================================================
@@ -397,7 +480,9 @@ impl<'a> CheckerState<'a> {
 
                 let import_name = &identifier.escaped_text;
 
-                if !exports_table.has(import_name) {
+                if !exports_table.has(import_name)
+                    && !self.has_named_export_via_export_equals(&exports_table, import_name)
+                {
                     // Before emitting TS2305, check if this import can be resolved
                     // through re-export chains (wildcard or named re-exports).
                     let found_via_reexport = self

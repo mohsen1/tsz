@@ -3221,10 +3221,43 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
 
-                // Check direct exports first
-                if let Some(exports) = symbol.exports.as_ref()
-                    && let Some(member_id) = exports.get(property_name)
-                {
+                tracing::trace!(
+                    sym_id = sym_id.0,
+                    symbol_name = symbol.escaped_name.as_str(),
+                    property_name,
+                    has_exports = symbol.exports.is_some(),
+                    has_members = symbol.members.is_some(),
+                    exports_len = symbol
+                        .exports
+                        .as_ref()
+                        .map(|t| t.iter().count())
+                        .unwrap_or(0),
+                    members_len = symbol
+                        .members
+                        .as_ref()
+                        .map(|t| t.iter().count())
+                        .unwrap_or(0),
+                    has_module_exports = self
+                        .ctx
+                        .binder
+                        .module_exports
+                        .contains_key(symbol.escaped_name.as_str()),
+                    "resolve_namespace_value_member: lazy namespace lookup"
+                );
+
+                // Check direct exports first, then namespace members as fallback.
+                let direct_member_id = symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(property_name))
+                    .or_else(|| {
+                        symbol
+                            .members
+                            .as_ref()
+                            .and_then(|members| members.get(property_name))
+                    });
+
+                if let Some(member_id) = direct_member_id {
                     // Follow re-export chains to get the actual symbol
                     let resolved_member_id = if let Some(member_symbol) =
                         self.ctx.binder.get_symbol(member_id)
@@ -3247,6 +3280,47 @@ impl<'a> CheckerState<'a> {
                     {
                         return None;
                     }
+                    return Some(self.get_type_of_symbol(resolved_member_id));
+                }
+
+                // Fallback: some ambient/module symbols keep exported members in
+                // binder.module_exports without populating symbol.exports/members.
+                let module_export_member_id = {
+                    let module_name = symbol.escaped_name.as_str();
+                    self.ctx
+                        .binder
+                        .module_exports
+                        .get(module_name)
+                        .and_then(|exports| exports.get(property_name))
+                        .or_else(|| {
+                            self.resolve_cross_file_namespace_exports(module_name)
+                                .and_then(|exports| exports.get(property_name))
+                        })
+                };
+
+                if let Some(member_id) = module_export_member_id {
+                    let resolved_member_id = if let Some(member_symbol) =
+                        self.ctx.binder.get_symbol(member_id)
+                        && member_symbol.flags & symbol_flags::ALIAS != 0
+                    {
+                        let mut visited_aliases = Vec::new();
+                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                            .unwrap_or(member_id)
+                    } else {
+                        member_id
+                    };
+
+                    if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
+                        return None;
+                    }
+
+                    if let Some(member_symbol) = self.ctx.binder.get_symbol(resolved_member_id)
+                        && member_symbol.flags & symbol_flags::VALUE == 0
+                        && member_symbol.flags & symbol_flags::ALIAS == 0
+                    {
+                        return None;
+                    }
+
                     return Some(self.get_type_of_symbol(resolved_member_id));
                 }
 
@@ -3331,6 +3405,163 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns true when an expression is an `import x = require("...")` alias
+    /// whose target module has `export =` bound to a type-only symbol.
+    ///
+    /// In value position, member access on such aliases should emit TS2708
+    /// (Cannot use namespace as a value).
+    pub(crate) fn is_type_only_import_equals_namespace_expr(&self, expr_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(expr_idx) else {
+            return false;
+        };
+
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+            return false;
+        };
+
+        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+            return false;
+        }
+
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return false;
+        }
+
+        let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node) else {
+            return false;
+        };
+
+        let module_name_owned;
+        let module_name = if let Some(module_node) =
+            self.ctx.arena.get(import_decl.module_specifier)
+            && module_node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(literal) = self.ctx.arena.get_literal(module_node)
+        {
+            literal.text.as_str()
+        } else if let Some(specifier) =
+            self.get_require_module_specifier(import_decl.module_specifier)
+        {
+            module_name_owned = specifier;
+            module_name_owned.as_str()
+        } else {
+            return false;
+        };
+
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let quoted = format!("\"{}\"", normalized);
+        let single_quoted = format!("'{}'", normalized);
+
+        let export_equals_sym = self
+            .ctx
+            .binder
+            .module_exports
+            .get(module_name)
+            .and_then(|exports| exports.get("export="))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .module_exports
+                    .get(normalized)
+                    .and_then(|exports| exports.get("export="))
+            })
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .module_exports
+                    .get(&quoted)
+                    .and_then(|exports| exports.get("export="))
+            })
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .module_exports
+                    .get(&single_quoted)
+                    .and_then(|exports| exports.get("export="))
+            });
+
+        let Some(export_equals_sym) = export_equals_sym else {
+            return false;
+        };
+
+        let resolved_export_equals = if let Some(export_sym) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(export_equals_sym, &lib_binders)
+            && (export_sym.flags & symbol_flags::ALIAS) != 0
+        {
+            let mut visited_aliases = Vec::new();
+            self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
+                .unwrap_or(export_equals_sym)
+        } else {
+            export_equals_sym
+        };
+
+        if let Some(export_symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(resolved_export_equals, &lib_binders)
+        {
+            if (export_symbol.flags & symbol_flags::VALUE) == 0 {
+                return true;
+            }
+
+            if (export_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                != 0
+            {
+                let mut has_runtime_value_member = false;
+
+                if let Some(exports) = export_symbol.exports.as_ref() {
+                    for (_, member_id) in exports.iter() {
+                        if let Some(member_symbol) = self
+                            .ctx
+                            .binder
+                            .get_symbol_with_libs(*member_id, &lib_binders)
+                            && (member_symbol.flags & symbol_flags::VALUE) != 0
+                            && !self.symbol_member_is_type_only(*member_id, None)
+                        {
+                            has_runtime_value_member = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !has_runtime_value_member && let Some(members) = export_symbol.members.as_ref() {
+                    for (_, member_id) in members.iter() {
+                        if let Some(member_symbol) = self
+                            .ctx
+                            .binder
+                            .get_symbol_with_libs(*member_id, &lib_binders)
+                            && (member_symbol.flags & symbol_flags::VALUE) != 0
+                            && !self.symbol_member_is_type_only(*member_id, None)
+                        {
+                            has_runtime_value_member = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !has_runtime_value_member {
+                    return true;
+                }
+            }
+        }
+
+        self.symbol_member_is_type_only(resolved_export_equals, Some("export="))
+    }
+
     /// Check if a namespace has a type-only member.
     ///
     /// This function determines if a specific property of a namespace
@@ -3377,12 +3608,16 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
 
-                let exports = match symbol.exports.as_ref() {
-                    Some(exports) => exports,
-                    None => return false,
-                };
+                let exports = symbol.exports.as_ref();
 
-                let member_id = match exports.get(property_name) {
+                let member_id = match exports
+                    .and_then(|exports| exports.get(property_name))
+                    .or_else(|| {
+                        symbol
+                            .members
+                            .as_ref()
+                            .and_then(|members| members.get(property_name))
+                    }) {
                     Some(member_id) => member_id,
                     None => return false,
                 };

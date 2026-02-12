@@ -3548,6 +3548,19 @@ impl BinderState {
             sym.is_exported = is_exported;
         }
         self.current_scope.set(name.to_string(), sym_id);
+
+        // Keep source-file declarations visible through file_locals.
+        // This is required for nested module scopes resolving references to
+        // top-level ambient symbols (e.g. `import alias = demoNS` inside `declare module`).
+        if !self.current_scope_id.is_none()
+            && self
+                .scopes
+                .get(self.current_scope_id.0 as usize)
+                .is_some_and(|scope| scope.kind == ContainerKind::SourceFile)
+        {
+            self.file_locals.set(name.to_string(), sym_id);
+        }
+
         self.node_symbols.insert(declaration.0, sym_id);
         self.declare_in_persistent_scope(name.to_string(), sym_id);
 

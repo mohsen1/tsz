@@ -1502,6 +1502,13 @@ impl<'a> CheckerState<'a> {
         let mut use_index_signature_check = true;
 
         if let Some(name) = literal_string.as_deref() {
+            if self.is_type_only_import_equals_namespace_expr(access.expression) {
+                if let Some(ns_name) = self.entity_name_text(access.expression) {
+                    self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                }
+                return TypeId::ERROR;
+            }
+
             if let Some(member_type) =
                 self.resolve_namespace_value_member(object_type_for_access, name)
             {
