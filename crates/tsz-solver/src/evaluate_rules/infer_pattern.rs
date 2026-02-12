@@ -1351,6 +1351,42 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeKey::Function(source_fn_id)) => {
                     match_function_params(source, source_fn_id, bindings)
                 }
+                Some(TypeKey::Callable(source_shape_id)) => {
+                    // Match against the last call signature (TypeScript behavior for overloads)
+                    let source_shape = self.interner().callable_shape(source_shape_id);
+                    if source_shape.call_signatures.is_empty() {
+                        return false;
+                    }
+                    let source_sig = source_shape.call_signatures.last().unwrap();
+                    // Allow source to have more params than pattern (structural subtyping)
+                    if source_sig.params.len() < pattern_fn.params.len() {
+                        return false;
+                    }
+                    let mut local_visited = FxHashSet::default();
+                    // Only match the first N params where N = pattern param count
+                    for (source_param, pattern_param) in
+                        source_sig.params.iter().zip(pattern_fn.params.iter())
+                    {
+                        // For optional params, strip undefined/null from the source type.
+                        // Optional callback params like `onfulfilled?: ((value: T) => ...) | undefined | null`
+                        // should match against `(value: infer V) => any` by stripping the nullish parts.
+                        let source_param_type = if source_param.optional {
+                            crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
+                        } else {
+                            source_param.type_id
+                        };
+                        if !self.match_infer_pattern(
+                            source_param_type,
+                            pattern_param.type_id,
+                            bindings,
+                            &mut local_visited,
+                            checker,
+                        ) {
+                            return false;
+                        }
+                    }
+                    true
+                }
                 Some(TypeKey::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
