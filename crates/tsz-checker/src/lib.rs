@@ -108,6 +108,9 @@ mod enum_member_cache_tests;
 #[path = "tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
+#[path = "tests/rest_parameter_tests.rs"]
+mod rest_parameter_tests;
+#[cfg(test)]
 #[path = "tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
 #[cfg(test)]
