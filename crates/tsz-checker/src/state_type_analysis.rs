@@ -1041,7 +1041,9 @@ impl<'a> CheckerState<'a> {
                     & (symbol_flags::INTERFACE
                         | symbol_flags::CLASS
                         | symbol_flags::TYPE_ALIAS
-                        | symbol_flags::ENUM)
+                        | symbol_flags::ENUM
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE)
                     != 0
                 {
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -1087,7 +1089,9 @@ impl<'a> CheckerState<'a> {
                 & (symbol_flags::INTERFACE
                     | symbol_flags::CLASS
                     | symbol_flags::TYPE_ALIAS
-                    | symbol_flags::ENUM)
+                    | symbol_flags::ENUM
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE)
                 != 0
             {
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -1356,6 +1360,12 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if let Some(symbol) = self.get_symbol_globally(sym_id)
+            && (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+        {
+            return None;
+        }
+
         let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
             .ctx
             .binder

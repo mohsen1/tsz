@@ -1047,12 +1047,11 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Create a child CheckerContext that shares the parent's caches.
-    /// This is used for temporary checkers (e.g., cross-file symbol resolution)
-    /// to ensure cache results are not lost (fixes Cache Isolation Bug).
+    /// Create a child CheckerContext for temporary cross-file checks.
     ///
-    /// The child context shares the parent's caches through Rc<RefCell<>> wrappers,
-    /// allowing both contexts to read and write to the same cache.
+    /// Important: only caches keyed by globally stable ids (e.g. TypeId, RelationCacheKey)
+    /// are copied from the parent. Arena/binder-local ids (SymbolId, NodeIndex, FlowNodeId)
+    /// must be reset to avoid cross-arena cache poisoning.
     pub fn with_parent_cache(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -1064,7 +1063,7 @@ impl<'a> CheckerContext<'a> {
         let compiler_options = compiler_options.apply_strict_defaults();
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
-        // Share caches through Rc<RefCell<>> to allow both parent and child to access
+        // Share selected caches that are safe across arenas.
         use std::cell::RefCell;
         use std::rc::Rc;
 
@@ -1075,8 +1074,9 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             report_unresolved_imports: false,
-            symbol_types: parent.symbol_types.clone(),
-            symbol_instance_types: parent.symbol_instance_types.clone(),
+            // CRITICAL: SymbolId is binder-local; never reuse parent symbol caches.
+            symbol_types: FxHashMap::default(),
+            symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
             // CRITICAL: Do NOT share node_types across arenas. Node indices are arena-specific,
             // so a cached type for node X in arena A would be incorrect for node X in arena B.
@@ -1095,14 +1095,17 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: parent.object_spread_property_set.clone(),
             element_access_type_cache: parent.element_access_type_cache.clone(),
             element_access_type_set: parent.element_access_type_set.clone(),
-            flow_analysis_cache: parent.flow_analysis_cache.clone(),
+            // CRITICAL: FlowNodeId/SymbolId are binder-local; isolate flow cache per context.
+            flow_analysis_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             contains_infer_types_true: FxHashSet::default(),
             contains_infer_types_false: FxHashSet::default(),
-            class_instance_type_to_decl: parent.class_instance_type_to_decl.clone(),
-            class_instance_type_cache: parent.class_instance_type_cache.clone(),
-            symbol_dependencies: parent.symbol_dependencies.clone(),
+            // CRITICAL: NodeIndex is arena-local; keep class declaration maps local.
+            class_instance_type_to_decl: FxHashMap::default(),
+            class_instance_type_cache: FxHashMap::default(),
+            // CRITICAL: Symbol dependency keys are SymbolId; isolate per binder.
+            symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             written_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -1140,13 +1143,15 @@ impl<'a> CheckerContext<'a> {
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: DefinitionStore::new(),
-            symbol_to_def: parent.symbol_to_def.clone(),
-            def_type_params: parent.def_type_params.clone(),
-            def_no_type_params: parent.def_no_type_params.clone(),
+            // CRITICAL: DefId mappings are context-local and tied to definition_store.
+            // Never reuse parent DefId maps in a child context.
+            symbol_to_def: RefCell::new(FxHashMap::default()),
+            def_type_params: RefCell::new(FxHashMap::default()),
+            def_no_type_params: RefCell::new(FxHashSet::default()),
             abstract_constructor_types: parent.abstract_constructor_types.clone(),
             protected_constructor_types: parent.protected_constructor_types.clone(),
             private_constructor_types: parent.private_constructor_types.clone(),
-            def_to_symbol: parent.def_to_symbol.clone(),
+            def_to_symbol: RefCell::new(FxHashMap::default()),
             all_arenas: None,
             all_binders: None,
             resolved_module_paths: None,
