@@ -14,13 +14,19 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Pre-register all variable names in this declaration list to handle shadowing
-        // This must happen before emitting any identifiers
-        for &decl_idx in &decl_list.declarations.nodes {
-            if let Some(decl_node) = self.arena.get(decl_idx)
-                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-            {
-                self.pre_register_binding_name(decl.name);
+        // Pre-register all variable names in this declaration list to handle shadowing.
+        // Only do this for let/const (block-scoped) — var declarations can be redeclared
+        // in the same scope without renaming.
+        let flags = node.flags as u32;
+        let is_block_scoped = (flags & tsz_parser::parser::node_flags::LET != 0)
+            || (flags & tsz_parser::parser::node_flags::CONST != 0);
+        if is_block_scoped {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.pre_register_binding_name(decl.name);
+                }
             }
         }
 
@@ -1993,13 +1999,19 @@ impl<'a> Printer<'a> {
 
         // Only handle variable declaration list: `for (let v of ...)`
         // Do NOT handle bare identifiers: `for (v of ...)` - those are assignments, not declarations
+        // Skip var declarations — var redeclarations don't need renaming
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            if let Some(decl_list) = self.arena.get_variable(init_node) {
-                for &decl_idx in &decl_list.declarations.nodes {
-                    if let Some(decl_node) = self.arena.get(decl_idx)
-                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    {
-                        self.pre_register_binding_name(decl.name);
+            let flags = init_node.flags as u32;
+            let is_block_scoped = (flags & tsz_parser::parser::node_flags::LET != 0)
+                || (flags & tsz_parser::parser::node_flags::CONST != 0);
+            if is_block_scoped {
+                if let Some(decl_list) = self.arena.get_variable(init_node) {
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        if let Some(decl_node) = self.arena.get(decl_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                        {
+                            self.pre_register_binding_name(decl.name);
+                        }
                     }
                 }
             }
