@@ -1373,6 +1373,9 @@ impl<'a> CheckerState<'a> {
 
         // TS2496: 'arguments' cannot be referenced in an arrow function in ES5
         if name == "arguments" {
+            // Track that this function body uses `arguments` (for JS implicit rest params)
+            self.ctx.js_body_uses_arguments = true;
+
             use tsz_common::common::ScriptTarget;
             let is_es5_or_lower = matches!(
                 self.ctx.compiler_options.target,

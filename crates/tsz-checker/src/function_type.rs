@@ -260,7 +260,14 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check if optional or has initializer
-                let optional = param.question_token || !param.initializer.is_none();
+                // In JS files, parameters without type annotations are implicitly optional
+                let is_js_file = self.ctx.file_name.ends_with(".js")
+                    || self.ctx.file_name.ends_with(".jsx")
+                    || self.ctx.file_name.ends_with(".mjs")
+                    || self.ctx.file_name.ends_with(".cjs");
+                let optional = param.question_token
+                    || !param.initializer.is_none()
+                    || (is_js_file && param.type_annotation.is_none());
                 let rest = param.dot_dot_dot_token;
 
                 // Under strictNullChecks, optional parameters (with `?`) get
@@ -321,6 +328,9 @@ impl<'a> CheckerState<'a> {
         return_type = self.evaluate_application_type(return_type);
 
         // Check the function body (for type errors within the body)
+        // Save/restore the arguments tracking flag for nested function handling
+        let saved_uses_arguments = self.ctx.js_body_uses_arguments;
+        self.ctx.js_body_uses_arguments = false;
         if !body.is_none() {
             // Track that we're inside a nested function for abstract property access checks.
             // This must happen before infer_return_type_from_body which evaluates body expressions.
@@ -626,6 +636,28 @@ impl<'a> CheckerState<'a> {
             self.ctx.function_depth -= 1;
         }
 
+        // In JS files, functions that reference `arguments` in their body should accept
+        // any number of extra arguments (TSC adds an implicit rest parameter).
+        // Only add if the function doesn't already have a rest parameter.
+        // For function declarations, the body wasn't checked yet (it's checked in
+        // check_function_declaration), so we also pre-walk the body for `arguments`.
+        let is_js_file_for_rest = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+        let uses_arguments = self.ctx.js_body_uses_arguments
+            || (is_function_declaration && self.body_has_arguments_reference(body));
+        if is_js_file_for_rest && uses_arguments && !params.last().is_some_and(|p| p.rest) {
+            params.push(ParamInfo {
+                name: None,
+                type_id: TypeId::ANY,
+                optional: true,
+                rest: true,
+            });
+        }
+        // Restore the arguments tracking flag
+        self.ctx.js_body_uses_arguments = saved_uses_arguments;
+
         // Create function type using TypeInterner
         // For annotated return types, use the original un-evaluated type so callers see
         // Promise<T>, Array<T>, etc. as Application types. This preserves type identity
@@ -645,6 +677,130 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(self.ctx.types.function(shape))
+    }
+
+    /// Check if a function body references the `arguments` object.
+    /// Walks the AST recursively but stops at nested function boundaries.
+    /// Used by JS files to determine if a function needs an implicit rest parameter.
+    fn body_has_arguments_reference(&self, body: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(body) else {
+            return false;
+        };
+
+        // Check if this node is an identifier named "arguments"
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            return ident.escaped_text == "arguments";
+        }
+
+        // Stop at nested function/method/class boundaries
+        let k = node.kind;
+        if k == syntax_kind_ext::FUNCTION_DECLARATION
+            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+            || k == syntax_kind_ext::ARROW_FUNCTION
+            || k == syntax_kind_ext::METHOD_DECLARATION
+            || k == syntax_kind_ext::CLASS_DECLARATION
+            || k == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return false;
+        }
+
+        // Walk children based on node kind
+        if let Some(block) = self.ctx.arena.get_block(node) {
+            for &stmt in &block.statements.nodes {
+                if self.body_has_arguments_reference(stmt) {
+                    return true;
+                }
+            }
+        } else if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
+            if self.body_has_arguments_reference(expr_stmt.expression) {
+                return true;
+            }
+        } else if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+            for &decl in &var_stmt.declarations.nodes {
+                if self.body_has_arguments_reference(decl) {
+                    return true;
+                }
+            }
+        } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+            if self.body_has_arguments_reference(var_decl.initializer) {
+                return true;
+            }
+        } else if let Some(ret) = self.ctx.arena.get_return_statement(node) {
+            if self.body_has_arguments_reference(ret.expression) {
+                return true;
+            }
+        } else if let Some(call) = self.ctx.arena.get_call_expr(node) {
+            if self.body_has_arguments_reference(call.expression) {
+                return true;
+            }
+            if let Some(ref args) = call.arguments {
+                for &arg in &args.nodes {
+                    if self.body_has_arguments_reference(arg) {
+                        return true;
+                    }
+                }
+            }
+        } else if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
+            if self.body_has_arguments_reference(bin.left)
+                || self.body_has_arguments_reference(bin.right)
+            {
+                return true;
+            }
+        } else if let Some(access) = self.ctx.arena.get_access_expr(node) {
+            if self.body_has_arguments_reference(access.expression) {
+                return true;
+            }
+            // Element access: also check the argument (e.g. arguments[0])
+            if self.body_has_arguments_reference(access.name_or_argument) {
+                return true;
+            }
+        } else if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
+            if self.body_has_arguments_reference(if_stmt.expression)
+                || self.body_has_arguments_reference(if_stmt.then_statement)
+                || self.body_has_arguments_reference(if_stmt.else_statement)
+            {
+                return true;
+            }
+        } else if let Some(loop_stmt) = self.ctx.arena.get_loop(node) {
+            if self.body_has_arguments_reference(loop_stmt.initializer)
+                || self.body_has_arguments_reference(loop_stmt.condition)
+                || self.body_has_arguments_reference(loop_stmt.incrementor)
+                || self.body_has_arguments_reference(loop_stmt.statement)
+            {
+                return true;
+            }
+        } else if let Some(for_in_of) = self.ctx.arena.get_for_in_of(node) {
+            if self.body_has_arguments_reference(for_in_of.expression)
+                || self.body_has_arguments_reference(for_in_of.statement)
+            {
+                return true;
+            }
+        } else if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+            if self.body_has_arguments_reference(paren.expression) {
+                return true;
+            }
+        } else if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+            if self.body_has_arguments_reference(unary.operand) {
+                return true;
+            }
+        } else if let Some(unary_ex) = self.ctx.arena.get_unary_expr_ex(node) {
+            if self.body_has_arguments_reference(unary_ex.expression) {
+                return true;
+            }
+        } else if let Some(spread) = self.ctx.arena.get_spread(node) {
+            if self.body_has_arguments_reference(spread.expression) {
+                return true;
+            }
+        } else if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+            if self.body_has_arguments_reference(cond.condition)
+                || self.body_has_arguments_reference(cond.when_true)
+                || self.body_has_arguments_reference(cond.when_false)
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Push type parameters from all enclosing generic functions/classes/interfaces.
