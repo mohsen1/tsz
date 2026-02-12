@@ -115,7 +115,7 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = ident.escaped_text.clone();
 
-        let sym_id = self.resolve_identifier_symbol(ident_idx)?;
+        let sym_id = self.resolve_identifier_symbol_no_mark(ident_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0 {
