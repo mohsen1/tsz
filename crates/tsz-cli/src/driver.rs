@@ -2122,7 +2122,30 @@ fn collect_diagnostics(
                         }
 
                         // Convert ResolutionFailure to Diagnostic to get the error code and message
-                        let diagnostic = failure_to_use.to_diagnostic();
+                        let mut diagnostic = failure_to_use.to_diagnostic();
+
+                        // TypeScript uses TS2792 (instead of TS2307) for unresolved bare specifiers
+                        // under Classic/Bundler resolution modes.
+                        let is_bare_specifier = !specifier.starts_with("./")
+                            && !specifier.starts_with("../")
+                            && !specifier.starts_with('/')
+                            && !specifier.contains(':');
+                        let prefers_2792 = matches!(
+                            options.effective_module_resolution(),
+                            crate::config::ModuleResolutionKind::Classic
+                                | crate::config::ModuleResolutionKind::Bundler
+                        );
+                        if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
+                            && is_bare_specifier
+                            && prefers_2792
+                        {
+                            diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
+                            diagnostic.message = format!(
+                                "Cannot find module '{}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?",
+                                specifier
+                            );
+                        }
+
                         resolved_module_errors.insert(
                             (file_idx, specifier.clone()),
                             tsz::checker::context::ResolutionError {
