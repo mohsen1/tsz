@@ -3270,6 +3270,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check return type annotation for parameter properties in function types
         if !func.type_annotation.is_none() {
             self.check_type_for_parameter_properties(func.type_annotation);
+            // Check for undefined type names in return type
+            self.check_type_for_missing_names(func.type_annotation);
         }
 
         // Check parameter type annotations for parameter properties
@@ -3279,6 +3281,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 && !param.type_annotation.is_none()
             {
                 self.check_type_for_parameter_properties(param.type_annotation);
+                // Check for undefined type names in parameter type
+                self.check_type_for_missing_names(param.type_annotation);
             }
         }
 
