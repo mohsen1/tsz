@@ -1586,6 +1586,28 @@ impl<'a> CheckerState<'a> {
         let instantiated_constructs: Vec<tsz_solver::CallSignature> = matching
             .iter()
             .map(|sig| {
+                {
+                    use tsz_solver::types::TypeKey;
+                    let key = self.ctx.types.lookup(sig.return_type);
+                    let app_info = match &key {
+                        Some(TypeKey::Application(app_id)) => {
+                            let app = self.ctx.types.type_application(*app_id);
+                            let base_key = self.ctx.types.lookup(app.base);
+                            format!(
+                                "base={:?} base_key={:?} args={:?}",
+                                app.base, base_key, app.args
+                            )
+                        }
+                        _ => String::new(),
+                    };
+                    tracing::trace!(
+                        ?sig.return_type,
+                        ?key,
+                        %app_info,
+                        type_params_count = sig.type_params.len(),
+                        "apply_type_args_to_ctor: BEFORE instantiation"
+                    );
+                }
                 let mut args = type_args.clone();
                 if args.len() < sig.type_params.len() {
                     for param in sig.type_params.iter().skip(args.len()) {
@@ -1599,7 +1621,29 @@ impl<'a> CheckerState<'a> {
                 if args.len() > sig.type_params.len() {
                     args.truncate(sig.type_params.len());
                 }
-                self.instantiate_constructor_signature(sig, &args)
+                let result = self.instantiate_constructor_signature(sig, &args);
+                {
+                    use tsz_solver::types::TypeKey;
+                    let key = self.ctx.types.lookup(result.return_type);
+                    let app_info = match &key {
+                        Some(TypeKey::Application(app_id)) => {
+                            let app = self.ctx.types.type_application(*app_id);
+                            let base_key = self.ctx.types.lookup(app.base);
+                            format!(
+                                "base={:?} base_key={:?} args={:?}",
+                                app.base, base_key, app.args
+                            )
+                        }
+                        _ => String::new(),
+                    };
+                    tracing::trace!(
+                        ?result.return_type,
+                        ?key,
+                        %app_info,
+                        "apply_type_args_to_ctor: AFTER instantiation"
+                    );
+                }
+                result
             })
             .collect();
 

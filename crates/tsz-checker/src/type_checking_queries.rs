@@ -2218,6 +2218,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::{TypeLowering, types::is_compiler_managed_type};
 
+        tracing::trace!(name, "resolve_lib_type_by_name: called");
         let mut lib_type_id: Option<TypeId> = None;
 
         // Clone lib_contexts to allow access within the resolver closure
@@ -2279,20 +2280,22 @@ impl<'a> CheckerState<'a> {
                 // CRITICAL: Use self.ctx.binder, not lib_contexts binders, to avoid SymbolId collisions
                 let binder = &self.ctx.binder;
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                    // For merged declarations, we need to check the arena for this specific node
-                    // Try to find the identifier text from each arena in decls_with_arenas
+                    // For merged declarations, we need to check the arena for this specific node.
+                    // IMPORTANT: NodeIndex values are arena-specific — the same index can refer
+                    // to different nodes in different arenas. We must check ALL arenas and only
+                    // return a match when the identifier is found in file_locals. Don't break
+                    // early on a mismatch since another arena may have the correct identifier
+                    // at the same NodeIndex.
                     for (_, arena) in &decls_with_arenas {
                         if let Some(ident_name) = arena.get_identifier_text(node_idx) {
-                            // Skip built-in types that have special handling in TypeLowering
                             if is_compiler_managed_type(ident_name) {
-                                return None;
+                                continue;
                             }
-
-                            // Look up the symbol in the MAIN file's binder
                             if let Some(found_sym) = binder.file_locals.get(ident_name) {
                                 return Some(found_sym.0);
                             }
-                            break;
+                            // Don't break - another arena may have a different identifier
+                            // at the same NodeIndex that resolves successfully
                         }
                     }
                     // Also try fallback arena
@@ -2314,6 +2317,19 @@ impl<'a> CheckerState<'a> {
                         .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
                 };
 
+                // Name-based resolver: resolves identifier text directly without NodeIndex.
+                // This is the reliable fallback for cross-arena lowering where NodeIndex
+                // values from the current arena don't match nodes in the declaration arenas.
+                let name_resolver = |name: &str| -> Option<tsz_solver::DefId> {
+                    if is_compiler_managed_type(name) {
+                        return None;
+                    }
+                    binder
+                        .file_locals
+                        .get(name)
+                        .map(|sym_id| self.ctx.get_or_create_def_id(sym_id))
+                };
+
                 // Create base lowering with the fallback arena and both resolvers
                 let lowering = TypeLowering::with_hybrid_resolver(
                     fallback_arena,
@@ -2321,7 +2337,8 @@ impl<'a> CheckerState<'a> {
                     &resolver,
                     &def_id_resolver,
                     &|_| None,
-                );
+                )
+                .with_name_def_id_resolver(&name_resolver);
 
                 // Try to lower as interface first (handles declaration merging)
                 if !symbol.declarations.is_empty() {

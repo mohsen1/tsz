@@ -39,6 +39,15 @@ pub struct TypeLowering<'a> {
     def_id_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<DefId>>,
     /// Optional value resolver for typeof queries.
     value_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<u32>>,
+    /// Optional name-based DefId resolver — fallback for cross-arena resolution.
+    ///
+    /// NodeIndex values are arena-specific: the same index means different things
+    /// in different arenas. When `with_arena()` switches the working arena, the
+    /// NodeIndex-based `def_id_resolver` can look up the wrong identifier because
+    /// its closure captured arenas from the ORIGINAL context. This name-based
+    /// resolver bypasses that problem by resolving directly from the identifier
+    /// text (which `lower_identifier_type` already extracts from `self.arena`).
+    name_def_id_resolver: Option<&'a dyn Fn(&str) -> Option<DefId>>,
     /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
     type_param_scopes: Rc<RefCell<Vec<Vec<(Atom, TypeId)>>>>,
     /// Operation counter to prevent infinite loops
@@ -209,6 +218,7 @@ impl<'a> TypeLowering<'a> {
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
+            name_def_id_resolver: None,
         }
     }
 
@@ -225,6 +235,7 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(resolver),
             def_id_resolver: None,
             value_resolver: Some(resolver),
+            name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -244,6 +255,7 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(type_resolver),
             def_id_resolver: None,
             value_resolver: Some(value_resolver),
+            name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -267,6 +279,7 @@ impl<'a> TypeLowering<'a> {
             type_resolver: None,
             def_id_resolver: Some(def_id_resolver),
             value_resolver: Some(value_resolver),
+            name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -290,6 +303,7 @@ impl<'a> TypeLowering<'a> {
             type_resolver: Some(type_resolver),
             def_id_resolver: Some(def_id_resolver),
             value_resolver: Some(value_resolver),
+            name_def_id_resolver: None,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
@@ -308,6 +322,7 @@ impl<'a> TypeLowering<'a> {
             type_resolver: self.type_resolver,
             def_id_resolver: self.def_id_resolver,
             value_resolver: self.value_resolver,
+            name_def_id_resolver: self.name_def_id_resolver,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
             operations: Rc::clone(&self.operations),
@@ -412,6 +427,21 @@ impl<'a> TypeLowering<'a> {
             *self.type_param_scopes.borrow_mut() = vec![bindings];
         }
         self
+    }
+
+    /// Set the name-based DefId resolver for cross-arena resolution.
+    pub fn with_name_def_id_resolver(
+        mut self,
+        resolver: &'a dyn Fn(&str) -> Option<DefId>,
+    ) -> Self {
+        self.name_def_id_resolver = Some(resolver);
+        self
+    }
+
+    /// Resolve an identifier name to a DefId using the name-based resolver.
+    fn resolve_def_id_by_name(&self, name: &str) -> Option<DefId> {
+        self.name_def_id_resolver
+            .and_then(|resolver| resolver(name))
     }
 
     /// Resolve a node to a type symbol ID if a resolver is provided.
@@ -2685,12 +2715,24 @@ impl<'a> TypeLowering<'a> {
             }
 
             // Phase 4.2: Must resolve to DefId - no fallback to SymbolRef
-            // The def_id_resolver closure must be provided and must return valid DefIds
+            //
+            // Try name-based resolution FIRST — it's reliable for cross-arena
+            // lowering because it uses the identifier text (extracted from the
+            // current arena) to look up directly in file_locals. The NodeIndex-
+            // based resolver iterates ALL declaration arenas and can produce
+            // false positives when the same NodeIndex maps to different
+            // identifiers in different arenas (e.g., NodeIndex(50) is "Promise"
+            // in arena A but "AbortSignal" in arena B).
+            if let Some(def_id) = self.resolve_def_id_by_name(name) {
+                let lazy_type = self.interner.intern(TypeKey::Lazy(def_id));
+                return lazy_type;
+            }
+            // Fall back to NodeIndex-based resolution for same-arena contexts
+            // where no name-based resolver is available (e.g., user code).
             if let Some(def_id) = self.resolve_def_id(node_idx) {
                 let lazy_type = self.interner.intern(TypeKey::Lazy(def_id));
                 return lazy_type;
             }
-            // If def_id resolution failed, this is an error - don't create bogus Lazy types
 
             // Check for built-in type names only if not resolved (shadowing-safe)
             match name.as_ref() {

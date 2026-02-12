@@ -1847,28 +1847,25 @@ impl<'a> CheckerState<'a> {
             // against the current arena produces incomplete interface shapes
             // (e.g. Date without getTime, PromiseConstructor without resolve/race/new).
             //
-            // We check two conditions:
-            // 1. arena.get(decl_idx).is_none() - the NodeIndex is out of range
-            // 2. declaration_arenas has an entry pointing to a DIFFERENT arena -
-            //    this catches NodeIndex collisions where a declaration's index
-            //    happens to be valid in the current arena but actually belongs
-            //    to a different lib file's arena.
+            // We check two conditions (either triggers the lib path):
+            // 1. Per-declaration check: NodeIndex is out of range OR declaration_arenas
+            //    has an entry pointing to a different arena
+            // 2. Fallback: symbol_arenas has an entry for this symbol, meaning it was
+            //    merged from a lib file. This catches cross-arena NodeIndex collisions
+            //    where the index is valid in the main arena but maps to a different node
             let has_out_of_arena_decl = declarations.iter().any(|&decl_idx| {
-                // Fast path: NodeIndex is beyond the current arena's range
                 if self.ctx.arena.get(decl_idx).is_none() {
                     return true;
                 }
-                // Slow path: Check if the declaration belongs to a different arena
-                // via the binder's declaration_arenas map (populated during lib merging)
                 if let Some(decl_arena) =
                     self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
                 {
-                    // If the pointer differs, the declaration is from another arena
                     return !std::ptr::eq(decl_arena.as_ref(), self.ctx.arena);
                 }
                 false
             });
-            if has_out_of_arena_decl
+            let is_lib_symbol = self.ctx.binder.symbol_arenas.contains_key(&sym_id);
+            if (has_out_of_arena_decl || is_lib_symbol)
                 && !self.ctx.lib_contexts.is_empty()
                 && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
             {
