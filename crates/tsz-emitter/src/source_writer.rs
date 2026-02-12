@@ -134,6 +134,12 @@ impl SourceWriter {
         self.raw_write(text);
     }
 
+    /// Write pre-indented text without adding additional indentation.
+    /// Used for writing output from transforms that manage their own indentation.
+    pub fn write_raw_text(&mut self, text: &str) {
+        self.raw_write(text);
+    }
+
     /// Write text derived from a source node (maps to original position)
     pub fn write_node(&mut self, text: &str, source_pos: SourcePosition) {
         self.ensure_indent();
