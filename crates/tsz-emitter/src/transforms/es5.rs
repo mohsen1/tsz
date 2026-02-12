@@ -571,10 +571,42 @@ impl<'a> ES5ClassTransformer<'a> {
             self.transform_block_contents(body_idx)
         } else {
             // Concise arrow: x => x + 1  ->  { return x + 1; }
+            // If body resolves to an object literal, wrap in parens to
+            // disambiguate: () => ({})  ->  function () { return ({}); }
             if let Some(expr) = self.transform_expression(body_idx) {
+                let expr = if self.concise_body_is_object_literal(body_idx) {
+                    expr.paren()
+                } else {
+                    expr
+                };
                 vec![IRNode::ret(Some(expr))]
             } else {
                 vec![IRNode::ret(Some(IRNode::id("undefined")))]
+            }
+        }
+    }
+
+    /// Check if a concise arrow body resolves to an object literal expression
+    /// and needs wrapping in parens. Returns false if already parenthesized.
+    fn concise_body_is_object_literal(&self, body_idx: NodeIndex) -> bool {
+        let mut idx = body_idx;
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return false,
+                _ => return false,
             }
         }
     }

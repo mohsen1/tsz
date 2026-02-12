@@ -151,6 +151,15 @@ function parseModule(moduleStr: string): number {
   return 0;
 }
 
+/**
+ * Infer default module kind from target, matching TSC's behavior:
+ * - es3/es5 → none (0) — auto_detect_module in emitter handles CommonJS wrapping
+ * - es2015+ → es2015 (5) — preserve ES module syntax
+ */
+function inferDefaultModule(target: number): number {
+  return target >= 2 ? 5 : 0;  // 2 = es2015, 5 = es2015 module kind
+}
+
 function extractVariantFromFilename(filename: string): { base: string; target?: string; module?: string; alwaysstrict?: string } {
   const match = filename.match(/^(.+?)\(([^)]+)\)\.js$/);
   if (!match) {
@@ -232,7 +241,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       : 1;
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
-      : 0;  // Baselines without @module were generated with module=none
+      : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
 
     const alwaysStrict = variant.alwaysstrict !== undefined
       ? variant.alwaysstrict === 'true'
