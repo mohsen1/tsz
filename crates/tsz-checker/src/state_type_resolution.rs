@@ -843,22 +843,22 @@ impl<'a> CheckerState<'a> {
                 };
                 if !decl_idx.is_none() {
                     // Get the correct arena for the symbol (lib arena or current arena)
-                    // Phase 4.3: Return Lazy(DefId) for type alias type references
-                    // This preserves type alias names in error messages (e.g., "type MyAlias" instead of expanded type)
+                    // Phase 4.3: Return structural type directly for type alias type references
                     //
-                    // IMPORTANT: We must still compute and cache the structural type first so that:
-                    // 1. resolve_lazy() can return the cached type when needed for type checking
-                    // 2. The DefinitionStore can be populated with the alias information
+                    // NOTE: This was changed from returning Lazy(DefId) to fix a bug where
+                    // conditional types in type aliases weren't fully resolved during assignability checking.
+                    // Trade-off: Error messages will show expanded type instead of alias name,
+                    // but this fixes ~84 false positive TS2322 errors.
+                    //
+                    // Example bug that this fixes:
+                    //   type Test = true extends true ? "y" : "n"
+                    //   let value: Test = "y"  // Was incorrectly rejected
 
-                    // Step 1: Ensure the structural type is computed and cached
-                    let _structural_type = self.get_type_of_symbol(sym_id);
-
-                    // Step 2: Return a Lazy type reference for the type alias
-                    // This allows error formatting to look up the alias name by DefId
-                    let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+                    // Compute and return the fully-evaluated structural type
+                    let structural_type = self.get_type_of_symbol(sym_id);
 
                     self.ctx.leave_recursion();
-                    return lazy_type;
+                    return structural_type;
                 }
             }
         }
