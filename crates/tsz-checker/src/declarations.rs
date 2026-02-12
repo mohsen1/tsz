@@ -57,6 +57,30 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         Self { ctx }
     }
 
+    /// Check if a declaration is ambient (has declare keyword or AMBIENT flag).
+    fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        // Check if the node or any ancestor has the AMBIENT flag
+        let mut current = var_idx;
+        while !current.is_none() {
+            if let Some(node) = self.ctx.arena.get(current) {
+                // Check if this node has the AMBIENT flag set
+                if (node.flags as u32) & node_flags::AMBIENT != 0 {
+                    return true;
+                }
+
+                // Move to parent
+                if let Some(ext) = self.ctx.arena.get_extended(current) {
+                    current = ext.parent;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
     /// Check a declaration node.
     ///
     /// This dispatches to specialized handlers based on declaration kind.
@@ -156,6 +180,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         return;
                     }
                 }
+            }
+
+            // Check if this is an ambient declaration (allowed)
+            // Ambient declarations have the AMBIENT flag or a declare modifier
+            let is_ambient = self.is_ambient_declaration(decl_idx);
+            if is_ambient {
+                return;
             }
 
             self.ctx.error(
