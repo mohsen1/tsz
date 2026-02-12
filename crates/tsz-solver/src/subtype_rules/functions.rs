@@ -397,10 +397,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let Some(s_rest_param) = source.params.last() else {
                         return SubtypeResult::False;
                     };
-                    let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                    if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method)
-                    {
-                        return SubtypeResult::False;
+
+                    // Handle tuple rest parameters - check tuple assignability to array
+                    // TypeScript allows (...args: [T]) to be compatible with (...args: T[])
+                    use crate::type_queries::get_tuple_list_id;
+                    if get_tuple_list_id(self.interner, s_rest_param.type_id).is_some() {
+                        // Source has tuple rest, target has array rest
+                        // Check if entire tuple type is assignable to target array type
+                        let target_rest_type = target.params.last().unwrap().type_id;
+                        if !self.are_parameters_compatible_impl(
+                            s_rest_param.type_id,
+                            target_rest_type,
+                            is_method,
+                        ) {
+                            return SubtypeResult::False;
+                        }
+                    } else {
+                        // Both have array rest - check element types
+                        let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                        if !self.are_parameters_compatible_impl(
+                            s_rest_elem,
+                            rest_elem_type,
+                            is_method,
+                        ) {
+                            return SubtypeResult::False;
+                        }
                     }
                 }
             }
@@ -644,8 +665,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let Some(s_rest_param) = source.params.last() else {
                     return SubtypeResult::False;
                 };
-                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
+                // Check if source rest type is assignable to target rest type.
+                // For tuple rest params like [...args: [T1, T2]], check the whole tuple
+                // against the target array type, not just the first element.
+                let target_rest_type = target.params.last().unwrap().type_id;
+                if !self.are_parameters_compatible_impl(
+                    s_rest_param.type_id,
+                    target_rest_type,
+                    is_method,
+                ) {
                     return SubtypeResult::False;
                 }
             }
@@ -768,8 +796,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let Some(s_rest_param) = source.params.last() else {
                     return SubtypeResult::False;
                 };
-                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
+                // Check if source rest type is assignable to target rest type.
+                // For tuple rest params like [...args: [T1, T2]], check the whole tuple
+                // against the target array type, not just the first element.
+                let target_rest_type = target.params.last().unwrap().type_id;
+                if !self.are_parameters_compatible_impl(
+                    s_rest_param.type_id,
+                    target_rest_type,
+                    is_method,
+                ) {
                     return SubtypeResult::False;
                 }
             }
@@ -892,8 +927,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let Some(s_rest_param) = source.params.last() else {
                     return SubtypeResult::False;
                 };
-                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method) {
+                // Check if source rest type is assignable to target rest type.
+                // For tuple rest params like [...args: [T1, T2]], check the whole tuple
+                // against the target array type, not just the first element.
+                let target_rest_type = target.params.last().unwrap().type_id;
+                if !self.are_parameters_compatible_impl(
+                    s_rest_param.type_id,
+                    target_rest_type,
+                    is_method,
+                ) {
                     return SubtypeResult::False;
                 }
             }

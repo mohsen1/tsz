@@ -860,7 +860,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS2323: Check for multiple default exports  
+        // TS2323: Check for multiple default exports
         // TypeScript emits TS2323 "Cannot redeclare exported variable 'default'" for duplicate default exports
         if export_default_indices.len() > 1 {
             for &export_idx in &export_default_indices {
