@@ -171,6 +171,9 @@ impl<'a> CheckerState<'a> {
             // Check triple-slash reference directives (TS6053)
             self.check_triple_slash_references(&sf.file_name, &sf.text);
 
+            // Check for duplicate AMD module name assignments (TS2458)
+            self.check_amd_module_names(&sf.text);
+
             // Check for unused declarations (TS6133/TS6196)
             if self.ctx.no_unused_locals() || self.ctx.no_unused_parameters() {
                 self.check_unused_declarations();
@@ -3421,6 +3424,58 @@ impl<'a> CheckerState<'a> {
                 let message = format_message("File '{0}' not found.", &[&reference_path]);
                 self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
             }
+        }
+    }
+
+    /// Check for duplicate AMD module name assignments.
+    ///
+    /// Validates `/// <amd-module name="..." />` directives in TypeScript source files.
+    /// If multiple AMD module name assignments are found, emits error TS2458.
+    fn check_amd_module_names(&mut self, source_text: &str) {
+        use crate::triple_slash_validator::extract_amd_module_names;
+
+        let amd_modules = extract_amd_module_names(source_text);
+
+        // Only emit error if there are multiple AMD module name assignments
+        if amd_modules.len() <= 1 {
+            return;
+        }
+
+        // Emit TS2458 error at the position of the second (and subsequent) directive(s)
+        for (_, line_num) in amd_modules.iter().skip(1) {
+            // Calculate the position of the error (start of the line)
+            let mut pos = 0u32;
+            for (idx, _) in source_text.lines().enumerate() {
+                if idx == *line_num {
+                    break;
+                }
+                pos += source_text
+                    .lines()
+                    .nth(idx)
+                    .map(|l| l.len() + 1)
+                    .unwrap_or(0) as u32;
+            }
+
+            // Find the actual directive on the line to get accurate position
+            if let Some(line) = source_text.lines().nth(*line_num) {
+                if let Some(directive_start) = line.find("///") {
+                    pos += directive_start as u32;
+                }
+            }
+
+            let length = source_text
+                .lines()
+                .nth(*line_num)
+                .map(|l| l.len() as u32)
+                .unwrap_or(0);
+
+            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.emit_error_at(
+                pos,
+                length,
+                diagnostic_messages::AN_AMD_MODULE_CANNOT_HAVE_MULTIPLE_NAME_ASSIGNMENTS,
+                diagnostic_codes::AN_AMD_MODULE_CANNOT_HAVE_MULTIPLE_NAME_ASSIGNMENTS,
+            );
         }
     }
 }
