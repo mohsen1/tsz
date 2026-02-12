@@ -1724,15 +1724,17 @@ impl<'a> CheckerState<'a> {
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
 
-        // TS18050 is emitted for null/undefined operands in arithmetic operators (except +)
-        // The + operator gets TS2365 instead because it can be string concatenation or arithmetic
-        let should_emit_ts18050 = matches!(
+        // TS18050 is only emitted for strictly-arithmetic and bitwise operators with null/undefined operands.
+        // The `+` operator is NOT included: tsc emits TS2365 for `null + null`, not TS18050,
+        // because `+` can be string concatenation and has its own type-checking path.
+        // Comparison operators (==, !=, ===, !==, <, >, <=, >=) also don't emit TS18050.
+        let should_emit_nullish_error = matches!(
             op,
             "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
         );
 
         // Emit TS18050 for null/undefined operands in arithmetic operations (except +)
-        if left_is_nullish && should_emit_ts18050 {
+        if left_is_nullish && should_emit_nullish_error {
             let value_name = if left_type == TypeId::NULL {
                 "null"
             } else {
@@ -1756,7 +1758,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if right_is_nullish && should_emit_ts18050 {
+        if right_is_nullish && should_emit_nullish_error {
             let value_name = if right_type == TypeId::NULL {
                 "null"
             } else {

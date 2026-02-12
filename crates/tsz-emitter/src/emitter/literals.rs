@@ -15,7 +15,19 @@ impl<'a> Printer<'a> {
 
             // Check if this variable has been renamed for block scoping (ES5 for-of shadowing)
             if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text) {
-                self.write(&renamed);
+                // Use write_identifier so source map name recording still works.
+                // When renamed differs from original, the source map records the original
+                // name so debuggers can map back to the source.
+                if renamed != *original_text {
+                    if let Some(source_pos) = self.take_pending_source_pos() {
+                        self.writer
+                            .write_node_with_name(&renamed, source_pos, original_text);
+                    } else {
+                        self.writer.write(&renamed);
+                    }
+                } else {
+                    self.write_identifier(original_text);
+                }
             } else {
                 self.write_identifier(original_text);
             }
