@@ -2125,6 +2125,41 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS8009/TS8010: Check for TypeScript-only features in JavaScript files
+        let is_js_file = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+
+        if is_js_file {
+            use crate::types::diagnostics::{diagnostic_messages, format_message};
+
+            // TS8009: Modifiers like 'declare' can only be used in TypeScript files
+            if self.ctx.has_modifier(
+                &prop.modifiers,
+                tsz_scanner::SyntaxKind::DeclareKeyword as u16,
+            ) {
+                let message = format_message(
+                    diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    &["declare"],
+                );
+                self.error_at_node(
+                    member_idx,
+                    &message,
+                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            // TS8010: Type annotations can only be used in TypeScript files
+            if !prop.type_annotation.is_none() {
+                self.error_at_node(
+                    prop.type_annotation,
+                    diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+
         // Track static property initializer context for TS17011
         let is_static = self.has_static_modifier(&prop.modifiers);
         let prev_static_prop_init = self
