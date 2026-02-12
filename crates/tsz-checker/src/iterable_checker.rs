@@ -77,8 +77,11 @@ impl<'a> CheckerState<'a> {
                 members.iter().any(|&m| self.is_iterable_type(m))
             }
             FullIterableTypeKind::Object(shape_id) => {
-                // Check if object has a [Symbol.iterator] method or 'next' method
+                // Check if object has a [Symbol.iterator] method
+                // Fall back to property access resolution for computed properties
+                // (e.g., `[Symbol.iterator]: any` may not be stored as a method in the shape)
                 self.object_has_iterator_method(shape_id)
+                    || self.type_has_symbol_iterator_via_property_access(type_id)
             }
             FullIterableTypeKind::Application { .. } => {
                 // Application types (Set<T>, Map<K,V>, Iterable<T>, etc.) may have
@@ -124,8 +127,15 @@ impl<'a> CheckerState<'a> {
         // Check for [Symbol.iterator] method (iterable protocol)
         for prop in &shape.properties {
             let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-            if prop_name.as_ref() == "[Symbol.iterator]" && prop.is_method {
-                return true;
+            if prop_name.as_ref() == "[Symbol.iterator]" {
+                if prop.is_method {
+                    return true;
+                }
+                // Non-method properties typed as `any` are callable, so treat them as valid.
+                // e.g., `class Foo { [Symbol.iterator]: any; }`
+                if prop.type_id == TypeId::ANY {
+                    return true;
+                }
             }
         }
 
@@ -212,13 +222,19 @@ impl<'a> CheckerState<'a> {
 
     /// Compute the element type produced by a `for (... of expr)` loop.
     ///
-    /// This is a best-effort implementation for common cases (arrays/tuples/unions).
+    /// Handles arrays, tuples, unions, strings, and custom iterators via
+    /// the `[Symbol.iterator]().next().value` protocol.
     pub fn for_of_element_type(&mut self, iterable_type: TypeId) -> TypeId {
         if iterable_type == TypeId::ANY
             || iterable_type == TypeId::UNKNOWN
             || iterable_type == TypeId::ERROR
         {
             return iterable_type;
+        }
+
+        // String iteration yields string
+        if iterable_type == TypeId::STRING {
+            return TypeId::STRING;
         }
 
         // Resolve lazy types (type aliases) before computing element type
@@ -232,6 +248,11 @@ impl<'a> CheckerState<'a> {
     fn for_of_element_type_classified(&mut self, type_id: TypeId, depth: usize) -> TypeId {
         if depth > 100 {
             return TypeId::ANY;
+        }
+
+        // Handle string types (including string literals)
+        if type_id == TypeId::STRING {
+            return TypeId::STRING;
         }
 
         match classify_for_of_element_type(self.ctx.types, type_id) {
@@ -257,7 +278,82 @@ impl<'a> CheckerState<'a> {
                 // Unwrap readonly wrapper and compute element type for inner
                 self.for_of_element_type_classified(inner, depth + 1)
             }
-            ForOfElementKind::Other => TypeId::ANY,
+            ForOfElementKind::String => TypeId::STRING,
+            ForOfElementKind::Other => {
+                // For custom iterators, Application types (Map, Set), etc.,
+                // try to resolve the element type via the iterator protocol:
+                // type_id[Symbol.iterator]().next().value
+                self.resolve_iterator_element_type(type_id)
+            }
+        }
+    }
+
+    /// Resolve the element type of an iterable via the iterator protocol.
+    ///
+    /// Follows the chain: type[Symbol.iterator] → call result → .next() → .value
+    /// Returns ANY as fallback if the protocol cannot be resolved.
+    fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
+        use tsz_solver::operations_property::PropertyAccessResult;
+
+        // Step 1: Get [Symbol.iterator] property
+        let iterator_fn = self.resolve_property_access_with_env(type_id, "[Symbol.iterator]");
+        let iterator_fn_type = match &iterator_fn {
+            PropertyAccessResult::Success { type_id, .. } => *type_id,
+            _ => return TypeId::ANY,
+        };
+
+        // Step 2: Get the return type of the iterator function (call it)
+        let iterator_type = self.get_call_return_type(iterator_fn_type);
+
+        // If the iterator function returns `any` (e.g., `[Symbol.iterator]() { return this; }`
+        // where `this` type inference fails), fall back to using the original object type.
+        // This is the common pattern where the object IS the iterator.
+        let iterator_type = if iterator_type == TypeId::ANY {
+            type_id
+        } else {
+            iterator_type
+        };
+
+        // Step 3: Get .next() on the iterator
+        let next_result = self.resolve_property_access_with_env(iterator_type, "next");
+        let next_fn_type = match &next_result {
+            PropertyAccessResult::Success { type_id, .. } => *type_id,
+            _ => return TypeId::ANY,
+        };
+
+        // Step 4: Get the return type of next()
+        let next_return = self.get_call_return_type(next_fn_type);
+
+        // Step 5: Get .value from the IteratorResult
+        let value_result = self.resolve_property_access_with_env(next_return, "value");
+        match &value_result {
+            PropertyAccessResult::Success { type_id, .. } => *type_id,
+            _ => TypeId::ANY,
+        }
+    }
+
+    /// Get the return type of calling a function type.
+    /// Returns ANY if the type is not callable.
+    fn get_call_return_type(&self, fn_type: TypeId) -> TypeId {
+        if fn_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        match self.ctx.types.lookup(fn_type) {
+            // Function type - single signature
+            Some(tsz_solver::types::TypeKey::Function(fn_id)) => {
+                let sig = self.ctx.types.function_shape(fn_id);
+                sig.return_type
+            }
+            // Callable type - use first call signature
+            Some(tsz_solver::types::TypeKey::Callable(callable_id)) => {
+                let callable = self.ctx.types.callable_shape(callable_id);
+                callable
+                    .call_signatures
+                    .first()
+                    .map(|sig| sig.return_type)
+                    .unwrap_or(TypeId::ANY)
+            }
+            _ => TypeId::ANY,
         }
     }
 

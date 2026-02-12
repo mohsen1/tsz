@@ -699,6 +699,38 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check assignability for for-in/of expression initializer (non-declaration case).
+    ///
+    /// For `for (v of expr)` where `v` is a pre-declared variable (not `var v`/`let v`/`const v`),
+    /// this checks:
+    /// - TS2588: Cannot assign to const variable
+    /// - TS2322: Element type not assignable to variable type
+    pub(crate) fn check_for_in_of_expression_initializer(
+        &mut self,
+        initializer: NodeIndex,
+        element_type: TypeId,
+        is_for_of: bool,
+    ) {
+        // Get the type of the initializer expression (this evaluates `v`, `v++`, `obj.prop`, etc.)
+        let var_type = self.get_type_of_node(initializer);
+
+        // TS2588: Cannot assign to const variable
+        if is_for_of {
+            self.check_const_assignment(initializer);
+        }
+
+        // TS2322: Check element type is assignable to the variable's declared type
+        if is_for_of
+            && var_type != TypeId::ANY
+            && element_type != TypeId::ANY
+            && element_type != TypeId::ERROR
+            && !self.type_contains_error(var_type)
+            && !self.is_assignable_to(element_type, var_type)
+        {
+            self.error_type_not_assignable_with_reason_at(element_type, var_type, initializer);
+        }
+    }
+
     /// Check a single variable declaration.
     pub(crate) fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -980,6 +1012,15 @@ impl<'a> CheckerState<'a> {
                 }
                 init_type
             } else {
+                // For for-in/for-of loop variables, the element type has already been cached
+                // by assign_for_in_of_initializer_types. Use that instead of defaulting to any.
+                if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx) {
+                    if let Some(&cached) = checker.ctx.symbol_types.get(&sym_id) {
+                        if cached != TypeId::ANY && cached != TypeId::ERROR {
+                            return cached;
+                        }
+                    }
+                }
                 declared_type
             }
         };
