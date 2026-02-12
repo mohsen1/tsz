@@ -1280,6 +1280,16 @@ impl<'a> CheckerState<'a> {
                 expected,
                 actual,
             } => {
+                // Avoid cascading TS2345 when the argument type is already invalid or unknown.
+                // In these cases, a more specific upstream diagnostic is usually the root cause.
+                if actual == TypeId::ERROR
+                    || actual == TypeId::UNKNOWN
+                    || expected == TypeId::ERROR
+                    || expected == TypeId::UNKNOWN
+                {
+                    return TypeId::ERROR;
+                }
+
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
                     if !self.should_skip_weak_union_error(actual, expected, arg_idx) {
