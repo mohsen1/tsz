@@ -7,8 +7,9 @@
 # binder, solver, checker, emitter, lsp) but NOT tsz-common.
 #
 # Steps:
-#   1. Block TypeScript submodule changes
-#   2. Detect changed crates
+#   0. Reset TypeScript submodule to pinned SHA
+#   0b. Block TypeScript submodule changes
+#   1. Detect changed crates
 #   3. cargo fmt -- check & auto-fix
 #   4. cargo clippy -- deny warnings (only affected crates)
 #   5. Run unit tests (only affected crates)
@@ -37,7 +38,11 @@ SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
 
 echo "Pre-commit checks..."
 
-# ─── 0. Block TypeScript submodule changes ───────────────────────────────────
+# ─── 0. Reset TypeScript submodule to pinned SHA ─────────────────────────────
+
+"$ROOT_DIR/scripts/reset-ts-submodule.sh"
+
+# ─── 0b. Block TypeScript submodule changes ──────────────────────────────────
 
 SUBMODULE_CHANGES=$(git diff --cached --name-only | grep '^TypeScript/' || true)
 if [ -n "$SUBMODULE_CHANGES" ]; then
