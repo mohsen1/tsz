@@ -422,6 +422,10 @@ impl<'a> CheckerState<'a> {
                 // TS2588: Cannot assign to 'x' because it is a constant.
                 let is_const = self.check_const_assignment(unary.operand);
 
+                // TS2630: Cannot assign to 'x' because it is a function.
+                // Must come after const check but before type checking.
+                self.check_function_assignment(unary.operand);
+
                 // TS2540: Cannot assign to readonly property (e.g., namespace const export)
                 if !is_const {
                     self.check_readonly_assignment(unary.operand, idx);
