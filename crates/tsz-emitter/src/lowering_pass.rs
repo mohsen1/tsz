@@ -1424,6 +1424,22 @@ impl<'a> LoweringPass<'a> {
                 .insert(idx, TransformDirective::ES5SuperCall);
         }
 
+        // Check if call has spread arguments and needs ES5 transformation
+        if self.ctx.target_es5 && !is_super_call {
+            if let Some(ref args) = call.arguments {
+                let has_spread = args
+                    .nodes
+                    .iter()
+                    .any(|&arg_idx| self.is_spread_element(arg_idx));
+                if has_spread {
+                    self.transforms
+                        .insert(idx, TransformDirective::ES5CallSpread { call_expr: idx });
+                    // Flag that __spreadArray helper is needed
+                    self.transforms.helpers_mut().spread_array = true;
+                }
+            }
+        }
+
         // Continue traversal
         self.visit(call.expression);
         if let Some(ref args) = call.arguments {

@@ -881,8 +881,11 @@ impl<'a> Printer<'a> {
             }
 
             EmitDirective::ES5CallSpread { call_expr } => {
-                // Emit as-is for now (spread call handling is done elsewhere)
-                self.emit_node_default(node, call_expr);
+                if let Some(call_node) = self.arena.get(call_expr) {
+                    self.emit_call_expression_es5_spread(call_node);
+                } else {
+                    self.emit_node_default(node, idx);
+                }
             }
 
             EmitDirective::Chain(directives) => {
@@ -1191,9 +1194,12 @@ impl<'a> Printer<'a> {
 
                 self.emit_chained_previous(node, idx, directives, index);
             }
-            EmitDirective::ES5CallSpread { call_expr: _ } => {
-                // TODO: Implement emit_call_expression_es5_spread
-                // For now, emit as-is (spread will be handled by ES5 transforms)
+            EmitDirective::ES5CallSpread { call_expr } => {
+                if let Some(call_node) = self.arena.get(*call_expr) {
+                    self.emit_call_expression_es5_spread(call_node);
+                    return;
+                }
+
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5VariableDeclarationList { decl_list } => {
@@ -1419,6 +1425,7 @@ impl<'a> Printer<'a> {
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
                 || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+                || k == syntax_kind_ext::CALL_EXPRESSION
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
         )
     }
