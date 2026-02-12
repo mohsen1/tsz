@@ -446,6 +446,15 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
         opts.insert(canonical_key.to_string(), json_value);
     }
 
+    // Match tsc default compiler behavior for tests that omit @target.
+    // TypeScript defaults target to ES5 when not specified.
+    if !opts.contains_key("target") {
+        opts.insert(
+            "target".to_string(),
+            serde_json::Value::String("es5".to_string()),
+        );
+    }
+
     serde_json::Value::Object(opts)
 }
 
