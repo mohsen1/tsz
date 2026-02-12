@@ -2081,6 +2081,36 @@ impl<'a> CheckerState<'a> {
             return self.type_of_value_declaration(decl_idx);
         }
 
+        // For lib declarations, check if the type annotation is a simple type reference
+        // to a global lib type. If so, use resolve_lib_type_by_name directly instead of
+        // creating a child checker. The child checker inherits the parent's merged binder,
+        // which can have wrong symbol IDs for lib types, causing incorrect type resolution.
+        if let Some(node) = decl_arena.get(decl_idx) {
+            if let Some(var_decl) = decl_arena.get_variable_declaration(node) {
+                if !var_decl.type_annotation.is_none() {
+                    // Try to extract the type name from a simple type reference
+                    if let Some(type_annotation_node) = decl_arena.get(var_decl.type_annotation) {
+                        if let Some(type_ref) = decl_arena.get_type_ref(type_annotation_node) {
+                            // Check if this is a simple identifier (not qualified name)
+                            if let Some(type_name_node) = decl_arena.get(type_ref.type_name) {
+                                if let Some(ident) = decl_arena.get_identifier(type_name_node) {
+                                    let type_name = ident.escaped_text.as_str();
+                                    // Use resolve_lib_type_by_name for global lib types
+                                    if let Some(lib_type) = self.resolve_lib_type_by_name(type_name)
+                                    {
+                                        if lib_type != TypeId::UNKNOWN && lib_type != TypeId::ERROR
+                                        {
+                                            return self.resolve_ref_type(lib_type);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Guard against deep cross-arena recursion (shared with all delegation points)
         if !Self::enter_cross_arena_delegation() {
             return TypeId::UNKNOWN;
