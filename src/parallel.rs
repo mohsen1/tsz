@@ -904,7 +904,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // PHASE 2: Process user files
     // ==========================================================================
 
-    for result in results {
+    for (file_idx, result) in results.iter().enumerate() {
         declared_modules.extend(result.declared_modules.iter().cloned());
         shorthand_ambient_modules.extend(result.shorthand_ambient_modules.iter().cloned());
 
@@ -1170,6 +1170,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     updated.value_declaration = old_sym.value_declaration;
                     updated.declarations = old_sym.declarations.clone();
                     updated.is_exported = old_sym.is_exported;
+                    // Track which file this symbol was declared in for TDZ cross-file detection
+                    updated.decl_file_idx = file_idx as u32;
                     updated.exports = old_sym
                         .exports
                         .as_ref()
