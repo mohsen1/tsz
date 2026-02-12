@@ -290,11 +290,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Phase 6 Task 4: Overload Contextual Typing
-        // Instead of re-collecting argument types for each signature (incorrect),
-        // we collect argument types ONCE using a union of all overload signatures.
-        // This matches TypeScript behavior where arguments get the union of parameter types
-        // from all candidate signatures as their contextual type.
+        // Phase 6 Task 4: Overload contextual typing baseline.
+        // First pass collects argument types once using a union of overload signatures.
+        // If that fails to find a match, we run a second pass that re-collects arguments
+        // per candidate signature with signature-specific contextual types. This helps
+        // avoid false TS2345/TS2322 when the union contextual type is too lossy.
 
         // Create a union of all overload signatures for contextual typing
         let signature_types: Vec<TypeId> = signatures
@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.node_types = std::mem::take(&mut original_node_types);
 
-        // Now try each signature with the pre-collected argument types
+        // First pass: try each signature with union-contextual argument types.
         for (_sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
             self.ensure_application_symbols_resolved(func_type);
             for &arg_type in &arg_types {
@@ -387,9 +387,67 @@ impl<'a> CheckerState<'a> {
 
                 return Some(return_type);
             }
+        }
 
-            // Phase 6 Task 4: REMOVED erroneous std::mem::take line that was corrupting state.
-            // We don't need to save state on failure - just continue to the next signature.
+        // Second pass: signature-specific contextual typing.
+        // Some overload sets require contextual typing from a specific candidate to
+        // type callback/object-literal arguments correctly. The union pass above can
+        // miss those, producing false negatives and downstream false TS2345/TS2322.
+        for (_sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
+            let sig_helper = ContextualTypeContext::with_expected(self.ctx.types, func_type);
+
+            let diagnostics_checkpoint = self.ctx.diagnostics.len();
+            self.ctx.node_types = Default::default();
+
+            let sig_arg_types = self.collect_call_argument_types_with_context(
+                args,
+                |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
+                false,
+                None,
+            );
+
+            self.ensure_application_symbols_resolved(func_type);
+            for &arg_type in &sig_arg_types {
+                self.ensure_application_symbols_resolved(arg_type);
+            }
+
+            self.ensure_refs_resolved(func_type);
+            for &arg_type in &sig_arg_types {
+                self.ensure_refs_resolved(arg_type);
+            }
+
+            let result = {
+                let env = self.ctx.type_env.borrow();
+                let resolved_func_type = {
+                    if let Some(def_id) =
+                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, func_type)
+                    {
+                        env.get_def(def_id).unwrap_or(func_type)
+                    } else {
+                        func_type
+                    }
+                };
+                let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
+                self.ctx.configure_compat_checker(&mut checker);
+                let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
+                evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
+                evaluator.set_contextual_type(self.ctx.contextual_type);
+                evaluator.resolve_call(resolved_func_type, &sig_arg_types)
+            };
+
+            if let CallResult::Success(return_type) = result {
+                let sig_node_types = std::mem::take(&mut self.ctx.node_types);
+                self.ctx.node_types = std::mem::take(&mut original_node_types);
+                self.ctx.node_types.extend(sig_node_types);
+
+                self.check_call_argument_excess_properties(args, &sig_arg_types, |i, arg_count| {
+                    sig_helper.get_parameter_type_for_call(i, arg_count)
+                });
+
+                return Some(return_type);
+            }
+
+            self.ctx.diagnostics.truncate(diagnostics_checkpoint);
         }
 
         // Restore original state if no overload matched
