@@ -782,6 +782,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if let Some(t_elem) = array_element_type(self.checker.interner, self.target) {
             self.checker.check_subtype(element_type, t_elem)
         } else {
+            // Target is not an array type. Try to resolve Array<element_type> via the
+            // Array<T> interface and check structurally.
+            // This handles cases like: number[] <: Iterable<number>, number[] <: { length: number; toString(): string }
+            if let Some(result) = self
+                .checker
+                .check_array_interface_subtype(element_type, self.target)
+            {
+                return result;
+            }
             // Trace: Array source doesn't match non-array target
             if let Some(tracer) = &mut self.checker.tracer {
                 if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
@@ -3139,12 +3148,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let source_is_callable = function_shape_id(self.interner, source).is_some()
             || callable_shape_id(self.interner, source).is_some();
         if source_is_callable {
-            // Build a source ObjectShape from callable properties for structural comparison
+            // Build a source ObjectShape from callable properties for structural comparison.
+            // IMPORTANT: Sort properties by name (Atom) to match the merge scan's expectation.
             let source_props = if let Some(callable_id) = callable_shape_id(self.interner, source) {
                 let callable = self.interner.callable_shape(callable_id);
+                let mut props = callable.properties.clone();
+                props.sort_by_key(|a| a.name);
                 Some(ObjectShape {
                     flags: ObjectFlags::empty(),
-                    properties: callable.properties.clone(),
+                    properties: props,
                     string_index: callable.string_index.clone(),
                     number_index: callable.number_index.clone(),
                     symbol: callable.symbol,
@@ -3203,33 +3215,38 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if t_shape.properties.is_empty() {
                     return SubtypeResult::True;
                 }
-                let mut all_ok = true;
-                for t_prop in &t_shape.properties {
-                    let prop_name = self.interner.resolve_atom(t_prop.name);
-                    if prop_name == "length" {
-                        if !self.check_subtype(TypeId::NUMBER, t_prop.type_id).is_true() {
-                            all_ok = false;
-                            break;
-                        }
-                    } else {
-                        all_ok = false;
-                        break;
+                // Check if all target properties are satisfiable by the array.
+                // First try a quick check for length-only targets.
+                let only_length = t_shape
+                    .properties
+                    .iter()
+                    .all(|p| self.interner.resolve_atom(p.name) == "length");
+                if only_length {
+                    let all_ok = t_shape
+                        .properties
+                        .iter()
+                        .all(|p| self.check_subtype(TypeId::NUMBER, p.type_id).is_true());
+                    if all_ok {
+                        return SubtypeResult::True;
                     }
                 }
-                if all_ok {
-                    return SubtypeResult::True;
-                } else {
-                    // Trace: Array/tuple not compatible with object
-                    if let Some(tracer) = &mut self.tracer {
-                        if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                            source_type: source,
-                            target_type: target,
-                        }) {
-                            return SubtypeResult::False;
-                        }
+                // Try the Array<T> interface for full structural comparison.
+                // This handles cases like: number[] <: { toString(): string }
+                if let Some(elem) = array_element_type(self.interner, source) {
+                    if let Some(result) = self.check_array_interface_subtype(elem, target) {
+                        return result;
                     }
-                    return SubtypeResult::False;
                 }
+                // Trace: Array/tuple not compatible with object
+                if let Some(tracer) = &mut self.tracer {
+                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                        source_type: source,
+                        target_type: target,
+                    }) {
+                        return SubtypeResult::False;
+                    }
+                }
+                return SubtypeResult::False;
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
@@ -3254,6 +3271,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                     }
                     return SubtypeResult::True;
+                }
+                // Target has non-empty properties + index signature.
+                // Try the Array<T> interface for full structural comparison.
+                if let Some(elem) = array_element_type(self.interner, source) {
+                    if let Some(result) = self.check_array_interface_subtype(elem, target) {
+                        return result;
+                    }
                 }
                 // Trace: Array/tuple not compatible with indexed object with non-empty properties
                 if let Some(tracer) = &mut self.tracer {
