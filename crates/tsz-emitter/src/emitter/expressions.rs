@@ -480,11 +480,24 @@ impl<'a> Printer<'a> {
 
         // Shorthand property: parser creates PROPERTY_ASSIGNMENT with name == initializer
         // (same NodeIndex) for { name } instead of SHORTHAND_PROPERTY_ASSIGNMENT
-        if prop.name == prop.initializer {
+        let is_shorthand = prop.name == prop.initializer;
+
+        // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
+        // ES5 doesn't support shorthand property syntax (ES6 feature)
+        if is_shorthand && self.ctx.target_es5 {
+            self.emit(prop.name);
+            self.write(": ");
+            self.emit_expression(prop.initializer);
+            return;
+        }
+
+        // For ES6+ target, preserve shorthand as-is
+        if is_shorthand {
             self.emit(prop.name);
             return;
         }
 
+        // Regular property: name: value
         self.emit(prop.name);
         self.write(": ");
         self.emit_expression(prop.initializer);
@@ -499,6 +512,20 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // For ES5 target, expand shorthand properties to full form: { x } → { x: x }
+        // ES5 doesn't support shorthand property syntax (ES6 feature)
+        if self.ctx.target_es5 {
+            self.emit(shorthand.name);
+            self.write(": ");
+            self.emit(shorthand.name);
+            if shorthand.equals_token {
+                // Object assignment pattern default value would go here
+                // For now, this is handled by the destructuring transform
+            }
+            return;
+        }
+
+        // For ES6+ target, emit shorthand as-is
         self.emit(shorthand.name);
         if shorthand.equals_token {
             self.write(" = ");
