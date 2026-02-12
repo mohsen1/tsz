@@ -693,7 +693,9 @@ impl<'a> CheckerState<'a> {
             None => return TypeSymbolResolution::NotFound,
         };
 
-        let Some(left_symbol) = self.ctx.binder.get_symbol(left_sym) else {
+        // Look up the symbol across binders (file + libs)
+        let lib_binders = self.get_lib_binders();
+        let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) else {
             return TypeSymbolResolution::NotFound;
         };
         let Some(exports) = left_symbol.exports.as_ref() else {
