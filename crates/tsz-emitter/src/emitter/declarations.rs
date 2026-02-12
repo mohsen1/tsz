@@ -559,16 +559,27 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             use crate::transforms::NamespaceES5Emitter;
             let mut es5_emitter = NamespaceES5Emitter::new(self.arena);
-            es5_emitter.set_indent_level(self.writer.indent_level());
+
+            // Set IRPrinter indent to 0 because we'll handle base indentation through
+            // the writer when writing each line. This prevents double-indentation for
+            // nested namespaces where the writer is already indented.
+            es5_emitter.set_indent_level(0);
+
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }
             let output = es5_emitter.emit_namespace(idx);
 
-            // The IRPrinter creates output with built-in indentation.
-            // Write it using write_raw_text() to avoid adding indentation on top.
+            // Write the namespace output line by line, letting the writer handle indentation.
+            // IRPrinter generates relative indentation (nested constructs indented relative
+            // to each other), and the writer adds the base indentation for our current scope.
             let trimmed = output.trim_end_matches('\n');
-            self.writer.write_raw_text(trimmed);
+            for (i, line) in trimmed.lines().enumerate() {
+                if i > 0 {
+                    self.write_line();
+                }
+                self.write(line);
+            }
 
             // Skip comments within the namespace body range since the ES5 namespace emitter
             // doesn't use the main comment system. Without this, comments would be dumped
