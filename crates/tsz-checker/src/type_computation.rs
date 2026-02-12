@@ -1103,10 +1103,71 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
+            // Check for boxed primitive types in arithmetic operations BEFORE evaluating types.
+            // Boxed types (Number, String, Boolean) are interface types from lib.d.ts
+            // and are NOT valid for arithmetic operations. We must check BEFORE calling
+            // evaluate_type_for_binary_ops because that function converts boxed types
+            // to primitives (Number → number), which would make our check fail.
+            let is_arithmetic_op = matches!(op_str, "+" | "-" | "*" | "/" | "%" | "**");
+            if is_arithmetic_op {
+                let left_is_boxed = self.is_boxed_primitive_type(left_type);
+                let right_is_boxed = self.is_boxed_primitive_type(right_type);
+
+                if left_is_boxed || right_is_boxed {
+                    // Emit appropriate error based on operator
+                    if op_str == "+" {
+                        // TS2365: Operator '+' cannot be applied to types 'T' and 'U'
+                        // Use the existing error reporter which handles + specially
+                        let left_str = self.format_type(left_type);
+                        let right_str = self.format_type(right_type);
+                        if let Some(node) = self.ctx.arena.get(node_idx) {
+                            let message = format!(
+                                "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                                op_str, left_str, right_str
+                            );
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                message,
+                                2365, // TS2365
+                            );
+                        }
+                    } else {
+                        // TS2362/TS2363: Left/right hand side must be number/bigint/enum
+                        // Emit separate errors for left and right operands
+                        if left_is_boxed {
+                            if let Some(node) = self.ctx.arena.get(left_idx) {
+                                let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    message,
+                                    2362, // TS2362
+                                );
+                            }
+                        }
+                        if right_is_boxed {
+                            if let Some(node) = self.ctx.arena.get(right_idx) {
+                                let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    message,
+                                    2363, // TS2363
+                                );
+                            }
+                        }
+                    }
+                    type_stack.push(TypeId::UNKNOWN);
+                    continue;
+                }
+            }
+
             // Evaluate types to resolve unevaluated conditional/mapped types before
             // passing to the solver. e.g., DeepPartial<number> | number → number
             let eval_left = self.evaluate_type_for_binary_ops(left_type);
             let eval_right = self.evaluate_type_for_binary_ops(right_type);
+
             let result = evaluator.evaluate(eval_left, eval_right, op_str);
             let result_type = match result {
                 BinaryOpResult::Success(result_type) => result_type,
