@@ -1576,17 +1576,46 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Find a member by name in a class, searching up the inheritance chain.
-    /// Returns the member info if found, or None. The `depth` parameter limits
-    /// chain traversal to prevent infinite loops.
+    /// Returns the member info if found, or None.
+    /// Uses cycle detection to handle circular inheritance safely.
     fn find_member_in_class_chain(
         &mut self,
         class_idx: NodeIndex,
         target_name: &str,
         target_is_static: bool,
-        depth: usize,
+        _depth: usize,
     ) -> Option<ClassMemberInfo> {
-        if depth > 10 {
-            return None; // Prevent infinite loops
+        use tsz_solver::recursion::{RecursionGuard, RecursionProfile};
+
+        // Create a recursion guard for cycle detection
+        let mut guard = RecursionGuard::with_profile(RecursionProfile::CheckerRecursion);
+
+        self.find_member_in_class_chain_impl(class_idx, target_name, target_is_static, &mut guard)
+    }
+
+    /// Internal implementation of find_member_in_class_chain with recursion guard.
+    fn find_member_in_class_chain_impl(
+        &mut self,
+        class_idx: NodeIndex,
+        target_name: &str,
+        target_is_static: bool,
+        guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
+    ) -> Option<ClassMemberInfo> {
+        use tsz_solver::recursion::RecursionResult;
+
+        // Check for cycles using the recursion guard
+        match guard.enter(class_idx) {
+            RecursionResult::Cycle => {
+                // Circular inheritance detected - return None gracefully
+                return None;
+            }
+            RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
+                // Exceeded limits - bail out
+                return None;
+            }
+            RecursionResult::Entered => {
+                // Proceed with the search
+            }
         }
 
         let class_node = self.ctx.arena.get(class_idx)?;
@@ -1596,13 +1625,22 @@ impl<'a> CheckerState<'a> {
         for &member_idx in &class_data.members.nodes {
             if let Some(info) = self.extract_class_member_info(member_idx, true) {
                 if info.name == target_name && info.is_static == target_is_static {
+                    // Found it! Leave guard before returning
+                    guard.leave(class_idx);
                     return Some(info);
                 }
             }
         }
 
         // Walk up to base class
-        let heritage_clauses = class_data.heritage_clauses.as_ref()?;
+        let heritage_clauses = match class_data.heritage_clauses.as_ref() {
+            Some(clauses) => clauses,
+            None => {
+                guard.leave(class_idx);
+                return None;
+            }
+        };
+
         for &clause_idx in &heritage_clauses.nodes {
             let clause_node = self.ctx.arena.get(clause_idx)?;
             let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
@@ -1627,13 +1665,20 @@ impl<'a> CheckerState<'a> {
             } else {
                 *symbol.declarations.first()?
             };
-            return self.find_member_in_class_chain(
+
+            let result = self.find_member_in_class_chain_impl(
                 base_idx,
                 target_name,
                 target_is_static,
-                depth + 1,
+                guard,
             );
+
+            // Always leave the guard before returning
+            guard.leave(class_idx);
+            return result;
         }
+
+        guard.leave(class_idx);
         None
     }
 
