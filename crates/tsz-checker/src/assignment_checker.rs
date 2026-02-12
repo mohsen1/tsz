@@ -292,6 +292,15 @@ impl<'a> CheckerState<'a> {
         evaluator.is_arithmetic_operand(type_id)
     }
 
+    /// Evaluate a type to simplify unevaluated conditional/mapped types for arithmetic checks.
+    ///
+    /// Types like `DeepPartial<number>` are conditional types (`number extends object ? ... : number`)
+    /// that may not have been evaluated yet. The `is_arithmetic_operand` visitor doesn't handle
+    /// unevaluated conditional types. This method resolves them before the check.
+    fn evaluate_type_for_arithmetic_check(&mut self, type_id: TypeId) -> TypeId {
+        self.evaluate_type_for_binary_ops(type_id)
+    }
+
     /// Check and emit TS2362/TS2363 errors for arithmetic operations.
     ///
     /// For operators like -, *, /, %, **, -=, *=, /=, %=, **=,
@@ -305,8 +314,12 @@ impl<'a> CheckerState<'a> {
         left_type: TypeId,
         right_type: TypeId,
     ) -> bool {
-        let left_is_valid = self.is_arithmetic_operand(left_type);
-        let right_is_valid = self.is_arithmetic_operand(right_type);
+        // Evaluate types first to resolve unevaluated conditional types.
+        // e.g. DeepPartial<number> (conditional: number extends object ? ... : number) → number
+        let left_eval = self.evaluate_type_for_arithmetic_check(left_type);
+        let right_eval = self.evaluate_type_for_arithmetic_check(right_type);
+        let left_is_valid = self.is_arithmetic_operand(left_eval);
+        let right_is_valid = self.is_arithmetic_operand(right_eval);
 
         if !left_is_valid {
             if let Some(loc) = self.get_source_location(left_idx) {

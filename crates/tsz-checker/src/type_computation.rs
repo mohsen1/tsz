@@ -27,6 +27,40 @@ impl<'a> CheckerState<'a> {
     // Core Type Computation
     // =========================================================================
 
+    /// Evaluate a type deeply for binary operation checking.
+    ///
+    /// Unlike `evaluate_type_with_resolution` which only handles the top-level type,
+    /// this also evaluates individual members of union types. This is needed because
+    /// types like `DeepPartial<number> | number` are stored as a union where one
+    /// member is an unevaluated Application type that the solver's `NumberLikeVisitor`
+    /// can't handle.
+    pub(crate) fn evaluate_type_for_binary_ops(&mut self, type_id: TypeId) -> TypeId {
+        use tsz_solver::type_queries::get_union_members;
+
+        // First try top-level evaluation
+        let evaluated = self.evaluate_type_with_resolution(type_id);
+
+        // If it's a union, evaluate each member individually
+        if let Some(members) = get_union_members(self.ctx.types, evaluated) {
+            let mut changed = false;
+            let new_members: Vec<TypeId> = members
+                .iter()
+                .map(|&m| {
+                    let eval_m = self.evaluate_type_with_resolution(m);
+                    if eval_m != m {
+                        changed = true;
+                    }
+                    eval_m
+                })
+                .collect();
+            if changed {
+                return self.ctx.types.union(new_members);
+            }
+        }
+
+        evaluated
+    }
+
     /// Evaluate a contextual type that may contain unevaluated mapped/conditional types.
     ///
     /// When a generic function's parameter type is instantiated (e.g., `{ [K in keyof P]: P[K] }`
@@ -1043,7 +1077,10 @@ impl<'a> CheckerState<'a> {
                         }
                         _ => "?",
                     };
-                    let result = evaluator.evaluate(left_type, right_type, op_str);
+                    // Evaluate types to resolve unevaluated conditional/mapped types
+                    let eval_left = self.evaluate_type_for_binary_ops(left_type);
+                    let eval_right = self.evaluate_type_for_binary_ops(right_type);
+                    let result = evaluator.evaluate(eval_left, eval_right, op_str);
                     let result_type = match result {
                         BinaryOpResult::Success(result_type) => result_type,
                         BinaryOpResult::TypeError { .. } => {
@@ -1066,7 +1103,11 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
-            let result = evaluator.evaluate(left_type, right_type, op_str);
+            // Evaluate types to resolve unevaluated conditional/mapped types before
+            // passing to the solver. e.g., DeepPartial<number> | number → number
+            let eval_left = self.evaluate_type_for_binary_ops(left_type);
+            let eval_right = self.evaluate_type_for_binary_ops(right_type);
+            let result = evaluator.evaluate(eval_left, eval_right, op_str);
             let result_type = match result {
                 BinaryOpResult::Success(result_type) => result_type,
                 BinaryOpResult::TypeError { left, right, op } => {
@@ -1097,9 +1138,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         // Don't emit errors if either operand is ERROR - prevents cascading errors
                         if left != TypeId::ERROR && right != TypeId::ERROR {
-                            // Emit appropriate error for arithmetic type mismatch
+                            // Use original types for error messages (more informative)
                             self.emit_binary_operator_error(
-                                node_idx, left_idx, right_idx, left, right, op,
+                                node_idx, left_idx, right_idx, left_type, right_type, op,
                             );
                         }
                         TypeId::UNKNOWN

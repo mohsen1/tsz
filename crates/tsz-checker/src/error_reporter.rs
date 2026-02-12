@@ -1848,14 +1848,19 @@ impl<'a> CheckerState<'a> {
         let is_bitwise = matches!(op, "&" | "|" | "^" | "<<" | ">>" | ">>>");
         let requires_numeric_operands = is_arithmetic || is_bitwise;
 
+        // Evaluate types to resolve unevaluated conditional/mapped types before checking.
+        // e.g., DeepPartial<number> | number → number
+        let eval_left = self.evaluate_type_for_binary_ops(left_type);
+        let eval_right = self.evaluate_type_for_binary_ops(right_type);
+
         // Check if operands have valid arithmetic types using BinaryOpEvaluator
         // This properly handles number, bigint, any, and enum types (unions of number literals)
         // Note: evaluator was already created above for symbol checking
         // Skip arithmetic checks for symbol operands (we already emitted TS2469)
         let left_is_valid_arithmetic =
-            !left_is_symbol && evaluator.is_arithmetic_operand(left_type);
+            !left_is_symbol && evaluator.is_arithmetic_operand(eval_left);
         let right_is_valid_arithmetic =
-            !right_is_symbol && evaluator.is_arithmetic_operand(right_type);
+            !right_is_symbol && evaluator.is_arithmetic_operand(eval_right);
 
         // For + operator, TSC always emits TS2365 ("Operator '+' cannot be applied to types"),
         // never TS2362/TS2363. This is because + can be either string concatenation or arithmetic,
