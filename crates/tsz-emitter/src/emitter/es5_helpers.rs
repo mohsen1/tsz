@@ -3,9 +3,9 @@ use super::{ParamTransform, ParamTransformPlan, Printer, RestParamTransform};
 use crate::transform_context::TransformDirective;
 use crate::transforms::ClassES5Emitter;
 use std::sync::Arc;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{MethodDeclData, Node};
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 /// Segment of an array literal for ES5 spread transformation
@@ -551,40 +551,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit an object segment (elements or spread)
-    #[allow(dead_code)]
-    fn emit_object_segment(&mut self, segment: &ObjectSegment) {
-        match segment {
-            ObjectSegment::Elements(elems) => {
-                let has_computed = elems
-                    .iter()
-                    .any(|&idx| self.is_computed_property_member(idx));
-                if has_computed {
-                    let temp_var = self.ctx.destructuring_state.next_temp_var();
-                    self.write("(");
-                    self.write(&temp_var);
-                    self.write(" = ");
-                    self.emit_object_literal_entries_es5(elems);
-                    for elem in elems.iter() {
-                        if self.is_computed_property_member(*elem) {
-                            self.write(", ");
-                            self.emit_property_assignment_es5(*elem, &temp_var);
-                        }
-                    }
-                    self.write(", ");
-                    self.write(&temp_var);
-                    self.write(")");
-                } else {
-                    self.emit_object_literal_entries_es5(elems);
-                }
-            }
-            ObjectSegment::Spread(_) => {
-                // Spread handled specially in emit_object_literal_with_spread_es5
-                self.write("{}");
-            }
-        }
-    }
-
     /// Emit a property assignment in ES5 computed property transform
     pub(super) fn emit_property_assignment_es5(&mut self, prop_idx: NodeIndex, temp_var: &str) {
         let Some(node) = self.arena.get(prop_idx) else {
@@ -1030,22 +996,6 @@ impl<'a> Printer<'a> {
         self.pop_temp_scope();
     }
 
-    #[allow(dead_code)] // Infrastructure for ES5 parameter transforms
-    pub(super) fn function_parameters_need_es5_transform(&self, params: &[NodeIndex]) -> bool {
-        params.iter().any(|&param_idx| {
-            let Some(param_node) = self.arena.get(param_idx) else {
-                return false;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                return false;
-            };
-
-            param.dot_dot_dot_token
-                || !param.initializer.is_none()
-                || self.is_binding_pattern(param.name)
-        })
-    }
-
     pub(super) fn emit_function_parameters_es5(
         &mut self,
         params: &[NodeIndex],
@@ -1251,78 +1201,5 @@ impl<'a> Printer<'a> {
             }
         }
         vars
-    }
-
-    /// Check if a class has an extends clause
-    #[allow(dead_code)]
-    pub(super) fn class_has_extends(&self, heritage_clauses: &Option<NodeList>) -> bool {
-        let Some(clauses) = heritage_clauses else {
-            return false;
-        };
-        for &clause_idx in &clauses.nodes {
-            let Some(clause_node) = self.arena.get(clause_idx) else {
-                continue;
-            };
-            let Some(heritage_data) = self.arena.get_heritage(clause_node) else {
-                continue;
-            };
-            if heritage_data.token == SyntaxKind::ExtendsKeyword as u16 {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Emit the __extends helper function
-    #[allow(dead_code)] // Infrastructure for ES5 class transforms
-    pub(super) fn emit_extends_helper(&mut self) {
-        // TypeScript's ES5 __extends helper
-        self.write("var __extends = (this && this.__extends) || (function () {");
-        self.write_line();
-        self.increase_indent();
-
-        self.write("var extendStatics = function (d, b) {");
-        self.write_line();
-        self.increase_indent();
-
-        self.write("extendStatics = Object.setPrototypeOf ||");
-        self.write_line();
-        self.write(
-            "    ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||",
-        );
-        self.write_line();
-        self.write("    function (d, b) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };");
-        self.write_line();
-        self.write("return extendStatics(d, b);");
-        self.write_line();
-
-        self.decrease_indent();
-        self.write("};");
-        self.write_line();
-
-        self.write("return function (d, b) {");
-        self.write_line();
-        self.increase_indent();
-
-        self.write("if (typeof b !== \"function\" && b !== null)");
-        self.write_line();
-        self.write("    throw new TypeError(\"Class extends value \" + String(b) + \" is not a constructor or null\");");
-        self.write_line();
-        self.write("extendStatics(d, b);");
-        self.write_line();
-        self.write("function __() { this.constructor = d; }");
-        self.write_line();
-        self.write(
-            "d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());",
-        );
-        self.write_line();
-
-        self.decrease_indent();
-        self.write("};");
-        self.write_line();
-
-        self.decrease_indent();
-        self.write("})();");
-        self.write_line();
     }
 }

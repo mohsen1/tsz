@@ -46,8 +46,6 @@ impl FoldingRange {
 #[derive(Debug)]
 struct RegionDelimiter {
     is_start: bool,
-    #[allow(dead_code)]
-    label: String,
 }
 
 define_lsp_provider!(minimal FoldingRangeProvider, "Provider for folding ranges.");
@@ -666,20 +664,9 @@ fn parse_region_delimiter(trimmed: &str) -> Option<RegionDelimiter> {
     let after_slashes = trimmed[2..].trim_start();
     if let Some(rest) = after_slashes.strip_prefix("#endregion") {
         let _ = rest;
-        Some(RegionDelimiter {
-            is_start: false,
-            label: String::new(),
-        })
-    } else if let Some(rest) = after_slashes.strip_prefix("#region") {
-        let label = rest.trim().to_string();
-        Some(RegionDelimiter {
-            is_start: true,
-            label: if label.is_empty() {
-                "#region".to_string()
-            } else {
-                label
-            },
-        })
+        Some(RegionDelimiter { is_start: false })
+    } else if let Some(_rest) = after_slashes.strip_prefix("#region") {
+        Some(RegionDelimiter { is_start: true })
     } else {
         None
     }
@@ -1039,7 +1026,6 @@ mod folding_tests {
         assert!(result.is_some());
         let d = result.unwrap();
         assert!(d.is_start);
-        assert_eq!(d.label, "My Region");
     }
 
     #[test]
@@ -1048,7 +1034,6 @@ mod folding_tests {
         assert!(result.is_some());
         let d = result.unwrap();
         assert!(d.is_start);
-        assert_eq!(d.label, "NoSpace");
     }
 
     #[test]
@@ -1065,7 +1050,6 @@ mod folding_tests {
         assert!(result.is_some());
         let d = result.unwrap();
         assert!(d.is_start);
-        assert_eq!(d.label, "#region");
     }
 
     #[test]

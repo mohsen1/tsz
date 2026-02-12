@@ -62,10 +62,6 @@ pub(crate) enum ComputedKey {
     String(String),
     /// A computed key that is a numeric literal: `this[0]`
     Number(String),
-    /// A computed key that is a qualified name: `this[Foo.Bar]`
-    Qualified(String),
-    /// Symbol call like Symbol("key") or Symbol() - stores optional description
-    Symbol(Option<String>),
 }
 
 // =============================================================================
@@ -984,36 +980,7 @@ impl<'a> CheckerState<'a> {
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access_name) = self.qualified_name_from_property_access(expr_idx)
         {
-            return Some(ComputedKey::Qualified(access_name));
-        }
-
-        // Handle call expressions like Symbol("key")
-        if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
-            && let Some(call) = self.ctx.arena.get_call_expr(expr_node)
-        {
-            // Check if callee is "Symbol"
-            if let Some(callee_node) = self.ctx.arena.get(call.expression)
-                && let Some(callee_ident) = self.ctx.arena.get_identifier(callee_node)
-                && callee_ident.escaped_text == "Symbol"
-            {
-                // Try to get the description argument if present
-                let description = call
-                    .arguments
-                    .as_ref()
-                    .and_then(|args| args.nodes.first())
-                    .and_then(|&first_arg| self.ctx.arena.get(first_arg))
-                    .and_then(|arg_node| {
-                        if arg_node.kind == SyntaxKind::StringLiteral as u16 {
-                            self.ctx
-                                .arena
-                                .get_literal(arg_node)
-                                .map(|lit| lit.text.clone())
-                        } else {
-                            None
-                        }
-                    });
-                return Some(ComputedKey::Symbol(description));
-            }
+            return Some(ComputedKey::Ident(access_name));
         }
 
         None

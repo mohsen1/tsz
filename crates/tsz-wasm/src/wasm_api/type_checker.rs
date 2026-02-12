@@ -26,17 +26,14 @@ pub struct TsTypeChecker {
     /// Reference to program's merged state
     /// Note: We use indices/IDs rather than holding full references
     /// to avoid complex lifetime issues with wasm-bindgen
-    #[allow(dead_code)]
     program_id: u32,
     /// Type interner pointer (borrowed from program)
     /// SAFETY: The TsTypeChecker is always created from TsProgram and
     /// must not outlive the program that created it
     interner_ptr: *const TypeInterner,
     /// Checker options
-    #[allow(dead_code)]
     options: CheckerOptions,
     /// Lib file names for global type resolution
-    #[allow(dead_code)]
     lib_file_names: Vec<String>,
 }
 

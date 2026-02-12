@@ -383,7 +383,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    #[allow(dead_code)]
     fn emit_es5_destructuring_from_value(
         &mut self,
         pattern_idx: NodeIndex,
@@ -1674,68 +1673,6 @@ impl<'a> Printer<'a> {
             self.write(".value");
             self.write_semicolon();
         }
-    }
-
-    #[allow(dead_code)]
-    fn emit_for_of_value_binding_es5(&mut self, initializer: NodeIndex, result_name: &str) {
-        if initializer.is_none() {
-            return;
-        }
-
-        let Some(init_node) = self.arena.get(initializer) else {
-            return;
-        };
-
-        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            self.write("var ");
-            if let Some(decl_list) = self.arena.get_variable(init_node) {
-                let mut first = true;
-                for &decl_idx in &decl_list.declarations.nodes {
-                    self.emit_for_of_declaration_value_es5(decl_idx, result_name, &mut first);
-                }
-            }
-            self.write_semicolon();
-        } else if self.is_binding_pattern(initializer) {
-            self.write("var ");
-            let mut first = true;
-            self.emit_es5_destructuring_from_value(initializer, result_name, &mut first);
-            self.write_semicolon();
-        } else {
-            self.emit_expression(initializer);
-            self.write(" = ");
-            self.write(result_name);
-            self.write(".value");
-            self.write_semicolon();
-        }
-    }
-
-    #[allow(dead_code)]
-    fn emit_for_of_declaration_value_es5(
-        &mut self,
-        decl_idx: NodeIndex,
-        result_name: &str,
-        first: &mut bool,
-    ) {
-        let Some(decl_node) = self.arena.get(decl_idx) else {
-            return;
-        };
-        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-            return;
-        };
-
-        if self.is_binding_pattern(decl.name) {
-            self.emit_es5_destructuring_from_value(decl.name, result_name, first);
-            return;
-        }
-
-        if !*first {
-            self.write(", ");
-        }
-        *first = false;
-        self.emit(decl.name);
-        self.write(" = ");
-        self.write(result_name);
-        self.write(".value");
     }
 
     /// Emit variable binding for array-indexed for-of pattern:

@@ -12,10 +12,8 @@
 //! This module extends CheckerState with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
-use crate::FlowAnalyzer;
 use crate::state::{CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, PropertyKey};
 use rustc_hash::FxHashSet;
-use std::rc::Rc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -26,7 +24,6 @@ use tsz_solver::TypeId;
 // Type Checking Methods
 // =============================================================================
 
-#[allow(dead_code)]
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Utility Methods
@@ -90,35 +87,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get modifiers from a class member node (property, method, accessor).
-    ///
-    /// This helper eliminates the repeated pattern of matching member kinds
-    /// and extracting their modifiers.
-    pub(crate) fn get_member_modifiers(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-    ) -> Option<&tsz_parser::parser::NodeList> {
-        use tsz_parser::parser::syntax_kind_ext;
-        match node.kind {
-            syntax_kind_ext::PROPERTY_DECLARATION => self
-                .ctx
-                .arena
-                .get_property_decl(node)
-                .and_then(|p| p.modifiers.as_ref()),
-            syntax_kind_ext::METHOD_DECLARATION => self
-                .ctx
-                .arena
-                .get_method_decl(node)
-                .and_then(|m| m.modifiers.as_ref()),
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
-                .ctx
-                .arena
-                .get_accessor(node)
-                .and_then(|a| a.modifiers.as_ref()),
-            _ => None,
-        }
-    }
-
     /// Get the name node from a class member node.
     ///
     /// This helper eliminates the repeated pattern of matching member kinds
@@ -143,63 +111,6 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         }
-    }
-
-    /// Get the name node from a declaration node.
-    ///
-    /// This helper eliminates the repeated pattern of matching declaration kinds
-    /// and extracting their name nodes.
-    pub(crate) fn get_declaration_name(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-    ) -> Option<NodeIndex> {
-        use tsz_parser::parser::syntax_kind_ext;
-        match node.kind {
-            syntax_kind_ext::VARIABLE_DECLARATION => self
-                .ctx
-                .arena
-                .get_variable_declaration(node)
-                .map(|v| v.name),
-            syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.ctx.arena.get_function(node).map(|f| f.name)
-            }
-            syntax_kind_ext::CLASS_DECLARATION => self.ctx.arena.get_class(node).map(|c| c.name),
-            syntax_kind_ext::INTERFACE_DECLARATION => {
-                self.ctx.arena.get_interface(node).map(|i| i.name)
-            }
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                self.ctx.arena.get_type_alias(node).map(|t| t.name)
-            }
-            syntax_kind_ext::ENUM_DECLARATION => self.ctx.arena.get_enum(node).map(|e| e.name),
-            _ => None,
-        }
-    }
-
-    /// Check if a node kind is a literal kind (string, number, boolean, null, undefined).
-    ///
-    /// This helper eliminates the repeated pattern of matching multiple literal kinds.
-    pub(crate) fn is_literal_kind(kind: u16) -> bool {
-        matches!(kind,
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-                || k == SyntaxKind::BigIntLiteral as u16
-                || k == SyntaxKind::TrueKeyword as u16
-                || k == SyntaxKind::FalseKeyword as u16
-                || k == SyntaxKind::NullKeyword as u16
-                || k == SyntaxKind::UndefinedKeyword as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || k == SyntaxKind::RegularExpressionLiteral as u16
-        )
-    }
-
-    /// Check if a node kind is a terminal statement (return, throw).
-    ///
-    /// Terminal statements are statements that always terminate execution.
-    pub(crate) fn is_terminal_statement(kind: u16) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-        matches!(kind,
-            k if k == syntax_kind_ext::RETURN_STATEMENT || k == syntax_kind_ext::THROW_STATEMENT
-        )
     }
 
     /// Get identifier text from a node, if it's an identifier.
@@ -239,128 +150,6 @@ impl<'a> CheckerState<'a> {
                 {
                     return true;
                 }
-            }
-        }
-        false
-    }
-
-    /// Generic helper to traverse both sides of a binary expression.
-    ///
-    /// This eliminates the repeated pattern of:
-    /// ```rust,ignore
-    /// if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
-    ///     self.some_check(bin_expr.left);
-    ///     self.some_check(bin_expr.right);
-    /// }
-    /// ```
-    pub(crate) fn for_each_binary_child<F>(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-        mut f: F,
-    ) -> bool
-    where
-        F: FnMut(NodeIndex),
-    {
-        use tsz_parser::parser::syntax_kind_ext;
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
-                f(bin_expr.left);
-                f(bin_expr.right);
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Generic helper to traverse conditional expression branches.
-    ///
-    /// This eliminates the repeated pattern of:
-    /// ```rust,ignore
-    /// if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
-    ///     self.some_check(cond.condition);
-    ///     self.some_check(cond.when_true);
-    ///     self.some_check(cond.when_false);
-    /// }
-    /// ```
-    pub(crate) fn for_each_conditional_child<F>(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-        mut f: F,
-    ) -> bool
-    where
-        F: FnMut(NodeIndex),
-    {
-        use tsz_parser::parser::syntax_kind_ext;
-        if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
-            if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
-                f(cond.condition);
-                f(cond.when_true);
-                if !cond.when_false.is_none() {
-                    f(cond.when_false);
-                }
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Generic helper to traverse call expression with arguments.
-    ///
-    /// This eliminates the repeated pattern of:
-    /// ```rust,ignore
-    /// if let Some(call) = self.ctx.arena.get_call_expr(node) {
-    ///     self.some_check(call.expression);
-    ///     if let Some(args) = &call.arguments {
-    ///         for &arg in &args.nodes {
-    ///             self.some_check(arg);
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    pub(crate) fn for_each_call_child<F>(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-        mut f: F,
-    ) -> bool
-    where
-        F: FnMut(NodeIndex),
-    {
-        use tsz_parser::parser::syntax_kind_ext;
-        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-            if let Some(call) = self.ctx.arena.get_call_expr(node) {
-                f(call.expression);
-                if let Some(args) = &call.arguments {
-                    for &arg in &args.nodes {
-                        f(arg);
-                    }
-                }
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Generic helper to skip parenthesized expressions.
-    ///
-    /// This eliminates the repeated pattern of:
-    /// ```rust,ignore
-    /// if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-    ///     self.some_check(paren.expression);
-    /// }
-    /// ```
-    pub(crate) fn for_each_parenthesized_child<F>(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-        mut f: F,
-    ) -> bool
-    where
-        F: FnMut(NodeIndex),
-    {
-        use tsz_parser::parser::syntax_kind_ext;
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                f(paren.expression);
-                return true;
             }
         }
         false
@@ -879,80 +668,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if the target type is valid for array destructuring.
-    ///
-    /// Validates that the type is array-like (has iterator, is tuple, or is string).
-    /// Emits TS2488 if the type is not iterable, TS2461 for other non-array-like types.
-    ///
-    /// ## Parameters:
-    /// - `pattern_idx`: The array binding pattern node index
-    /// - `source_type`: The type being destructured
-    ///
-    /// ## Validation:
-    /// - Checks if the type is array, tuple, string, or has iterator
-    /// - Emits TS2488 for non-iterable types (preferred error for destructuring)
-    /// - Emits TS2461 as fallback for non-array-like types
-    pub(crate) fn check_array_destructuring_target_type(
-        &mut self,
-        pattern_idx: NodeIndex,
-        source_type: TypeId,
-    ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
-        // Skip check for any, unknown, error, or never types
-        if source_type == TypeId::ANY
-            || source_type == TypeId::UNKNOWN
-            || source_type == TypeId::ERROR
-            || source_type == TypeId::NEVER
-        {
-            return;
-        }
-
-        // TypeScript allows empty array destructuring patterns on any type (including null/undefined)
-        // Example: let [] = null; // No error
-        // Skip iterability check if the pattern is empty
-        if let Some(pattern_node) = self.ctx.arena.get(pattern_idx) {
-            if let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
-                if binding_pattern.elements.nodes.is_empty() {
-                    return;
-                }
-            }
-        }
-
-        // Resolve lazy types (type aliases) before checking iterability
-        let source_type = self.resolve_lazy_type(source_type);
-
-        // First check if the type is iterable (TS2488 - preferred error)
-        // This is the primary check for array destructuring
-        // Also allow array-like types with numeric index signatures
-        if !self.is_iterable_type(source_type) && !self.has_numeric_index_signature(source_type) {
-            let type_str = self.format_type(source_type);
-            let message = format_message(
-                diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
-                &[&type_str],
-            );
-            self.error_at_node(
-                pattern_idx,
-                &message,
-                diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
-            );
-            return;
-        }
-
-        // Check if the type is array-like (TS2461 - fallback error)
-        // This catches cases where type is iterable but not array-like
-        let is_array_like = self.is_array_destructurable_type(source_type);
-
-        if !is_array_like {
-            let type_str = self.format_type(source_type);
-            self.error_at_node_msg(
-                pattern_idx,
-                diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                &[&type_str],
-            );
-        }
-    }
-
     // =========================================================================
     // Import Validation
     // =========================================================================
@@ -962,7 +677,6 @@ impl<'a> CheckerState<'a> {
 // Statement Validation
 // =============================================================================
 
-#[allow(dead_code)]
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Return Statement Validation
@@ -1367,12 +1081,6 @@ impl<'a> CheckerState<'a> {
         has_dispose
     }
 
-    /// Get a type string for error messages (fallback when detailed formatting isn't available).
-    fn get_type_string_fallback(&self, type_id: TypeId) -> String {
-        // Try to get a reasonable type name
-        self.get_type_display_name(type_id)
-    }
-
     // =========================================================================
     // Super Expression Validation
     // =========================================================================
@@ -1626,37 +1334,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
-    }
-
-    /// Check if a function is a class method.
-    ///
-    /// Walks up the parent chain looking for ClassDeclaration nodes.
-    ///
-    /// ## Parameters
-    /// - `func_idx`: The function node index
-    ///
-    /// Returns true if the function is inside a class declaration.
-    pub(crate) fn is_class_method(&self, func_idx: NodeIndex) -> bool {
-        // Walk up the parent chain looking for ClassDeclaration nodes
-        let mut current = func_idx;
-
-        while !current.is_none() {
-            if let Some(ext) = self.ctx.arena.get_extended(current) {
-                // Check if this node is a ClassDeclaration
-                if let Some(node) = self.ctx.arena.get(current) {
-                    if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    {
-                        return true;
-                    }
-                }
-                current = ext.parent;
-            } else {
-                break;
-            }
-        }
-
-        false
     }
 
     /// Check if a function is within a namespace or module context.
@@ -2628,45 +2305,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a node is an assignment target in a for-in or for-of loop.
-    ///
-    /// ## Parameters
-    /// - `idx`: The node index to check
-    ///
-    /// Returns true if the node is the variable being assigned in a for-in/of loop.
-    pub(crate) fn is_for_in_of_assignment_target(&self, idx: NodeIndex) -> bool {
-        let mut current = idx;
-        let mut iterations = 0;
-        loop {
-            iterations += 1;
-            if iterations > MAX_TREE_WALK_ITERATIONS {
-                return false;
-            }
-            let ext = match self.ctx.arena.get_extended(current) {
-                Some(ext) => ext,
-                None => return false,
-            };
-            if ext.parent.is_none() {
-                return false;
-            }
-            let parent = ext.parent;
-            let parent_node = match self.ctx.arena.get(parent) {
-                Some(node) => node,
-                None => return false,
-            };
-            if (parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
-                && let Some(for_data) = self.ctx.arena.get_for_in_of(parent_node)
-            {
-                let analyzer = FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types)
-                    .with_flow_cache(&self.ctx.flow_analysis_cache)
-                    .with_type_environment(Rc::clone(&self.ctx.type_environment));
-                return analyzer.assignment_targets_reference(for_data.initializer, idx);
-            }
-            current = parent;
-        }
-    }
-
     /// Convert a floating-point number to a numeric index.
     ///
     /// ## Parameters
@@ -2706,13 +2344,6 @@ impl<'a> CheckerState<'a> {
             PropertyKey::Computed(ComputedKey::Number(n)) => {
                 format!("[{}]", n)
             }
-            PropertyKey::Computed(ComputedKey::Qualified(q)) => {
-                format!("[{}]", q)
-            }
-            PropertyKey::Computed(ComputedKey::Symbol(Some(s))) => {
-                format!("[Symbol({})]", s)
-            }
-            PropertyKey::Computed(ComputedKey::Symbol(None)) => "[Symbol()]".to_string(),
             PropertyKey::Private(s) => format!("#{}", s),
         }
     }
@@ -2769,46 +2400,6 @@ impl<'a> CheckerState<'a> {
     }
 
     // 22. Type Checking Utilities (2 functions)
-
-    /// Check if a type is narrowable (can be narrowed via control flow).
-    ///
-    /// Narrowable types include unions, type parameters, infer types, and unknown.
-    /// These types can be narrowed to more specific types through
-    /// type guards and control flow analysis.
-    ///
-    /// ## Parameters
-    /// - `type_id`: The type ID to check
-    ///
-    /// Returns true if the type can be narrowed.
-    ///
-    /// ## Narrowable Types
-    /// - **Union types**: Can be narrowed to specific members via discriminant checks
-    /// - **Type parameters**: Can be narrowed via constraints
-    /// - **Infer types**: Can be narrowed during type inference
-    /// - **Unknown type**: Can be narrowed via typeof guards and user-defined type guards
-    /// - **Nullish types**: Can be narrowed via null/undefined checks
-    pub(crate) fn is_narrowable_type(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries::is_narrowable_type_key;
-
-        // unknown type is narrowable - typeof guards and user-defined type guards
-        // should narrow unknown to the guard's target type
-        // This prevents false positive TS2571 errors after type guards
-        if type_id == TypeId::UNKNOWN {
-            return true;
-        }
-
-        // Check if it's a union type or a type parameter (which can be narrowed)
-        if is_narrowable_type_key(self.ctx.types, type_id) {
-            return true;
-        }
-
-        // Types that include null or undefined can be narrowed via null checks
-        if self.type_contains_nullish(type_id) {
-            return true;
-        }
-
-        false
-    }
 
     /// Check if a node is within another node in the AST tree.
     ///
@@ -4379,154 +3970,6 @@ impl<'a> CheckerState<'a> {
     }
 
     // 23. Import and Private Brand Utilities (moved to symbol_resolver.rs)
-
-    // 24. Module Detection Utilities (3 functions)
-
-    /// Check if async function context validation should be performed.
-    ///
-    /// Determines whether async function validation should be strict based on:
-    /// - File extension (.d.ts files are always strict)
-    /// - isolatedModules compiler option
-    /// - Whether the file is a module (has import/export)
-    /// - Whether the function is a class method
-    /// - Whether in a namespace context
-    /// - Strict property initialization mode
-    /// - Other strict mode flags
-    ///
-    /// ## Parameters
-    /// - `func_idx`: The function node to check
-    ///
-    /// Returns true if async validation should be performed.
-    pub(crate) fn should_validate_async_function_context(&self, func_idx: NodeIndex) -> bool {
-        // Enhanced validation to catch more TS2705 cases (we have 34 missing)
-        // Need to be more liberal while maintaining precision
-
-        // Always validate in declaration files (.d.ts files are always strict)
-        if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        // Always validate for isolatedModules mode (explicit flag for strict validation)
-        if self.ctx.isolated_modules() {
-            return true;
-        }
-
-        // Validate if this is a module file (has import/export declarations in AST)
-        if self.is_file_module() {
-            return true;
-        }
-
-        // Validate class methods - class methods are typically strict
-        if self.is_class_method(func_idx) {
-            return true;
-        }
-
-        // Validate functions in namespaces (explicit module structure)
-        if self.is_in_namespace_context(func_idx) {
-            return true;
-        }
-
-        // Validate async functions in strict property initialization contexts
-        // If we're doing strict property checking, likely need strict async too
-        if self.ctx.strict_property_initialization() {
-            return true;
-        }
-
-        // More liberal fallback: validate if any strict mode features are enabled
-        if self.ctx.strict_null_checks()
-            || self.ctx.strict_function_types()
-            || self.ctx.no_implicit_any()
-        {
-            return true;
-        }
-
-        false
-    }
-
-    /// Check if the current file is a module (has import/export declarations).
-    ///
-    /// Uses AST-based detection instead of filename heuristics. A file is
-    /// considered a module if it contains any import or export declarations.
-    ///
-    /// Returns true if the file is a module.
-    pub(crate) fn is_file_module(&self) -> bool {
-        // Get the root source file node
-        let Some(root_node) = self.ctx.arena.nodes.last() else {
-            return false;
-        };
-
-        // Check if it's a source file
-        if root_node.kind != syntax_kind_ext::SOURCE_FILE {
-            return false;
-        }
-
-        let Some(source_file) = self.ctx.arena.get_source_file(root_node) else {
-            return false;
-        };
-
-        // Check each top-level statement for import/export declarations
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-
-            match stmt.kind {
-                // Import declarations indicate module
-                k if k == syntax_kind_ext::IMPORT_DECLARATION => return true,
-                k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => return true,
-
-                // Export declarations indicate module
-                k if k == syntax_kind_ext::EXPORT_DECLARATION => return true,
-                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
-
-                // Check for export modifier on declarations using existing method
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT
-                    || k == syntax_kind_ext::FUNCTION_DECLARATION
-                    || k == syntax_kind_ext::CLASS_DECLARATION
-                    || k == syntax_kind_ext::INTERFACE_DECLARATION
-                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                    || k == syntax_kind_ext::ENUM_DECLARATION
-                    || k == syntax_kind_ext::MODULE_DECLARATION =>
-                {
-                    if self.has_export_modifier_on_modifiers(stmt) {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        false
-    }
-
-    /// Check if a node's modifiers include the 'export' keyword.
-    ///
-    /// Helper for `is_file_module` to check export on declarations.
-    /// Iterates through the modifier nodes to find an ExportKeyword.
-    ///
-    /// ## Parameters
-    /// - `node`: The node to check (must be a declaration with modifiers)
-    ///
-    /// Returns true if the node has an export modifier.
-    pub(crate) fn has_export_modifier_on_modifiers(
-        &self,
-        node: &tsz_parser::parser::node::Node,
-    ) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        // Use helper to get modifiers from declaration
-        let Some(mods) = self.get_declaration_modifiers(node) else {
-            return false;
-        };
-
-        // Check if export modifier is present
-        mods.nodes.iter().any(|&mod_idx| {
-            self.ctx
-                .arena
-                .get(mod_idx)
-                .is_some_and(|mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
-        })
-    }
 
     // 25. AST Traversal Utilities (11 functions)
 

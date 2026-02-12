@@ -117,10 +117,8 @@ pub struct TsProgram {
     /// Compiler options
     options: TsCompilerOptions,
     /// Cached type checker
-    #[allow(dead_code)]
     type_checker: Option<TsTypeChecker>,
     /// Cached source files
-    #[allow(dead_code)]
     source_files: Vec<TsSourceFile>,
 }
 

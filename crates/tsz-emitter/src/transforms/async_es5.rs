@@ -65,7 +65,6 @@
 //! This separation allows clean transform logic while delegating string emission
 //! to the centralized `IRPrinter`.
 
-use crate::source_writer::source_position_from_offset;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_common::source_map::Mapping;
@@ -87,10 +86,6 @@ pub struct AsyncES5Emitter<'a> {
     source_text: Option<&'a str>,
     source_index: u32,
     mappings: Vec<Mapping>,
-    #[allow(dead_code)]
-    line: u32,
-    #[allow(dead_code)]
-    column: u32,
     this_capture_depth: u32,
     class_name: Option<String>,
 }
@@ -104,8 +99,6 @@ impl<'a> AsyncES5Emitter<'a> {
             source_text: None,
             source_index: 0,
             mappings: Vec::new(),
-            line: 0,
-            column: 0,
             this_capture_depth: 0,
             class_name: None,
         }
@@ -135,27 +128,6 @@ impl<'a> AsyncES5Emitter<'a> {
 
     pub fn take_mappings(&mut self) -> Vec<Mapping> {
         std::mem::take(&mut self.mappings)
-    }
-
-    #[allow(dead_code)]
-    fn record_mapping_for_node(&mut self, node_idx: NodeIndex) {
-        let Some(text) = self.source_text else {
-            return;
-        };
-
-        let Some(node) = self.arena.get(node_idx) else {
-            return;
-        };
-
-        let source_pos = source_position_from_offset(text, node.pos);
-        self.mappings.push(Mapping {
-            generated_line: self.line,
-            generated_column: self.column,
-            source_index: self.source_index,
-            original_line: source_pos.line,
-            original_column: source_pos.column,
-            name_index: None,
-        });
     }
 
     /// Check if a function body contains any await expressions

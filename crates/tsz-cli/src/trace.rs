@@ -298,7 +298,6 @@ pub struct TraceSpan<'a> {
     tracer: &'a mut Tracer,
     name: String,
     category: String,
-    #[allow(dead_code)]
     start: Instant,
 }
 
