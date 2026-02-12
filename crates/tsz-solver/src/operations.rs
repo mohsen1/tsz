@@ -3170,6 +3170,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// This handles classes and interfaces with construct signatures.
     fn resolve_callable_new(&mut self, shape: &CallableShape, arg_types: &[TypeId]) -> CallResult {
         if shape.construct_signatures.is_empty() {
+            // If there are call signatures but no construct signatures (e.g. a method
+            // accessed as a property), TypeScript allows `new` and returns `any`,
+            // matching JS semantics where any function can be used as a constructor.
+            if !shape.call_signatures.is_empty() {
+                return CallResult::Success(TypeId::ANY);
+            }
             return CallResult::NotCallable {
                 type_id: self.interner.callable(shape.clone()),
             };
