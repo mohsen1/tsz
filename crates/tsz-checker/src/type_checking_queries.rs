@@ -1396,8 +1396,25 @@ impl<'a> CheckerState<'a> {
         let Some(root_node) = self.ctx.arena.get(body_root) else {
             return;
         };
-        let pos_start = root_node.pos;
-        let pos_end = root_node.end;
+        let mut pos_start = root_node.pos;
+        let mut pos_end = root_node.end;
+
+        // For merged declarations (e.g., class + interface with same name),
+        // check type parameter usage across ALL declarations, not just the current one.
+        // This prevents false positives like "class C<T> {} interface C<T> { a: T }".
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(body_root) {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                // If there are multiple declarations, expand the range to include all
+                if symbol.declarations.len() > 1 {
+                    for &decl_idx in &symbol.declarations {
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                            pos_start = pos_start.min(decl_node.pos);
+                            pos_end = pos_end.max(decl_node.end);
+                        }
+                    }
+                }
+            }
+        }
 
         let decl_indices: Vec<NodeIndex> = params.iter().map(|(_, idx)| *idx).collect();
         let mut used = vec![false; params.len()];
