@@ -1240,7 +1240,7 @@ impl ParserState {
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
             let saved_pos = self.token_pos();
-            let member = self.parse_type_member();
+            let member = self.parse_type_member(false);
 
             // If parse_type_member returned NONE (couldn't parse) and we haven't advanced,
             // skip the current token to prevent infinite loops
