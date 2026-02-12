@@ -1528,9 +1528,6 @@ impl<'a> Printer<'a> {
         // - Named arrays use `<name>_1` (doesn't consume from counter)
         // - Names are checked against all identifiers in the source file
 
-        // Enter a new scope for block-scoped variable tracking
-        self.ctx.block_scope_state.enter_scope();
-
         // Generate index name: first for-of gets `_i`, subsequent ones use global counter
         let index_name = if !self.first_for_of_emitted {
             self.first_for_of_emitted = true;
@@ -1606,9 +1603,6 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
-
-        // Exit the scope for block-scoped variable tracking
-        self.ctx.block_scope_state.exit_scope();
     }
 
     /// Emit the for-of loop body (common logic for both array and iterator modes)
