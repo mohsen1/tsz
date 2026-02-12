@@ -2124,20 +2124,30 @@ fn collect_diagnostics(
                         // Convert ResolutionFailure to Diagnostic to get the error code and message
                         let mut diagnostic = failure_to_use.to_diagnostic();
 
-                        // TypeScript uses TS2792 (instead of TS2307) for unresolved bare specifiers
-                        // under Classic/Bundler resolution modes.
+                        // TypeScript emits TS2792 (instead of TS2307) for certain module kinds.
+                        // These are "classic-like" module systems (AMD, System, UMD) and ES modules.
+                        use tsz_common::common::ModuleKind;
+                        let module_kind_prefers_2792 = matches!(
+                            options.checker.module,
+                            ModuleKind::System
+                                | ModuleKind::AMD
+                                | ModuleKind::UMD
+                                | ModuleKind::ES2015
+                                | ModuleKind::ES2020
+                                | ModuleKind::ES2022
+                                | ModuleKind::ESNext
+                                | ModuleKind::Preserve
+                        );
+
+                        // Convert TS2307 to TS2792 for bare specifiers in these module kinds
                         let is_bare_specifier = !specifier.starts_with("./")
                             && !specifier.starts_with("../")
                             && !specifier.starts_with('/')
                             && !specifier.contains(':');
-                        let prefers_2792 = matches!(
-                            options.effective_module_resolution(),
-                            crate::config::ModuleResolutionKind::Classic
-                                | crate::config::ModuleResolutionKind::Bundler
-                        );
+
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
                             && is_bare_specifier
-                            && prefers_2792
+                            && module_kind_prefers_2792
                         {
                             diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
                             diagnostic.message = format!(

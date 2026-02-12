@@ -1194,16 +1194,9 @@ impl ModuleResolver {
             });
         }
 
-        // Classic resolution emits TS2792 ("Did you mean to set moduleResolution
-        // to 'nodenext'?") instead of TS2307 when resolution fails.
-        if matches!(self.resolution_kind, ModuleResolutionKind::Classic) {
-            return Err(ResolutionFailure::ModuleResolutionModeMismatch {
-                specifier: specifier.to_string(),
-                containing_file: containing_file.to_string(),
-                span: specifier_span,
-            });
-        }
-
+        // Module not found - emit TS2307 (standard "Cannot find module" error).
+        // TS2792 should only be emitted when we've detected a package.json exports
+        // field that would work in a different resolution mode.
         Err(ResolutionFailure::NotFound {
             specifier: specifier.to_string(),
             containing_file: containing_file.to_string(),
@@ -1318,9 +1311,9 @@ impl ModuleResolver {
             }
         }
 
-        // Classic resolution can't resolve bare specifiers via node_modules.
-        // Return TS2792 (suggesting moduleResolution change) instead of TS2307.
-        Err(ResolutionFailure::ModuleResolutionModeMismatch {
+        // Module not found - emit TS2307 (standard "Cannot find module" error).
+        // Classic resolution walks up the directory tree but doesn't use node_modules.
+        Err(ResolutionFailure::NotFound {
             specifier: specifier.to_string(),
             containing_file: containing_file.to_string(),
             span: specifier_span,
