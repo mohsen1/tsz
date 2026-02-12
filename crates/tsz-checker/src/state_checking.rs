@@ -781,6 +781,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1210: 'arguments'/'eval' as variable name inside class body (implicit strict mode)
+        if self.ctx.enclosing_class.is_some() {
+            if let Some(ref name) = var_name {
+                if name == "arguments" || name == "eval" {
+                    use crate::types::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        var_decl.name,
+                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                        &[name],
+                    );
+                }
+            }
+        }
+
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
         // TS1039: Initializers are not allowed in ambient contexts

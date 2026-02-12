@@ -265,7 +265,7 @@ impl<'a> CheckerState<'a> {
     // For-Of Iterability Checking with Error Reporting
     // =========================================================================
 
-    /// Check iterability of a for-of expression and emit TS2488/TS2504 if not iterable.
+    /// Check iterability of a for-of expression and emit TS2488/TS2495/TS2504 if not iterable.
     ///
     /// Returns `true` if the type is iterable (or async iterable for for-await-of).
     pub fn check_for_of_iterability(
@@ -312,7 +312,29 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Regular for-of - check sync iterability
+        // In ES5 mode (without downlevelIteration), for-of only works with arrays and strings.
+        // Emit TS2495 if the type is neither an array nor a string.
+        if self.ctx.compiler_options.target.is_es5() {
+            if self.is_array_or_tuple_or_string(expr_type) {
+                return true;
+            }
+            if let Some((start, end)) = self.get_node_span(expr_idx) {
+                let type_str = self.format_type(expr_type);
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
+                    &[&type_str],
+                );
+                self.error(
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
+                );
+            }
+            return false;
+        }
+
+        // Regular for-of (ES2015+) - check sync iterability
         if self.is_iterable_type(expr_type) {
             return true;
         }
@@ -415,7 +437,33 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy types (type aliases) before checking iterability
         let resolved_type = self.resolve_lazy_type(pattern_type);
 
-        // Check if the type is iterable
+        // In ES5 mode (without downlevelIteration), array destructuring requires actual arrays.
+        // Emit TS2461 if the type is not an array type.
+        if self.ctx.compiler_options.target.is_es5() {
+            if self.is_array_or_tuple_type(resolved_type) {
+                return true;
+            }
+            // Use the initializer expression for error location if available
+            let error_idx = if init_expr.is_some() {
+                init_expr
+            } else {
+                pattern_idx
+            };
+            if let Some((start, end)) = self.get_node_span(error_idx) {
+                let type_str = self.format_type(pattern_type);
+                let message =
+                    format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
+                self.error(
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                );
+            }
+            return false;
+        }
+
+        // Check if the type is iterable (ES2015+)
         if self.is_iterable_type(resolved_type) {
             return true;
         }
@@ -447,6 +495,55 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
             );
+        }
+        false
+    }
+
+    // =========================================================================
+    // ES5 Type Classification Helpers
+    // =========================================================================
+
+    /// Check if a type is an array or tuple type (for ES5 destructuring).
+    fn is_array_or_tuple_type(&self, type_id: TypeId) -> bool {
+        use tsz_solver::type_queries::{is_array_type, is_tuple_type};
+        if is_array_type(self.ctx.types, type_id) || is_tuple_type(self.ctx.types, type_id) {
+            return true;
+        }
+        // Check unions: all members must be array/tuple
+        if let Some(tsz_solver::TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) {
+            return self
+                .ctx
+                .types
+                .type_list(list_id)
+                .iter()
+                .all(|&m| self.is_array_or_tuple_type(m));
+        }
+        false
+    }
+
+    /// Check if a type is an array, tuple, or string type (for ES5 for-of).
+    fn is_array_or_tuple_or_string(&self, type_id: TypeId) -> bool {
+        use tsz_solver::type_queries::{is_array_type, is_string_type, is_tuple_type};
+        if type_id == TypeId::STRING || is_string_type(self.ctx.types, type_id) {
+            return true;
+        }
+        if is_array_type(self.ctx.types, type_id) || is_tuple_type(self.ctx.types, type_id) {
+            return true;
+        }
+        // String literals count as string types
+        if let Some(tsz_solver::TypeKey::Literal(tsz_solver::LiteralValue::String(_))) =
+            self.ctx.types.lookup(type_id)
+        {
+            return true;
+        }
+        // Check unions: all members must be array/tuple/string
+        if let Some(tsz_solver::TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) {
+            return self
+                .ctx
+                .types
+                .type_list(list_id)
+                .iter()
+                .all(|&m| self.is_array_or_tuple_or_string(m));
         }
         false
     }

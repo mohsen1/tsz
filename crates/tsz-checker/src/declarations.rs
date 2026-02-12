@@ -1873,15 +1873,102 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             if let Some(block) = self.ctx.arena.get_module_block(node)
                 && let Some(ref stmts) = block.statements
             {
+                let is_ambient = self.is_in_ambient_context(body_idx);
                 for &stmt_idx in &stmts.nodes {
-                    // Dispatch to statement/declaration checking
-                    // Currently a no-op - will call StatementChecker
-                    let _ = stmt_idx;
+                    if is_ambient {
+                        self.check_statement_in_ambient_context(stmt_idx);
+                    }
                 }
             }
         } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
             // Nested module
             self.check_module_declaration(body_idx);
+        }
+    }
+
+    /// Check a statement inside an ambient context (declare namespace/module).
+    /// Emits TS1036 for non-declaration statements, plus specific errors for
+    /// continue (TS1104), return (TS1108), and with (TS2410).
+    fn check_statement_in_ambient_context(&mut self, stmt_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        // Non-declaration statements are not allowed in ambient contexts
+        let is_non_declaration = matches!(
+            node.kind,
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT
+                || k == syntax_kind_ext::IF_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT
+                || k == syntax_kind_ext::BREAK_STATEMENT
+                || k == syntax_kind_ext::CONTINUE_STATEMENT
+                || k == syntax_kind_ext::RETURN_STATEMENT
+                || k == syntax_kind_ext::WITH_STATEMENT
+                || k == syntax_kind_ext::SWITCH_STATEMENT
+                || k == syntax_kind_ext::THROW_STATEMENT
+                || k == syntax_kind_ext::TRY_STATEMENT
+                || k == syntax_kind_ext::DEBUGGER_STATEMENT
+        );
+
+        if is_non_declaration {
+            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
+                self.ctx.error(
+                    pos,
+                    end - pos,
+                    diagnostic_messages::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS.to_string(),
+                    diagnostic_codes::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                );
+            }
+        }
+
+        // Additional specific checks for certain statements
+        if node.kind == syntax_kind_ext::CONTINUE_STATEMENT {
+            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
+                self.ctx.error(
+                    pos,
+                    end - pos,
+                    diagnostic_messages::A_CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_STATEMENT.to_string(),
+                    diagnostic_codes::A_CONTINUE_STATEMENT_CAN_ONLY_BE_USED_WITHIN_AN_ENCLOSING_ITERATION_STATEMENT,
+                );
+            }
+        }
+
+        if node.kind == syntax_kind_ext::RETURN_STATEMENT {
+            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
+                self.ctx.error(
+                    pos,
+                    end - pos,
+                    diagnostic_messages::A_RETURN_STATEMENT_CAN_ONLY_BE_USED_WITHIN_A_FUNCTION_BODY
+                        .to_string(),
+                    diagnostic_codes::A_RETURN_STATEMENT_CAN_ONLY_BE_USED_WITHIN_A_FUNCTION_BODY,
+                );
+            }
+        }
+
+        if node.kind == syntax_kind_ext::WITH_STATEMENT {
+            use crate::types::diagnostics::diagnostic_codes;
+            if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
+                self.ctx.error(
+                    pos,
+                    end - pos,
+                    "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.".to_string(),
+                    diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+                );
+            }
+        }
+
+        // Check labeled statements — the inner statement should also be checked
+        if node.kind == syntax_kind_ext::LABELED_STATEMENT {
+            if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
+                self.check_statement_in_ambient_context(labeled.statement);
+            }
         }
     }
 

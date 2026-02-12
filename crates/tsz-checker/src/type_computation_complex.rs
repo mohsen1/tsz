@@ -1389,6 +1389,23 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
                 );
             }
+
+            // Inside a regular (non-arrow) function body, `arguments` is the implicit
+            // IArguments object, overriding any outer `arguments` declaration.
+            if self.is_in_regular_function_body(idx) {
+                let lib_binders = self.get_lib_binders();
+                if let Some(sym_id) = self
+                    .ctx
+                    .binder
+                    .get_global_type_with_libs("IArguments", &lib_binders)
+                {
+                    // Use type_reference_symbol_type because IArguments is an interface (type),
+                    // not a value — get_type_of_symbol returns ERROR for type-only symbols.
+                    return self.type_reference_symbol_type(sym_id);
+                }
+                // Fallback if IArguments not found (e.g., noLib mode)
+                return TypeId::ANY;
+            }
         }
 
         // === CRITICAL FIX: Check type parameter scope FIRST ===
