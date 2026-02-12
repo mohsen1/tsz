@@ -2566,6 +2566,29 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Skip check for ambient declarations - they don't have runtime initialization order
+        // Check if the using class (heritage clause) is in an ambient declaration
+        if is_class {
+            // Find the class declaration that contains this heritage clause usage
+            let mut current = usage_idx;
+            while let Some(ext) = self.ctx.arena.get_extended(current) {
+                let parent = ext.parent;
+                if parent.is_none() {
+                    break;
+                }
+                if let Some(parent_node) = self.ctx.arena.get(parent) {
+                    if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                        // Check if this class is ambient
+                        if self.is_ambient_class_declaration(parent) {
+                            return;
+                        }
+                        break; // Found the containing class, no need to check further
+                    }
+                }
+                current = parent;
+            }
+        }
+
         // Only flag if usage is before declaration in source order
         if usage_node.pos >= decl_node.pos {
             return;
