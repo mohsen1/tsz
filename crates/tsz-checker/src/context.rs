@@ -2152,6 +2152,24 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         }
     }
 
+    /// Get the Array<T> interface type from lib.d.ts.
+    /// Delegates to the type environment.
+    fn get_array_base_type(&self) -> Option<tsz_solver::TypeId> {
+        if let Ok(env) = self.type_env.try_borrow() {
+            env.get_array_base_type()
+        } else {
+            None
+        }
+    }
+
+    /// Get the type parameters for the Array<T> interface.
+    /// Delegates to the type environment.
+    fn get_array_base_type_params(&self) -> &[tsz_solver::TypeParamInfo] {
+        // We can't borrow type_env and return a reference from it (lifetime issue),
+        // so we fall back to the interner which stores the same data.
+        self.types.get_array_base_type_params()
+    }
+
     /// Get the base class type for a class/interface type.
     ///
     /// This implements the TypeResolver trait method for Best Common Type (BCT) algorithm.

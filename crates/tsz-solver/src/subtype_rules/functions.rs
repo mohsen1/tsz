@@ -541,19 +541,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Check properties (if any), excluding private fields
-        let source_props: Vec<_> = source
+        // Check properties (if any), excluding private fields.
+        // Sort by name (Atom) to match the merge scan's expectation in check_object_subtype.
+        let mut source_props: Vec<_> = source
             .properties
             .iter()
             .filter(|p| !self.interner.resolve_atom(p.name).starts_with('#'))
             .cloned()
             .collect();
-        let target_props: Vec<_> = target
+        source_props.sort_by_key(|a| a.name);
+        let mut target_props: Vec<_> = target
             .properties
             .iter()
             .filter(|p| !self.interner.resolve_atom(p.name).starts_with('#'))
             .cloned()
             .collect();
+        target_props.sort_by_key(|a| a.name);
         // Create temporary ObjectShape instances for the property check
         let source_shape = ObjectShape {
             flags: ObjectFlags::empty(),

@@ -7,6 +7,7 @@
 //! - Tuple rest elements and expansion
 //! - Array-to-tuple and tuple-to-array compatibility
 
+use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::*;
 use crate::visitor::{array_element_type, tuple_list_id};
 
@@ -364,6 +365,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             variadic: Some(type_id),
             tail: Vec::new(),
         }
+    }
+
+    /// Check if Array<element_type> (the interface) is a subtype of the target.
+    ///
+    /// This is analogous to `is_boxed_primitive_subtype` — when a T[] is checked
+    /// against a structural type (e.g., `{ length: number; toString(): string }`),
+    /// we instantiate the Array<T> interface with the concrete element type and
+    /// check whether that interface type is a subtype of the target.
+    ///
+    /// Returns `Some(result)` if the Array interface was available and the check was
+    /// performed, or `None` if the Array base type is not registered (e.g., in tests
+    /// without lib.d.ts).
+    pub(crate) fn check_array_interface_subtype(
+        &mut self,
+        element_type: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeResult> {
+        let array_base = self.resolver.get_array_base_type()?;
+        let params = self.resolver.get_array_base_type_params();
+        if params.is_empty() {
+            // No type params means we can't instantiate — just check directly
+            return Some(self.check_subtype(array_base, target));
+        }
+
+        // Instantiate Array<T> → Array<element_type>
+        let subst = TypeSubstitution::from_args(self.interner, params, &[element_type]);
+        let instantiated = instantiate_type(self.interner, array_base, &subst);
+
+        Some(self.check_subtype(instantiated, target))
     }
 
     /// Get the element type of an array type, or return the type itself for any[].
