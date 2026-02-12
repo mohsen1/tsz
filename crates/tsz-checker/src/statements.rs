@@ -67,6 +67,9 @@ pub trait StatementCheckCallbacks {
     /// Check an await expression (TS1359: await outside async).
     fn check_await_expression(&mut self, expr_idx: NodeIndex);
 
+    /// Check a for-await statement (TS1103/TS1432: for-await outside async or without proper module/target).
+    fn check_for_await_statement(&mut self, stmt_idx: NodeIndex);
+
     /// Check if a condition expression is always truthy/falsy (TS2872/TS2873).
     fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex);
 
