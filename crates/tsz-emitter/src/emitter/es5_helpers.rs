@@ -723,67 +723,39 @@ impl<'a> Printer<'a> {
         &mut self,
         _node: &Node,
         func: &tsz_parser::parser::node::FunctionData,
-        captures_this: bool,
-        captures_arguments: bool,
-        class_alias: &Option<Arc<str>>,
+        _captures_this: bool,
+        _captures_arguments: bool,
+        _class_alias: &Option<Arc<str>>,
     ) {
-        // When class_alias is Some (arrow in static member), use class alias capture pattern:
-        // - Don't use IIFE wrapper
-        // - this references are substituted with the class alias via SubstituteThis directive
-        // Example: var _a = Vector; _a.foo = () => _a;
-        let use_class_alias_capture = class_alias.is_some() && captures_this;
-
-        // Determine capture wrapper: (function (_this, _arguments) { ... })
-        let captures_any = captures_this || captures_arguments;
-        if captures_any && !use_class_alias_capture {
-            self.write("(function (");
-            if captures_this {
-                self.write("_this");
-            }
-            if captures_this && captures_arguments {
-                self.write(", ");
-            }
-            if captures_arguments {
-                self.write("_arguments");
-            }
-            self.write(") { return ");
-        }
+        // Arrow functions are transformed to regular function expressions.
+        // `this` capture is handled by `var _this = this;` at the enclosing
+        // function scope (inserted during block emission). The lowering pass
+        // marks `this` references with SubstituteThis to emit `_this` instead.
 
         if func.is_async {
-            let this_expr = if captures_this { "_this" } else { "this" };
+            let this_expr = if _captures_this { "_this" } else { "this" };
             self.emit_async_function_es5(func, "", this_expr);
         } else {
-            // Check if this is a simple arrow function with no parameters and has capture wrapper
-            // In this case, we don't need the extra "function ()" wrapper
-            let has_no_params = func.parameters.nodes.is_empty();
-            let is_simple_capture = captures_any && has_no_params;
+            self.write("function (");
+            let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
+            self.write(") ");
 
-            if !is_simple_capture {
-                self.write("function (");
-                let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
-                self.write(") ");
+            // If body is not a block (concise arrow), wrap with return
+            let body_node = self.arena.get(func.body);
+            let is_block = body_node
+                .map(|n| n.kind == syntax_kind_ext::BLOCK)
+                .unwrap_or(false);
+            let needs_param_prologue = param_transforms.has_transforms();
 
-                // If body is not a block (concise arrow), wrap with return
-                let body_node = self.arena.get(func.body);
-                let is_block = body_node
-                    .map(|n| n.kind == syntax_kind_ext::BLOCK)
-                    .unwrap_or(false);
-                let needs_param_prologue = param_transforms.has_transforms();
-
-                if is_block {
-                    // Check if it's a simple single-return block
-                    if let Some(block_node) = self.arena.get(func.body) {
-                        if let Some(block) = self.arena.get_block(block_node) {
-                            if !needs_param_prologue
-                                && block.statements.nodes.len() == 1
-                                && self.is_simple_return_statement(block.statements.nodes[0])
-                            {
-                                self.emit_single_line_block(func.body);
-                            } else if needs_param_prologue {
-                                self.emit_block_with_param_prologue(func.body, &param_transforms);
-                            } else {
-                                self.emit(func.body);
-                            }
+            if is_block {
+                // Check if it's a simple single-return block
+                if let Some(block_node) = self.arena.get(func.body) {
+                    if let Some(block) = self.arena.get_block(block_node) {
+                        if !needs_param_prologue
+                            && block.statements.nodes.len() == 1
+                            && self.is_simple_return_statement(block.statements.nodes[0])
+                        {
+                            self.emit_single_line_block(func.body);
                         } else if needs_param_prologue {
                             self.emit_block_with_param_prologue(func.body, &param_transforms);
                         } else {
@@ -795,51 +767,28 @@ impl<'a> Printer<'a> {
                         self.emit(func.body);
                     }
                 } else if needs_param_prologue {
-                    self.write("{");
-                    self.write_line();
-                    self.increase_indent();
-                    self.emit_param_prologue(&param_transforms);
-                    self.write("return ");
-                    self.emit(func.body);
-                    self.write(";");
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("}");
+                    self.emit_block_with_param_prologue(func.body, &param_transforms);
                 } else {
-                    // Concise body: (x) => x + 1  →  function (x) { return x + 1; }
-                    self.write("{ return ");
                     self.emit(func.body);
-                    self.write("; }");
                 }
-                self.pop_temp_scope();
-            } else {
-                // Simple capture case: just emit the body directly
-                // (function (_arguments) { return arguments.length; })
-                // The capture wrapper already added "return " and will add ";"
-                // So just emit the body expression
+            } else if needs_param_prologue {
+                self.write("{");
+                self.write_line();
+                self.increase_indent();
+                self.emit_param_prologue(&param_transforms);
+                self.write("return ");
                 self.emit(func.body);
+                self.write(";");
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
+            } else {
+                // Concise body: (x) => x + 1  →  function (x) { return x + 1; }
+                self.write("{ return ");
+                self.emit(func.body);
+                self.write("; }");
             }
-        }
-
-        if captures_any && !use_class_alias_capture {
-            // Close the (function (_this, _arguments) { ... }) wrapper
-            self.write("; })");
-            self.write("(");
-            // For nested arrow functions, the parent's captured values are passed
-            if captures_this {
-                if self.ctx.arrow_state.this_capture_depth > 0 {
-                    self.write("_this");
-                } else {
-                    self.write("this");
-                }
-            }
-            if captures_this && captures_arguments {
-                self.write(", ");
-            }
-            if captures_arguments {
-                self.write("arguments");
-            }
-            self.write(")");
+            self.pop_temp_scope();
         }
     }
 

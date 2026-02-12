@@ -1,4 +1,5 @@
 use super::{ModuleKind, Printer};
+use tsz_parser::parser::NodeIndex;
 
 impl<'a> Printer<'a> {
     pub(super) fn emit_module_wrapper(
@@ -7,16 +8,17 @@ impl<'a> Printer<'a> {
         dependencies: &[String],
         source_node: &tsz_parser::parser::node::Node,
         source: &tsz_parser::parser::node::SourceFileData,
+        source_idx: NodeIndex,
     ) {
         match format {
             crate::transform_context::ModuleFormat::AMD => {
-                self.emit_amd_wrapper(dependencies, source_node);
+                self.emit_amd_wrapper(dependencies, source_node, source_idx);
             }
             crate::transform_context::ModuleFormat::UMD => {
-                self.emit_umd_wrapper(source_node);
+                self.emit_umd_wrapper(source_node, source_idx);
             }
             crate::transform_context::ModuleFormat::System => {
-                self.emit_system_wrapper(dependencies, source_node);
+                self.emit_system_wrapper(dependencies, source_node, source_idx);
             }
             _ => {
                 for &stmt_idx in &source.statements.nodes {
@@ -31,6 +33,7 @@ impl<'a> Printer<'a> {
         &mut self,
         dependencies: &[String],
         source_node: &tsz_parser::parser::node::Node,
+        source_idx: NodeIndex,
     ) {
         use crate::transforms::module_commonjs;
 
@@ -50,13 +53,17 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.emit_module_wrapper_body(source_node);
+        self.emit_module_wrapper_body(source_node, source_idx);
 
         self.decrease_indent();
         self.write("});");
     }
 
-    pub(super) fn emit_umd_wrapper(&mut self, source_node: &tsz_parser::parser::node::Node) {
+    pub(super) fn emit_umd_wrapper(
+        &mut self,
+        source_node: &tsz_parser::parser::node::Node,
+        source_idx: NodeIndex,
+    ) {
         self.write("(function (factory) {");
         self.write_line();
         self.increase_indent();
@@ -83,7 +90,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.emit_module_wrapper_body(source_node);
+        self.emit_module_wrapper_body(source_node, source_idx);
 
         self.decrease_indent();
         self.write("});");
@@ -93,6 +100,7 @@ impl<'a> Printer<'a> {
         &mut self,
         dependencies: &[String],
         source_node: &tsz_parser::parser::node::Node,
+        source_idx: NodeIndex,
     ) {
         self.write("System.register([");
         for (i, dep) in dependencies.iter().enumerate() {
@@ -115,7 +123,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.emit_module_wrapper_body(source_node);
+        self.emit_module_wrapper_body(source_node, source_idx);
 
         self.decrease_indent();
         self.write("}");
@@ -130,6 +138,7 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_module_wrapper_body(
         &mut self,
         source_node: &tsz_parser::parser::node::Node,
+        source_idx: NodeIndex,
     ) {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
@@ -141,7 +150,7 @@ impl<'a> Printer<'a> {
         self.ctx.options.module = ModuleKind::CommonJS;
         self.ctx.auto_detect_module = false;
 
-        self.emit_source_file(source_node);
+        self.emit_source_file(source_node, source_idx);
 
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;

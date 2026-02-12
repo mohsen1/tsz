@@ -193,6 +193,16 @@ impl<'a> ES5ClassTransformer<'a> {
         converter.convert_statement(idx)
     }
 
+    /// Convert an AST statement to IR with `this` captured as `_this`.
+    /// Used in derived constructors after super() where `this` → `_this`.
+    fn convert_statement_this_captured(&self, idx: NodeIndex) -> IRNode {
+        let mut converter = AstToIr::new(self.arena).with_this_captured(true);
+        if let Some(ref transforms) = self.transforms {
+            converter = converter.with_transforms(transforms.clone());
+        }
+        converter.convert_statement(idx)
+    }
+
     /// Convert an AST expression to IR (avoids ASTRef when possible)
     fn convert_expression(&self, idx: NodeIndex) -> IRNode {
         let mut converter = AstToIr::new(self.arena);
@@ -478,6 +488,11 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             } else {
                 // Non-derived class default constructor
+                // Check if instance property initializers need _this capture
+                if self.instance_props_need_this_capture(&instance_props) {
+                    ctor_body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+                }
+
                 // Emit private field initializations
                 self.emit_private_field_initializations_ir(&mut ctor_body, false);
                 self.emit_private_accessor_initializations_ir(&mut ctor_body, false);
@@ -554,13 +569,13 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         // Emit remaining statements after super()
+        // In derived constructors, `this` becomes `_this` after super() call
         if super_stmt_idx.is_some() {
             for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
                 if i <= super_stmt_position {
                     continue;
                 }
-                // Transform this to _this in these statements
-                body.push(self.convert_statement(stmt_idx));
+                body.push(self.convert_statement_this_captured(stmt_idx));
             }
         }
 
@@ -578,7 +593,17 @@ impl<'a> ES5ClassTransformer<'a> {
         params: &NodeList,
         instance_props: &[NodeIndex],
     ) {
-        // Emit private field initializations first
+        // Check if constructor body or instance property initializers contain
+        // arrow functions that capture `this`.
+        // TSC emits `var _this = this;` as the FIRST statement in the constructor.
+        let needs_this_capture = self.constructor_needs_this_capture(body_idx)
+            || self.instance_props_need_this_capture(instance_props);
+        if needs_this_capture {
+            // Emit: var _this = this;
+            body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+        }
+
+        // Emit private field initializations
         self.emit_private_field_initializations_ir(body, false);
         self.emit_private_accessor_initializations_ir(body, false);
 
@@ -590,13 +615,6 @@ impl<'a> ES5ClassTransformer<'a> {
             if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
                 body.push(ir);
             }
-        }
-
-        // Check if constructor body contains arrow functions that capture `this`
-        let needs_this_capture = self.constructor_needs_this_capture(body_idx);
-        if needs_this_capture {
-            // Emit: var _this = this;
-            body.push(IRNode::var_decl("_this", Some(IRNode::this())));
         }
 
         // Emit original constructor body
@@ -979,6 +997,41 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
+        false
+    }
+
+    /// Check if instance property initializers contain arrow functions that capture `this`.
+    /// Property initializers are moved into the constructor body by the ES5 transform.
+    fn instance_props_need_this_capture(&self, instance_props: &[NodeIndex]) -> bool {
+        for &prop_idx in instance_props {
+            let Some(prop_node) = self.arena.get(prop_idx) else {
+                continue;
+            };
+            let Some(prop_data) = self.arena.get_property_decl(prop_node) else {
+                continue;
+            };
+            if prop_data.initializer.is_none() {
+                continue;
+            }
+            // Check if the initializer contains arrow functions that capture `this`
+            let mut arrows = Vec::new();
+            self.collect_arrow_functions_in_node(prop_data.initializer, &mut arrows);
+            for &arrow_idx in &arrows {
+                if let Some(ref transforms) = self.transforms {
+                    if let Some(crate::transform_context::TransformDirective::ES5ArrowFunction {
+                        captures_this,
+                        ..
+                    }) = transforms.get(arrow_idx)
+                    {
+                        if *captures_this {
+                            return true;
+                        }
+                    }
+                } else if contains_this_reference(self.arena, arrow_idx) {
+                    return true;
+                }
+            }
+        }
         false
     }
 
@@ -1663,6 +1716,12 @@ impl<'a> AstToIr<'a> {
     /// Set the current class alias for `this` substitution
     pub fn with_class_alias(self, alias: Option<String>) -> Self {
         self.current_class_alias.set(alias);
+        self
+    }
+
+    /// Set whether `this` should be captured as `_this`
+    pub fn with_this_captured(self, captured: bool) -> Self {
+        self.this_captured.set(captured);
         self
     }
 
