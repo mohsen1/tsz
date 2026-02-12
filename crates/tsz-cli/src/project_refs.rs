@@ -750,7 +750,8 @@ mod tests {
     #[test]
     fn test_parse_project_reference() {
         let json = r#"{ "path": "./packages/core" }"#;
-        let reference: ProjectReference = serde_json::from_str(json).expect("JSON parsing should succeed in test");
+        let reference: ProjectReference =
+            serde_json::from_str(json).expect("JSON parsing should succeed in test");
         assert_eq!(reference.path, "./packages/core");
         assert!(!reference.prepend);
     }
@@ -758,7 +759,8 @@ mod tests {
     #[test]
     fn test_parse_project_reference_with_prepend() {
         let json = r#"{ "path": "./packages/core", "prepend": true }"#;
-        let reference: ProjectReference = serde_json::from_str(json).expect("JSON parsing should succeed in test");
+        let reference: ProjectReference =
+            serde_json::from_str(json).expect("JSON parsing should succeed in test");
         assert_eq!(reference.path, "./packages/core");
         assert!(reference.prepend);
     }
