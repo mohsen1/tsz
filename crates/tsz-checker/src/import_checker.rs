@@ -1163,6 +1163,18 @@ impl<'a> CheckerState<'a> {
                                 return;
                             }
                         }
+
+                        // TS2439: Import or export declaration in an ambient module declaration
+                        // cannot reference module through relative module name
+                        let is_relative_path =
+                            imported_module.starts_with("./") || imported_module.starts_with("../");
+                        if is_relative_path {
+                            self.error_at_node(
+                                import.module_specifier,
+                                diagnostic_messages::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
+                                diagnostic_codes::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
+                            );
+                        }
                     }
                 }
             }
