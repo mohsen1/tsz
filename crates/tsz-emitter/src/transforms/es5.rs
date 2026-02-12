@@ -650,7 +650,12 @@ impl<'a> ES5ClassTransformer<'a> {
                     }
                 }
                 if declarations.len() == 1 {
-                    Some(declarations.into_iter().next().unwrap())
+                    Some(
+                        declarations
+                            .into_iter()
+                            .next()
+                            .expect("declarations has exactly 1 element, checked above"),
+                    )
                 } else {
                     Some(IRNode::VarDeclList(declarations))
                 }

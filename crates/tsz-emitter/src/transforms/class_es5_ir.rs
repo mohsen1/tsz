@@ -1855,7 +1855,10 @@ impl<'a> AstToIr<'a> {
                 return IRNode::ASTRef(idx);
             }
             if decls.len() == 1 {
-                return decls.into_iter().next().unwrap();
+                return decls
+                    .into_iter()
+                    .next()
+                    .expect("decls has exactly 1 element, checked above");
             }
             return IRNode::VarDeclList(decls);
         }
@@ -2673,7 +2676,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         assert!(output.contains("var Point = /** @class */ (function ()"));
         assert!(output.contains("function Point(x, y)"));
@@ -2690,7 +2693,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some(), "Transform should produce output");
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         assert!(
             output.contains("(function (_super)"),
@@ -2719,7 +2722,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         assert!(output.contains("Greeter.prototype.greet = function ()"));
     }
@@ -2734,7 +2737,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         assert!(output.contains("Counter.count = function ()"));
     }
@@ -2747,7 +2750,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         assert!(output.contains("var _Container_value"));
         assert!(output.contains("_Container_value.set(this, void 0)"));
@@ -2762,7 +2765,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         assert!(output.contains("this.x = x"));
         assert!(output.contains("this.y = y"));
@@ -2775,7 +2778,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         assert!(output.contains("__extends(Child, _super)"));
         assert!(
@@ -2792,7 +2795,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         assert!(output.contains("this.count ="));
     }
@@ -2817,7 +2820,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Should have single Object.defineProperty call with both get and set
         assert!(output.contains("Object.defineProperty"));
@@ -2837,7 +2840,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Should have Object.defineProperty on class directly (not prototype)
         assert!(output.contains("Object.defineProperty(Config,"));
@@ -2855,7 +2858,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Async method should have __awaiter wrapper
         assert!(output.contains("__awaiter"));
@@ -2871,7 +2874,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Static async method should have __awaiter wrapper
         assert!(output.contains("API.request = function ()"));
@@ -2888,7 +2891,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Computed method name should use bracket notation
         assert!(output.contains("Container.prototype[Symbol.iterator]"));
@@ -2902,7 +2905,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Should have DefineProperty with only get
         assert!(output.contains("Object.defineProperty"));
@@ -2920,7 +2923,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Should have DefineProperty with only set
         assert!(output.contains("Object.defineProperty"));
@@ -2938,7 +2941,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Static block content should be emitted
         assert!(output.contains("Initializer.value = 42"));
@@ -2954,7 +2957,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // String literal method name should use bracket notation
         assert!(output.contains("StringMethods.prototype[\"my-method\"]"));
@@ -2970,7 +2973,7 @@ mod tests {
 
         let output = transform_class(source);
         assert!(output.is_some());
-        let output = output.unwrap();
+        let output = output.expect("transform should succeed in test");
 
         // Numeric literal method name should use bracket notation
         assert!(output.contains("NumericMethods.prototype[42]"));
