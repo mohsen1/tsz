@@ -45,10 +45,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check heritage clauses for unresolved names (TS2304)
-        self.check_heritage_clauses_for_unresolved_names(&iface.heritage_clauses, false, &[]);
-
+        // Push type parameters BEFORE checking heritage clauses
+        // This allows heritage clauses to reference the interface's type parameters
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+
+        // Collect interface type parameter names for TS2304 checking in heritage clauses
+        let interface_type_param_names: Vec<String> = type_param_updates
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        // Check heritage clauses for unresolved names (TS2304)
+        // Must be checked AFTER type parameters are pushed so heritage can reference type params
+        self.check_heritage_clauses_for_unresolved_names(
+            &iface.heritage_clauses,
+            false,
+            &interface_type_param_names,
+        );
 
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&iface.type_parameters, stmt_idx);

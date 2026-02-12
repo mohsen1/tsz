@@ -1842,6 +1842,10 @@ impl<'a> CheckerState<'a> {
                             self.validate_type_reference_type_arguments(heritage_sym, type_args);
                         }
                     } else if required_count > 0
+                        // In class extends clauses, TypeScript allows omitting type
+                        // arguments (e.g. `class C extends Array {}`). The type
+                        // defaults to the constructor's instance type with default args.
+                        && !(is_class_declaration && is_extends_clause)
                         && let Some(name) = self.heritage_name_text(expr_idx)
                     {
                         self.error_generic_type_requires_type_arguments_at(
