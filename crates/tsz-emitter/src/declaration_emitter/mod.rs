@@ -3608,10 +3608,10 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Resolve name for SymbolId imports, generating alias if needed.
     #[allow(dead_code)]
-    fn resolve_import_name_for_symbol(&mut self, _module: &str, name: &str, _sym_id: SymbolId) {
+    fn resolve_import_name_for_symbol(&mut self, _module: &str, name: &str, sym_id: SymbolId) {
         if self.reserved_names.contains(name) {
             let alias = self.generate_unique_name(name);
-            // TODO: Store symbol alias when we implement symbol-based tracking
+            self.symbol_aliases.insert(sym_id, alias.clone());
             self.reserved_names.insert(alias);
         } else {
             self.reserved_names.insert(name.to_string());
@@ -3749,9 +3749,19 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        // TODO: Check if symbol is declared in current file
-        // This requires knowing the current file index, which we don't have yet
-        // For now, assume all non-imported symbols need imports
+        // Check if symbol is declared in current file by comparing arena paths
+        if let Some(current_path) = &self.current_file_path {
+            if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
+                let arena_addr = std::sync::Arc::as_ptr(source_arena) as usize;
+                if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
+                    if source_path == current_path {
+                        // Symbol is declared in the current file, no import needed
+                        return false;
+                    }
+                }
+            }
+        }
+
         true
     }
 
