@@ -262,22 +262,12 @@ impl<'a> IRPrinter<'a> {
                 self.emit_parameters(parameters);
                 self.write(") ");
                 let has_defaults = parameters.iter().any(|p| p.default_value.is_some());
-                // Empty function bodies always use inline format: { }
-                // TSC emits all empty bodies as single-line, regardless of name.
-                if !has_defaults && body.is_empty() {
-                    self.write("{ }");
-                    return;
-                }
+                let is_source_single_line = self.is_body_source_single_line(*body_source_range);
+
                 // Single-line function body: { return expr; }
                 // Applies to:
                 // 1. Arrow-to-function conversions (is_expression_body)
                 // 2. Functions that were single-line in source (is_source_single_line)
-                // 3. Anonymous functions with simple return bodies (callbacks, etc.)
-                let is_source_single_line = self.is_body_source_single_line(*body_source_range);
-
-                // Determine if we should emit single-line:
-                // - For arrow-to-function conversions: always single-line
-                // - For functions that were single-line in source: single-line
                 // tsc never collapses multi-line function bodies to single line,
                 // so we should NOT use heuristics to guess single-line for generated code.
                 let should_emit_single_line = *is_expression_body || is_source_single_line;
@@ -1112,10 +1102,13 @@ impl<'a> IRPrinter<'a> {
             self.write(current_name);
             self.write(";");
             self.write_line();
+            // Need indent after the newline from var declaration
+            self.write_indent();
         }
+        // When should_declare_var is false, the caller already wrote the indent
+        // (the parent namespace body loop calls write_indent before emit_node).
 
         // Open IIFE: (function (name) {
-        self.write_indent();
         self.write("(function (");
         self.write(iife_param);
         self.write(") {");
@@ -1152,7 +1145,9 @@ impl<'a> IRPrinter<'a> {
             self.write(next_name);
             self.write(";");
             self.write_line();
-            // Recurse for nested namespace (inner levels use name_parts[index-1] as parent)
+            // Recurse for nested namespace (inner levels use name_parts[index-1] as parent).
+            // Write indent since we're on a new line after "var Y;\n".
+            self.write_indent();
             self.emit_namespace_iife(
                 name_parts,
                 index + 1,
