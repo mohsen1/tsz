@@ -518,6 +518,7 @@ pub mod codes {
     pub use dc::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY as READONLY_PROPERTY;
     pub use dc::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE as EXCESS_PROPERTY;
     pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE as PROPERTY_NOT_EXIST;
+    pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN as PROPERTY_NOT_EXIST_DID_YOU_MEAN;
     pub use dc::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_MISSING;
     pub use dc::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS as PROPERTY_VISIBILITY_MISMATCH;
     pub use dc::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A as PROPERTY_NOMINAL_MISMATCH;
@@ -681,6 +682,23 @@ impl<'a> DiagnosticBuilder<'a> {
                 prop_name, type_str
             ),
             codes::PROPERTY_NOT_EXIST,
+        )
+    }
+
+    /// Create a "Property X does not exist on type Y. Did you mean Z?" diagnostic (TS2551).
+    pub fn property_not_exist_did_you_mean(
+        &mut self,
+        prop_name: &str,
+        type_id: TypeId,
+        suggestion: &str,
+    ) -> TypeDiagnostic {
+        let type_str = self.formatter.format(type_id);
+        TypeDiagnostic::error(
+            format!(
+                "Property '{}' does not exist on type '{}'. Did you mean '{}'?",
+                prop_name, type_str, suggestion
+            ),
+            codes::PROPERTY_NOT_EXIST_DID_YOU_MEAN,
         )
     }
 
@@ -1395,6 +1413,20 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
     ) -> TypeDiagnostic {
         self.builder
             .property_not_exist(prop_name, type_id)
+            .with_span(self.span(start, length))
+    }
+
+    /// Create a "Property X does not exist on type Y. Did you mean Z?" diagnostic with span (TS2551).
+    pub fn property_not_exist_did_you_mean(
+        &mut self,
+        prop_name: &str,
+        type_id: TypeId,
+        suggestion: &str,
+        start: u32,
+        length: u32,
+    ) -> TypeDiagnostic {
+        self.builder
+            .property_not_exist_did_you_mean(prop_name, type_id, suggestion)
             .with_span(self.span(start, length))
     }
 
