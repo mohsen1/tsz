@@ -637,11 +637,14 @@ impl<'a> CheckerState<'a> {
                 // Check if we're inside a MODULE_DECLARATION (namespace/module)
                 let mut current = stmt_idx;
                 let mut inside_namespace = false;
+                let mut namespace_is_exported = false;
 
                 while !current.is_none() {
                     if let Some(node) = self.ctx.arena.get(current) {
                         if node.kind == syntax_kind_ext::MODULE_DECLARATION {
                             inside_namespace = true;
+                            // Check if this namespace is exported
+                            namespace_is_exported = self.has_export_modifier(current);
                             break;
                         }
                         // Move to parent
@@ -661,8 +664,11 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                         diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     );
-                    // Return early - don't check for module resolution when import is invalid
-                    return;
+                    // Only return early for non-exported namespaces
+                    // TypeScript emits both TS1147 and TS2307 for exported namespaces
+                    if !namespace_is_exported {
+                        return;
+                    }
                 }
             }
         }
