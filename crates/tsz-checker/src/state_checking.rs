@@ -2616,7 +2616,14 @@ impl<'a> CheckerState<'a> {
 
         // Skip check for cross-file symbols (imported from another file).
         // Position comparison only makes sense within the same file.
-        if symbol.decl_file_idx != u32::MAX || symbol.import_module.is_some() {
+        if symbol.import_module.is_some() {
+            return;
+        }
+        // If decl_file_idx is set and differs from the current file, the declaration
+        // is in another file — TDZ position comparison is meaningless across files.
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+        {
             return;
         }
 
@@ -2635,6 +2642,25 @@ impl<'a> CheckerState<'a> {
         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
             return;
         };
+
+        // In multi-file mode, decl_idx may be from a different file's arena.
+        // Validate that the node at decl_idx actually matches the expected kind.
+        // A mismatch means the declaration is in another file — no TDZ applies.
+        if self.ctx.all_arenas.is_some() {
+            let kind_ok = (is_class
+                && (decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION))
+                || (is_enum && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION);
+            if !kind_ok {
+                return;
+            }
+        }
+
+        // Skip check for ambient declarations — `declare class` is hoisted
+        // and can be referenced before its source position.
+        if self.is_ambient_declaration(decl_idx) {
+            return;
+        }
 
         // Skip check for ambient declarations - they don't have runtime initialization order
         // Check if the using class (heritage clause) is in an ambient declaration

@@ -1945,6 +1945,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Skip cross-file symbols — TDZ position comparison only valid within same file
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+        {
+            return false;
+        }
+
         // 3. Get the declaration node
         // Prefer value_declaration, fall back to first declaration
         let decl_idx = if !symbol.value_declaration.is_none() {
@@ -2007,6 +2014,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Skip cross-file symbols — TDZ position comparison only valid within same file
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+        {
+            return false;
+        }
+
         // 3. Get the declaration node
         let decl_idx = if !symbol.value_declaration.is_none() {
             symbol.value_declaration
@@ -2060,6 +2074,14 @@ impl<'a> CheckerState<'a> {
             != 0;
 
         if !is_block_scoped {
+            return false;
+        }
+
+        // Skip cross-file symbols — TDZ position comparison only makes sense
+        // within the same file.
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+        {
             return false;
         }
 
@@ -2119,7 +2141,14 @@ impl<'a> CheckerState<'a> {
 
         // Skip check for cross-file symbols (imported from another file).
         // Position comparison only makes sense within the same file.
-        if symbol.decl_file_idx != u32::MAX || symbol.import_module.is_some() {
+        if symbol.import_module.is_some() {
+            return false;
+        }
+        // If decl_file_idx is set and differs from the current file, the declaration
+        // is in another file — TDZ position comparison is meaningless across files.
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+        {
             return false;
         }
 
@@ -2164,6 +2193,30 @@ impl<'a> CheckerState<'a> {
             if !kind_ok {
                 return false;
             }
+        }
+
+        // Skip ambient declarations — `declare class`/`declare enum` are type-level
+        // and have no TDZ. In multi-file mode, search all arenas since decl_idx may
+        // point to a node in another file's arena.
+        if is_multi_file {
+            if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+                for arena in arenas.iter() {
+                    if let Some(node) = arena.get(decl_idx) {
+                        if let Some(class) = arena.get_class(node) {
+                            if self.has_declare_modifier_in_arena(arena, &class.modifiers) {
+                                return false;
+                            }
+                        }
+                        if let Some(enum_decl) = arena.get_enum(node) {
+                            if self.has_declare_modifier_in_arena(arena, &enum_decl.modifiers) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }
+        } else if self.is_ambient_declaration(decl_idx) {
+            return false;
         }
 
         // Only flag if usage is before declaration in source order
@@ -2230,6 +2283,25 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    /// Check if a modifier list in a specific arena contains the `declare` keyword.
+    /// Used in multi-file mode where `self.ctx.arena` may not be the declaration's arena.
+    pub(crate) fn has_declare_modifier_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = arena.get(mod_idx)
+                    && mod_node.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Check if a function-like node is immediately invoked (IIFE pattern).
