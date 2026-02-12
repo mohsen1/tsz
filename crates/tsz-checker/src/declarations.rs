@@ -7,8 +7,7 @@ use super::context::CheckerContext;
 use crate::types::diagnostics::diagnostic_messages;
 use rustc_hash::FxHashSet;
 use std::path::{Component, Path, PathBuf};
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 /// Declaration type checker that operates on the shared context.
@@ -122,7 +121,51 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check a variable declaration.
-    pub fn check_variable_declaration(&mut self, _decl_idx: NodeIndex) {
+    pub fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return;
+        };
+        let Some(decl_data) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return;
+        };
+
+        // TS1155: Check if const declarations must be initialized
+        // Get the parent node (VARIABLE_DECLARATION_LIST) via extended info
+        let parent_idx = if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+            ext.parent
+        } else {
+            return;
+        };
+
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return;
+        };
+
+        // Check if this is a const declaration by checking the parent's flags
+        let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
+
+        // TS1155: 'const' declarations must be initialized
+        if is_const && decl_data.initializer.is_none() {
+            // Check if this is in a for-in or for-of loop (allowed)
+            if let Some(parent_ext) = self.ctx.arena.get_extended(parent_idx) {
+                if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
+                    if gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                    {
+                        // const in for-in/for-of is allowed without initializer
+                        return;
+                    }
+                }
+            }
+
+            self.ctx.error(
+                decl_node.pos,
+                decl_node.end - decl_node.pos,
+                "'const' declarations must be initialized.".to_string(),
+                1155,
+            );
+        }
+
         // Variable declaration checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:

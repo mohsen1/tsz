@@ -1322,9 +1322,19 @@ pub fn apply_contextual_type(
     }
 
     // If contextual type is assignable to expr_type, use contextual type (it's more specific)
-    checker.reset();
-    if checker.is_subtype_of(ctx_type, expr_type) {
-        return ctx_type;
+    // BUT: Skip for function/callable types — the solver's bivariant SubtypeChecker can
+    // incorrectly say that a wider function type (e.g. (x: number|string) => void) is a
+    // subtype of a narrower one (e.g. (x: number) => void), which would widen the property
+    // type and suppress valid TS2322 errors under strict function types.
+    let is_function_type = matches!(
+        interner.lookup(expr_type),
+        Some(TypeKey::Function(_) | TypeKey::Object(_))
+    );
+    if !is_function_type {
+        checker.reset();
+        if checker.is_subtype_of(ctx_type, expr_type) {
+            return ctx_type;
+        }
     }
 
     // Default: prefer the expression type (don't widen to contextual type)

@@ -3820,34 +3820,49 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// Returns a path like "../utils" or "./helper"
     fn calculate_relative_path(&self, current: &str, source: &str) -> String {
-        use std::path::Path;
+        use std::path::{Component, Path};
 
         let current_path = Path::new(current);
         let source_path = Path::new(source);
 
         // Get parent directories
         let current_dir = current_path.parent().unwrap_or(current_path);
-        let source_dir = source_path.parent().unwrap_or(source_path);
 
-        // Simple case: same directory
-        if current_dir == source_dir {
-            let file_name = source_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            return format!("./{}", file_name);
-        }
+        // Find common prefix and build relative path
+        let current_components: Vec<_> = current_dir.components().collect();
+        let source_components: Vec<_> = source_path.components().collect();
 
-        // Different directory - use full path for now
-        // TODO: Implement proper relative path calculation
-        let path_str = source_path.to_string_lossy().replace('\\', "/");
+        // Find common prefix length
+        let common_len = current_components
+            .iter()
+            .zip(source_components.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
 
-        // Ensure path starts with ./
-        if !path_str.starts_with("./") && !path_str.starts_with("../") {
-            format!("./{}", path_str)
+        // Build relative path: go up from current_dir, then down to source
+        let ups = current_components.len() - common_len;
+        let mut result = String::new();
+
+        if ups == 0 {
+            result.push_str("./");
         } else {
-            path_str
+            for _ in 0..ups {
+                result.push_str("../");
+            }
         }
+
+        // Append remaining source path components
+        let remaining: Vec<_> = source_components[common_len..]
+            .iter()
+            .filter_map(|c| match c {
+                Component::Normal(s) => s.to_str(),
+                _ => None,
+            })
+            .collect();
+        result.push_str(&remaining.join("/"));
+
+        // Normalize separators
+        result.replace('\\', "/")
     }
 
     /// Strip TypeScript file extensions from a path.
