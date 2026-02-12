@@ -2713,9 +2713,35 @@ impl<'a> TypeLowering<'a> {
                 return type_param;
             }
 
+            // Check for built-in type names FIRST before attempting symbol resolution.
+            // This ensures that primitive type keywords like "symbol", "string", "number"
+            // always resolve to their primitive types (TypeId::SYMBOL, TypeId::STRING, etc.)
+            // and are never shadowed by user-defined or lib-defined symbols.
+            //
+            // BUG FIX: Previously, we attempted symbol resolution first, which caused
+            // the "symbol" keyword in lib file type annotations (e.g., `(): symbol`)
+            // to incorrectly resolve to user symbols or lib symbols instead of the
+            // primitive type. This caused Symbol('test') to return DecoratorMetadata
+            // instead of symbol when esnext.decorators was loaded.
+            match name.as_ref() {
+                "any" => return TypeId::ANY,
+                "unknown" => return TypeId::UNKNOWN,
+                "never" => return TypeId::NEVER,
+                "void" => return TypeId::VOID,
+                "undefined" => return TypeId::UNDEFINED,
+                "null" => return TypeId::NULL,
+                "boolean" => return TypeId::BOOLEAN,
+                "number" => return TypeId::NUMBER,
+                "string" => return TypeId::STRING,
+                "bigint" => return TypeId::BIGINT,
+                "symbol" => return TypeId::SYMBOL,
+                "object" => return TypeId::OBJECT,
+                _ => {}
+            }
+
             // Phase 4.2: Must resolve to DefId - no fallback to SymbolRef
             //
-            // Try name-based resolution FIRST — it's reliable for cross-arena
+            // Try name-based resolution — it's reliable for cross-arena
             // lowering because it uses the identifier text (extracted from the
             // current arena) to look up directly in file_locals. The NodeIndex-
             // based resolver iterates ALL declaration arenas and can produce
@@ -2731,23 +2757,6 @@ impl<'a> TypeLowering<'a> {
             if let Some(def_id) = self.resolve_def_id(node_idx) {
                 let lazy_type = self.interner.intern(TypeKey::Lazy(def_id));
                 return lazy_type;
-            }
-
-            // Check for built-in type names only if not resolved (shadowing-safe)
-            match name.as_ref() {
-                "any" => return TypeId::ANY,
-                "unknown" => return TypeId::UNKNOWN,
-                "never" => return TypeId::NEVER,
-                "void" => return TypeId::VOID,
-                "undefined" => return TypeId::UNDEFINED,
-                "null" => return TypeId::NULL,
-                "boolean" => return TypeId::BOOLEAN,
-                "number" => return TypeId::NUMBER,
-                "string" => return TypeId::STRING,
-                "bigint" => return TypeId::BIGINT,
-                "symbol" => return TypeId::SYMBOL,
-                "object" => return TypeId::OBJECT,
-                _ => {}
             }
 
             TypeId::ERROR
