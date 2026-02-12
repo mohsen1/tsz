@@ -772,23 +772,66 @@ impl<'a> Printer<'a> {
                     self.emit(func.body);
                 }
             } else if needs_param_prologue {
+                let needs_parens = self.concise_body_needs_parens(func.body);
                 self.write("{");
                 self.write_line();
                 self.increase_indent();
                 self.emit_param_prologue(&param_transforms);
-                self.write("return ");
-                self.emit(func.body);
-                self.write(";");
+                if needs_parens {
+                    self.write("return (");
+                    self.emit(func.body);
+                    self.write(");");
+                } else {
+                    self.write("return ");
+                    self.emit(func.body);
+                    self.write(";");
+                }
                 self.write_line();
                 self.decrease_indent();
                 self.write("}");
             } else {
                 // Concise body: (x) => x + 1  →  function (x) { return x + 1; }
-                self.write("{ return ");
-                self.emit(func.body);
-                self.write("; }");
+                // If the body is (or resolves to) an object literal, wrap in parens
+                // to disambiguate from a block: () => ({})  →  function () { return ({}); }
+                let needs_parens = self.concise_body_needs_parens(func.body);
+                if needs_parens {
+                    self.write("{ return (");
+                    self.emit(func.body);
+                    self.write("); }");
+                } else {
+                    self.write("{ return ");
+                    self.emit(func.body);
+                    self.write("; }");
+                }
             }
             self.pop_temp_scope();
+        }
+    }
+
+    /// Check if a concise arrow body resolves to an object literal expression
+    /// and needs wrapping in parens. Returns false if already parenthesized
+    /// (to avoid double-parens). Unwraps through type assertions and as-expressions.
+    fn concise_body_needs_parens(&self, body_idx: NodeIndex) -> bool {
+        let mut idx = body_idx;
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                // Already parenthesized — the emitter will preserve the parens
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return false,
+                _ => return false,
+            }
         }
     }
 

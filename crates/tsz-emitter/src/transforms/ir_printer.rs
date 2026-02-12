@@ -24,6 +24,7 @@ use crate::transform_context::TransformContext;
 use crate::transforms::ir::*;
 use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::syntax_kind_ext;
 
 /// IR Printer - converts IR nodes to JavaScript strings
 pub struct IRPrinter<'a> {
@@ -1624,9 +1625,42 @@ impl<'a> IRPrinter<'a> {
             self.emit_node(&IRNode::ASTRef(func.body));
         } else {
             // Concise body - wrap with return and emit recursively
-            self.write("{ return ");
-            self.emit_node(&IRNode::ASTRef(func.body));
-            self.write("; }");
+            // If body resolves to an object literal, wrap in parens
+            let needs_parens = Self::concise_body_needs_parens(arena, func.body);
+            if needs_parens {
+                self.write("{ return (");
+                self.emit_node(&IRNode::ASTRef(func.body));
+                self.write("); }");
+            } else {
+                self.write("{ return ");
+                self.emit_node(&IRNode::ASTRef(func.body));
+                self.write("; }");
+            }
+        }
+    }
+
+    /// Check if a concise arrow body resolves to an object literal expression
+    /// and needs wrapping in parens. Returns false if already parenthesized.
+    fn concise_body_needs_parens(arena: &NodeArena, body_idx: NodeIndex) -> bool {
+        let mut idx = body_idx;
+        loop {
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION =>
+                {
+                    if let Some(ta) = arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return false,
+                _ => return false,
+            }
         }
     }
 }
