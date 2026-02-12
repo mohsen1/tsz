@@ -905,6 +905,13 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_should_declare_var(*should_declare_var);
                 let output = ns_emitter.emit_namespace(*namespace_node);
                 self.write(output.trim_end_matches('\n'));
+                // Advance comment cursor past comments inside the namespace body,
+                // since the sub-emitter already handled them.
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].end <= node.end
+                {
+                    self.comment_emit_idx += 1;
+                }
             }
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
@@ -1041,6 +1048,13 @@ impl<'a> Printer<'a> {
                 ns_emitter.set_should_declare_var(*should_declare_var);
                 let output = ns_emitter.emit_namespace(*namespace_node);
                 self.write(output.trim_end_matches('\n'));
+                // Advance comment cursor past comments inside the namespace body,
+                // since the sub-emitter already handled them.
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].end <= node.end
+                {
+                    self.comment_emit_idx += 1;
+                }
             }
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);

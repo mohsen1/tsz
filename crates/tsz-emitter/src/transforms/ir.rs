@@ -337,6 +337,11 @@ pub enum IRNode {
     /// Comment: `/* text */` or `// text`
     Comment { text: String, is_block: bool },
 
+    /// Trailing comment that should be emitted on the same line as the previous node.
+    /// Used for comments like `M.x = ""; //comment` inside namespace bodies.
+    /// The text includes delimiters (e.g., `//comment` or `/* comment */`).
+    TrailingComment(String),
+
     /// Sequence of statements/nodes
     Sequence(Vec<IRNode>),
 

@@ -80,9 +80,10 @@ impl<'a> NamespaceES5Emitter<'a> {
         }
     }
 
-    /// Set the source text for ASTRef emission
+    /// Set the source text for ASTRef emission and comment extraction
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
+        self.transformer.set_source_text(text);
     }
 
     /// Set whether to emit a 'var' declaration for the namespace
