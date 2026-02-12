@@ -1568,6 +1568,10 @@ impl<'a> Printer<'a> {
         // Enter a new scope for the loop body to track variable shadowing
         self.ctx.block_scope_state.enter_scope();
 
+        // Pre-register loop variables before emitting (needed for shadowing)
+        // Note: We only pre-register for VARIABLE_DECLARATION_LIST nodes, not assignment targets
+        self.pre_register_for_of_loop_variable(for_in_of.initializer);
+
         // Emit the value binding: var item = _c.value;
         self.emit_for_of_value_binding_iterator_es5(for_in_of.initializer, &loop_result_name);
         self.write_line();
