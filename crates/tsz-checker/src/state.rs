@@ -778,16 +778,66 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // For array literals, clear cache for all elements
-        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            if let Some(array) = self.ctx.arena.get_literal_expr(node) {
-                for &elem_idx in array.elements.nodes.iter() {
-                    self.clear_type_cache_recursive(elem_idx);
+        match node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                if let Some(array) = self.ctx.arena.get_literal_expr(node) {
+                    for &elem_idx in array.elements.nodes.iter() {
+                        self.clear_type_cache_recursive(elem_idx);
+                    }
                 }
             }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(obj) = self.ctx.arena.get_literal_expr(node) {
+                    for &prop_idx in obj.elements.nodes.iter() {
+                        self.clear_type_cache_recursive(prop_idx);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.ctx.arena.get_property_assignment(node) {
+                    self.clear_type_cache_recursive(prop.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.clear_type_cache_recursive(paren.expression);
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                    self.clear_type_cache_recursive(call.expression);
+                    if let Some(ref args) = call.arguments {
+                        for &arg_idx in &args.nodes {
+                            self.clear_type_cache_recursive(arg_idx);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
+                    self.clear_type_cache_recursive(bin.left);
+                    self.clear_type_cache_recursive(bin.right);
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    self.clear_type_cache_recursive(cond.condition);
+                    self.clear_type_cache_recursive(cond.when_true);
+                    self.clear_type_cache_recursive(cond.when_false);
+                }
+            }
+            k if k == syntax_kind_ext::SPREAD_ELEMENT => {
+                if let Some(spread) = self.ctx.arena.get_unary_expr_ex(node) {
+                    self.clear_type_cache_recursive(spread.expression);
+                }
+            }
+            k if k == syntax_kind_ext::AS_EXPRESSION => {
+                if let Some(as_expr) = self.ctx.arena.get_type_assertion(node) {
+                    self.clear_type_cache_recursive(as_expr.expression);
+                }
+            }
+            _ => {}
         }
-
-        // TODO: Add more node types as needed (object literals, etc.)
     }
 
     /// Compute the type of a node (internal, not cached).
