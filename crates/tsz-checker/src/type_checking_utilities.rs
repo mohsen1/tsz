@@ -1680,6 +1680,75 @@ impl<'a> CheckerState<'a> {
         self.class_has_base(class) && !self.class_extends_null(class)
     }
 
+    /// Check whether a class has features that require strict super() placement checks.
+    ///
+    /// Matches TypeScript diagnostics TS2376/TS2401 trigger conditions:
+    /// initialized instance properties, constructor parameter properties,
+    /// or private identifiers.
+    pub(crate) fn class_has_super_call_position_sensitive_members(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+
+                    if self.is_private_identifier_name(prop.name) {
+                        return true;
+                    }
+
+                    if !self.has_static_modifier(&prop.modifiers) && !prop.initializer.is_none() {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.is_private_identifier_name(method.name) {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.is_private_identifier_name(accessor.name) {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                        continue;
+                    };
+
+                    for &param_idx in &ctor.parameters.nodes {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+
+                        if self.has_parameter_property_modifier(&param.modifiers) {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
     /// Check if a type includes undefined (directly or in a union).
     ///
     /// Returns true if type_id is UNDEFINED or a union containing UNDEFINED.
