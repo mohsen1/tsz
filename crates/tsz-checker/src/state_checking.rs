@@ -2235,7 +2235,19 @@ impl<'a> CheckerState<'a> {
                             self.resolve_alias_symbol(heritage_sym, &mut visited_aliases);
                         let sym_to_check = resolved_sym.unwrap_or(heritage_sym);
 
-                        let symbol_type = self.get_type_of_symbol(sym_to_check);
+                        // Guard against infinite recursion: if this symbol is already being resolved
+                        // as a class instance type, skip the type resolution to prevent stack overflow.
+                        // This can happen with circular class inheritance across multiple files.
+                        let is_being_resolved = self
+                            .ctx
+                            .class_instance_resolution_set
+                            .contains(&sym_to_check);
+                        let symbol_type = if is_being_resolved {
+                            // Skip type resolution for symbols already being resolved to prevent infinite recursion
+                            TypeId::ERROR
+                        } else {
+                            self.get_type_of_symbol(sym_to_check)
+                        };
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_to_check) {
                             if symbol.flags & symbol_flags::MODULE != 0 {
                                 if let Some(name) = self.heritage_name_text(expr_idx) {
