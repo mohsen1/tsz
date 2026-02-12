@@ -193,7 +193,10 @@ impl<'a> Printer<'a> {
                 let _range_start = prev_end.unwrap_or(node.pos); // For first node, this won't emit anything
                 if prev_end.is_some() {
                     // For non-first nodes, emit comments between previous node end and current node start
-                    self.emit_unemitted_comments_between(prev_end.unwrap(), node.pos);
+                    self.emit_unemitted_comments_between(
+                        prev_end.expect("prev_end is Some, checked by if condition"),
+                        node.pos,
+                    );
                 }
             }
             first = false;
