@@ -2319,6 +2319,9 @@ impl<'a> CheckerState<'a> {
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&method.parameters);
 
+        // Check that rest parameters have array types (TS2370)
+        self.check_rest_parameter_types(&method.parameters.nodes);
+
         // Check that parameter default values are assignable to declared types (TS2322)
         self.check_parameter_initializers(&method.parameters.nodes);
 
@@ -2557,6 +2560,9 @@ impl<'a> CheckerState<'a> {
 
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&ctor.parameters);
+
+        // Check that rest parameters have array types (TS2370)
+        self.check_rest_parameter_types(&ctor.parameters.nodes);
 
         // Check that parameter default values are assignable to declared types (TS2322)
         self.check_parameter_initializers(&ctor.parameters.nodes);
@@ -3636,6 +3642,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&func.parameters);
+
+        // Check that rest parameters have array types (TS2370)
+        self.check_rest_parameter_types(&func.parameters.nodes);
 
         // Check return type annotation for parameter properties in function types
         if !func.type_annotation.is_none() {
