@@ -131,6 +131,44 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns true if the given node is inside a regular (non-arrow) function body.
+    /// Arrow functions don't have their own `arguments` binding, so this returns false for them.
+    /// Returns false if at module/global scope (no enclosing function).
+    pub(crate) fn is_in_regular_function_body(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::*;
+        let mut current = idx;
+        let mut iterations = 0;
+        while !current.is_none() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                match node.kind {
+                    k if k == ARROW_FUNCTION => return false,
+                    k if k == FUNCTION_DECLARATION
+                        || k == FUNCTION_EXPRESSION
+                        || k == METHOD_DECLARATION
+                        || k == CONSTRUCTOR
+                        || k == GET_ACCESSOR
+                        || k == SET_ACCESSOR =>
+                    {
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     /// Check if `this` has a contextual owner (class or object literal).
     ///
     /// Walks up the AST to find the nearest non-arrow function. If that function is

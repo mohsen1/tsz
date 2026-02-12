@@ -594,16 +594,33 @@ impl<'a> CheckerState<'a> {
 
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == SyntaxKind::Identifier as u16
-            && let Some(sym_id) = self.resolve_identifier_symbol_for_write(idx)
         {
-            if self.alias_resolves_to_type_only(sym_id) {
-                if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                    self.error_type_only_value_at(&ident.escaped_text, idx);
+            // Inside a regular function body, `arguments` is the implicit IArguments object,
+            // overriding any outer `arguments` declaration.
+            if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                if ident.escaped_text == "arguments" && self.is_in_regular_function_body(idx) {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(sym_id) = self
+                        .ctx
+                        .binder
+                        .get_global_type_with_libs("IArguments", &lib_binders)
+                    {
+                        return self.type_reference_symbol_type(sym_id);
+                    }
+                    return TypeId::ANY;
                 }
-                return TypeId::ERROR;
             }
-            let declared_type = self.get_type_of_symbol(sym_id);
-            return declared_type;
+
+            if let Some(sym_id) = self.resolve_identifier_symbol_for_write(idx) {
+                if self.alias_resolves_to_type_only(sym_id) {
+                    if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                        self.error_type_only_value_at(&ident.escaped_text, idx);
+                    }
+                    return TypeId::ERROR;
+                }
+                let declared_type = self.get_type_of_symbol(sym_id);
+                return declared_type;
+            }
         }
 
         // For non-identifier assignment targets (property access, element access, etc.),

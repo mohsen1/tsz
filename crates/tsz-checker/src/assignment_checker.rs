@@ -194,9 +194,10 @@ impl<'a> CheckerState<'a> {
         let name = &id_data.escaped_text;
 
         // Check for built-in global functions that always error with TS2630
-        // These are: eval, arguments
-        // TypeScript always treats these as functions, even if not explicitly declared
-        if name == "eval" || name == "arguments" {
+        // Note: `arguments` is NOT included here because inside function bodies,
+        // `arguments` is an IArguments object (handled by type_computation_complex.rs).
+        // Only at module scope would `arguments` resolve to a function-like global.
+        if name == "eval" {
             use crate::types::diagnostics::{
                 diagnostic_codes, diagnostic_messages, format_message,
             };

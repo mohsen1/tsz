@@ -568,11 +568,59 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Some(indexed_access) = self.ctx.arena.get_indexed_access_type(node) {
             let object_type = self.check(indexed_access.object_type);
             let index_type = self.check(indexed_access.index_type);
+
+            // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
+            if self.is_invalid_index_type(index_type) {
+                if let Some(inode) = self.ctx.arena.get(indexed_access.index_type) {
+                    self.ctx.error(
+                        inode.pos,
+                        inode.end - inode.pos,
+                        "Type cannot be used as an index type.".to_string(),
+                        2538,
+                    );
+                }
+            }
+
             self.ctx
                 .types
                 .intern(tsz_solver::TypeKey::IndexAccess(object_type, index_type))
         } else {
             TypeId::ERROR
+        }
+    }
+
+    /// Check if a type cannot be used as an index type (TS2538).
+    fn is_invalid_index_type(&self, type_id: TypeId) -> bool {
+        use tsz_solver::{IntrinsicKind, LiteralValue, TypeKey};
+
+        if matches!(
+            type_id,
+            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+        ) {
+            return false;
+        }
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Intrinsic(kind)) => matches!(
+                kind,
+                IntrinsicKind::Void
+                    | IntrinsicKind::Null
+                    | IntrinsicKind::Undefined
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Object
+                    | IntrinsicKind::Function
+            ),
+            Some(TypeKey::Literal(value)) => {
+                matches!(value, LiteralValue::Boolean(_) | LiteralValue::BigInt(_))
+            }
+            Some(TypeKey::Array(_))
+            | Some(TypeKey::Tuple(_))
+            | Some(TypeKey::Object(_))
+            | Some(TypeKey::ObjectWithIndex(_))
+            | Some(TypeKey::Function(_))
+            | Some(TypeKey::Callable(_)) => true,
+            _ => false,
         }
     }
 
