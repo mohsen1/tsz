@@ -343,6 +343,39 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn is_in_constructor_parameter_context(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut saw_parameter = false;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if parent_node.kind == syntax_kind_ext::PARAMETER {
+                saw_parameter = true;
+            }
+
+            if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                return saw_parameter;
+            }
+
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
     /// Find the enclosing class by walking up the parent chain.
     ///
     /// This is more reliable than relying on `enclosing_class` which may not be set
@@ -440,12 +473,40 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(false);
 
+        let in_constructor_parameter_context = self.is_in_constructor_parameter_context(idx);
+        let in_static_property_initializer = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|info| info.in_static_property_initializer)
+            .unwrap_or(false);
+
+        if in_static_property_initializer {
+            self.error_at_node(
+                idx,
+                diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+            );
+        }
+
         if !is_super_call && !is_super_property_access {
             self.error_at_node(
                 idx,
                 diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
                 diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
             );
+            if in_constructor_parameter_context {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_CANNOT_BE_REFERENCED_IN_CONSTRUCTOR_ARGUMENTS,
+                    diagnostic_codes::SUPER_CANNOT_BE_REFERENCED_IN_CONSTRUCTOR_ARGUMENTS,
+                );
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                    diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                );
+            }
             return;
         }
 
@@ -498,6 +559,21 @@ impl<'a> CheckerState<'a> {
                 idx,
                 diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
                 diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
+            );
+            return;
+        }
+
+        // TS2336/TS17011: super property access in constructor parameters is not allowed.
+        if is_super_property_access && in_constructor_parameter_context {
+            self.error_at_node(
+                idx,
+                diagnostic_messages::SUPER_CANNOT_BE_REFERENCED_IN_CONSTRUCTOR_ARGUMENTS,
+                diagnostic_codes::SUPER_CANNOT_BE_REFERENCED_IN_CONSTRUCTOR_ARGUMENTS,
+            );
+            self.error_at_node(
+                idx,
+                diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
             );
             return;
         }

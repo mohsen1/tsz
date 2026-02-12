@@ -291,6 +291,35 @@ class Derived extends Base {
     );
 }
 
+#[test]
+fn test_super_in_constructor_parameter_reports_ts2336_and_ts17011() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class B {
+    public foo(): number {
+        return 0;
+    }
+}
+
+class C extends B {
+    constructor(a = super.foo()) {
+    }
+}
+                "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2336),
+        "Expected TS2336 for super in constructor argument context. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+    assert!(
+        has_error(&diagnostics, 17011),
+        "Expected TS17011 for super property access before super() in constructor context. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
 /// Issue: Overly aggressive strict null checking
 ///
 /// From: neverReturningFunctions1.ts
