@@ -1672,7 +1672,10 @@ mod tests {
         let var_pos = output.find("var result");
         let yield_pos = output.find("[4 /*yield*/");
         assert!(
-            var_pos.is_some() && yield_pos.is_some() && var_pos.unwrap() < yield_pos.unwrap(),
+            var_pos.is_some()
+                && yield_pos.is_some()
+                && var_pos.expect("var_pos is Some, checked above")
+                    < yield_pos.expect("yield_pos is Some, checked above"),
             "Variable declaration must come before yield: {}",
             output
         );
