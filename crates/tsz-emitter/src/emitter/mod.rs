@@ -1943,12 +1943,33 @@ impl<'a> Printer<'a> {
             let mut prev_end: u32 = 0;
             for &stmt_idx in &source.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    let mut is_erased = false;
+
+                    // Check if statement is directly an interface or type alias
                     if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                         || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     {
-                        // Comments between prev_end and this node's pos are leading
-                        // trivia for this erased declaration
-                        erased_ranges.push((prev_end, stmt_node.pos));
+                        is_erased = true;
+                    }
+                    // Also check if it's an export declaration wrapping an interface/type
+                    else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                        if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                            if let Some(inner_node) = self.arena.get(export.export_clause) {
+                                if inner_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                    || inner_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                {
+                                    is_erased = true;
+                                }
+                            }
+                        }
+                    }
+
+                    if is_erased {
+                        // Filter comments in the entire span of the erased declaration,
+                        // including leading trivia (from prev_end to node end).
+                        // This ensures comments before type-only declarations don't leak
+                        // into the JavaScript output.
+                        erased_ranges.push((prev_end, stmt_node.end));
                     }
                     prev_end = stmt_node.end;
                 }
