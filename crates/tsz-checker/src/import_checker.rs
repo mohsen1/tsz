@@ -1622,39 +1622,79 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
                 let mut skip_export_checks = false;
-                let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                if let Some(source_file) = arena.source_files.first() {
-                    let file_name = source_file.file_name.as_str();
-                    let is_js_like = file_name.ends_with(".js")
-                        || file_name.ends_with(".jsx")
-                        || file_name.ends_with(".mjs")
-                        || file_name.ends_with(".cjs");
-                    if is_js_like && !source_file.is_declaration_file {
+                // Extract data we need before any mutable borrows
+                let (is_declaration_file_flag, file_info) = {
+                    let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                    if let Some(source_file) = arena.source_files.first() {
+                        let file_name = source_file.file_name.as_str();
+                        let is_js_like = file_name.ends_with(".js")
+                            || file_name.ends_with(".jsx")
+                            || file_name.ends_with(".mjs")
+                            || file_name.ends_with(".cjs");
+                        let skip_exports = is_js_like && !source_file.is_declaration_file;
+                        let target_is_esm =
+                            file_name.ends_with(".mjs") || file_name.ends_with(".mts");
+                        let is_dts = source_file.is_declaration_file;
+                        (is_dts, Some((skip_exports, target_is_esm)))
+                    } else {
+                        (false, None)
+                    }
+                };
+
+                if let Some((should_skip_exports, target_is_esm)) = file_info {
+                    if should_skip_exports {
                         skip_export_checks = true;
                     }
-                    if source_file.is_declaration_file
-                        && !is_type_only_import
-                        && !emitted_dts_import_error
-                    {
+
+                    // TS1479: Check if CommonJS file is importing an ES module
+                    // This error occurs when the current file will emit require() calls
+                    // but the target file is an ES module (which cannot be required)
+                    let current_is_commonjs = {
+                        let current_file = &self.ctx.file_name;
+                        // .cts files are always CommonJS
+                        let is_cts = current_file.ends_with(".cts");
+                        // .mts files are always ESM
+                        let is_mts = current_file.ends_with(".mts");
+                        // For other files, check if module system will emit require() calls
+                        is_cts || (!is_mts && !self.ctx.compiler_options.module.is_es_module())
+                    };
+
+                    if current_is_commonjs && target_is_esm && !is_type_only_import {
                         use crate::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
-                        let suggested = if module_name.ends_with(".d.ts") {
-                            module_name.trim_end_matches(".d.ts")
-                        } else {
-                            module_name.as_str()
-                        };
                         let message = format_message(
-                            diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
-                            &[suggested],
+                            diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_WHOSE_IMPORTS_WILL_PRODUCE_REQUIRE_CALLS_H,
+                            &[module_name],
                         );
                         self.error_at_position(
                             spec_start,
                             spec_length,
                             &message,
-                            diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                            diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_WHOSE_IMPORTS_WILL_PRODUCE_REQUIRE_CALLS_H,
                         );
                     }
+                }
+
+                if is_declaration_file_flag && !is_type_only_import && !emitted_dts_import_error {
+                    use crate::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let suggested = if module_name.ends_with(".d.ts") {
+                        module_name.trim_end_matches(".d.ts")
+                    } else {
+                        module_name.as_str()
+                    };
+                    let message = format_message(
+                            diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                            &[suggested],
+                        );
+                    self.error_at_position(
+                            spec_start,
+                            spec_length,
+                            &message,
+                            diagnostic_codes::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
+                        );
                 }
                 if let Some(binder) = self.ctx.get_binder_for_file(target_idx) {
                     let normalized_module_name = module_name.trim_matches('"').trim_matches('\'');
