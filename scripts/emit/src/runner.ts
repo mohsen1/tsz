@@ -150,7 +150,7 @@ function parseModule(moduleStr: string): number {
   return 0;
 }
 
-function extractVariantFromFilename(filename: string): { base: string; target?: string; module?: string } {
+function extractVariantFromFilename(filename: string): { base: string; target?: string; module?: string; alwaysstrict?: string } {
   const match = filename.match(/^(.+?)\(([^)]+)\)\.js$/);
   if (!match) {
     return { base: filename.replace('.js', '') };
@@ -158,12 +158,13 @@ function extractVariantFromFilename(filename: string): { base: string; target?: 
 
   const base = match[1];
   const variants = match[2].split(',').map(v => v.trim());
-  const result: { base: string; target?: string; module?: string } = { base };
+  const result: { base: string; target?: string; module?: string; alwaysstrict?: string } = { base };
 
   for (const variant of variants) {
     const [key, value] = variant.split('=');
     if (key === 'target') result.target = value;
     if (key === 'module') result.module = value;
+    if (key === 'alwaysstrict') result.alwaysstrict = value;
   }
 
   return result;
@@ -232,7 +233,9 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       : directives.module ? parseModule(String(directives.module))
       : 1;  // TypeScript defaults to CommonJS when no module is specified
 
-    const alwaysStrict = directives.strict === true || directives.alwaysstrict === true;
+    const alwaysStrict = variant.alwaysstrict !== undefined
+      ? variant.alwaysstrict === 'true'
+      : (directives.strict === true || directives.alwaysstrict === true);
     const sourceMap = directives.sourcemap === true || directives.inlinesourcemap === true;
 
     return {
