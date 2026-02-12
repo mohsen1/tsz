@@ -95,7 +95,19 @@ impl ParserState {
             }
             // <T>(x) => ... (generic arrow function)
             SyntaxKind::LessThanToken => self.look_ahead_is_generic_arrow_function(),
-            _ => self.is_identifier_or_keyword() && self.look_ahead_is_simple_arrow_function(),
+            _ => {
+                // In generator context, 'yield' is always a yield expression, never an arrow parameter
+                // Example: function * foo(a = yield => yield) {} - first 'yield' is expression, not param
+                if self.in_generator_context() && self.is_token(SyntaxKind::YieldKeyword) {
+                    return false;
+                }
+                // In async context (including parameter defaults), 'await' cannot start an arrow function
+                // Example: async (a = await => x) => {} - 'await' triggers TS1109, not treated as arrow param
+                if self.in_async_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+                    return false;
+                }
+                self.is_identifier_or_keyword() && self.look_ahead_is_simple_arrow_function()
+            }
         }
     }
 
