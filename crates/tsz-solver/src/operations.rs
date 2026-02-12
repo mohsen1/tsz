@@ -37,7 +37,7 @@ use crate::visitor::TypeVisitor;
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
-use tracing::debug;
+use tracing::{debug, trace};
 use tsz_common::interner::Atom;
 
 /// Maximum recursion depth for type constraint collection to prevent infinite loops.
@@ -904,33 +904,63 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut final_subst = TypeSubstitution::new();
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
-            let has_constraints = infer_ctx
-                .get_constraints(var)
-                .is_some_and(|c| !c.is_empty());
+            let constraints = infer_ctx.get_constraints(var);
+            let has_constraints = constraints.as_ref().is_some_and(|c| !c.is_empty());
+
+            trace!(
+                type_param_name = ?self.interner.resolve_atom(tp.name),
+                var = ?var,
+                has_constraints = has_constraints,
+                constraints = ?constraints,
+                has_default = tp.default.is_some(),
+                has_constraint = tp.constraint.is_some(),
+                constraint = ?tp.constraint,
+                "Resolving type parameter"
+            );
 
             let ty = if has_constraints {
                 match infer_ctx.resolve_with_constraints_by(var, |source, target| {
                     self.checker.is_assignable_to(source, target)
                 }) {
-                    Ok(ty) => ty,
-                    Err(_) => {
+                    Ok(ty) => {
+                        trace!(
+                            resolved_type = ?ty,
+                            "Type parameter resolved successfully from constraints"
+                        );
+                        ty
+                    }
+                    Err(e) => {
+                        trace!(
+                            error = ?e,
+                            "Constraint resolution failed, using fallback"
+                        );
                         // Inference from constraints failed - try fallback options
                         // Use ERROR as ultimate fallback when constraints exist but inference fails
                         // (this indicates a real type conflict that should be reported)
-                        if let Some(default) = tp.default {
+                        let fallback = if let Some(default) = tp.default {
                             instantiate_type(self.interner, default, &final_subst)
                         } else if let Some(constraint) = tp.constraint {
                             instantiate_type(self.interner, constraint, &final_subst)
                         } else {
                             TypeId::ERROR
-                        }
+                        };
+                        trace!(
+                            fallback_type = ?fallback,
+                            "Using fallback type"
+                        );
+                        fallback
                     }
                 }
             } else if let Some(default) = tp.default {
-                instantiate_type(self.interner, default, &final_subst)
+                let ty = instantiate_type(self.interner, default, &final_subst);
+                trace!(resolved_type = ?ty, "Using default type");
+                ty
             } else if let Some(constraint) = tp.constraint {
-                instantiate_type(self.interner, constraint, &final_subst)
+                let ty = instantiate_type(self.interner, constraint, &final_subst);
+                trace!(resolved_type = ?ty, "Using constraint as fallback (no constraints collected)");
+                ty
             } else {
+                trace!("Using UNKNOWN (unconstrained type parameter)");
                 // TypeScript infers 'unknown' for unconstrained type parameters without defaults
                 TypeId::UNKNOWN
             };
@@ -2590,8 +2620,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             priority,
         );
         // Constrain type predicates if both have them
+        trace!(
+            source_has_predicate = source.type_predicate.is_some(),
+            target_has_predicate = target.type_predicate.is_some(),
+            "constrain_function_to_call_signature: checking type predicates"
+        );
         if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate) {
+            trace!(
+                source_pred_asserts = s_pred.asserts,
+                source_pred_type = ?s_pred.type_id,
+                target_pred_asserts = t_pred.asserts,
+                target_pred_type = ?t_pred.type_id,
+                "constrain_function_to_call_signature: both have predicates"
+            );
             if let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id) {
+                trace!(
+                    s_pred_type = ?s_pred_type,
+                    t_pred_type = ?t_pred_type,
+                    "constrain_function_to_call_signature: adding constraint"
+                );
                 self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
             }
         }

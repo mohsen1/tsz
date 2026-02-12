@@ -198,9 +198,15 @@ impl<'a> Printer<'a> {
     /// Skip (suppress) all comments that belong to an erased declaration (interface, type alias).
     /// Advances comment_emit_idx past any comments whose end position falls within the node's range.
     pub(super) fn skip_comments_for_erased_node(&mut self, node: &Node) {
+        // Find the actual end of the node's code content, excluding trailing trivia.
+        // This prevents us from skipping comments that appear after the closing brace/token
+        // but before the next statement (which should be emitted as leading comments for
+        // that next statement).
+        let actual_end = self.find_token_end_before_trivia(node.pos, node.end);
+
         while self.comment_emit_idx < self.all_comments.len() {
             let c = &self.all_comments[self.comment_emit_idx];
-            if c.end <= node.end {
+            if c.end <= actual_end {
                 self.comment_emit_idx += 1;
             } else {
                 break;

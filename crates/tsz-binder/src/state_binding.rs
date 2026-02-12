@@ -585,6 +585,9 @@ impl BinderState {
             if let Some(case_block_node) = arena.get(switch_data.case_block)
                 && let Some(case_block) = arena.get_block(case_block_node)
             {
+                // Enter a block scope for the case block - all case clauses share this scope
+                self.enter_scope(ContainerKind::Block, switch_data.case_block);
+
                 for &clause_idx in &case_block.statements.nodes {
                     if let Some(clause_node) = arena.get(clause_idx)
                         && let Some(clause) = arena.get_case_clause(clause_node)
@@ -616,6 +619,9 @@ impl BinderState {
                         }
                     }
                 }
+
+                // Exit the case block scope
+                self.exit_scope(arena);
             }
 
             self.break_targets.pop();
