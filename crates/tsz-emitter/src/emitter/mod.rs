@@ -1964,6 +1964,10 @@ impl<'a> Printer<'a> {
         self.generated_temp_names.clear();
         self.first_for_of_emitted = false;
 
+        // Enter root scope for block-scoped variable tracking
+        // This ensures variables declared throughout the file are tracked for renaming
+        self.ctx.block_scope_state.enter_scope();
+
         // Extract comments. Triple-slash references (/// <reference ...>) are
         // preserved in output (TypeScript keeps them in JS emit).
         // Only AMD-specific directives (/// <amd ...) are stripped.
@@ -2287,6 +2291,9 @@ impl<'a> Printer<'a> {
         if !self.writer.is_at_line_start() {
             self.write_line();
         }
+
+        // Exit root scope for block-scoped variable tracking
+        self.ctx.block_scope_state.exit_scope();
     }
 }
 
