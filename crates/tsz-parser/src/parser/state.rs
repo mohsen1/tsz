@@ -723,6 +723,9 @@ impl ParserState {
     pub(crate) fn parse_semicolon(&mut self) {
         if self.is_token(SyntaxKind::SemicolonToken) {
             self.next_token();
+        } else if self.is_token(SyntaxKind::Unknown) {
+            // Scanner/lexer already reported an error for this token.
+            // Avoid cascading TS1005 (';' expected) at the same position.
         } else if !self.can_parse_semicolon() {
             // Suppress cascading TS1005 "';' expected" when a recent error was already
             // emitted. This happens when a prior parse failure (e.g., missing identifier,
