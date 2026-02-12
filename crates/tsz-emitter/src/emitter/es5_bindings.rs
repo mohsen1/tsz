@@ -14,6 +14,16 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Pre-register all variable names in this declaration list to handle shadowing
+        // This must happen before emitting any identifiers
+        for &decl_idx in &decl_list.declarations.nodes {
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+            {
+                self.pre_register_binding_name(decl.name);
+            }
+        }
+
         self.write("var ");
 
         let mut first = true;
@@ -1667,13 +1677,18 @@ impl<'a> Printer<'a> {
             if self.file_identifiers.contains(&candidate)
                 || self.generated_temp_names.contains(&candidate)
             {
-                self.make_unique_name()
+                let name = self.make_unique_name();
+                self.ctx.block_scope_state.reserve_name(name.clone());
+                name
             } else {
                 self.generated_temp_names.insert(candidate.clone());
+                self.ctx.block_scope_state.reserve_name(candidate.clone());
                 candidate
             }
         } else {
-            self.make_unique_name()
+            let name = self.make_unique_name();
+            self.ctx.block_scope_state.reserve_name(name.clone());
+            name
         };
 
         // Derive array name from expression:
@@ -1696,18 +1711,28 @@ impl<'a> Printer<'a> {
                     }
                     if let Some(candidate) = found {
                         self.generated_temp_names.insert(candidate.clone());
+                        // Reserve this name in block scope state to prevent variable shadowing conflicts
+                        self.ctx.block_scope_state.reserve_name(candidate.clone());
                         candidate
                     } else {
-                        self.make_unique_name()
+                        let name = self.make_unique_name();
+                        self.ctx.block_scope_state.reserve_name(name.clone());
+                        name
                     }
                 } else {
-                    self.make_unique_name()
+                    let name = self.make_unique_name();
+                    self.ctx.block_scope_state.reserve_name(name.clone());
+                    name
                 }
             } else {
-                self.make_unique_name()
+                let name = self.make_unique_name();
+                self.ctx.block_scope_state.reserve_name(name.clone());
+                name
             }
         } else {
-            self.make_unique_name()
+            let name = self.make_unique_name();
+            self.ctx.block_scope_state.reserve_name(name.clone());
+            name
         };
 
         self.write("for (var ");
@@ -1832,6 +1857,10 @@ impl<'a> Printer<'a> {
     ///
     /// For example: `for (let v of [v])` where inner v shadows outer v
     /// We register inner v as v_1, so when we emit [v], it becomes [v_1]
+    ///
+    /// Note: Only registers variables from VARIABLE_DECLARATION_LIST nodes (e.g., `for (let v of ...)`).
+    /// Bare identifiers (e.g., `for (v of ...)`) are assignment targets, not declarations, so they don't
+    /// create new variables and shouldn't be pre-registered.
     fn pre_register_for_of_loop_variable(&mut self, initializer: NodeIndex) {
         if initializer.is_none() {
             return;
@@ -1841,7 +1870,8 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Handle variable declaration list: `for (let v of ...)`
+        // Only handle variable declaration list: `for (let v of ...)`
+        // Do NOT handle bare identifiers: `for (v of ...)` - those are assignments, not declarations
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
             if let Some(decl_list) = self.arena.get_variable(init_node) {
                 for &decl_idx in &decl_list.declarations.nodes {
@@ -1852,10 +1882,9 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-        } else {
-            // Direct binding pattern or identifier
-            self.pre_register_binding_name(initializer);
         }
+        // Note: We explicitly do NOT pre-register for the else case (bare identifiers or patterns)
+        // because those are assignment targets, not declarations
     }
 
     /// Pre-register a binding name (identifier or pattern) in the current scope
