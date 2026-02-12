@@ -2114,6 +2114,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a property declaration.
+    #[tracing::instrument(level = "debug", skip(self), fields(file = %self.ctx.file_name))]
     pub(crate) fn check_property_declaration(&mut self, member_idx: NodeIndex) {
         use crate::types::diagnostics::diagnostic_codes;
 
@@ -2130,6 +2131,7 @@ impl<'a> CheckerState<'a> {
             || self.ctx.file_name.ends_with(".jsx")
             || self.ctx.file_name.ends_with(".mjs")
             || self.ctx.file_name.ends_with(".cjs");
+        tracing::debug!(is_js_file, file_name = %self.ctx.file_name, "Checking if JS file for TS8009/TS8010");
 
         if is_js_file {
             use crate::types::diagnostics::{diagnostic_messages, format_message};
