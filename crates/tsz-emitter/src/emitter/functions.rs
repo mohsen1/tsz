@@ -242,7 +242,11 @@ impl<'a> Printer<'a> {
         // Emit body - tsc never collapses multi-line function expression bodies
         // to single lines. Single-line formatting is preserved via emit_block
         // when the source was originally single-line.
+
+        // Push temp scope for function body - each function gets fresh temp variables
+        self.push_temp_scope();
         self.emit(func.body);
+        self.pop_temp_scope();
     }
 
     /// Check if a statement is a simple return statement (for single-line emission).

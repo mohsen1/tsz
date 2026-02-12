@@ -62,7 +62,11 @@ impl<'a> Printer<'a> {
         // No return type for JavaScript
 
         self.write_space();
+
+        // Push temp scope for function body - each function gets fresh temp variables
+        self.push_temp_scope();
         self.emit(func.body);
+        self.pop_temp_scope();
 
         // Track function name to prevent duplicate var declarations for merged namespaces.
         // Function declarations provide their own declaration, so if a namespace merges
