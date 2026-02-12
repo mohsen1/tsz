@@ -3789,14 +3789,24 @@ impl<'a> CheckerState<'a> {
 
                     if !skip_import_ts6133 && !skip_variable_ts6133 {
                         // TS6196 for classes, interfaces, type aliases, enums ("never used")
-                        // TS6133 for variables, functions, imports, private members ("value never read")
+                        // TS6138 for properties (including parameter properties) ("property value never read")
+                        // TS6133 for variables, functions, imports ("value never read")
                         let is_type_only = (flags & symbol_flags::CLASS) != 0
                             || (flags & symbol_flags::INTERFACE) != 0
                             || (flags & symbol_flags::TYPE_ALIAS) != 0
                             || (flags & symbol_flags::REGULAR_ENUM) != 0
                             || (flags & symbol_flags::CONST_ENUM) != 0;
+                        let is_property = (flags & symbol_flags::PROPERTY) != 0;
                         let (msg, code) = if is_type_only {
                             (format!("'{}' is declared but never used.", name), 6196)
+                        } else if is_property {
+                            (
+                                format!(
+                                    "Property '{}' is declared but its value is never read.",
+                                    name
+                                ),
+                                6138,
+                            )
                         } else {
                             (
                                 format!("'{}' is declared but its value is never read.", name),
