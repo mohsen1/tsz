@@ -390,7 +390,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         // A namespace is instantiated if it has any value declarations
         // (variables, functions, classes, enums, sub-namespaces),
         // even if the body produces no IR output (e.g., uninitialized exports).
-        if body.is_empty() && !self.has_value_declarations(innermost_body) {
+        // Comments alone don't make a namespace instantiated.
+        let has_code = body.iter().any(|n| !is_comment_node(n));
+        if !has_code && !self.has_value_declarations(innermost_body) {
             return None;
         }
 
@@ -991,7 +993,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
-        if body.is_empty() && !self.has_value_declarations(ns_data.body) {
+        if !body.iter().any(|n| !is_comment_node(n)) && !self.has_value_declarations(ns_data.body) {
             return None;
         }
 
@@ -1048,7 +1050,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
-        if body.is_empty() && !self.has_value_declarations(ns_data.body) {
+        if !body.iter().any(|n| !is_comment_node(n)) && !self.has_value_declarations(ns_data.body) {
             return None;
         }
 
@@ -1118,7 +1120,8 @@ impl<'a> NamespaceTransformContext<'a> {
         // A namespace is instantiated if it has any value declarations
         // (variables, functions, classes, enums, sub-namespaces),
         // even if the body produces no IR output (e.g., uninitialized exports).
-        if body.is_empty() && !self.has_value_declarations(innermost_body) {
+        if !body.iter().any(|n| !is_comment_node(n)) && !self.has_value_declarations(innermost_body)
+        {
             return None;
         }
 
@@ -1506,7 +1509,8 @@ impl<'a> NamespaceTransformContext<'a> {
         // A namespace is instantiated if it has any value declarations
         // (variables, functions, classes, enums, sub-namespaces),
         // even if the body produces no IR output (e.g., uninitialized exports).
-        if body.is_empty() && !self.has_value_declarations(innermost_body) {
+        if !body.iter().any(|n| !is_comment_node(n)) && !self.has_value_declarations(innermost_body)
+        {
             return None;
         }
 
@@ -1557,7 +1561,8 @@ impl<'a> NamespaceTransformContext<'a> {
         // A namespace is instantiated if it has any value declarations
         // (variables, functions, classes, enums, sub-namespaces),
         // even if the body produces no IR output (e.g., uninitialized exports).
-        if body.is_empty() && !self.has_value_declarations(innermost_body) {
+        if !body.iter().any(|n| !is_comment_node(n)) && !self.has_value_declarations(innermost_body)
+        {
             return None;
         }
 
@@ -1651,6 +1656,13 @@ fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
     }
 
     false
+}
+
+/// Check if an IR node is a comment (standalone or trailing).
+/// Used to determine if a namespace body has only comments and no actual code.
+fn is_comment_node(node: &IRNode) -> bool {
+    matches!(node, IRNode::Raw(s) if s.starts_with("//") || s.starts_with("/*"))
+        || matches!(node, IRNode::TrailingComment(_))
 }
 
 /// Check if a node is a namespace-like declaration (MODULE_DECLARATION or
