@@ -158,11 +158,46 @@ All comment-related unit tests pass:
 - **IR definition**: `crates/tsz-emitter/src/transforms/ir.rs`
   - Line 347: `TrailingComment(String)` variant
 
+## Investigation Attempts
+
+### Attempted Fix #1: Skip MODULE_DECLARATION trailing comments
+
+**Theory**: The outer namespace extracts a trailing comment for the nested namespace node, finding the same comment that was already extracted by the inner namespace.
+
+**Implementation**: Added check to skip trailing comment extraction for `MODULE_DECLARATION` statements:
+```rust
+if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+    if let Some(comment_text) = self.extract_trailing_comment_in_stmt(...) {
+        result.push(IRNode::TrailingComment(comment_text));
+    }
+}
+```
+
+**Result**: Did not fix the duplication. The issue is more subtle than this simple case.
+
+**Reverted**: Yes - the fix didn't work and added unnecessary complexity.
+
+### Further Investigation Needed
+
+The duplication persists, which suggests:
+1. The duplicate might be emitted by the IR printer itself, not the transformer
+2. There might be a state issue in the comment range iteration
+3. The peek-ahead logic might have a case it doesn't handle
+
+Next steps for investigation:
+- Add debug logging to track TrailingComment IR nodes through the pipeline
+- Verify the IR structure for nested namespaces - how many TrailingComment nodes exist?
+- Check if the printer's peek-ahead logic handles nested namespace IIFEs correctly
+- Consider if the issue is in how comment ranges are being iterated
+
 ## Conclusion
 
 The comment preservation infrastructure is solid and working. The two remaining edge cases are:
-1. **Tractable** - specific bugs with clear reproduction cases
+1. **Tractable but complex** - specific bugs with clear reproduction, but root cause requires deeper investigation
 2. **Non-blocking** - don't prevent most tests from passing
 3. **Isolated** - don't affect other functionality
 
-The 4.8% improvement in pass rate demonstrates the infrastructure is valuable. Future work should focus on fixing the two edge cases to unlock additional test passes.
+The 4.8% improvement in pass rate demonstrates the infrastructure is valuable. Future work should focus on fixing the two edge cases to unlock additional test passes. The duplication issue in particular will require:
+- Debug instrumentation to track IR node creation and emission
+- Careful tracing of the emit_namespace_iife recursion
+- Possibly unit tests for the specific nested namespace case
