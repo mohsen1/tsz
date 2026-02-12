@@ -462,6 +462,25 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Check if two nodes are on the same line in the source.
+    fn are_on_same_line_in_source(
+        &self,
+        node1: tsz_parser::parser::NodeIndex,
+        node2: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        if let Some(text) = self.source_text {
+            if let (Some(n1), Some(n2)) = (self.arena.get(node1), self.arena.get(node2)) {
+                let start = std::cmp::min(n1.end as usize, text.len());
+                let end = std::cmp::min(n2.pos as usize, text.len());
+                if start < end {
+                    // Check if there's a newline between the two nodes
+                    return !text[start..end].contains('\n');
+                }
+            }
+        }
+        false
+    }
+
     /// Get the output.
     pub fn get_output(&self) -> &str {
         self.writer.get_output()

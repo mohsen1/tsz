@@ -441,16 +441,32 @@ impl<'a> Printer<'a> {
             }
             self.write(" }");
         } else {
-            // Multi-line format for object literals
+            // Multi-line format: preserve original line layout from source
+            // TSC keeps properties that are on the same line together
             self.write("{");
             self.write_line();
             self.increase_indent();
             for (i, &prop) in obj.elements.nodes.iter().enumerate() {
                 self.emit(prop);
-                if i < obj.elements.nodes.len() - 1 || has_trailing_comma {
+
+                let is_last = i == obj.elements.nodes.len() - 1;
+                if !is_last || has_trailing_comma {
                     self.write(",");
                 }
-                self.write_line();
+
+                // Check if next property is on the same line in source
+                if !is_last {
+                    let next_prop = obj.elements.nodes[i + 1];
+                    if self.are_on_same_line_in_source(prop, next_prop) {
+                        // Keep on same line
+                        self.write(" ");
+                    } else {
+                        // Different lines in source
+                        self.write_line();
+                    }
+                } else {
+                    self.write_line();
+                }
             }
             self.decrease_indent();
             self.write("}");
