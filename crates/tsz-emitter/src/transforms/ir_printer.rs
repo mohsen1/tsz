@@ -1284,19 +1284,35 @@ impl<'a> IRPrinter<'a> {
         &mut self,
         params: &[IRParam],
         body: &[IRNode],
-        _body_source_range: Option<(u32, u32)>,
+        body_source_range: Option<(u32, u32)>,
     ) {
         // Check if any params have defaults
         let has_defaults = params.iter().any(|p| p.default_value.is_some());
 
+        // Check if the body was single-line in the source
+        let is_body_source_single_line = self.is_body_source_single_line(body_source_range);
+
+        // Empty body with no defaults: emit as single-line { } if source was single-line
         if !has_defaults && body.is_empty() {
-            self.write("{");
-            self.write_line();
-            self.write_indent();
-            self.write("}");
+            if is_body_source_single_line {
+                self.write("{ }");
+            } else {
+                self.write("{");
+                self.write_line();
+                self.write("}");
+            }
             return;
         }
 
+        // Single statement with no defaults: emit as single-line if source was single-line
+        if !has_defaults && body.len() == 1 && is_body_source_single_line {
+            self.write("{ ");
+            self.emit_node(&body[0]);
+            self.write(" }");
+            return;
+        }
+
+        // Multi-line body (either has defaults, multiple statements, or wasn't single-line in source)
         self.write("{");
         self.write_line();
         self.increase_indent();

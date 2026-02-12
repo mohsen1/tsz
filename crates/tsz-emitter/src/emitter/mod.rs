@@ -426,11 +426,15 @@ impl<'a> Printer<'a> {
 
     /// Check if a node spans a single line in the source.
     /// Finds the first `{` and last `}` within the node's source span and checks
-    /// if there's a newline between them. Uses `rfind` to handle nested braces correctly.
+    /// if there's a newline between them. Uses depth counting to handle nested braces correctly.
     fn is_single_line(&self, node: &Node) -> bool {
         if let Some(text) = self.source_text {
             let actual_start = self.skip_trivia_forward(node.pos, node.end) as usize;
-            let end = std::cmp::min(node.end as usize, text.len());
+            // Use actual token end, not node.end which includes trailing trivia.
+            // For example, `{ return x; }\n` has trailing newline in node.end,
+            // but we want to check only `{ return x; }`.
+            let token_end = self.find_token_end_before_trivia(node.pos, node.end);
+            let end = std::cmp::min(token_end as usize, text.len());
             if actual_start < end {
                 let slice = &text[actual_start..end];
                 // Find the first `{` and its matching `}` using depth counting
