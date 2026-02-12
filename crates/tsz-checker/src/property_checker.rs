@@ -44,12 +44,25 @@ impl<'a> CheckerState<'a> {
         error_node: NodeIndex,
         object_type: tsz_solver::TypeId,
     ) -> bool {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some((class_idx, is_static)) = self.resolve_class_for_access(object_expr, object_type)
         else {
             return true;
         };
+
+        if self.is_super_expression(object_expr)
+            && let Some(false) =
+                self.is_method_member_in_class_hierarchy(class_idx, property_name, is_static)
+        {
+            self.error_at_node(
+                error_node,
+                diagnostic_messages::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
+                diagnostic_codes::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
+            );
+            return false;
+        }
+
         let Some(access_info) = self.find_member_access_info(class_idx, property_name, is_static)
         else {
             return true;
