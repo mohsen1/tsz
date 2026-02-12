@@ -379,6 +379,12 @@ pub struct CheckerContext<'a> {
     /// Used to suppress TS1117 (duplicate property) checks in object patterns.
     pub in_destructuring_target: bool,
 
+    /// Whether to skip flow narrowing when computing types.
+    /// Used in assignment target type resolution to get declared types instead of narrowed types.
+    /// When checking `foo[x] = 1` after `if (foo[x] === undefined)`, we need the declared type
+    /// (e.g., `number | undefined`) not the narrowed type (e.g., `undefined`).
+    pub skip_flow_narrowing: bool,
+
     /// Current depth of recursive type instantiation.
     pub instantiation_depth: RefCell<u32>,
 
@@ -639,6 +645,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             is_checking_statements: false,
             in_destructuring_target: false,
+            skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
@@ -748,6 +755,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             is_checking_statements: false,
             in_destructuring_target: false,
+            skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
@@ -860,6 +868,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             is_checking_statements: false,
             in_destructuring_target: false,
+            skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
@@ -971,6 +980,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             is_checking_statements: false,
             in_destructuring_target: false,
+            skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
@@ -1096,6 +1106,7 @@ impl<'a> CheckerContext<'a> {
             contextual_type: None,
             is_checking_statements: false,
             in_destructuring_target: false,
+            skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
             depth_exceeded: RefCell::new(false),
             // Propagate depth from parent to prevent infinite recursion across arena boundaries

@@ -600,7 +600,16 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        self.get_type_of_node(idx)
+        // For non-identifier assignment targets (property access, element access, etc.),
+        // we need the declared type without control-flow narrowing.
+        // Example: After `if (foo[x] === undefined)`, when checking `foo[x] = 1`,
+        // we should check against the declared type (e.g., `number | undefined` from index signature)
+        // not the narrowed type (e.g., `undefined`).
+        let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
+        self.ctx.skip_flow_narrowing = true;
+        let result = self.get_type_of_node(idx);
+        self.ctx.skip_flow_narrowing = prev_skip_narrowing;
+        result
     }
 
     /// Get the type of a property access when we know the property name.
