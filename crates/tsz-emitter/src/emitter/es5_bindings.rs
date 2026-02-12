@@ -1528,6 +1528,9 @@ impl<'a> Printer<'a> {
         // - Named arrays use `<name>_1` (doesn't consume from counter)
         // - Names are checked against all identifiers in the source file
 
+        // Enter a new scope for block-scoped variable tracking
+        self.ctx.block_scope_state.enter_scope();
+
         // Generate index name: first for-of gets `_i`, subsequent ones use global counter
         let index_name = if !self.first_for_of_emitted {
             self.first_for_of_emitted = true;
@@ -1603,6 +1606,9 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+
+        // Exit the scope for block-scoped variable tracking
+        self.ctx.block_scope_state.exit_scope();
     }
 
     /// Emit the for-of loop body (common logic for both array and iterator modes)
@@ -1775,7 +1781,28 @@ impl<'a> Printer<'a> {
                                 self.write(", ");
                             }
                             first = false;
-                            self.emit(decl.name);
+
+                            // Handle variable shadowing: register the variable and emit renamed version
+                            if let Some(ident_node) = self.arena.get(decl.name) {
+                                if ident_node.kind == SyntaxKind::Identifier as u16 {
+                                    if let Some(ident) = self.arena.get_identifier(ident_node) {
+                                        let original_name =
+                                            self.arena.resolve_identifier_text(ident);
+                                        let emitted_name = self
+                                            .ctx
+                                            .block_scope_state
+                                            .register_variable(original_name);
+                                        self.write(&emitted_name);
+                                    } else {
+                                        self.emit(decl.name);
+                                    }
+                                } else {
+                                    self.emit(decl.name);
+                                }
+                            } else {
+                                self.emit(decl.name);
+                            }
+
                             self.write(" = ");
                             self.write(&element_expr);
                         }
