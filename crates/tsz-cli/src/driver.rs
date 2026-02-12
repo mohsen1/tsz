@@ -3345,6 +3345,13 @@ fn create_cross_file_lookup_binder(
             .insert(file.file_name.clone(), reexports.clone());
     }
     binder.is_external_module = file.is_external_module;
+    // Copy symbol-to-arena and declaration-to-arena mappings for cross-file
+    // type checking. Without these, delegate_cross_arena_symbol_resolution
+    // can't detect when a symbol belongs to a different file's arena, causing
+    // the checker to look up nodes in the wrong arena (e.g., TS2351 false
+    // positives for `export = C` where C is a class in another file).
+    binder.symbol_arenas = program.symbol_arenas.clone();
+    binder.declaration_arenas = program.declaration_arenas.clone();
     binder
 }
 
