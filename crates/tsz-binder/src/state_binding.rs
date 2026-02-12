@@ -1423,6 +1423,7 @@ impl BinderState {
                         .and_then(|m| m.modifiers.as_ref())
                         .is_some_and(|mods| self.has_export_modifier_any(arena, mods)),
                     syntax_kind_ext::EXPORT_DECLARATION => true, // export { x } / export type X = ...
+                    syntax_kind_ext::EXPORT_ASSIGNMENT => true,  // export = X / export default X
                     _ => false,
                 };
                 if is_ambient_module {
@@ -1524,6 +1525,18 @@ impl BinderState {
                                 if let Some(name) = name {
                                     exported_names.push(name);
                                 }
+                            }
+                        }
+                        syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                            if let Some(assign) = arena.get_export_assignment(stmt_node)
+                                && let Some(target_name) =
+                                    self.get_identifier_name(arena, assign.expression)
+                                && let Some(sym_id) = self
+                                    .current_scope
+                                    .get(target_name)
+                                    .or_else(|| self.file_locals.get(target_name))
+                            {
+                                exported_symbols.push(("export=".to_string(), sym_id));
                             }
                         }
                         syntax_kind_ext::EXPORT_DECLARATION => {

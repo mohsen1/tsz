@@ -1146,6 +1146,23 @@ impl<'a> CheckerState<'a> {
             return SyntacticTruthiness::Sometimes;
         }
 
+        if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+            if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                return self.get_syntactic_truthy_semantics(unary.expression);
+            }
+            return SyntacticTruthiness::Sometimes;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::AS_EXPRESSION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
+                return self.get_syntactic_truthy_semantics(assertion.expression);
+            }
+            return SyntacticTruthiness::Sometimes;
+        }
+
         match node.kind {
             // Numeric literals: 0 and 1 are "sometimes" (allows while(0)/while(1)),
             // all others are always truthy
@@ -3220,6 +3237,10 @@ impl<'a> CheckerState<'a> {
                         member_id
                     };
 
+                    if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
+                        return None;
+                    }
+
                     if let Some(member_symbol) = self.ctx.binder.get_symbol(resolved_member_id)
                         && member_symbol.flags & symbol_flags::VALUE == 0
                         && member_symbol.flags & symbol_flags::ALIAS == 0
@@ -3238,6 +3259,10 @@ impl<'a> CheckerState<'a> {
                         property_name,
                         &mut visited_aliases,
                     ) {
+                        if self.symbol_member_is_type_only(reexported_sym, Some(property_name)) {
+                            return None;
+                        }
+
                         if let Some(member_symbol) = self.ctx.binder.get_symbol(reexported_sym)
                             && member_symbol.flags & symbol_flags::VALUE == 0
                             && member_symbol.flags & symbol_flags::ALIAS == 0
@@ -3379,6 +3404,10 @@ impl<'a> CheckerState<'a> {
                     None => return false,
                 };
 
+                if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
+                    return true;
+                }
+
                 let has_value =
                     (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
                 let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
@@ -3468,6 +3497,78 @@ impl<'a> CheckerState<'a> {
         let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
         let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
         has_type && !has_value
+    }
+
+    fn symbol_member_is_type_only(&self, sym_id: SymbolId, name_hint: Option<&str>) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let (symbol, arena) = if let Some(found) = self.lookup_symbol_with_name(sym_id, name_hint) {
+            found
+        } else if name_hint.is_some() {
+            match self.lookup_symbol_with_name(sym_id, None) {
+                Some(found) => found,
+                None => return false,
+            }
+        } else {
+            return false;
+        };
+
+        if symbol.is_type_only {
+            return true;
+        }
+
+        if (symbol.flags & symbol_flags::METHOD) != 0
+            && (symbol.flags & symbol_flags::FUNCTION) == 0
+        {
+            return true;
+        }
+
+        let mut saw_declaration = false;
+        let mut all_type_only = true;
+
+        for &decl in &symbol.declarations {
+            if decl.is_none() {
+                continue;
+            }
+            let Some(node) = arena.get(decl) else {
+                continue;
+            };
+
+            saw_declaration = true;
+
+            let decl_is_type_only = match node.kind {
+                k if k == syntax_kind_ext::METHOD_SIGNATURE
+                    || k == syntax_kind_ext::PROPERTY_SIGNATURE
+                    || k == syntax_kind_ext::CALL_SIGNATURE
+                    || k == syntax_kind_ext::CONSTRUCT_SIGNATURE
+                    || k == syntax_kind_ext::INDEX_SIGNATURE =>
+                {
+                    true
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::PROPERTY_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                {
+                    if let Some(ext) = arena.get_extended(decl)
+                        && let Some(parent) = arena.get(ext.parent)
+                    {
+                        parent.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                            || parent.kind == syntax_kind_ext::TYPE_LITERAL
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+
+            if !decl_is_type_only {
+                all_type_only = false;
+                break;
+            }
+        }
+
+        saw_declaration && all_type_only
     }
 
     /// Check if a type is type-only (has no runtime value).
