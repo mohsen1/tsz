@@ -1192,7 +1192,13 @@ impl<'a> CheckerState<'a> {
             self.ctx.configure_compat_checker(&mut checker);
             let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
             evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
-            evaluator.resolve_call(callee_type_for_call, &arg_types)
+            // super() calls are constructor calls, not function calls.
+            // Use resolve_new() which checks construct signatures instead of call signatures.
+            if is_super_call {
+                evaluator.resolve_new(callee_type_for_call, &arg_types)
+            } else {
+                evaluator.resolve_call(callee_type_for_call, &arg_types)
+            }
         };
 
         self.handle_call_result(
@@ -1234,6 +1240,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
             CallResult::NotCallable { .. } => {
+                // super() calls now use resolve_new() which checks construct signatures,
+                // so NotCallable for super() means the base class has no constructor.
+                // This is valid - classes can have implicit constructors.
                 if is_super_call {
                     return TypeId::VOID;
                 }

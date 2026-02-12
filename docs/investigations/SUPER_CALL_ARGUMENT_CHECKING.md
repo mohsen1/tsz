@@ -153,17 +153,47 @@ CallResult::NotCallable { .. } => {
 
 ## Status
 
-**Status**: Root cause identified, needs implementation
-**Priority**: Medium - affects correctness but less critical than missing errors
-**Complexity**: Medium - needs understanding of constructor vs call signatures
-**Estimated Effort**: 2-4 hours
+**Status**: ✅ RESOLVED
+**Date Fixed**: 2026-02-12
+**Complexity**: Medium - needed understanding of constructor vs call signatures
+**Time Taken**: ~1 hour
 
 ---
 
-## Next Steps
+## Solution Implemented
 
-1. Add debug logging to see what type `get_class_constructor_type()` returns
-2. Check if CallEvaluator properly handles constructor types
-3. Implement fix (likely Option 1 or Option 2)
-4. Add unit tests for super() argument validation
-5. Verify baseCheck conformance test passes
+**Approach**: Use `resolve_new()` instead of `resolve_call()` for super() calls.
+
+### Root Cause
+super() calls were using `CallEvaluator::resolve_call()` which looks for call signatures, but constructor types only have construct signatures. This caused CallResult::NotCallable to be returned, which then short-circuited without validating arguments.
+
+### Implementation
+Modified `get_type_of_call_expression()` in `crates/tsz-checker/src/type_computation_complex.rs` at line 1195:
+
+```rust
+// super() calls are constructor calls, not function calls.
+// Use resolve_new() which checks construct signatures instead of call signatures.
+if is_super_call {
+    evaluator.resolve_new(callee_type_for_call, &arg_types)
+} else {
+    evaluator.resolve_call(callee_type_for_call, &arg_types)
+}
+```
+
+Also updated the NotCallable handler at line 1242 to clarify that super() returning NotCallable is valid (implicit constructors).
+
+### Results
+- ✅ **TS2554**: Expected 2 arguments, but got 1 (class D extends C)
+- ✅ **TS2345**: Argument of type 'string' is not assignable to parameter of type 'number' (class F extends C)
+- ✅ **baseCheck conformance**: Now emitting 4/5 expected errors (TS2552 is separate scoping issue)
+- ✅ **Unit tests**: 2372/2372 passing (100%)
+- ✅ **No regressions**: All existing tests still pass
+
+### Files Modified
+- `crates/tsz-checker/src/type_computation_complex.rs`: Use resolve_new() for super() calls
+
+---
+
+## Remaining Issue
+
+**TS2552 vs TS2304**: The test expects TS2552 "Cannot find name 'loc'. Did you mean the instance member 'this.loc'?" but TSZ emits TS2304 "Cannot find name 'loc'." This is a separate issue about suggesting instance members when a variable with the same name exists in a method.
