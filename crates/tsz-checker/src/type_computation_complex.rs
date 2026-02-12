@@ -1418,6 +1418,23 @@ impl<'a> CheckerState<'a> {
             );
 
             if self.alias_resolves_to_type_only(sym_id) {
+                // Don't emit TS2693 in heritage clause context (e.g., `extends A`)
+                if self.is_direct_heritage_type_reference(idx) {
+                    return TypeId::ERROR;
+                }
+                // Don't emit TS2693 for export default/export = expressions
+                if let Some(parent_ext) = self.ctx.arena.get_extended(idx) {
+                    if !parent_ext.parent.is_none() {
+                        if let Some(parent_node) = self.ctx.arena.get(parent_ext.parent) {
+                            use tsz_parser::parser::syntax_kind_ext;
+                            if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                                || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                            {
+                                return TypeId::ERROR;
+                            }
+                        }
+                    }
+                }
                 self.error_type_only_value_at(name, idx);
                 return TypeId::ERROR;
             }

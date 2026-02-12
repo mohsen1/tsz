@@ -1054,6 +1054,8 @@ impl<'a> CheckerState<'a> {
             if is_equality_op
                 && left_narrow != TypeId::ERROR
                 && right_narrow != TypeId::ERROR
+                && !tsz_solver::type_queries::is_type_parameter(self.ctx.types, left_narrow)
+                && !tsz_solver::type_queries::is_type_parameter(self.ctx.types, right_narrow)
                 && self.types_have_no_overlap(left_narrow, right_narrow)
             {
                 use crate::types::diagnostics::{
@@ -1253,15 +1255,24 @@ impl<'a> CheckerState<'a> {
             );
 
             if is_equality_op || is_inequality_op {
-                // Check if the types have any overlap
-                if !self.are_types_overlapping(left_type, right_type) {
-                    // TS2367: This condition will always return 'false'/'true'
-                    self.error_comparison_no_overlap(
-                        left_type,
-                        right_type,
-                        is_equality_op,
-                        node_idx,
-                    );
+                // Skip TS2367 for type parameters — they can be instantiated
+                // to any type, so comparisons like `value != null` in generic
+                // functions are valid (e.g., `<T>(value: T) => value != null`).
+                let left_is_type_param =
+                    tsz_solver::type_queries::is_type_parameter(self.ctx.types, left_type);
+                let right_is_type_param =
+                    tsz_solver::type_queries::is_type_parameter(self.ctx.types, right_type);
+                if !left_is_type_param && !right_is_type_param {
+                    // Check if the types have any overlap
+                    if !self.are_types_overlapping(left_type, right_type) {
+                        // TS2367: This condition will always return 'false'/'true'
+                        self.error_comparison_no_overlap(
+                            left_type,
+                            right_type,
+                            is_equality_op,
+                            node_idx,
+                        );
+                    }
                 }
             }
 

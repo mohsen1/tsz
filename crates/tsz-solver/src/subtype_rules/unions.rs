@@ -14,7 +14,7 @@ use crate::visitor::{
 
 use super::super::{SubtypeChecker, SubtypeFailureReason, SubtypeResult, TypeResolver};
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Infrastructure for union/intersection subtype checking
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a union type is a subtype of a target type.
     ///
