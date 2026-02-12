@@ -1229,6 +1229,11 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::CallResult;
         match result {
             CallResult::Success(return_type) => {
+                // super() calls always return void — they call the parent constructor
+                // on `this`, they don't create a new instance.
+                if is_super_call {
+                    return TypeId::VOID;
+                }
                 let return_type =
                     self.apply_this_substitution_to_call_return(return_type, callee_expr);
                 let return_type =
