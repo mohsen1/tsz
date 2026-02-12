@@ -13,6 +13,7 @@
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -936,6 +937,9 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     if is_exported {
+                        if self.is_unresolved_import_symbol(qn.left) {
+                            return;
+                        }
                         // Check if the left (namespace) is type-only by checking if it has
                         // any value members. For now, emit TS2708 if we're exporting an import
                         // from a namespace that contains a type member.
@@ -952,6 +956,11 @@ impl<'a> CheckerState<'a> {
                                     & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
                                     != 0;
                                 if is_type_only {
+                                    if self.should_suppress_namespace_value_error_for_failed_import(
+                                        qn.left,
+                                    ) {
+                                        return;
+                                    }
                                     // Emit TS2708: Cannot use namespace as a value
                                     // The error message mentions the namespace, not the member
                                     self.error_namespace_used_as_value_at(&name, qn.left);
@@ -982,6 +991,13 @@ impl<'a> CheckerState<'a> {
 
                                     // If namespace has no value exports, emit TS2708
                                     if !has_value_exports {
+                                        if self
+                                            .should_suppress_namespace_value_error_for_failed_import(
+                                                qn.left,
+                                            )
+                                        {
+                                            return;
+                                        }
                                         self.error_namespace_used_as_value_at(&name, qn.left);
                                     }
                                 }
@@ -1018,6 +1034,95 @@ impl<'a> CheckerState<'a> {
             return self.resolve_leftmost_qualified_name(qn.left);
         }
         None
+    }
+
+    fn should_suppress_namespace_value_error_for_failed_import(&self, left_idx: NodeIndex) -> bool {
+        let Some(left_sym) = self.resolve_leftmost_qualified_name(left_idx) else {
+            return false;
+        };
+
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) else {
+            return false;
+        };
+
+        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+            return false;
+        }
+
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first) = symbol.declarations.first() {
+            first
+        } else {
+            return false;
+        };
+
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        let module_name = if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node) else {
+                return false;
+            };
+            let Some(module_node) = self.ctx.arena.get(import_decl.module_specifier) else {
+                return false;
+            };
+            if module_node.kind != SyntaxKind::StringLiteral as u16 {
+                return false;
+            }
+            let Some(literal) = self.ctx.arena.get_literal(module_node) else {
+                return false;
+            };
+            literal.text.as_str()
+        } else if decl_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+            || decl_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+            || decl_node.kind == syntax_kind_ext::IMPORT_CLAUSE
+        {
+            let mut current = decl_idx;
+            let mut import_decl_idx = None;
+            for _ in 0..4 {
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                let parent = ext.parent;
+                let Some(parent_node) = self.ctx.arena.get(parent) else {
+                    break;
+                };
+                if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    import_decl_idx = Some(parent);
+                    break;
+                }
+                current = parent;
+            }
+
+            let Some(import_decl_idx) = import_decl_idx else {
+                return false;
+            };
+            let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx) else {
+                return false;
+            };
+            let Some(import_decl) = self.ctx.arena.get_import_decl(import_decl_node) else {
+                return false;
+            };
+            let Some(module_node) = self.ctx.arena.get(import_decl.module_specifier) else {
+                return false;
+            };
+            if module_node.kind != SyntaxKind::StringLiteral as u16 {
+                return false;
+            }
+            let Some(literal) = self.ctx.arena.get_literal(module_node) else {
+                return false;
+            };
+            literal.text.as_str()
+        } else {
+            return false;
+        };
+
+        self.ctx.modules_with_ts2307_emitted.contains(module_name)
+            || (!self.module_exists_cross_file(module_name)
+                && !self.is_ambient_module_match(module_name))
     }
 
     // =========================================================================

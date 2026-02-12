@@ -39,6 +39,99 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         }
     }
 
+    fn get_expected_yield_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let enclosing_fn_idx = self.checker.find_enclosing_function(idx)?;
+        let fn_node = self.checker.ctx.arena.get(enclosing_fn_idx)?;
+
+        let declared_return_type_node =
+            if let Some(func) = self.checker.ctx.arena.get_function(fn_node) {
+                if !func.asterisk_token || func.type_annotation.is_none() {
+                    return None;
+                }
+                func.type_annotation
+            } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node) {
+                if !method.asterisk_token || method.type_annotation.is_none() {
+                    return None;
+                }
+                method.type_annotation
+            } else {
+                return None;
+            };
+
+        let declared_return_type = self
+            .checker
+            .get_type_from_type_node(declared_return_type_node);
+        self.checker
+            .get_generator_yield_type_argument(declared_return_type)
+    }
+
+    fn get_type_of_yield_expression(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.checker.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+        let Some(yield_expr) = self.checker.ctx.arena.get_unary_expr_ex(node) else {
+            return TypeId::ERROR;
+        };
+
+        let yielded_type = if yield_expr.expression.is_none() {
+            TypeId::UNDEFINED
+        } else {
+            self.checker.get_type_of_node(yield_expr.expression)
+        };
+
+        if let Some(expected_yield_type) = self.get_expected_yield_type(idx) {
+            let error_node = if yield_expr.expression.is_none() {
+                idx
+            } else {
+                yield_expr.expression
+            };
+
+            self.checker
+                .ensure_application_symbols_resolved(yielded_type);
+            self.checker
+                .ensure_application_symbols_resolved(expected_yield_type);
+
+            let resolved_expected_yield_type = self.checker.resolve_lazy_type(expected_yield_type);
+
+            let bare_yield_requires_error = yield_expr.expression.is_none()
+                && expected_yield_type != TypeId::ANY
+                && expected_yield_type != TypeId::UNKNOWN
+                && expected_yield_type != TypeId::ERROR
+                && !self.checker.type_includes_undefined(expected_yield_type)
+                && !self
+                    .checker
+                    .type_includes_undefined(resolved_expected_yield_type);
+
+            if bare_yield_requires_error {
+                self.checker.error_type_not_assignable_with_reason_at(
+                    yielded_type,
+                    expected_yield_type,
+                    error_node,
+                );
+            } else if !self.checker.type_contains_error(expected_yield_type)
+                && !self
+                    .checker
+                    .is_assignable_to(yielded_type, expected_yield_type)
+                && !self.checker.should_skip_weak_union_error(
+                    yielded_type,
+                    expected_yield_type,
+                    error_node,
+                )
+            {
+                self.checker.error_type_not_assignable_with_reason_at(
+                    yielded_type,
+                    expected_yield_type,
+                    error_node,
+                );
+            }
+        }
+
+        // TypeScript models `yield` result type as the value received by `.next(...)` (TNext).
+        // We currently use `any` here until full Generator<TYield, TReturn, TNext>
+        // flow is threaded through expression typing.
+        TypeId::ANY
+    }
+
     /// Dispatch type computation based on node kind.
     ///
     /// This method examines the syntax node kind and dispatches to the
@@ -254,6 +347,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::AWAIT_EXPRESSION => {
                 self.checker.get_type_of_await_expression(idx)
             }
+
+            // yield expression
+            k if k == syntax_kind_ext::YIELD_EXPRESSION => self.get_type_of_yield_expression(idx),
 
             // Parenthesized expression - just pass through to inner expression
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {

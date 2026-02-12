@@ -48,6 +48,56 @@ const result2 = identity("string"); // TS2322: "string" doesn't satisfy "extends
 }
 
 #[test]
+fn test_readonly_generic_parameter_no_ts2339() {
+    let source = r#"
+interface Props {
+    onFoo?(value: string): boolean;
+}
+
+type Readonly<T> = { readonly [K in keyof T]: T[K] };
+
+function test<P extends Props>(props: Readonly<P>) {
+    props.onFoo;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2339_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .count();
+    assert_eq!(
+        ts2339_count,
+        0,
+        "Expected no TS2339 for Readonly<P> property access, got diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 #[ignore = "TODO: Generic constraint checking not yet implemented"]
 fn test_generic_with_default_type_parameter() {
     let source = r#"

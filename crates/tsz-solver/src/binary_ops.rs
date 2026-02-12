@@ -117,7 +117,7 @@ macro_rules! primitive_visitor {
 
 primitive_visitor!(NumberLikeVisitor, IntrinsicKind::Number,
     LiteralValue::Number(_) => true,
-    check_union_all, check_constraint, recurse_enum, ref_conservative, check_intersection_any);
+    check_union_all, check_constraint, recurse_enum, check_intersection_any);
 
 primitive_visitor!(StringLikeVisitor, IntrinsicKind::String,
     LiteralValue::String(_) => true,
@@ -125,7 +125,7 @@ primitive_visitor!(StringLikeVisitor, IntrinsicKind::String,
 
 primitive_visitor!(BigIntLikeVisitor, IntrinsicKind::Bigint,
     LiteralValue::BigInt(_) => true,
-    check_union_all, check_constraint, recurse_enum, ref_conservative, check_intersection_any);
+    check_union_all, check_constraint, recurse_enum, check_intersection_any);
 
 primitive_visitor!(BooleanLikeVisitor, IntrinsicKind::Boolean,
     LiteralValue::Boolean(_) => true);

@@ -982,6 +982,9 @@ impl<'a> CheckerState<'a> {
                 return self.apply_flow_narrowing(idx, member_type);
             }
             if self.namespace_has_type_only_member(object_type, property_name) {
+                if self.is_unresolved_import_symbol(access.expression) {
+                    return TypeId::ERROR;
+                }
                 // Don't emit TS2693 in heritage clause context — the heritage
                 // checker will emit the appropriate error (e.g., TS2689).
                 if self

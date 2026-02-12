@@ -35,6 +35,29 @@ fn check_with_no_unused_params(source: &str) -> Vec<crate::types::Diagnostic> {
     checker.ctx.diagnostics.clone()
 }
 
+fn check_with_no_unused_locals(source: &str) -> Vec<crate::types::Diagnostic> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut options = CheckerOptions::default();
+    options.no_unused_locals = true;
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
+}
+
 fn ts6133_count(diags: &[crate::types::Diagnostic]) -> usize {
     diags.iter().filter(|d| d.code == 6133).count()
 }
@@ -94,6 +117,20 @@ fn test_function_used_type_param() {
         !names.contains(&"T".to_string()),
         "T should not be reported as unused, got names: {:?}",
         names
+    );
+}
+
+#[test]
+fn test_all_imports_unused_emits_ts6192() {
+    let diags = check_with_no_unused_locals("import d, { Member as M } from './b';\nvoid 0;\n");
+    let ts6192_count = diags.iter().filter(|d| d.code == 6192).count();
+    assert!(
+        ts6192_count >= 1,
+        "Expected TS6192 for fully unused import declaration, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
     );
 }
 
