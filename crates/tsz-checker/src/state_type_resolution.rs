@@ -277,18 +277,30 @@ impl<'a> CheckerState<'a> {
                         let mut found = false;
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                             for &decl_idx in &symbol.declarations {
-                                if let Some(node) = self.ctx.arena.get(decl_idx)
-                                    && let Some(iface) = self.ctx.arena.get_interface(node)
-                                    && let Some(ref tpl) = iface.type_parameters
-                                {
-                                    let (params, updates) =
-                                        self.push_type_parameters(&Some(tpl.clone()));
-                                    self.pop_type_parameters(updates);
-                                    if !params.is_empty() {
-                                        self.ctx.insert_def_type_params(def_id, params);
-                                        found = true;
+                                if let Some(node) = self.ctx.arena.get(decl_idx) {
+                                    if let Some(iface) = self.ctx.arena.get_interface(node)
+                                        && let Some(ref tpl) = iface.type_parameters
+                                    {
+                                        let (params, updates) =
+                                            self.push_type_parameters(&Some(tpl.clone()));
+                                        self.pop_type_parameters(updates);
+                                        if !params.is_empty() {
+                                            self.ctx.insert_def_type_params(def_id, params);
+                                            found = true;
+                                        }
+                                        break;
                                     }
-                                    break;
+
+                                    if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                                        let (params, updates) =
+                                            self.push_type_parameters(&type_alias.type_parameters);
+                                        self.pop_type_parameters(updates);
+                                        if !params.is_empty() {
+                                            self.ctx.insert_def_type_params(def_id, params);
+                                            found = true;
+                                        }
+                                        break;
+                                    }
                                 }
                             }
                         }

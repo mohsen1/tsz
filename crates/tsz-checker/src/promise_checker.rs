@@ -586,6 +586,26 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Extract the TYield type argument from Generator<Y, R, N> or AsyncGenerator<Y, R, N>.
+    ///
+    /// For `yield expr` in a generator with an explicit return annotation,
+    /// `expr` must be assignable to TYield (the first type argument).
+    pub fn get_generator_yield_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use tsz_solver::type_queries::get_type_application;
+
+        let app = get_type_application(self.ctx.types, type_id)?;
+
+        if app.args.is_empty() {
+            return None;
+        }
+
+        if self.is_generator_like_base_type(app.base) {
+            Some(app.args[0])
+        } else {
+            None
+        }
+    }
+
     /// Check if a type is a Generator-like base type (Generator, AsyncGenerator,
     /// Iterator, AsyncIterator, IterableIterator, AsyncIterableIterator).
     fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {

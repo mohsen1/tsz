@@ -131,6 +131,40 @@ fn test_ts2322_return_wrong_array_element() {
     ));
 }
 
+#[test]
+fn test_ts2322_generator_yield_missing_value() {
+    let source = r#"
+        interface IterableIterator<T> {}
+
+        function* g(): IterableIterator<number> {
+            yield;
+            yield 1;
+        }
+    "#;
+
+    assert!(has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
+#[test]
+fn test_ts2322_generator_yield_wrong_type() {
+    let source = r#"
+        interface IterableIterator<T> {}
+
+        function* g(): IterableIterator<number> {
+            yield "x";
+            yield 1;
+        }
+    "#;
+
+    assert!(has_error_with_code(
+        source,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+    ));
+}
+
 // =============================================================================
 // Variable Declaration Tests (TS2322)
 // =============================================================================

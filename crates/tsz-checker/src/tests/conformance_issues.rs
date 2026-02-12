@@ -186,6 +186,22 @@ interface void {}
     );
 }
 
+#[test]
+fn test_unresolved_import_namespace_access_suppresses_ts2708() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+import { alias } from "foo";
+let x = new alias.Class();
+        "#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2708),
+        "Should not emit cascading TS2708 for unresolved imported namespace access. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
 /// Issue: Overly aggressive strict null checking
 ///
 /// From: neverReturningFunctions1.ts

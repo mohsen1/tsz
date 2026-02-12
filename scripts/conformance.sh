@@ -174,7 +174,14 @@ ensure_binaries() {
     
     # For dev profile, optimize for fast build (link time not important)
     # For release/dist, LTO is already configured in Cargo.toml
-    cargo build --profile "$BUILD_PROFILE" -p tsz-cli -p tsz-conformance
+    # NOTE: On macOS, ThinLTO + incremental can intermittently fail at link-time
+    # with undefined llvm internal symbols. Disable incremental for dist profiles
+    # in this script to keep conformance runs stable.
+    local cargo_incremental="${CARGO_INCREMENTAL:-1}"
+    if [[ "$BUILD_PROFILE" == "dist" || "$BUILD_PROFILE" == "dist-fast" ]]; then
+        cargo_incremental="0"
+    fi
+    CARGO_INCREMENTAL="$cargo_incremental" cargo build --profile "$BUILD_PROFILE" -p tsz-cli -p tsz-conformance
     
     echo ""
 }
