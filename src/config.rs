@@ -330,13 +330,15 @@ impl ResolvedCompilerOptions {
 
         // Match tsc's computed moduleResolution defaults exactly:
         // None/AMD/UMD/System → Classic
+        // CommonJS → Node (node10)
         // NodeNext → NodeNext
-        // Node16..NodeNext range → Node16
-        // Everything else (CommonJS, ES2015, ES2020, ES2022, ESNext) → Bundler
+        // Node16 → Node16
+        // Everything else (ES2015, ES2020, ES2022, ESNext, Preserve) → Bundler
         match self.printer.module {
             ModuleKind::None | ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System => {
                 ModuleResolutionKind::Classic
             }
+            ModuleKind::CommonJS => ModuleResolutionKind::Node,
             ModuleKind::NodeNext => ModuleResolutionKind::NodeNext,
             ModuleKind::Node16 => ModuleResolutionKind::Node16,
             _ => ModuleResolutionKind::Bundler,

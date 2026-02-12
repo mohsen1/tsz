@@ -305,6 +305,43 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
+                // TSC emits TS2322 instead of TS2739/TS2740 when the source is a primitive type.
+                if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
+                // Also emit TS2322 for wrapper types (Boolean, Number, String)
+                let tgt_str_check = self.format_type(*target_type);
+                if tgt_str_check == "Boolean"
+                    || tgt_str_check == "Number"
+                    || tgt_str_check == "String"
+                {
+                    let src_str = self.format_type(*source_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str_check],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // TS2739: Type 'A' is missing the following properties from type 'B': x, y, z
                 // TS2740: Type 'A' is missing the following properties from type 'B': x, y, z, and N more.
                 let src_str = self.format_type(*source_type);

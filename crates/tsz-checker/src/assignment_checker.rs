@@ -229,22 +229,36 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Check if this symbol is a function
-        if symbol.flags & symbol_flags::FUNCTION != 0 {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
-            let message = format_message(
+        // Check if this symbol is a class, enum, or function (TS2629, TS2628, TS2630)
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        let (msg_template, code) = if symbol.flags & symbol_flags::CLASS != 0 {
+            (
+                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS,
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS,
+            )
+        } else if symbol.flags & symbol_flags::ENUM != 0 {
+            (
+                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_AN_ENUM,
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_AN_ENUM,
+            )
+        } else if symbol.flags & symbol_flags::FUNCTION != 0 {
+            (
                 diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
-                &[name],
-            );
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
+            )
+        } else {
+            return;
+        };
+
+        {
+            let message = format_message(msg_template, &[name]);
             self.ctx.diagnostics.push(Diagnostic {
                 file: self.ctx.file_name.clone(),
                 start: node.pos,
                 length: node.end.saturating_sub(node.pos),
                 message_text: message,
                 category: DiagnosticCategory::Error,
-                code: diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
+                code,
                 related_information: Vec::new(),
             });
         }
@@ -493,6 +507,9 @@ impl<'a> CheckerState<'a> {
 
         // TS2588: Cannot assign to 'x' because it is a constant.
         let is_const = self.check_const_assignment(left_idx);
+
+        // TS2629/TS2628/TS2630: Cannot assign to class/enum/function.
+        self.check_function_assignment(left_idx);
 
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);

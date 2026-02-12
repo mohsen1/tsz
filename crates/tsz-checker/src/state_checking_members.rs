@@ -1237,6 +1237,17 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
+                    // TS7039: Mapped object type implicitly has an 'any' template type.
+                    if self.ctx.no_implicit_any() && mapped.type_node.is_none() {
+                        let pos = node.pos;
+                        let len = node.end.saturating_sub(node.pos);
+                        self.ctx.error(
+                            pos,
+                            len,
+                            "Mapped object type implicitly has an 'any' template type.".to_string(),
+                            7039,
+                        );
+                    }
                     self.check_type_parameter_node_for_missing_names(mapped.type_parameter);
                     let mut param_binding: Option<(String, Option<TypeId>)> = None;
                     if let Some(param_node) = self.ctx.arena.get(mapped.type_parameter)
