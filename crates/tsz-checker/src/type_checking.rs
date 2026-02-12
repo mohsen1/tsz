@@ -3780,7 +3780,8 @@ impl<'a> CheckerState<'a> {
         // For script files (non-module), skip the root SourceFile scope since
         // top-level declarations are globals and not checked by noUnusedLocals.
         // For module files, check all scopes including root.
-        let mut symbols_to_check: Vec<(tsz_binder::SymbolId, String)> = Vec::new();
+        // Track the scope kind so we can distinguish function-scoped type aliases from module-scoped ones.
+        let mut symbols_to_check: Vec<(tsz_binder::SymbolId, String, ContainerKind)> = Vec::new();
 
         for scope in &self.ctx.binder.scopes {
             // Skip root scope in script files
@@ -3792,7 +3793,7 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.binder.lib_symbol_ids.contains(&sym_id) {
                     continue;
                 }
-                symbols_to_check.push((sym_id, name.clone()));
+                symbols_to_check.push((sym_id, name.clone(), scope.kind));
             }
         }
 
@@ -3804,7 +3805,7 @@ impl<'a> CheckerState<'a> {
 
         // First pass: identify ALL import symbols and track them by import declaration.
         // This includes both used and unused imports.
-        for (_sym_id, _name) in &symbols_to_check {
+        for (_sym_id, _name, _scope_kind) in &symbols_to_check {
             let sym_id = *_sym_id;
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
@@ -3836,7 +3837,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        for (sym_id, name) in symbols_to_check {
+        for (sym_id, name, scope_kind) in symbols_to_check {
             // Skip if already referenced
             if self.ctx.referenced_symbols.borrow().contains(&sym_id) {
                 continue;
@@ -3978,13 +3979,21 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if !skip_import_ts6133 {
-                        // TS6196 for classes, interfaces, type aliases, enums ("never used")
-                        // TS6133 for variables, functions, imports, private members ("value never read")
-                        let is_type_only = (flags & symbol_flags::CLASS) != 0
+                        // TS6196 for classes, interfaces, type aliases (at module level), enums ("never used")
+                        // TS6133 for variables, functions, imports, private members, and type aliases in function/block scope ("value never read")
+
+                        // Type aliases in function/block scope should get TS6133 like local variables
+                        let is_type_alias_in_local_scope = (flags & symbol_flags::TYPE_ALIAS) != 0
+                            && (scope_kind == ContainerKind::Function
+                                || scope_kind == ContainerKind::Block);
+
+                        let is_type_only = ((flags & symbol_flags::CLASS) != 0
                             || (flags & symbol_flags::INTERFACE) != 0
                             || (flags & symbol_flags::TYPE_ALIAS) != 0
                             || (flags & symbol_flags::REGULAR_ENUM) != 0
-                            || (flags & symbol_flags::CONST_ENUM) != 0;
+                            || (flags & symbol_flags::CONST_ENUM) != 0)
+                            && !is_type_alias_in_local_scope;
+
                         let (msg, code) = if is_type_only {
                             (format!("'{}' is declared but never used.", name), 6196)
                         } else {
