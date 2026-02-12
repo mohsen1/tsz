@@ -130,8 +130,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Type query (typeof X) - returns the type of X
             k if k == syntax_kind_ext::TYPE_QUERY => self.get_type_from_type_query(idx),
 
+            // Mapped type ({ [P in K]: T })
+            // Check for TS7039 before TypeLowering since TypeLowering doesn't emit diagnostics
+            k if k == syntax_kind_ext::MAPPED_TYPE => self.get_type_from_mapped_type(idx),
+
             // Fall back to TypeLowering for type nodes not handled above
-            // (conditional types, mapped types, indexed access types, etc.)
+            // (conditional types, indexed access types, etc.)
             _ => {
                 use tsz_binder::symbol_flags;
                 use tsz_solver::TypeLowering;
@@ -1093,6 +1097,138 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             &value_resolver,
         );
 
+        lowering.lower_type(idx)
+    }
+
+    /// Check a mapped type ({ [P in K]: T }).
+    ///
+    /// This function validates the mapped type and emits TS7039 if the type expression
+    /// after the colon is missing (e.g., `{[P in "bar"]}` instead of `{[P in "bar"]: string}`).
+    fn get_type_from_mapped_type(&mut self, idx: NodeIndex) -> TypeId {
+        use tsz_parser::parser::NodeIndex as ParserNodeIndex;
+        use tsz_solver::TypeLowering;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(data) = self.ctx.arena.get_mapped_type(node) else {
+            return TypeId::ERROR;
+        };
+
+        // TS7039: Mapped object type implicitly has an 'any' template type.
+        // This error occurs when the type expression after the colon is missing.
+        // Example: type Foo = {[P in "bar"]};  // Missing ": T" after "bar"]
+        if data.type_node == ParserNodeIndex::NONE {
+            let message = "Mapped object type implicitly has an 'any' template type.";
+            self.ctx
+                .error(node.pos, node.end - node.pos, message.to_string(), 7039);
+            // Return ANY since the template type is implicitly any
+            return TypeId::ANY;
+        }
+
+        // Delegate to TypeLowering for normal mapped type processing
+        let type_param_bindings: Vec<(tsz_common::interner::Atom, TypeId)> = self
+            .ctx
+            .type_parameter_scope
+            .iter()
+            .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
+            .collect();
+
+        // Create type and value resolvers (similar to the fallback case)
+        let type_resolver = |node_idx: ParserNodeIndex| -> Option<u32> {
+            let ident = self.ctx.arena.get_identifier_at(node_idx)?;
+            let name = ident.escaped_text.as_str();
+
+            if tsz_solver::types::is_compiler_managed_type(name) {
+                return None;
+            }
+
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                if (symbol.flags
+                    & (tsz_binder::symbol_flags::TYPE
+                        | tsz_binder::symbol_flags::REGULAR_ENUM
+                        | tsz_binder::symbol_flags::CONST_ENUM))
+                    != 0
+                {
+                    return Some(sym_id.0);
+                }
+            }
+
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
+                    if (symbol.flags
+                        & (tsz_binder::symbol_flags::TYPE
+                            | tsz_binder::symbol_flags::REGULAR_ENUM
+                            | tsz_binder::symbol_flags::CONST_ENUM))
+                        != 0
+                    {
+                        let file_sym_id =
+                            self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                        return Some(file_sym_id.0);
+                    }
+                }
+            }
+
+            None
+        };
+
+        let value_resolver = |node_idx: ParserNodeIndex| -> Option<u32> {
+            let ident = self.ctx.arena.get_identifier_at(node_idx)?;
+            let name = ident.escaped_text.as_str();
+
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    if (symbol.flags
+                        & (tsz_binder::symbol_flags::VALUE
+                            | tsz_binder::symbol_flags::ALIAS
+                            | tsz_binder::symbol_flags::REGULAR_ENUM
+                            | tsz_binder::symbol_flags::CONST_ENUM))
+                        != 0
+                    {
+                        return Some(sym_id.0);
+                    }
+                }
+            }
+
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    if let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id) {
+                        if (symbol.flags
+                            & (tsz_binder::symbol_flags::VALUE
+                                | tsz_binder::symbol_flags::ALIAS
+                                | tsz_binder::symbol_flags::REGULAR_ENUM
+                                | tsz_binder::symbol_flags::CONST_ENUM))
+                            != 0
+                        {
+                            let file_sym_id =
+                                self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                            return Some(file_sym_id.0);
+                        }
+                    }
+                }
+            }
+
+            None
+        };
+
+        let def_id_resolver = |node_idx: ParserNodeIndex| -> Option<tsz_solver::def::DefId> {
+            let sym_id = type_resolver(node_idx)?;
+            Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
+        };
+
+        let mut lowering = TypeLowering::with_hybrid_resolver(
+            self.ctx.arena,
+            self.ctx.types,
+            &type_resolver,
+            &def_id_resolver,
+            &value_resolver,
+        );
+        if !type_param_bindings.is_empty() {
+            lowering = lowering.with_type_param_bindings(type_param_bindings);
+        }
         lowering.lower_type(idx)
     }
 
