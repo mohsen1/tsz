@@ -11464,6 +11464,7 @@ fn test_index_signature_at_solver_level() {
         PropertyAccessResult::Success {
             type_id,
             from_index_signature,
+            ..
         } => {
             assert_eq!(type_id, TypeId::NUMBER);
             assert!(

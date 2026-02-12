@@ -2149,19 +2149,12 @@ impl<'a> CheckerState<'a> {
             if !value_decl.is_none()
                 && let Some(node) = self.ctx.arena.get(value_decl)
             {
-                // Handle Import Equals Declaration (import x = ns.member)
                 if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                     && let Some(import) = self.ctx.arena.get_import_decl(node)
                 {
-                    // module_specifier holds the reference (e.g., 'ns.member' or require("..."))
-                    // Use resolve_qualified_symbol to get the target symbol directly,
-                    // avoiding the value-only check that's inappropriate for import aliases.
-                    // Import aliases can legitimately reference value-only namespaces.
-                    if let Some(target_sym) = self.resolve_qualified_symbol(import.module_specifier)
-                    {
-                        return (self.get_type_of_symbol(target_sym), Vec::new());
-                    }
-                    // Check if this is a require() call - handle by creating module namespace type
+                    // Check for require() call FIRST — `import A = require('M')` must
+                    // resolve through module_exports, not qualified symbol resolution.
+                    // The qualified symbol path is for `import x = ns.member` patterns.
                     if let Some(module_specifier) =
                         self.get_require_module_specifier(import.module_specifier)
                     {
@@ -2209,6 +2202,12 @@ impl<'a> CheckerState<'a> {
                         // TypeScript treats unresolved imports as `any` to avoid cascading errors
                         self.emit_module_not_found_error(&module_specifier, value_decl);
                         return (TypeId::ANY, Vec::new());
+                    }
+                    // Not a require() call — try qualified symbol resolution
+                    // for `import x = ns.member` patterns.
+                    if let Some(target_sym) = self.resolve_qualified_symbol(import.module_specifier)
+                    {
+                        return (self.get_type_of_symbol(target_sym), Vec::new());
                     }
                     // Namespace import failed to resolve
                     // Check for TS2694 (Namespace has no exported member) or TS2304 (Cannot find name)
@@ -2269,6 +2268,15 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
 
                     if let Some(exports_table) = exports_table {
+                        // For `export = X`, the binder stores a synthetic `export=` entry
+                        // that points to the assigned symbol. For `import A = require('M')`
+                        // where M has `export = C`, A should be typed as C (not an object
+                        // with all module exports). This is the same logic used in the
+                        // IMPORT_EQUALS_DECLARATION path above (line 2174).
+                        if let Some(export_equals_sym) = exports_table.get("export=") {
+                            return (self.get_type_of_symbol(export_equals_sym), Vec::new());
+                        }
+
                         use tsz_solver::PropertyInfo;
                         let mut props: Vec<PropertyInfo> = Vec::new();
                         for (name, &export_sym_id) in exports_table.iter() {
@@ -2888,6 +2896,7 @@ impl<'a> CheckerState<'a> {
             PropertyAccessResult::Success {
                 type_id,
                 from_index_signature,
+                ..
             } => {
                 if from_index_signature {
                     // Private fields can't come from index signatures
