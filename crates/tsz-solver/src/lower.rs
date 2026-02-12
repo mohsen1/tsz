@@ -9,7 +9,8 @@ use crate::def::DefId;
 use crate::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::*;
 use crate::{QueryDatabase, TypeDatabase};
-use rustc_hash::{FxHashMap, FxHashSet};
+use indexmap::IndexMap;
+use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 use std::rc::Rc;
 use tsz_common::interner::Atom;
@@ -47,7 +48,10 @@ pub struct TypeLowering<'a> {
 }
 
 struct InterfaceParts {
-    properties: FxHashMap<Atom, PropertyMerge>,
+    // Use IndexMap for deterministic property order - this ensures
+    // the same interface produces the same TypeId on every lowering.
+    // FxHashMap has undefined iteration order, causing non-determinism.
+    properties: IndexMap<Atom, PropertyMerge>,
     call_signatures: Vec<CallSignature>,
     construct_signatures: Vec<CallSignature>,
     string_index: Option<IndexSignature>,
@@ -77,7 +81,7 @@ impl TypeResolver for IndexSignatureResolver {
 impl InterfaceParts {
     fn new() -> Self {
         InterfaceParts {
-            properties: FxHashMap::default(),
+            properties: IndexMap::new(),
             call_signatures: Vec::new(),
             construct_signatures: Vec::new(),
             string_index: None,
@@ -86,7 +90,7 @@ impl InterfaceParts {
     }
 
     fn merge_property(&mut self, prop: PropertyInfo) {
-        use std::collections::hash_map::Entry;
+        use indexmap::map::Entry;
 
         match self.properties.entry(prop.name) {
             Entry::Vacant(entry) => {
@@ -139,7 +143,7 @@ impl InterfaceParts {
         optional: bool,
         readonly: bool,
     ) {
-        use std::collections::hash_map::Entry;
+        use indexmap::map::Entry;
 
         match self.properties.entry(name) {
             Entry::Vacant(entry) => {

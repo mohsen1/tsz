@@ -2216,10 +2216,7 @@ impl<'a> CheckerState<'a> {
     /// ```
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use tsz_parser::parser::node::NodeAccess;
-        use tsz_solver::types::TypeKey;
-        use tsz_solver::{
-            TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type,
-        };
+        use tsz_solver::{TypeLowering, types::is_compiler_managed_type};
 
         let mut lib_type_id: Option<TypeId> = None;
 
@@ -2236,155 +2233,119 @@ impl<'a> CheckerState<'a> {
             }
             None
         };
-        // Collect lowered types from ALL lib contexts that define this symbol.
-        // This is critical for interface merging across lib files - e.g. Array is
-        // defined in lib.es5.d.ts and augmented in lib.es2015.core.d.ts with
-        // methods like find(), findIndex(), etc.
+        // Collect lowered types from the symbol's declarations.
+        // The main file's binder already has merged declarations from all lib files.
         let mut lib_types: Vec<TypeId> = Vec::new();
-        // Track canonical TypeIds for the first definition's type parameters.
-        let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
-        let mut first_params_set = false;
-        // Track the first symbol and type parameters for generic interfaces.
-        // Used after merging to wrap in Lazy(DefId) so Application types can
-        // resolve type parameters during property access.
-        let mut first_sym_id: Option<tsz_binder::SymbolId> = None;
-        let mut first_params_info: Option<Vec<tsz_solver::TypeParamInfo>> = None;
 
-        for lib_ctx in &lib_contexts {
-            // Look up the symbol in this lib file's file_locals
-            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
-                // Get the symbol's declaration(s)
-                if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
-                    // Get the fallback arena (for symbols without declaration_arenas tracking)
-                    let fallback_arena: &NodeArena = lib_ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .map(|arc| arc.as_ref())
-                        .unwrap_or_else(|| lib_ctx.arena.as_ref());
+        // CRITICAL: Look up the symbol in the MAIN file's binder (self.ctx.binder),
+        // not in lib_ctx.binder. The main file's binder has lib symbols merged with
+        // unique SymbolIds via merge_lib_contexts_into_binder during binding.
+        // lib_ctx.binder is a SEPARATE merged binder with DIFFERENT SymbolIds.
+        // Using lib_ctx.binder's SymbolIds with self.ctx.get_or_create_def_id causes
+        // SymbolId collisions and wrong type resolution.
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            // Get the symbol's declaration(s) from the main file's binder
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                // Get the fallback arena from lib_contexts if available, otherwise use main arena
+                let fallback_arena: &NodeArena = self
+                    .ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .map(|arc| arc.as_ref())
+                    .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
+                    .unwrap_or(self.ctx.arena);
 
-                    // Build declaration -> arena pairs using declaration_arenas
-                    // This is critical for merged interfaces like Array which have
-                    // declarations in es5.d.ts, es2015.d.ts, etc.
-                    let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
-                        .declarations
-                        .iter()
-                        .map(|&decl_idx| {
-                            let arena = lib_ctx
-                                .binder
-                                .declaration_arenas
-                                .get(&(sym_id, decl_idx))
-                                .map(|arc| arc.as_ref())
-                                .unwrap_or(fallback_arena);
-                            (decl_idx, arena)
-                        })
-                        .collect();
+                // Build declaration -> arena pairs using declaration_arenas
+                // This is critical for merged interfaces like Array which have
+                // declarations in es5.d.ts, es2015.d.ts, etc.
+                // Use the MAIN file's binder's declaration_arenas, not lib_ctx.binder.
+                let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
+                    .declarations
+                    .iter()
+                    .map(|&decl_idx| {
+                        let arena = self
+                            .ctx
+                            .binder
+                            .declaration_arenas
+                            .get(&(sym_id, decl_idx))
+                            .map(|arc| arc.as_ref())
+                            .unwrap_or(fallback_arena);
+                        (decl_idx, arena)
+                    })
+                    .collect();
 
-                    // Create resolver that can look up names across all lib contexts
-                    let resolver = |node_idx: NodeIndex| -> Option<u32> {
-                        // For merged declarations, we need to check the arena for this specific node
-                        // Try to find the identifier text from each arena in decls_with_arenas
-                        for (_, arena) in &decls_with_arenas {
-                            if let Some(ident_name) = arena.get_identifier_text(node_idx) {
-                                // Skip built-in types that have special handling in TypeLowering
-                                if is_compiler_managed_type(ident_name) {
-                                    return None;
-                                }
-
-                                // Look up the symbol in all lib contexts' file_locals
-                                for ctx in &lib_contexts {
-                                    if let Some(found_sym) = ctx.binder.file_locals.get(ident_name)
-                                    {
-                                        return Some(found_sym.0);
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                        // Also try fallback arena
-                        if let Some(ident_name) = fallback_arena.get_identifier_text(node_idx) {
+                // Create resolver that looks up names in the MAIN file's binder
+                // CRITICAL: Use self.ctx.binder, not lib_contexts binders, to avoid SymbolId collisions
+                let binder = &self.ctx.binder;
+                let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    // For merged declarations, we need to check the arena for this specific node
+                    // Try to find the identifier text from each arena in decls_with_arenas
+                    for (_, arena) in &decls_with_arenas {
+                        if let Some(ident_name) = arena.get_identifier_text(node_idx) {
+                            // Skip built-in types that have special handling in TypeLowering
                             if is_compiler_managed_type(ident_name) {
                                 return None;
                             }
-                            for ctx in &lib_contexts {
-                                if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-                                    return Some(found_sym.0);
-                                }
+
+                            // Look up the symbol in the MAIN file's binder
+                            if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                                return Some(found_sym.0);
                             }
+                            break;
                         }
-                        None
-                    };
-
-                    // Create def_id_resolver that converts SymbolIds to DefIds
-                    // This is required for Phase 4.2 which uses TypeKey::Lazy(DefId) everywhere
-                    let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                        resolver(node_idx).map(|sym_id| {
-                            self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id))
-                        })
-                    };
-
-                    // Create base lowering with the fallback arena and both resolvers
-                    let lowering = TypeLowering::with_hybrid_resolver(
-                        fallback_arena,
-                        self.ctx.types,
-                        &resolver,
-                        &def_id_resolver,
-                        &|_| None,
-                    );
-
-                    // Try to lower as interface first (handles declaration merging)
-                    if !symbol.declarations.is_empty() {
-                        // Use lower_merged_interface_declarations for proper multi-arena support
-                        let (ty, params) =
-                            lowering.lower_merged_interface_declarations(&decls_with_arenas);
-
-                        // If lowering succeeded (not ERROR), use the result
-                        if ty != TypeId::ERROR {
-                            // For the first definition, record canonical type parameter TypeIds
-                            if !first_params_set && !params.is_empty() {
-                                first_params_set = true;
-                                first_sym_id = Some(sym_id);
-                                first_params_info = Some(params.clone());
-                                canonical_param_type_ids = params
-                                    .iter()
-                                    .map(|p| {
-                                        self.ctx.types.intern(TypeKey::TypeParameter(p.clone()))
-                                    })
-                                    .collect();
-
-                                // Cache type params for Application expansion
-                                // (matches resolve_lib_type_with_params pattern)
-                                let file_sym_id =
-                                    self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                                let def_id = self.ctx.get_or_create_def_id(file_sym_id);
-                                self.ctx.insert_def_type_params(def_id, params.clone());
-
-                                lib_types.push(ty);
-                            } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
-                                // For subsequent definitions, substitute type params with canonical ones
-                                let mut subst = TypeSubstitution::new();
-                                for (i, p) in params.iter().enumerate() {
-                                    if i < canonical_param_type_ids.len() {
-                                        subst.insert(p.name, canonical_param_type_ids[i]);
-                                    }
-                                }
-                                if !subst.is_empty() {
-                                    let mut instantiator =
-                                        TypeInstantiator::new(self.ctx.types, &subst);
-                                    let substituted_ty = instantiator.instantiate(ty);
-                                    lib_types.push(substituted_ty);
-                                } else {
-                                    lib_types.push(ty);
-                                }
-                            } else {
-                                lib_types.push(ty);
-                            }
-                            continue;
+                    }
+                    // Also try fallback arena
+                    if let Some(ident_name) = fallback_arena.get_identifier_text(node_idx) {
+                        if is_compiler_managed_type(ident_name) {
+                            return None;
                         }
+                        if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                            return Some(found_sym.0);
+                        }
+                    }
+                    None
+                };
 
-                        // Interface lowering returned ERROR - try as type alias
-                        // Type aliases like Partial<T>, Pick<T,K>, Record<K,T> have their
-                        // declaration in symbol.declarations but are not interface nodes
+                // Create def_id_resolver that converts SymbolIds to DefIds
+                // This is required for Phase 4.2 which uses TypeKey::Lazy(DefId) everywhere
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
+                    resolver(node_idx)
+                        .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
+                };
+
+                // Create base lowering with the fallback arena and both resolvers
+                let lowering = TypeLowering::with_hybrid_resolver(
+                    fallback_arena,
+                    self.ctx.types,
+                    &resolver,
+                    &def_id_resolver,
+                    &|_| None,
+                );
+
+                // Try to lower as interface first (handles declaration merging)
+                if !symbol.declarations.is_empty() {
+                    // Use lower_merged_interface_declarations for proper multi-arena support
+                    let (ty, params) =
+                        lowering.lower_merged_interface_declarations(&decls_with_arenas);
+
+                    // If lowering succeeded (not ERROR), use the result
+                    if ty != TypeId::ERROR {
+                        // Record type parameters for generic interfaces
+                        if !params.is_empty() {
+                            // Cache type params for Application expansion
+                            let file_sym_id =
+                                self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
+                            let def_id = self.ctx.get_or_create_def_id(file_sym_id);
+                            self.ctx.insert_def_type_params(def_id, params.clone());
+                        }
+                        lib_types.push(ty);
+                    }
+
+                    // Interface lowering returned ERROR - try as type alias
+                    // Type aliases like Partial<T>, Pick<T,K>, Record<K,T> have their
+                    // declaration in symbol.declarations but are not interface nodes
+                    if lib_types.is_empty() {
                         for (decl_idx, decl_arena) in &decls_with_arenas {
                             if let Some(node) = decl_arena.get(*decl_idx) {
                                 if let Some(alias) = decl_arena.get_type_alias(node) {
@@ -2418,25 +2379,22 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
-                        if !lib_types.is_empty() {
-                            continue;
-                        }
                     }
+                }
 
-                    // For value declarations (vars, consts, functions)
-                    let decl_idx = symbol.value_declaration;
-                    if decl_idx.0 != u32::MAX {
-                        // Get the correct arena for the value declaration
-                        let value_arena = lib_ctx
-                            .binder
-                            .declaration_arenas
-                            .get(&(sym_id, decl_idx))
-                            .map(|arc| arc.as_ref())
-                            .unwrap_or(fallback_arena);
-                        let value_lowering = lowering.with_arena(value_arena);
-                        lib_types.push(value_lowering.lower_type(decl_idx));
-                        break;
-                    }
+                // For value declarations (vars, consts, functions)
+                let decl_idx = symbol.value_declaration;
+                if decl_idx.0 != u32::MAX {
+                    // Get the correct arena for the value declaration from main binder
+                    let value_arena = self
+                        .ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .map(|arc| arc.as_ref())
+                        .unwrap_or(fallback_arena);
+                    let value_lowering = lowering.with_arena(value_arena);
+                    lib_types.push(value_lowering.lower_type(decl_idx));
                 }
             }
         }
@@ -2591,25 +2549,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For generic lib interfaces, wrap in Lazy(DefId) so Application types
-        // can resolve type parameters during property access.
-        // This mirrors the type alias path (lines above) that already uses
-        // Lazy(DefId) + insert_def_with_params.
-        if let Some(merged_type) = lib_type_id {
-            if let Some(ref params) = first_params_info {
-                if !params.is_empty() {
-                    let sym_id = first_sym_id.unwrap();
-                    let file_sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                    let def_id = self.ctx.get_or_create_def_id(file_sym_id);
-                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                        env.insert_def_with_params(def_id, merged_type, params.clone());
-                    }
-                    let lazy_type = self.ctx.types.intern(TypeKey::Lazy(def_id));
-                    return Some(lazy_type);
-                }
-            }
-        }
-
+        // For generic lib interfaces, we already cached the type params in the
+        // interface lowering code above. The type is already correctly lowered
+        // and can be returned directly.
         lib_type_id
     }
 
