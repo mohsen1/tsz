@@ -360,6 +360,14 @@ impl<'a> CheckerState<'a> {
                 in_computed_property = true;
             }
 
+            // Reset computed property tracking when passing through an object literal.
+            // Computed property names in object literals don't affect which class `super` refers to.
+            // Without this, `class C extends B { m() { var o = { [super.x]() {} }; } }` would
+            // incorrectly skip class C thinking the computed property is a class member.
+            if parent_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                in_computed_property = false;
+            }
+
             // Arrow functions capture the class context, so skip them
             if parent_node.kind == syntax_kind_ext::ARROW_FUNCTION {
                 current = parent_idx;
