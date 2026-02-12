@@ -1,8 +1,10 @@
 # Emit Test Status
 
 **Last Updated**: 2026-02-12
-**Overall JS Emit Pass Rate**: 68.2% (120/176 on 200-test sample)
+**Overall JS Emit Pass Rate**: 64.4% (282/438 on 500-test sample)
 **Target**: 90%+
+
+*Note: 200-test sample showed 68.2%, but larger 500-test sample is more representative*
 
 ## Current Status by Slice
 
@@ -18,13 +20,19 @@
 - ✅ JSDoc comments on ES5 class instance methods
 - ✅ Auto-extraction of source text from arena
 - ✅ Proper comment indentation in IR printer
+- ✅ Trailing comment infrastructure for namespaces (with some edge cases)
 
 **Test Wins**:
 - `commentBeforeStaticMethod1` ✅
 - `commentBeforeStaticMethod2` ✅ (likely)
 - Similar JSDoc on method tests ✅
 
-**Remaining Work** (168 failing comment tests):
+**Known Issues**:
+- 🐛 Trailing comments sometimes duplicated on closing brackets
+- 🐛 Indentation off by 4 spaces in nested namespace IIFEs
+  - Example: `ClassAndModuleThatMergeWithStaticVariableAndExportedVarThatShareAName`
+
+**Remaining Work** (still many failing comment tests):
 1. **High Priority**:
    - Trailing comments in call arguments (`s.map(// comment\nfunction...)`)
    - End-of-file comments
@@ -95,11 +103,14 @@ Foundation is in place for comment preservation in IR-based transforms:
 **Commits**:
 - `38f9e18f3` - feat(emit): preserve JSDoc comments for ES5 class methods
 - `254a525b9` - docs: session summary
+- `f8dfd80b5` - docs: emit test status tracking document
 
 **Impact**:
-- Overall pass rate: ~62% → 68.2% (+6.2%)
+- Overall pass rate: ~59.6% → 64.4% (+4.8% on 500-test sample)
 - Fixed JSDoc comments on ES5 class method transformations
+- Trailing comment infrastructure already working (just needed rebuild)
 - Established pattern for future comment preservation work
+- 21 more tests passing
 
 **Files Changed**:
 - `crates/tsz-emitter/src/transforms/ir.rs` - Added comment fields to IR nodes
