@@ -3866,7 +3866,27 @@ impl<'a> CheckerState<'a> {
                         false
                     };
 
-                    if !skip_import_ts6133 && !skip_variable_ts6133 {
+                    // For destructuring patterns, check if this is part of a binding pattern where ALL elements are unused.
+                    // If so, skip emitting TS6133 here because TS6198 will be emitted for the entire pattern.
+                    // Only skip when there are MULTIPLE elements (single unused elements get TS6133).
+                    let skip_destructuring_ts6133 = if is_variable {
+                        if let Some(pattern_idx) = self.find_parent_binding_pattern(decl_idx) {
+                            if let Some(&(total_count, unused_count)) =
+                                destructuring_patterns.get(&pattern_idx)
+                            {
+                                // Skip TS6133 only if there are multiple elements and ALL are unused (TS6198 will cover it)
+                                total_count > 1 && unused_count == total_count
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if !skip_import_ts6133 && !skip_variable_ts6133 && !skip_destructuring_ts6133 {
                         // Check if write-only (assigned but never read)
                         let is_write_only = self.ctx.written_symbols.borrow().contains(&sym_id);
 
@@ -3995,6 +4015,29 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+
+            // Emit TS6198 for destructuring patterns where ALL elements are unused.
+            // Only emit this when there are MULTIPLE elements (total_count > 1).
+            // For single unused elements, TS6133 is emitted above.
+            for (pattern_idx, (total_count, unused_count)) in destructuring_patterns {
+                // Only emit if there are multiple elements and ALL are unused
+                if total_count > 1 && unused_count == total_count {
+                    if let Some(pattern_node) = self.ctx.arena.get(pattern_idx) {
+                        let msg = "All destructured elements are unused.".to_string();
+                        let start = pattern_node.pos;
+                        let length = pattern_node.end.saturating_sub(pattern_node.pos);
+                        self.ctx.push_diagnostic(Diagnostic {
+                            file: file_name.clone(),
+                            start,
+                            length,
+                            message_text: msg,
+                            category: crate::types::diagnostics::DiagnosticCategory::Error,
+                            code: 6198,
+                            related_information: Vec::new(),
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -4071,6 +4114,39 @@ impl<'a> CheckerState<'a> {
 
             if let Some(node) = self.ctx.arena.get(idx) {
                 if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                    return Some(idx);
+                }
+            }
+
+            // Move to parent
+            idx = self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+        }
+
+        None
+    }
+
+    /// Find the parent BINDING_PATTERN (OBJECT_BINDING_PATTERN or ARRAY_BINDING_PATTERN)
+    /// for a binding element declaration. This is used to track TS6198 (all destructured
+    /// elements are unused).
+    fn find_parent_binding_pattern(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Walk up the parent chain to find OBJECT_BINDING_PATTERN or ARRAY_BINDING_PATTERN
+        for _ in 0..10 {
+            // Limit iterations to prevent infinite loops
+            if idx.is_none() {
+                return None;
+            }
+
+            if let Some(node) = self.ctx.arena.get(idx) {
+                if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                {
                     return Some(idx);
                 }
             }
