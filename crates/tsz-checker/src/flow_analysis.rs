@@ -1331,6 +1331,13 @@ impl<'a> CheckerState<'a> {
     /// in the outer scope but the closure captures the variable and might execute
     /// after the variable has been reassigned to a different type.
     pub(crate) fn apply_flow_narrowing(&self, idx: NodeIndex, declared_type: TypeId) -> TypeId {
+        // Skip flow narrowing when getting assignment target types.
+        // For assignments like `foo[x] = 1` after `if (foo[x] === undefined)`,
+        // we need the declared type (e.g., `number | undefined`) not the narrowed type (`undefined`).
+        if self.ctx.skip_flow_narrowing {
+            return declared_type;
+        }
+
         // Get the flow node for this expression usage FIRST
         // If there's no flow info, no narrowing is possible regardless of node type
         let flow_node = match self.ctx.binder.get_node_flow(idx) {
