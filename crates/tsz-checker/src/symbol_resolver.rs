@@ -1158,7 +1158,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returning the declaration node avoids relying on cross-binder SymbolId
     /// identity, which can collide and lead to incorrect value/type selection.
-    pub(crate) fn find_value_declaration_in_libs(&self, name: &str) -> Option<NodeIndex> {
+    pub(crate) fn find_value_declaration_in_libs(
+        &self,
+        name: &str,
+    ) -> Option<(SymbolId, NodeIndex)> {
         let lib_binders = self.get_lib_binders();
 
         // Check merged/local symbols first.
@@ -1171,7 +1174,7 @@ impl<'a> CheckerState<'a> {
             && !val_symbol.is_type_only
             && !val_symbol.value_declaration.is_none()
         {
-            return Some(val_symbol.value_declaration);
+            return Some((val_sym_id, val_symbol.value_declaration));
         }
 
         // Then scan lib binders directly.
@@ -1182,7 +1185,7 @@ impl<'a> CheckerState<'a> {
                 && !val_symbol.is_type_only
                 && !val_symbol.value_declaration.is_none()
             {
-                return Some(val_symbol.value_declaration);
+                return Some((val_sym_id, val_symbol.value_declaration));
             }
         }
 
