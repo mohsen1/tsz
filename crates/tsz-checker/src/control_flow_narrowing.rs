@@ -517,6 +517,16 @@ impl<'a> FlowAnalyzer<'a> {
                     Some(self.interner.union(instance_types))
                 }
             }
+            ConstructorInstanceKind::Intersection(members) => {
+                // For intersection types, TypeScript finds the first member with a construct signature
+                // Example: { new(): T } & { foo: true } extracts T from the first member
+                for member in members {
+                    if let Some(instance_type) = self.instance_type_from_constructor_type(member) {
+                        return Some(instance_type);
+                    }
+                }
+                None
+            }
             ConstructorInstanceKind::None => None,
         }
     }
