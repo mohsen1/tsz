@@ -1449,6 +1449,11 @@ impl<'a> CheckerState<'a> {
                 "get_type_of_identifier: resolved symbol"
             );
 
+            if self.is_type_only_import_equals_namespace_expr(idx) {
+                self.error_namespace_used_as_value_at(name, idx);
+                return TypeId::ERROR;
+            }
+
             if self.alias_resolves_to_type_only(sym_id) {
                 // Don't emit TS2693 in heritage clause context (e.g., `extends A`)
                 if self.is_direct_heritage_type_reference(idx) {
