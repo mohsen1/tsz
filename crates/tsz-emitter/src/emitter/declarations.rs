@@ -570,7 +570,8 @@ impl<'a> Printer<'a> {
 
         // ES6+: Emit namespace as IIFE, preserving ES6+ syntax inside
         let module = module.clone();
-        self.emit_namespace_iife(&module, None);
+        let parent_name = self.current_namespace_name.clone();
+        self.emit_namespace_iife(&module, parent_name.as_deref());
     }
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.
@@ -617,9 +618,12 @@ impl<'a> Printer<'a> {
             } else {
                 // MODULE_BLOCK: emit body statements
                 let prev = self.in_namespace_iife;
+                let prev_ns_name = self.current_namespace_name.clone();
                 self.in_namespace_iife = true;
+                self.current_namespace_name = Some(name.clone());
                 self.emit_namespace_body_statements(module, &name);
                 self.in_namespace_iife = prev;
+                self.current_namespace_name = prev_ns_name;
             }
         }
 
@@ -718,7 +722,8 @@ impl<'a> Printer<'a> {
                                             self.write(";");
                                             self.write_line();
                                         }
-                                    } else {
+                                    } else if inner_kind != syntax_kind_ext::MODULE_DECLARATION {
+                                        // Don't write extra newline for namespaces - they already call write_line()
                                         self.write_line();
                                     }
                                 }

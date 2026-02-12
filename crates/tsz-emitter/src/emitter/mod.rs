@@ -273,6 +273,10 @@ pub struct Printer<'a> {
     /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
     pub(super) in_namespace_iife: bool,
 
+    /// The name of the current namespace we're emitting inside (if any).
+    /// Used for nested exported namespaces to emit proper IIFE parameters.
+    pub(super) current_namespace_name: Option<String>,
+
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(super) declared_namespace_names: FxHashSet<String>,
 
@@ -332,6 +336,7 @@ impl<'a> Printer<'a> {
             temp_scope_stack: Vec::new(),
             first_for_of_emitted: false,
             in_namespace_iife: false,
+            current_namespace_name: None,
             declared_namespace_names: FxHashSet::default(),
             pending_class_field_inits: Vec::new(),
             hoisted_assignment_temps: Vec::new(),
@@ -1403,6 +1408,9 @@ impl<'a> Printer<'a> {
             }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 self.emit_string_literal(node);
+            }
+            k if k == SyntaxKind::RegularExpressionLiteral as u16 => {
+                self.emit_regex_literal(node);
             }
             k if k == SyntaxKind::TrueKeyword as u16 => {
                 self.write("true");

@@ -27,6 +27,48 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(super) fn emit_regex_literal(&mut self, node: &Node) {
+        // Regex literals should be emitted exactly as they appear in source
+        // to preserve the pattern and flags (e.g., /\r\n/g)
+        if let Some(text) = self.source_text {
+            let start = node.pos as usize;
+            let max_end = std::cmp::min(node.end as usize, text.len());
+            // Skip leading trivia to find the start of the regex
+            let mut i = start;
+            while i < max_end && matches!(text.as_bytes()[i], b' ' | b'\t' | b'\r' | b'\n') {
+                i += 1;
+            }
+            if i < max_end && text.as_bytes()[i] == b'/' {
+                let regex_start = i;
+                i += 1; // Skip opening /
+                // Find closing / by scanning for it (handling escapes)
+                let mut escaped = false;
+                while i < max_end {
+                    match text.as_bytes()[i] {
+                        b'\\' if !escaped => escaped = true,
+                        b'/' if !escaped => {
+                            i += 1; // Include closing /
+                            // Include any flags (g, i, m, etc.)
+                            while i < max_end
+                                && matches!(text.as_bytes()[i], b'a'..=b'z' | b'A'..=b'Z')
+                            {
+                                i += 1;
+                            }
+                            self.write(&text[regex_start..i]);
+                            return;
+                        }
+                        _ => escaped = false,
+                    }
+                    i += 1;
+                }
+            }
+        }
+        // Fallback: use the literal text from the node
+        if let Some(lit) = self.arena.get_literal(node) {
+            self.write(&lit.text);
+        }
+    }
+
     pub(super) fn emit_string_literal(&mut self, node: &Node) {
         // Try to use raw source text to preserve line continuations etc.
         if let Some(raw) = self.get_raw_string_literal(node) {
