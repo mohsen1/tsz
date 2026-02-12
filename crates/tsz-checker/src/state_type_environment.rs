@@ -1617,6 +1617,16 @@ impl<'a> CheckerState<'a> {
             self.check_unused_type_params(&Some(tp), idx);
         }
 
+        // EXPLICIT WALK: For TYPE_REFERENCE nodes, route through CheckerState's method to emit TS2304.
+        // TypeNodeChecker uses TypeLowering which doesn't emit errors, so we must handle TYPE_REFERENCE
+        // explicitly here to ensure undefined type names emit TS2304.
+        // This fixes cases like `function A(): (public B) => C {}` where C is undefined.
+        if let Some(node) = self.ctx.arena.get(idx) {
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                return self.get_type_from_type_reference(idx);
+            }
+        }
+
         // For other type nodes, delegate to TypeNodeChecker
         let mut checker = crate::TypeNodeChecker::new(&mut self.ctx);
         checker.check(idx)

@@ -586,20 +586,112 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use tsz_solver::TypeLowering;
         use tsz_solver::types::is_compiler_managed_type;
 
-        // EXPLICIT WALK: Visit the return type annotation to emit diagnostics.
-        // This ensures TS2304 "Cannot find name" errors are emitted for undefined
-        // type references in function return types (e.g., `(x) => UndefinedType`).
-        // TypeLowering computes the type but does not emit diagnostics.
-        let Some(node) = self.ctx.arena.get(idx) else {
+        let Some(_node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
-        let Some(func_data) = self.ctx.arena.get_function_type(node) else {
+        let Some(func_data) = self.ctx.arena.get_function_type(_node) else {
             return TypeId::ERROR;
         };
-        // Explicitly walk the return type to trigger TS2304 errors.
-        // Must use self.check() not self.compute_type() to go through caching and proper dispatch.
+
+        // EXPLICIT VALIDATION: Check type references in parameters and return type for TS2304.
+        // We must do this before TypeLowering because TypeLowering doesn't emit diagnostics.
+        // This ensures errors like "Cannot find name 'C'" are emitted for: (x: T) => C
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Collect type parameter names from this function type (e.g., <T> in <T>(x: T) => T)
+        let mut local_type_params: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        if let Some(ref type_params) = func_data.type_parameters {
+            for &tp_idx in &type_params.nodes {
+                if let Some(tp_node) = self.ctx.arena.get(tp_idx)
+                    && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                    && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    local_type_params.insert(ident.escaped_text.clone());
+                }
+            }
+        }
+
+        // Helper to check if a type name is a built-in TypeScript type
+        let is_builtin_type = |name: &str| -> bool {
+            matches!(
+                name,
+                // Primitive types
+                "void" | "null" | "undefined" | "any" | "unknown" | "never" |
+                "number" | "bigint" | "boolean" | "string" | "symbol" | "object" |
+                // Special types
+                "Function" | "Object" | "String" | "Number" | "Boolean" | "Symbol" |
+                // Compiler-managed
+                "Array" | "ReadonlyArray" | "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize"
+            )
+        };
+
+        // Collect undefined type names first (to avoid borrow checker issues)
+        let mut undefined_types: Vec<(NodeIndex, String)> = Vec::new();
+
+        // Check return type annotation
         if !func_data.type_annotation.is_none() {
-            let _ = self.check(func_data.type_annotation);
+            if let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
+                && tn.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(tr) = self.ctx.arena.get_type_ref(tn)
+                && let Some(name_node) = self.ctx.arena.get(tr.type_name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = &ident.escaped_text;
+                let is_builtin = is_builtin_type(name);
+                let is_local_type_param = local_type_params.contains(name);
+                let is_type_param = self.ctx.type_parameter_scope.contains_key(name);
+                let in_file = self.ctx.binder.file_locals.get(name).is_some();
+                let in_lib = self
+                    .ctx
+                    .lib_contexts
+                    .iter()
+                    .any(|lib_ctx| lib_ctx.binder.file_locals.get(name).is_some());
+
+                if !is_builtin && !is_local_type_param && !is_type_param && !in_file && !in_lib {
+                    undefined_types.push((tr.type_name, name.clone()));
+                }
+            }
+        }
+
+        // Check parameter type annotations
+        for param_idx in &func_data.parameters.nodes {
+            if let Some(param_node) = self.ctx.arena.get(*param_idx)
+                && let Some(param_data) = self.ctx.arena.get_parameter(param_node)
+                && !param_data.type_annotation.is_none()
+            {
+                if let Some(tn) = self.ctx.arena.get(param_data.type_annotation)
+                    && tn.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(tr) = self.ctx.arena.get_type_ref(tn)
+                    && let Some(name_node) = self.ctx.arena.get(tr.type_name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
+                    let name = &ident.escaped_text;
+                    let is_builtin = is_builtin_type(name);
+                    let is_local_type_param = local_type_params.contains(name);
+                    let is_type_param = self.ctx.type_parameter_scope.contains_key(name);
+                    let in_file = self.ctx.binder.file_locals.get(name).is_some();
+                    let in_lib = self
+                        .ctx
+                        .lib_contexts
+                        .iter()
+                        .any(|lib_ctx| lib_ctx.binder.file_locals.get(name).is_some());
+
+                    if !is_builtin && !is_local_type_param && !is_type_param && !in_file && !in_lib
+                    {
+                        undefined_types.push((tr.type_name, name.clone()));
+                    }
+                }
+            }
+        }
+
+        // Now emit all the TS2304 errors
+        for (error_idx, name) in undefined_types {
+            if let Some(node) = self.ctx.arena.get(error_idx) {
+                let message = format!("Cannot find name '{}'.", name);
+                self.ctx.error(node.pos, node.end - node.pos, message, 2304);
+            }
         }
 
         // Create a type resolver that looks up symbols in the binder
