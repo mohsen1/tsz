@@ -190,7 +190,9 @@ enum EmitDirective {
         function_node: NodeIndex,
     },
     ES5TemplateLiteral,
-    SubstituteThis,
+    SubstituteThis {
+        capture_name: Arc<str>,
+    },
     SubstituteArguments,
     ES5SuperCall,
     ModuleWrapper {
@@ -584,7 +586,9 @@ impl<'a> Printer<'a> {
                 }
             }
             TransformDirective::ES5TemplateLiteral { .. } => EmitDirective::ES5TemplateLiteral,
-            TransformDirective::SubstituteThis => EmitDirective::SubstituteThis,
+            TransformDirective::SubstituteThis { capture_name } => EmitDirective::SubstituteThis {
+                capture_name: capture_name.clone(),
+            },
             TransformDirective::SubstituteArguments => EmitDirective::SubstituteArguments,
             TransformDirective::ES5SuperCall => EmitDirective::ES5SuperCall,
             TransformDirective::ModuleWrapper {
@@ -853,9 +857,9 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            EmitDirective::SubstituteThis => {
-                // Substitute 'this' with '_this' for lexical capture
-                self.write("_this");
+            EmitDirective::SubstituteThis { ref capture_name } => {
+                // Substitute 'this' with capture name (usually '_this', or '_this_1' on collision)
+                self.write(capture_name);
             }
 
             EmitDirective::SubstituteArguments => {
@@ -1234,9 +1238,9 @@ impl<'a> Printer<'a> {
 
                 self.emit_chained_previous(node, idx, directives, index);
             }
-            EmitDirective::SubstituteThis => {
-                // Substitute 'this' with '_this' for lexical capture
-                self.write("_this");
+            EmitDirective::SubstituteThis { capture_name } => {
+                // Substitute 'this' with capture name (usually '_this', or '_this_1' on collision)
+                self.write(capture_name);
             }
             EmitDirective::SubstituteArguments => {
                 // Substitute 'arguments' with '_arguments' for lexical capture
@@ -1911,14 +1915,12 @@ impl<'a> Printer<'a> {
             k if k == SyntaxKind::ThisKeyword as u16 => {
                 // Check for SubstituteThis directive from lowering pass (Phase C)
                 // Directive approach is now the only path (fallback removed)
-                if self.transforms.has_transform(idx) {
-                    if let Some(TransformDirective::SubstituteThis) = self.transforms.get(idx) {
-                        self.write("_this");
-                    } else {
-                        self.write("this");
-                    }
+                if let Some(TransformDirective::SubstituteThis { capture_name }) =
+                    self.transforms.get(idx)
+                {
+                    let name = capture_name.clone();
+                    self.write(&name);
                 } else {
-                    // No directive means no substitution needed
                     self.write("this");
                 }
             }
@@ -2193,8 +2195,14 @@ impl<'a> Printer<'a> {
         }
 
         // Emit `var _this = this;` for top-level arrow functions that capture `this`
-        if self.transforms.needs_this_capture(source_idx) {
-            self.write("var _this = this;");
+        if let Some(capture_name) = self
+            .transforms
+            .this_capture_name(source_idx)
+            .map(|s| s.to_string())
+        {
+            self.write("var ");
+            self.write(&capture_name);
+            self.write(" = this;");
             self.write_line();
         }
 

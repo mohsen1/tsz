@@ -25,7 +25,7 @@
 //! - ✅ Clear separation of concerns
 
 use crate::transforms::helpers::HelpersNeeded;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 
@@ -255,7 +255,10 @@ pub enum TransformDirective {
     ///   (function (_this) { return _this.x; })
     /// }
     /// ```
-    SubstituteThis,
+    SubstituteThis {
+        /// The capture variable name to substitute with (e.g., "_this" or "_this_1")
+        capture_name: Arc<str>,
+    },
 
     /// Substitute arguments with _arguments (lexical capture for arrow functions)
     ///
@@ -335,7 +338,8 @@ pub struct TransformContext {
     /// Function body block nodes that need `var _this = this;` at the start.
     /// When an arrow function captures `this`, the enclosing non-arrow function's
     /// body block is added here so the emitter knows to inject the capture statement.
-    this_capture_scopes: FxHashSet<NodeIndex>,
+    /// The value is the capture variable name (e.g., "_this" or "_this_1" on collision).
+    this_capture_scopes: FxHashMap<NodeIndex, Arc<str>>,
 }
 
 impl TransformContext {
@@ -345,7 +349,7 @@ impl TransformContext {
             directives: FxHashMap::default(),
             helpers: HelpersNeeded::default(),
             helpers_populated: false,
-            this_capture_scopes: FxHashSet::default(),
+            this_capture_scopes: FxHashMap::default(),
         }
     }
 
@@ -386,13 +390,15 @@ impl TransformContext {
     }
 
     /// Mark a function body block as needing `var _this = this;` at the start.
-    pub fn mark_this_capture_scope(&mut self, body_idx: NodeIndex) {
-        self.this_capture_scopes.insert(body_idx);
+    /// `capture_name` is the variable name to use (e.g., "_this" or "_this_1" on collision).
+    pub fn mark_this_capture_scope(&mut self, body_idx: NodeIndex, capture_name: Arc<str>) {
+        self.this_capture_scopes.insert(body_idx, capture_name);
     }
 
     /// Check if a function body block needs `var _this = this;` at the start.
-    pub fn needs_this_capture(&self, body_idx: NodeIndex) -> bool {
-        self.this_capture_scopes.contains(&body_idx)
+    /// Returns the capture variable name if so.
+    pub fn this_capture_name(&self, body_idx: NodeIndex) -> Option<&str> {
+        self.this_capture_scopes.get(&body_idx).map(|s| &**s)
     }
 
     /// Check if a node has a transform directive
