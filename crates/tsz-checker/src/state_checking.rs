@@ -1772,27 +1772,47 @@ impl<'a> CheckerState<'a> {
 
                 // Try to resolve the heritage symbol
                 if let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) {
-                    // TS2314: Check if generic type is used without required type arguments.
-                    // Skip for extends clauses — TypeScript allows omitting type arguments
-                    // in class extends, defaulting all missing type params to `any`.
-                    // E.g., `class C extends Array { }` is valid (Array<any>).
-                    let has_type_args = self
+                    let type_args = self
                         .ctx
                         .arena
                         .get_expr_type_args(type_node)
-                        .and_then(|e| e.type_arguments.as_ref())
-                        .is_some_and(|args| !args.nodes.is_empty());
-                    if !has_type_args && !is_extends_clause {
-                        let required_count = self.count_required_type_params(heritage_sym);
-                        if required_count > 0 {
-                            if let Some(name) = self.heritage_name_text(expr_idx) {
+                        .and_then(|e| e.type_arguments.as_ref());
+
+                    let required_count = self.count_required_type_params(heritage_sym);
+                    let total_type_params = self.get_type_params_for_symbol(heritage_sym).len();
+
+                    if let Some(type_args) = type_args {
+                        if total_type_params == 0 {
+                            if let Some(&arg_idx) = type_args.nodes.first()
+                                && let Some(name) = self.heritage_name_text(expr_idx)
+                            {
+                                self.error_at_node_msg(
+                                    arg_idx,
+                                    crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                                    &[name.as_str()],
+                                );
+                            }
+                        } else {
+                            if type_args.nodes.len() < required_count
+                                && let Some(name) = self.heritage_name_text(expr_idx)
+                            {
                                 self.error_generic_type_requires_type_arguments_at(
                                     &name,
                                     required_count,
                                     type_idx,
                                 );
                             }
+
+                            self.validate_type_reference_type_arguments(heritage_sym, type_args);
                         }
+                    } else if required_count > 0
+                        && let Some(name) = self.heritage_name_text(expr_idx)
+                    {
+                        self.error_generic_type_requires_type_arguments_at(
+                            &name,
+                            required_count,
+                            type_idx,
+                        );
                     }
 
                     // TS2449/TS2450: Check if class/enum is used before its declaration

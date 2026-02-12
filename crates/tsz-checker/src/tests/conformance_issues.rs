@@ -202,6 +202,29 @@ let x = new alias.Class();
     );
 }
 
+#[test]
+fn test_super_call_args_match_instantiated_generic_base_ctor() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base<T> {
+    constructor(public value: T) {}
+}
+
+class Derived extends Base<number> {
+    constructor() {
+        super("hi");
+    }
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for super argument type mismatch against instantiated base ctor. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
 /// Issue: Overly aggressive strict null checking
 ///
 /// From: neverReturningFunctions1.ts
