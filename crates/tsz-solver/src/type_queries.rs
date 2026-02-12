@@ -2301,6 +2301,8 @@ pub enum ConstructorInstanceKind {
     Callable(crate::types::CallableShapeId),
     /// Union - search members for construct signatures
     Union(Vec<TypeId>),
+    /// Intersection - search members for construct signatures
+    Intersection(Vec<TypeId>),
     /// Not a constructor type
     None,
 }
@@ -2319,6 +2321,10 @@ pub fn classify_for_constructor_instance(
         TypeKey::Union(members_id) => {
             let members = db.type_list(members_id);
             ConstructorInstanceKind::Union(members.to_vec())
+        }
+        TypeKey::Intersection(members_id) => {
+            let members = db.type_list(members_id);
+            ConstructorInstanceKind::Intersection(members.to_vec())
         }
         _ => ConstructorInstanceKind::None,
     }
