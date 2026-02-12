@@ -47,6 +47,7 @@ interface TestCase {
   module: number;
   alwaysStrict: boolean;
   sourceMap: boolean;
+  downlevelIteration: boolean;
 }
 
 interface TestResult {
@@ -80,8 +81,8 @@ function hashString(str: string): string {
   return hash.toString(36);
 }
 
-function getCacheKey(source: string, target: number, module: number, alwaysStrict: boolean, declaration: boolean, sourceMap: boolean = false): string {
-  return hashString(`${source}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}`);
+function getCacheKey(source: string, target: number, module: number, alwaysStrict: boolean, declaration: boolean, sourceMap: boolean = false, downlevelIteration: boolean = false): string {
+  return hashString(`${source}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${downlevelIteration}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -237,6 +238,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       ? variant.alwaysstrict === 'true'
       : (directives.strict === true || directives.alwaysstrict === true);
     const sourceMap = directives.sourcemap === true || directives.inlinesourcemap === true;
+    const downlevelIteration = directives.downleveliteration === true;
 
     return {
       baselineFile,
@@ -248,6 +250,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
       module,
       alwaysStrict,
       sourceMap,
+      downlevelIteration,
     } as TestCase;
   })));
 
@@ -271,7 +274,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
 
   try {
     loadCache();
-    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module, testCase.alwaysStrict, config.dtsOnly, testCase.sourceMap);
+    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module, testCase.alwaysStrict, config.dtsOnly, testCase.sourceMap, testCase.downlevelIteration);
     let tszJs: string;
     let tszDts: string | null = null;
 
@@ -286,6 +289,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         declaration: config.dtsOnly,
         alwaysStrict: testCase.alwaysStrict,
         sourceMap: testCase.sourceMap,
+        downlevelIteration: testCase.downlevelIteration,
       });
       tszJs = transpileResult.js;
       tszDts = transpileResult.dts || null;
