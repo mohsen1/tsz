@@ -3758,10 +3758,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check for unused declarations (TS6133).
+    /// Check for unused declarations (TS6133, TS6192).
     /// Reports variables, functions, classes, and other declarations that are never referenced.
+    /// Also reports import declarations where ALL imports are unused (TS6192).
     pub(crate) fn check_unused_declarations(&mut self) {
         use crate::types::diagnostics::Diagnostic;
+        use std::collections::HashMap;
         use tsz_binder::ContainerKind;
         use tsz_binder::symbol_flags;
 
@@ -3795,6 +3797,44 @@ impl<'a> CheckerState<'a> {
         }
 
         let file_name = self.ctx.file_name.clone();
+
+        // Track import declarations for TS6192.
+        // Map from import declaration NodeIndex to (total_count, unused_count).
+        let mut import_declarations: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
+
+        // First pass: identify ALL import symbols and track them by import declaration.
+        // This includes both used and unused imports.
+        for (_sym_id, _name) in &symbols_to_check {
+            let sym_id = *_sym_id;
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+            let flags = symbol.flags;
+
+            // Only track ALIAS symbols (imports)
+            if (flags & symbol_flags::ALIAS) == 0 {
+                continue;
+            }
+
+            // Get the declaration node
+            let decl_idx = if !symbol.value_declaration.is_none() {
+                symbol.value_declaration
+            } else if let Some(&first) = symbol.declarations.first() {
+                first
+            } else {
+                continue;
+            };
+
+            // Find the parent IMPORT_DECLARATION node
+            if let Some(import_decl_idx) = self.find_parent_import_declaration(decl_idx) {
+                let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
+                let entry = import_declarations.entry(import_decl_idx).or_insert((0, 0));
+                entry.0 += 1; // total count
+                if !is_used {
+                    entry.1 += 1; // unused count
+                }
+            }
+        }
 
         for (sym_id, name) in symbols_to_check {
             // Skip if already referenced
@@ -3976,6 +4016,58 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
+        // Emit TS6192 for import declarations where ALL imports are unused.
+        if check_locals {
+            for (import_decl_idx, (total_count, unused_count)) in import_declarations {
+                // Only emit if ALL imports in this declaration are unused
+                if total_count > 0 && unused_count == total_count {
+                    if let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx) {
+                        let msg = "All imports in import declaration are unused.".to_string();
+                        let start = import_decl_node.pos;
+                        let length = import_decl_node.end.saturating_sub(import_decl_node.pos);
+                        self.ctx.push_diagnostic(Diagnostic {
+                            file: file_name.clone(),
+                            start,
+                            length,
+                            message_text: msg,
+                            category: crate::types::diagnostics::DiagnosticCategory::Error,
+                            code: 6192,
+                            related_information: Vec::new(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Find the parent IMPORT_DECLARATION node for an import symbol's declaration.
+    fn find_parent_import_declaration(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Walk up the parent chain to find IMPORT_DECLARATION
+        for _ in 0..10 {
+            // Limit iterations to prevent infinite loops
+            if idx.is_none() {
+                return None;
+            }
+
+            if let Some(node) = self.ctx.arena.get(idx) {
+                if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    return Some(idx);
+                }
+            }
+
+            // Move to parent
+            idx = self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+        }
+
+        None
     }
 
     /// Check if a declaration node is a parameter declaration.
