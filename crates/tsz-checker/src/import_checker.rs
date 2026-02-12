@@ -1178,6 +1178,48 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .find_enclosing_scope(self.ctx.arena, stmt_idx);
 
+            // TS2440: Import declaration conflicts with local declaration.
+            // The binder can merge non-mergeable declarations into the import symbol,
+            // so detect conflicts directly on the import symbol's declarations first.
+            if let Some(import_sym_id) = import_sym_id
+                && let Some(import_sym) = self.ctx.binder.symbols.get(import_sym_id)
+            {
+                let has_merged_local_non_import_decl =
+                    import_sym.declarations.iter().any(|&decl_idx| {
+                        if decl_idx == stmt_idx {
+                            return false;
+                        }
+                        let in_same_scope = if let Some(import_scope_id) = import_scope {
+                            self.ctx
+                                .binder
+                                .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                == Some(import_scope_id)
+                        } else {
+                            true
+                        };
+                        if !in_same_scope {
+                            return false;
+                        }
+
+                        self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                            decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        })
+                    });
+
+                if has_merged_local_non_import_decl {
+                    let message = format_message(
+                        diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                        &[name],
+                    );
+                    self.error_at_node(
+                        stmt_idx,
+                        &message,
+                        diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                    );
+                    return;
+                }
+            }
+
             // Find all symbols with this name (there may be multiple due to shadowing)
             let all_symbols = self.ctx.binder.symbols.find_all_by_name(name);
 
@@ -1193,8 +1235,34 @@ impl<'a> CheckerState<'a> {
                     let is_alias = (sym.flags & symbol_flags::ALIAS) != 0;
                     let is_namespace = (sym.flags & symbol_flags::NAMESPACE_MODULE) != 0;
 
-                    // Skip if this is also an import/alias
+                    // TS2300: duplicate `import =` aliases with the same name in the same scope.
+                    // TypeScript reports this as duplicate identifier (not TS2440).
                     if is_alias {
+                        let alias_in_same_scope = if let Some(import_scope_id) = import_scope {
+                            sym.declarations.iter().any(|&decl_idx| {
+                                self.ctx
+                                    .binder
+                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                    == Some(import_scope_id)
+                            })
+                        } else {
+                            true
+                        };
+
+                        let has_local_alias_decl = sym.declarations.iter().any(|&decl_idx| {
+                            self.ctx.binder.node_symbols.get(&decl_idx.0) == Some(&sym_id)
+                        });
+
+                        if alias_in_same_scope && has_local_alias_decl {
+                            let message =
+                                format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[name]);
+                            self.error_at_node(
+                                import.import_clause,
+                                &message,
+                                diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            );
+                            return;
+                        }
                         continue;
                     }
 
