@@ -1348,7 +1348,9 @@ impl BinderState {
 
             // Populate exports for the module symbol
             if !module_symbol_id.is_none() && !module.body.is_none() {
-                let is_ambient_module = !is_augmentation && declared_module_specifier.is_some();
+                let is_ambient_module = !is_augmentation
+                    && (declared_module_specifier.is_some()
+                        || self.has_declare_modifier(arena, &module.modifiers));
                 self.populate_module_exports(
                     arena,
                     module.body,

@@ -375,9 +375,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return TypeId::ANY;
         }
 
+        if let Some(TypeKey::ReadonlyType(inner)) = self.interner.lookup(type_id) {
+            return self.get_array_element_type(inner);
+        }
+
         // First try array element type
         if let Some(elem) = array_element_type(self.interner, type_id) {
             return elem;
+        }
+
+        // Handle generic array applications like Array<T> / ReadonlyArray<T>
+        // which are represented as TypeKey::Application with a single type arg.
+        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(type_id) {
+            let app = self.interner.type_application(app_id);
+            if let Some(&first_arg) = app.args.first() {
+                return first_arg;
+            }
         }
 
         // For tuples used as rest parameters, extract the first element's type
