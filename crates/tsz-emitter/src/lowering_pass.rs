@@ -668,17 +668,18 @@ impl<'a> LoweringPass<'a> {
             }
         }
 
-        // Set in_assignment_target when visiting initializer that's a destructuring pattern
-        // to prevent spread in destructuring patterns from triggering __spreadArray
-        let init_is_destructuring = self
-            .arena
-            .get(for_in_of.initializer)
-            .map(|n| {
-                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                    || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            })
-            .unwrap_or(false);
-        if init_is_destructuring {
+        // Check if initializer contains destructuring pattern
+        // For-of initializer can be VARIABLE_DECLARATION_LIST with binding patterns
+        let init_has_binding_pattern =
+            self.for_of_initializer_has_binding_pattern(for_in_of.initializer);
+
+        if init_has_binding_pattern {
+            // Mark __read helper when destructuring is used with downlevelIteration
+            // TypeScript emits __read to convert iterator results to arrays for destructuring
+            if self.ctx.target_es5 && self.ctx.options.downlevel_iteration {
+                self.transforms.helpers_mut().read = true;
+            }
+            // Set in_assignment_target to prevent spread in destructuring from triggering __spreadArray
             let prev = self.in_assignment_target;
             self.in_assignment_target = true;
             self.visit(for_in_of.initializer);
@@ -1881,6 +1882,37 @@ impl<'a> LoweringPass<'a> {
 
         node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
             || node.kind == syntax_kind_ext::SPREAD_ELEMENT
+    }
+
+    /// Check if a for-of initializer contains binding patterns (destructuring)
+    /// Initializer can be VARIABLE_DECLARATION_LIST with declarations that have binding patterns
+    fn for_of_initializer_has_binding_pattern(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+
+        // Check if initializer is a variable declaration list
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            if let Some(var_data) = self.arena.get_variable(init_node) {
+                // Check each declaration in the list
+                for &decl_idx in &var_data.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx) {
+                        if let Some(decl_data) = self.arena.get_variable_declaration(decl_node) {
+                            if let Some(name_node) = self.arena.get(decl_data.name) {
+                                // Check if name is a binding pattern
+                                if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                    || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        false
     }
 
     fn get_identifier_id(&self, idx: NodeIndex) -> Option<IdentifierId> {
