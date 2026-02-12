@@ -1038,7 +1038,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(accessor_name) = self.get_property_name(accessor.name)
                             && accessor_name == name
                         {
-                            return Some(false);
+                            return Some(!self.ctx.compiler_options.target.is_es5());
                         }
                     }
                     k if k == syntax_kind_ext::CONSTRUCTOR => {

@@ -46,6 +46,19 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        let is_property_identifier = self
+            .ctx
+            .arena
+            .get(error_node)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .is_some();
+
+        // TypeScript allows `super["x"]` element-access forms without applying
+        // the stricter method-only/private-protected checks used for `super.x`.
+        if self.is_super_expression(object_expr) && !is_property_identifier {
+            return true;
+        }
+
         let Some((class_idx, is_static)) = self.resolve_class_for_access(object_expr, object_type)
         else {
             return true;
