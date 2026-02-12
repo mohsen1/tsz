@@ -1237,6 +1237,20 @@ impl<'a> CheckerContext<'a> {
         })
     }
 
+    /// Resolve an import specifier from a specific file to its target file index.
+    /// Like resolve_import_target but for any source file, not just the current one.
+    pub fn resolve_import_target_from_file(
+        &self,
+        source_file_idx: usize,
+        specifier: &str,
+    ) -> Option<usize> {
+        self.resolved_module_paths.as_ref().and_then(|paths| {
+            paths
+                .get(&(source_file_idx, specifier.to_string()))
+                .copied()
+        })
+    }
+
     /// Extract the persistent cache from this context.
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> TypeCache {

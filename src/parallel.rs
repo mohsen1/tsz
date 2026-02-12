@@ -275,6 +275,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
 
             // Bind
             let mut binder = BinderState::new();
+            binder.set_debug_file(&file_name);
             binder.bind_source_file(&arena, source_file);
 
             BindResult {
@@ -315,6 +316,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
     let (arena, parse_diagnostics) = parser.into_parts();
 
     let mut binder = BinderState::new();
+    binder.set_debug_file(&file_name);
     binder.bind_source_file(&arena, source_file);
 
     BindResult {
@@ -572,6 +574,7 @@ pub fn parse_and_bind_parallel_with_libs(
 
             // Bind with lib symbols
             let mut binder = BinderState::new();
+            binder.set_debug_file(&file_name);
 
             // IMPORTANT: Merge lib symbols BEFORE binding source file
             // so that symbols like console, Array, Promise are available during binding

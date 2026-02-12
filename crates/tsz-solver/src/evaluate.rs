@@ -297,6 +297,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => None,
         };
 
+        tracing::trace!(
+            base = app.base.0,
+            base_key = ?base_key,
+            def_id = ?def_id,
+            args = ?app.args.iter().map(|a| a.0).collect::<Vec<_>>(),
+            "evaluate_application"
+        );
+
         // If the base is a DefId (Lazy, Ref, or TypeQuery), try to resolve and instantiate
         if let Some(def_id) = def_id {
             // =======================================================================
@@ -335,6 +343,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
+
+            tracing::trace!(
+                ?def_id,
+                has_type_params = type_params.is_some(),
+                type_params_count = type_params.as_ref().map(|p| p.len()),
+                has_resolved = resolved.is_some(),
+                resolved_key = ?resolved.and_then(|r| self.interner.lookup(r)),
+                "evaluate_application resolve"
+            );
 
             let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body

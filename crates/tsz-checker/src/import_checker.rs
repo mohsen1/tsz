@@ -271,15 +271,36 @@ impl<'a> CheckerState<'a> {
                     };
 
                     let import_name = &identifier.escaped_text;
-                    let message = format_message(
-                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                        &[module_name, import_name],
-                    );
-                    self.error_at_node(
-                        specifier.name,
-                        &message,
-                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                    );
+
+                    // Check re-export chains before emitting TS2305
+                    let found_via_reexport = self
+                        .ctx
+                        .binder
+                        .resolve_import_if_needed_public(module_name, import_name)
+                        .is_some()
+                        || self
+                            .ctx
+                            .binder
+                            .resolve_import_if_needed_public(normalized, import_name)
+                            .is_some()
+                        || self.resolve_import_via_target_binder(module_name, import_name)
+                        || self.resolve_import_via_all_binders(
+                            module_name,
+                            normalized,
+                            import_name,
+                        );
+
+                    if !found_via_reexport {
+                        let message = format_message(
+                            diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                            &[module_name, import_name],
+                        );
+                        self.error_at_node(
+                            specifier.name,
+                            &message,
+                            diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                        );
+                    }
                 }
                 return;
             };
@@ -314,15 +335,36 @@ impl<'a> CheckerState<'a> {
                 let import_name = &identifier.escaped_text;
 
                 if !exports_table.has(import_name) {
-                    let message = format_message(
-                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                        &[module_name, import_name],
-                    );
-                    self.error_at_node(
-                        specifier.name,
-                        &message,
-                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                    );
+                    // Before emitting TS2305, check if this import can be resolved
+                    // through re-export chains (wildcard or named re-exports).
+                    let found_via_reexport = self
+                        .ctx
+                        .binder
+                        .resolve_import_if_needed_public(module_name, import_name)
+                        .is_some()
+                        || self
+                            .ctx
+                            .binder
+                            .resolve_import_if_needed_public(normalized, import_name)
+                            .is_some()
+                        || self.resolve_import_via_target_binder(module_name, import_name)
+                        || self.resolve_import_via_all_binders(
+                            module_name,
+                            normalized,
+                            import_name,
+                        );
+
+                    if !found_via_reexport {
+                        let message = format_message(
+                            diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                            &[module_name, import_name],
+                        );
+                        self.error_at_node(
+                            specifier.name,
+                            &message,
+                            diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                        );
+                    }
                 } else {
                     // Import exists - check if it should be elided from JavaScript output
                     // Get the symbol from the exports table
@@ -1489,5 +1531,110 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .import_resolution_stack
             .contains(&module.to_string())
+    }
+
+    // =========================================================================
+    // Re-export Resolution Helpers
+    // =========================================================================
+
+    /// Try to resolve an import through the target module's binder re-export chains.
+    /// Traverses across binder boundaries by resolving each re-export source
+    /// to its target file and checking that file's binder.
+    fn resolve_import_via_target_binder(&self, module_name: &str, import_name: &str) -> bool {
+        if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+            let mut visited = rustc_hash::FxHashSet::default();
+            return self.resolve_import_in_file(target_idx, import_name, &mut visited);
+        }
+        false
+    }
+
+    /// Try to resolve an import by searching all binders' re-export chains.
+    fn resolve_import_via_all_binders(
+        &self,
+        module_name: &str,
+        normalized: &str,
+        import_name: &str,
+    ) -> bool {
+        if let Some(all_binders) = &self.ctx.all_binders {
+            for binder in all_binders.iter() {
+                if binder
+                    .resolve_import_if_needed_public(module_name, import_name)
+                    .is_some()
+                    || binder
+                        .resolve_import_if_needed_public(normalized, import_name)
+                        .is_some()
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Resolve an import by checking a specific file's exports and following
+    /// re-export chains across binder boundaries. Each file has its own binder
+    /// in multi-file mode, so we traverse wildcard/named re-exports by resolving
+    /// each source specifier to its target file and checking that file's binder.
+    fn resolve_import_in_file(
+        &self,
+        file_idx: usize,
+        import_name: &str,
+        visited: &mut rustc_hash::FxHashSet<usize>,
+    ) -> bool {
+        if !visited.insert(file_idx) {
+            return false; // Cycle detection
+        }
+
+        let Some(target_binder) = self.ctx.get_binder_for_file(file_idx) else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let Some(target_file_name) = target_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+        else {
+            return false;
+        };
+
+        // Check direct exports
+        if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
+            if exports.has(import_name) {
+                return true;
+            }
+        }
+
+        // Check named re-exports
+        if let Some(reexports) = target_binder.reexports.get(&target_file_name) {
+            if let Some((source_module, original_name)) = reexports.get(import_name) {
+                let name = original_name.as_deref().unwrap_or(import_name);
+                if let Some(source_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, source_module)
+                {
+                    if self.resolve_import_in_file(source_idx, name, visited) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Check wildcard re-exports
+        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+            let source_modules = source_modules.clone();
+            for source_module in &source_modules {
+                if let Some(source_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, source_module)
+                {
+                    if self.resolve_import_in_file(source_idx, import_name, visited) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 }

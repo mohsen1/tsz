@@ -1210,7 +1210,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Fall back to checking file_locals in the target binder
-        target_binder.file_locals.get(export_name)
+        if let Some(sym_id) = target_binder.file_locals.get(export_name) {
+            return Some(sym_id);
+        }
+
+        // Follow re-export chains (wildcard and named re-exports)
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.resolve_export_in_file(target_file_idx, export_name, &mut visited)
     }
 
     fn resolve_ambient_module_export(
@@ -1226,6 +1232,70 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        None
+    }
+
+    /// Follow re-export chains across binder boundaries to find an exported symbol.
+    /// Returns the SymbolId if the export is found via named or wildcard re-exports.
+    fn resolve_export_in_file(
+        &self,
+        file_idx: usize,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<usize>,
+    ) -> Option<tsz_binder::SymbolId> {
+        if !visited.insert(file_idx) {
+            return None; // Cycle detection
+        }
+
+        let target_binder = self.ctx.get_binder_for_file(file_idx)?;
+
+        let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let target_file_name = target_arena.source_files.first()?.file_name.clone();
+
+        // Check direct exports
+        if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
+            if let Some(sym_id) = exports.get(export_name) {
+                return Some(sym_id);
+            }
+        }
+
+        // Check file_locals
+        if let Some(sym_id) = target_binder.file_locals.get(export_name) {
+            return Some(sym_id);
+        }
+
+        // Check named re-exports
+        if let Some(reexports) = target_binder.reexports.get(&target_file_name) {
+            if let Some((source_module, original_name)) = reexports.get(export_name) {
+                let name = original_name.as_deref().unwrap_or(export_name);
+                if let Some(source_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, source_module)
+                {
+                    if let Some(sym_id) = self.resolve_export_in_file(source_idx, name, visited) {
+                        return Some(sym_id);
+                    }
+                }
+            }
+        }
+
+        // Check wildcard re-exports
+        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+            let source_modules = source_modules.clone();
+            for source_module in &source_modules {
+                if let Some(source_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, source_module)
+                {
+                    if let Some(sym_id) =
+                        self.resolve_export_in_file(source_idx, export_name, visited)
+                    {
+                        return Some(sym_id);
+                    }
+                }
+            }
+        }
+
         None
     }
 
@@ -1251,7 +1321,11 @@ impl<'a> CheckerState<'a> {
 
         // Try iterating through module_exports to find matching file
         if let Some((_, exports_table)) = target_binder.module_exports.iter().next() {
-            return Some(exports_table.clone());
+            let mut combined = exports_table.clone();
+            // Also collect exports from re-export chains
+            let mut visited = rustc_hash::FxHashSet::default();
+            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            return Some(combined);
         }
 
         None
@@ -1268,6 +1342,76 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+
+    /// Collect all symbols reachable through re-export chains into the given SymbolTable.
+    fn collect_reexported_symbols(
+        &self,
+        file_idx: usize,
+        result: &mut tsz_binder::SymbolTable,
+        visited: &mut rustc_hash::FxHashSet<usize>,
+    ) {
+        if !visited.insert(file_idx) {
+            return; // Cycle detection
+        }
+
+        let Some(target_binder) = self.ctx.get_binder_for_file(file_idx) else {
+            return;
+        };
+        let Some(target_file_name) = self
+            .ctx
+            .get_arena_for_file(file_idx as u32)
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+        else {
+            return;
+        };
+
+        // Collect from wildcard re-exports (export * from './module')
+        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+            let source_modules = source_modules.clone();
+            for source_module in &source_modules {
+                if let Some(source_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file(file_idx, source_module)
+                {
+                    if let Some(source_binder) = self.ctx.get_binder_for_file(source_idx) {
+                        // Add all exports from the source module
+                        if let Some((_, exports)) = source_binder.module_exports.iter().next() {
+                            for (name, sym_id) in exports.iter() {
+                                if !result.has(name) {
+                                    result.set(name.to_string(), *sym_id);
+                                }
+                            }
+                        }
+                        // Recursively collect from the source's re-exports
+                        self.collect_reexported_symbols(source_idx, result, visited);
+                    }
+                }
+            }
+        }
+
+        // Collect from named re-exports (export { X } from './module')
+        if let Some(reexports) = target_binder.reexports.get(&target_file_name) {
+            let reexports = reexports.clone();
+            for (exported_name, (source_module, original_name)) in reexports.iter() {
+                if !result.has(exported_name) {
+                    let name = original_name.as_deref().unwrap_or(exported_name);
+                    if let Some(source_idx) = self
+                        .ctx
+                        .resolve_import_target_from_file(file_idx, source_module)
+                    {
+                        let mut inner_visited = visited.clone();
+                        if let Some(sym_id) =
+                            self.resolve_export_in_file(source_idx, name, &mut inner_visited)
+                        {
+                            result.set(exported_name.to_string(), sym_id);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Emit TS2307 error for a module that cannot be found.
