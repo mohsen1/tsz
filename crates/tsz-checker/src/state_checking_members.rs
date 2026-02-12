@@ -2732,6 +2732,7 @@ impl<'a> CheckerState<'a> {
             }
 
             self.push_return_type(return_type);
+
             self.check_statement(accessor.body);
             if is_getter {
                 // Check if this is an async getter
@@ -2782,6 +2783,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+
             self.pop_return_type();
         }
     }
@@ -3682,12 +3684,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 if let Some(param_node) = self.ctx.arena.get(first_param)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
                 {
+                    // Check if parameter name is "this"
+                    // Must check both ThisKeyword and Identifier("this") to match parser behavior
                     let is_this = if let Some(name_node) = self.ctx.arena.get(param.name) {
-                        if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                            self.ctx
-                                .arena
-                                .get_identifier(name_node)
-                                .is_some_and(|id| id.escaped_text == "this")
+                        if name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                            true
+                        } else if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                            ident.escaped_text == "this"
                         } else {
                             false
                         }
