@@ -592,6 +592,13 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
+        // Check if constructor body contains arrow functions that capture `this`
+        let needs_this_capture = self.constructor_needs_this_capture(body_idx);
+        if needs_this_capture {
+            // Emit: var _this = this;
+            body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+        }
+
         // Emit original constructor body
         if let Some(block_node) = self.arena.get(body_idx)
             && let Some(block) = self.arena.get_block(block_node)
@@ -945,6 +952,34 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
         arrows
+    }
+
+    /// Check if constructor body needs `var _this = this;` capture
+    /// Returns true if the body contains arrow functions that capture `this`
+    fn constructor_needs_this_capture(&self, body_idx: NodeIndex) -> bool {
+        let arrow_indices = self.collect_arrow_functions_in_block(body_idx);
+
+        // Check if any arrow function captures `this`
+        for &arrow_idx in &arrow_indices {
+            if let Some(ref transforms) = self.transforms {
+                if let Some(crate::transform_context::TransformDirective::ES5ArrowFunction {
+                    captures_this,
+                    ..
+                }) = transforms.get(arrow_idx)
+                {
+                    if *captures_this {
+                        return true;
+                    }
+                }
+            } else {
+                // Fallback: directly check if arrow contains `this` reference
+                if contains_this_reference(self.arena, arrow_idx) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Recursively collect arrow function indices starting from a node
@@ -2480,30 +2515,14 @@ impl<'a> AstToIr<'a> {
                 body_source_range,
             };
 
-            // Handle this capture:
-            // - If class_alias is Some (static method), no IIFE wrapper needed - the alias is provided by outer scope
-            // - If captures_this but no class_alias (regular method), wrap in IIFE
-            if captures_this && class_alias.is_none() {
-                IRNode::CallExpr {
-                    callee: Box::new(IRNode::FunctionExpr {
-                        name: None,
-                        parameters: vec![IRParam {
-                            name: "_this".to_string(),
-                            rest: false,
-                            default_value: None,
-                        }],
-                        body: vec![IRNode::ReturnStatement(Some(Box::new(func_expr)))],
-                        is_expression_body: false,
-                        body_source_range: None,
-                    }),
-                    arguments: vec![IRNode::This {
-                        captured: prev_captured,
-                    }],
-                }
-            } else {
-                // Either doesn't capture this, or has class_alias (static method)
-                func_expr
-            }
+            // TypeScript's ES5 arrow transform:
+            // - Convert arrow to plain function expression
+            // - Containing function emits `var _this = this;` at body start
+            // - Substitution of `this` -> `_this` is handled by IRNode::This { captured: true }
+            //
+            // Note: We no longer use IIFE wrappers like `(function (_this) { ... })(this)`
+            // The `_this` capture should be hoisted to the containing function's body start.
+            func_expr
         } else {
             IRNode::ASTRef(idx)
         }
