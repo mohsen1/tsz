@@ -52,6 +52,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check if a declaration is ambient (has declare keyword or AMBIENT flag).
     fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
+        // .d.ts files are always ambient
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
         // Check if the node or any ancestor has the AMBIENT flag
         let mut current = var_idx;
         while !current.is_none() {
@@ -163,31 +168,40 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // TS1155: 'const' declarations must be initialized
         if is_const && decl_data.initializer.is_none() {
-            // Check if this is in a for-in or for-of loop (allowed)
-            if let Some(parent_ext) = self.ctx.arena.get_extended(parent_idx) {
-                if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
-                    if gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                        || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                    {
-                        // const in for-in/for-of is allowed without initializer
+            // Skip for destructuring patterns - they get TS1182 from the parser
+            if let Some(name_node) = self.ctx.arena.get(decl_data.name) {
+                if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                {
+                    // TS1182 is emitted by parser for destructuring without initializer
+                    // Don't also emit TS1155
+                } else {
+                    // Check if this is in a for-in or for-of loop (allowed)
+                    if let Some(parent_ext) = self.ctx.arena.get_extended(parent_idx) {
+                        if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
+                            if gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                                || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                            {
+                                // const in for-in/for-of is allowed without initializer
+                                return;
+                            }
+                        }
+                    }
+
+                    // Check if this is an ambient declaration (allowed)
+                    let is_ambient = self.is_ambient_declaration(decl_idx);
+                    if is_ambient {
                         return;
                     }
+
+                    self.ctx.error(
+                        decl_node.pos,
+                        decl_node.end - decl_node.pos,
+                        "'const' declarations must be initialized.".to_string(),
+                        1155,
+                    );
                 }
             }
-
-            // Check if this is an ambient declaration (allowed)
-            // Ambient declarations have the AMBIENT flag or a declare modifier
-            let is_ambient = self.is_ambient_declaration(decl_idx);
-            if is_ambient {
-                return;
-            }
-
-            self.ctx.error(
-                decl_node.pos,
-                decl_node.end - decl_node.pos,
-                "'const' declarations must be initialized.".to_string(),
-                1155,
-            );
         }
 
         // Variable declaration checking is handled by CheckerState for now

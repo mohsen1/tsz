@@ -1299,16 +1299,27 @@ impl ParserState {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
 
-        // Note: function names are NOT subject to async/generator context restrictions
-        // because the name is a declaration in the outer scope, not a binding in the
-        // function body. `async function * await() {}` and `function * yield() {}` are valid.
-        // Only check for static block context (where await is always illegal as an identifier)
-        if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+        // Check for reserved words used as function expression names:
+        // - `await` cannot be used as name in async function expressions
+        // - `yield` cannot be used as name in generator function expressions
+        // - `await` in static blocks is always illegal
+        // Note: function DECLARATIONS are different - they bind in outer scope, so
+        // `async function await() {}` as a declaration is valid.
+        {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
-            );
+            if self.is_token(SyntaxKind::AwaitKeyword)
+                && (is_async || self.in_static_block_context())
+            {
+                self.parse_error_at_current_token(
+                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                );
+            } else if self.is_token(SyntaxKind::YieldKeyword) && asterisk_token {
+                self.parse_error_at_current_token(
+                    "Identifier expected. 'yield' is a reserved word that cannot be used here.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                );
+            }
         }
 
         // Parse optional name (function expressions can be anonymous)

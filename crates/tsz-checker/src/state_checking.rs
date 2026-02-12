@@ -754,6 +754,15 @@ impl<'a> CheckerState<'a> {
                     let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
 
                     if is_const && var_decl.initializer.is_none() {
+                        // Skip for destructuring patterns - they get TS1182 from the parser
+                        let is_binding_pattern =
+                            if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
+                                name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            } else {
+                                false
+                            };
+
                         // Check if this is in a for-in or for-of loop (allowed)
                         let is_in_for_loop =
                             if let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) {
@@ -767,7 +776,7 @@ impl<'a> CheckerState<'a> {
                                 false
                             };
 
-                        if !is_in_for_loop {
+                        if !is_in_for_loop && !is_binding_pattern {
                             self.ctx.error(
                                 node.pos,
                                 node.end - node.pos,
@@ -2648,6 +2657,35 @@ impl<'a> CheckerState<'a> {
                 "Class name cannot be 'any'.",
                 diagnostic_codes::CLASS_NAME_CANNOT_BE,
             );
+        }
+
+        // TS2725: Class name cannot be 'Object' when targeting ES5 and above with module X
+        // Only applies to non-ES module kinds (CommonJS, AMD, UMD, System) and non-ambient classes
+        if !class.name.is_none()
+            && !self.has_declare_modifier(&class.modifiers)
+            && let Some(name_node) = self.ctx.arena.get(class.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && ident.escaped_text == "Object"
+        {
+            use tsz_common::common::ModuleKind;
+            let module = self.ctx.compiler_options.module;
+            let module_name = match module {
+                ModuleKind::CommonJS => Some("CommonJS"),
+                ModuleKind::AMD => Some("AMD"),
+                ModuleKind::UMD => Some("UMD"),
+                ModuleKind::System => Some("System"),
+                _ => None, // ES modules and None don't trigger this error
+            };
+            if let Some(module_name) = module_name {
+                self.error_at_node(
+                    class.name,
+                    &format!(
+                        "Class name cannot be 'Object' when targeting ES5 and above with module {}.",
+                        module_name
+                    ),
+                    diagnostic_codes::CLASS_NAME_CANNOT_BE_OBJECT_WHEN_TARGETING_ES5_AND_ABOVE_WITH_MODULE,
+                );
+            }
         }
 
         // Check if this is a declared class (ambient declaration)

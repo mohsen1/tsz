@@ -3902,7 +3902,10 @@ impl<'a> CheckerState<'a> {
 
                     if !skip_import_ts6133 && !skip_variable_ts6133 && !skip_destructuring_ts6133 {
                         // Check if write-only (assigned but never read)
-                        let is_write_only = self.ctx.written_symbols.borrow().contains(&sym_id);
+                        // Destructured variables should NOT get TS6198 - they get TS6133
+                        let is_destructured = self.find_parent_binding_pattern(decl_idx).is_some();
+                        let is_write_only =
+                            !is_destructured && self.ctx.written_symbols.borrow().contains(&sym_id);
 
                         // TS6196 for classes, interfaces, type aliases, enums ("never used")
                         // TS6198 for write-only variables ("assigned but never used")
