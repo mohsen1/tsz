@@ -3602,7 +3602,7 @@ impl<'a> CheckerState<'a> {
 
         // Track destructuring patterns for TS6198.
         // Map from binding pattern NodeIndex to (total_count, unused_count).
-        let destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
+        let mut destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
 
         // First pass: identify ALL import symbols and track them by import declaration.
         // This includes both used and unused imports.
