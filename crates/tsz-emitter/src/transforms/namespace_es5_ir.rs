@@ -139,6 +139,155 @@ impl<'a> NamespaceES5Transformer<'a> {
         result
     }
 
+    /// Skip whitespace and comments forward from `pos` to find the actual token start.
+    /// Returns the position of the first non-trivia character.
+    fn skip_trivia_forward(&self, pos: u32, end: u32) -> u32 {
+        let source_text = match self.source_text {
+            Some(t) => t,
+            None => return pos,
+        };
+        let bytes = source_text.as_bytes();
+        let mut i = pos as usize;
+        let end = end as usize;
+        while i < end && i < bytes.len() {
+            match bytes[i] {
+                b' ' | b'\t' | b'\n' | b'\r' => i += 1,
+                b'/' if i + 1 < end => {
+                    if bytes[i + 1] == b'/' {
+                        // Line comment: skip to end of line
+                        i += 2;
+                        while i < end && i < bytes.len() && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                        if i < end && i < bytes.len() && bytes[i] == b'\n' {
+                            i += 1;
+                        }
+                    } else if bytes[i + 1] == b'*' {
+                        // Block comment: skip to */
+                        i += 2;
+                        while i + 1 < end && i + 1 < bytes.len() {
+                            if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                                i += 2;
+                                break;
+                            }
+                            i += 1;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            }
+        }
+        i as u32
+    }
+
+    /// Find the position after the code content of an erased statement (interface/type alias).
+    /// Scans forward with brace-depth tracking to find the closing `}` or `;`.
+    /// This is needed because `node.end` includes trailing trivia that may contain
+    /// comments belonging to the next statement.
+    fn find_code_end_of_erased_stmt(&self, node_pos: u32, node_end: u32) -> u32 {
+        let source_text = match self.source_text {
+            Some(t) => t,
+            None => return node_end,
+        };
+        let bytes = source_text.as_bytes();
+        let end = (node_end as usize).min(bytes.len());
+        let mut i = node_pos as usize;
+        let mut brace_depth: i32 = 0;
+        let mut found_brace = false;
+
+        while i < end {
+            // Skip over comment ranges
+            let pos = i as u32;
+            let mut skipped_comment = false;
+            for c in &self.comment_ranges {
+                if c.pos <= pos && pos < c.end {
+                    i = c.end as usize;
+                    skipped_comment = true;
+                    break;
+                }
+                if c.pos > pos {
+                    break; // comments sorted by position
+                }
+            }
+            if skipped_comment {
+                continue;
+            }
+
+            match bytes[i] {
+                b'{' => {
+                    brace_depth += 1;
+                    found_brace = true;
+                }
+                b'}' => {
+                    brace_depth -= 1;
+                    if found_brace && brace_depth == 0 {
+                        return (i + 1) as u32;
+                    }
+                }
+                b';' if brace_depth == 0 && !found_brace => {
+                    // Type alias without braces: type Foo = number;
+                    return (i + 1) as u32;
+                }
+                b'\'' | b'"' => {
+                    // Skip string literal
+                    let quote = bytes[i];
+                    i += 1;
+                    while i < end && bytes[i] != quote {
+                        if bytes[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                    if i < end {
+                        i += 1;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        node_end
+    }
+
+    /// Extract standalone comments (on their own line) within [from_pos, to_pos).
+    /// Unlike `extract_comments_in_range`, this filters out trailing comments
+    /// that share a line with code — only comments on their own line are returned.
+    fn extract_standalone_comments_in_range(&self, from_pos: u32, to_pos: u32) -> Vec<IRNode> {
+        let source_text = match self.source_text {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+        let bytes = source_text.as_bytes();
+        let mut result = Vec::new();
+        for c in &self.comment_ranges {
+            if c.pos >= from_pos && c.end <= to_pos {
+                // Check if standalone: only whitespace before it on the line
+                let mut line_start = c.pos as usize;
+                while line_start > 0
+                    && bytes[line_start - 1] != b'\n'
+                    && bytes[line_start - 1] != b'\r'
+                {
+                    line_start -= 1;
+                }
+                let before = &source_text[line_start..c.pos as usize];
+                if before.trim().is_empty() {
+                    let text = c.get_text(source_text);
+                    if !text.is_empty() {
+                        result.push(IRNode::Raw(text.to_string()));
+                    }
+                }
+            }
+            if c.pos >= to_pos {
+                break;
+            }
+        }
+        result
+    }
+
     /// Extract a trailing comment within a statement's span.
     ///
     /// In our parser, `node.end` includes trailing trivia, so comments appear
@@ -447,38 +596,62 @@ impl<'a> NamespaceES5Transformer<'a> {
             let mut prev_end = body_node.pos + 1; // skip past '{'
 
             for &stmt_idx in &stmts.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    // Extract leading comments between previous end and this statement
-                    let leading_comments = self.extract_comments_in_range(prev_end, stmt_node.pos);
+                let stmt_node = match self.arena.get(stmt_idx) {
+                    Some(n) => n,
+                    None => continue,
+                };
+
+                // Extract leading comments between previous end and this statement.
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                if prev_end <= actual_start {
+                    let leading_comments = self.extract_comments_in_range(prev_end, actual_start);
                     for c in leading_comments {
                         result.push(c);
                     }
-                    prev_end = stmt_node.end;
                 }
 
-                if let Some(ir) = self.transform_namespace_member_with_declared(
+                let ir = self.transform_namespace_member_with_declared(
                     ns_name,
                     stmt_idx,
                     &declared_names,
-                ) {
+                );
+
+                if let Some(ir) = ir {
                     // Filter out empty sequences (e.g., from uninitialized exports)
                     if let IRNode::Sequence(ref items) = ir {
                         if items.is_empty() {
+                            prev_end = stmt_node.end;
                             continue;
                         }
                     }
                     result.push(ir);
 
                     // Check for trailing comment on the same line as this statement.
-                    // Note: node.end includes trailing trivia, so the comment is WITHIN the span.
-                    if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    // Skip namespace-like declarations since their sub-emitters handle
+                    // internal comments.
+                    let skip = is_namespace_like(self.arena, stmt_node);
+                    if !skip {
                         if let Some(comment_text) =
                             self.extract_trailing_comment_in_stmt(stmt_node.pos, stmt_node.end)
                         {
                             result.push(IRNode::TrailingComment(comment_text));
                         }
                     }
+                } else {
+                    // Erased statement (interface/type alias).
+                    // Find the actual code end (after closing } or ;) and extract
+                    // standalone comments from the trailing trivia. These are
+                    // between-statement comments that would otherwise be lost
+                    // because prev_end advances past them.
+                    let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
+                    let standalone =
+                        self.extract_standalone_comments_in_range(code_end, stmt_node.end);
+                    for c in standalone {
+                        result.push(c);
+                    }
                 }
+
+                prev_end = stmt_node.end;
             }
 
             // Extract standalone comments after the last statement but before the closing brace.
@@ -1480,6 +1653,23 @@ fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
     false
 }
 
+/// Check if a node is a namespace-like declaration (MODULE_DECLARATION or
+/// EXPORT_DECLARATION wrapping MODULE_DECLARATION). These have block bodies
+/// whose internal comments are handled by the sub-emitter.
+fn is_namespace_like(arena: &NodeArena, node: &tsz_parser::parser::node::Node) -> bool {
+    if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+        return true;
+    }
+    if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+        if let Some(export_data) = arena.get_export_decl(node) {
+            if let Some(inner) = arena.get(export_data.export_clause) {
+                return inner.kind == syntax_kind_ext::MODULE_DECLARATION;
+            }
+        }
+    }
+    false
+}
+
 fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
     if node.kind == SyntaxKind::Identifier as u16 {
@@ -2382,6 +2572,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_namespace_comment_after_erased_interface() {
+        // Comment between an erased interface and a value declaration
+        // should be preserved. The interface is erased during emit, but
+        // the comment in its trailing trivia must survive.
+        let source = r#"namespace A {
+    export interface Point {
+        x: number;
+        y: number;
+    }
+
+    // valid since Point is exported
+    export var Origin: Point = { x: 0, y: 0 };
+}"#;
+        let output = transform_and_emit_with_comments(source);
+        assert!(
+            output.contains("// valid since Point is exported"),
+            "Comment after erased interface should be preserved. Got:\n{}",
+            output
+        );
     }
 
     #[test]

@@ -173,4 +173,23 @@ mod tests {
     // currently doesn't attach the `declare` modifier to namespace nodes.
     // This is a known parser limitation that should be fixed separately.
     // The has_declare_modifier() check is still in place for when the parser is fixed.
+
+    #[test]
+    fn test_namespace_comment_after_erased_interface() {
+        let source = r#"namespace A {
+    export interface Point {
+        x: number;
+        y: number;
+    }
+
+    // valid since Point is exported
+    export var Origin: Point = { x: 0, y: 0 };
+}"#;
+        let output = emit_namespace(source);
+        assert!(
+            output.contains("// valid since Point is exported"),
+            "Comment after erased interface should be preserved. Got:\n{}",
+            output
+        );
+    }
 }
