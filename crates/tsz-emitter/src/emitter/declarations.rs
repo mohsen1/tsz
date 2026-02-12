@@ -722,7 +722,8 @@ impl<'a> Printer<'a> {
                                             self.write(";");
                                             self.write_line();
                                         }
-                                    } else {
+                                    } else if inner_kind != syntax_kind_ext::MODULE_DECLARATION {
+                                        // Don't write extra newline for namespaces - they already call write_line()
                                         self.write_line();
                                     }
                                 }
