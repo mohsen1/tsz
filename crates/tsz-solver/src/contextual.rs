@@ -591,7 +591,6 @@ impl<'a> ParameterForCallExtractor<'a> {
         self.visit_type(self.db, type_id)
     }
 
-    #[allow(dead_code)]
     fn signature_accepts_arg_count(&self, params: &[ParamInfo], arg_count: usize) -> bool {
         // Count required (non-optional) parameters
         let required_count = params.iter().filter(|p| !p.optional).count();
@@ -1061,84 +1060,6 @@ impl<'a> ContextualTypeContext<'a> {
         match self.get_return_type() {
             Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
             None => ContextualTypeContext::new(self.interner),
-        }
-    }
-
-    /// Helper to extract parameter type from a list of params.
-    #[allow(dead_code)]
-    fn get_parameter_type_from_params(&self, params: &[ParamInfo], index: usize) -> Option<TypeId> {
-        if index < params.len() {
-            let param = &params[index];
-            if param.rest {
-                // Rest parameter - extract element type from array or tuple
-                if let Some(TypeKey::Array(elem)) = self.interner.lookup(param.type_id) {
-                    return Some(elem);
-                }
-                // For rest parameter with union type (e.g., union of tuples), extract element at index from each member
-                if let Some(TypeKey::Union(members)) = self.interner.lookup(param.type_id) {
-                    let members = self.interner.type_list(members);
-                    let elem_types: Vec<TypeId> = members
-                        .iter()
-                        .filter_map(|&m| {
-                            let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                            ctx.get_tuple_element_type(index)
-                        })
-                        .collect();
-                    if !elem_types.is_empty() {
-                        return Some(self.interner.union(elem_types));
-                    }
-                }
-                // For rest parameter with tuple type, extract the element at the given index
-                if let Some(TypeKey::Tuple(elements)) = self.interner.lookup(param.type_id) {
-                    let elements = self.interner.tuple_list(elements);
-                    // Find the tuple element at the given index
-                    if index < elements.len() {
-                        return Some(elements[index].type_id);
-                    } else if let Some(last_elem) = elements.last()
-                        && last_elem.rest
-                    {
-                        return Some(last_elem.type_id);
-                    }
-                }
-            }
-            Some(param.type_id)
-        } else if let Some(last) = params.last() {
-            // Index beyond params - check if last is rest
-            if last.rest {
-                // Extract element type from array or tuple
-                if let Some(TypeKey::Array(elem)) = self.interner.lookup(last.type_id) {
-                    return Some(elem);
-                }
-                // For rest parameter with union type (e.g., union of tuples), extract element at index from each member
-                if let Some(TypeKey::Union(members)) = self.interner.lookup(last.type_id) {
-                    let members = self.interner.type_list(members);
-                    let elem_types: Vec<TypeId> = members
-                        .iter()
-                        .filter_map(|&m| {
-                            let ctx = ContextualTypeContext::with_expected(self.interner, m);
-                            ctx.get_tuple_element_type(index)
-                        })
-                        .collect();
-                    if !elem_types.is_empty() {
-                        return Some(self.interner.union(elem_types));
-                    }
-                }
-                // For rest parameter with tuple type, extract the element at the given index
-                if let Some(TypeKey::Tuple(elements)) = self.interner.lookup(last.type_id) {
-                    let elements = self.interner.tuple_list(elements);
-                    // Find the tuple element at the given index
-                    if index < elements.len() {
-                        return Some(elements[index].type_id);
-                    } else if let Some(last_elem) = elements.last()
-                        && last_elem.rest
-                    {
-                        return Some(last_elem.type_id);
-                    }
-                }
-            }
-            None
-        } else {
-            None
         }
     }
 

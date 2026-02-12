@@ -449,12 +449,6 @@ impl ParserState {
         )
     }
 
-    /// Parse index signature: [key: string]: value
-    #[allow(dead_code)] // Infrastructure for full TypeScript parsing
-    pub(crate) fn parse_index_signature(&mut self) -> NodeIndex {
-        self.parse_index_signature_with_modifiers(None, self.token_pos())
-    }
-
     /// Parse index signature with modifiers (static, readonly, etc.): static [key: string]: value
     pub(crate) fn parse_index_signature_with_modifiers(
         &mut self,
@@ -1105,32 +1099,6 @@ impl ParserState {
         )
     }
 
-    /// Parse module name (can be dotted: A.B.C)
-    #[allow(dead_code)] // Infrastructure for full TypeScript parsing
-    pub(crate) fn parse_module_name(&mut self) -> NodeIndex {
-        let mut left = self.parse_identifier();
-
-        while self.is_token(SyntaxKind::DotToken) {
-            self.next_token();
-            let right = self.parse_identifier();
-            let start = if let Some(n) = self.arena.get(left) {
-                n.pos
-            } else {
-                0
-            };
-            let end = self.token_end();
-
-            left = self.arena.add_qualified_name(
-                syntax_kind_ext::QUALIFIED_NAME,
-                start,
-                end,
-                QualifiedNameData { left, right },
-            );
-        }
-
-        left
-    }
-
     /// Parse module block: { statements }
     /// is_ambient: true if this is a declare namespace/module, false for regular namespace
     pub(crate) fn parse_module_block(&mut self, is_ambient: bool) -> NodeIndex {
@@ -1346,18 +1314,6 @@ impl ParserState {
                 named_bindings,
             },
         )
-    }
-
-    /// Check if next token is "from" keyword
-    #[allow(dead_code)] // Infrastructure for full TypeScript parsing
-    pub(crate) fn is_next_token_from(&mut self) -> bool {
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-        self.next_token();
-        let is_from = self.is_token(SyntaxKind::FromKeyword);
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        is_from
     }
 
     /// Parse namespace import: * as name

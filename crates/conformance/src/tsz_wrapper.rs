@@ -24,7 +24,6 @@ pub struct PreparedTest {
     /// Temp directory containing test files and tsconfig.json
     pub temp_dir: tempfile::TempDir,
     /// Compiler options used
-    #[allow(dead_code)]
     pub options: HashMap<String, String>,
 }
 

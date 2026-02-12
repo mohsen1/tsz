@@ -140,21 +140,6 @@ fn generate_large_source(lines: usize) -> String {
     source
 }
 
-/// Count tokens in source
-#[allow(dead_code)]
-fn count_tokens(source: &str) -> usize {
-    let mut scanner = ScannerState::new(source.to_string(), true);
-    let mut count = 0;
-    loop {
-        let token = scanner.scan();
-        if token == SyntaxKind::EndOfFileToken {
-            break;
-        }
-        count += 1;
-    }
-    count
-}
-
 /// Benchmark: Scan small source file
 fn bench_scan_small(c: &mut Criterion) {
     c.bench_function("scan_small", |b| {

@@ -280,59 +280,6 @@ impl<'a> DocumentHighlightProvider<'a> {
         Range::new(start, end)
     }
 
-    /// Find the parent if-statement for a node near the given offset.
-    #[allow(dead_code)]
-    fn find_enclosing_if_statement(&self, _node_idx: NodeIndex, offset: u32) -> Option<NodeIndex> {
-        // Walk all nodes to find the if statement that contains this offset
-        // and whose keyword is at or near this offset
-        for (i, node) in self.arena.nodes.iter().enumerate() {
-            if node.kind == syntax_kind_ext::IF_STATEMENT && node.pos <= offset && node.end > offset
-            {
-                // Check if the "if" keyword is at the start of this node
-                let keyword_start = self.skip_whitespace_forward(node.pos as usize) as u32;
-                if keyword_start == offset
-                    || (keyword_start <= offset && offset < keyword_start + 2)
-                {
-                    return Some(NodeIndex(i as u32));
-                }
-            }
-        }
-        // Fallback: find the tightest if statement containing offset
-        let mut best = NodeIndex::NONE;
-        let mut best_len = u32::MAX;
-        for (i, node) in self.arena.nodes.iter().enumerate() {
-            if node.kind == syntax_kind_ext::IF_STATEMENT && node.pos <= offset && node.end > offset
-            {
-                let len = node.end - node.pos;
-                if len < best_len {
-                    best_len = len;
-                    best = NodeIndex(i as u32);
-                }
-            }
-        }
-        if best.is_some() { Some(best) } else { None }
-    }
-
-    /// Find the enclosing try statement for a node near the given offset.
-    #[allow(dead_code)]
-    fn find_enclosing_try_statement(&self, offset: u32) -> Option<NodeIndex> {
-        let mut best = NodeIndex::NONE;
-        let mut best_len = u32::MAX;
-        for (i, node) in self.arena.nodes.iter().enumerate() {
-            if node.kind == syntax_kind_ext::TRY_STATEMENT
-                && node.pos <= offset
-                && node.end > offset
-            {
-                let len = node.end - node.pos;
-                if len < best_len {
-                    best_len = len;
-                    best = NodeIndex(i as u32);
-                }
-            }
-        }
-        if best.is_some() { Some(best) } else { None }
-    }
-
     /// Find the enclosing switch statement for a node near the given offset.
     fn find_enclosing_switch_statement(&self, offset: u32) -> Option<NodeIndex> {
         let mut best = NodeIndex::NONE;
@@ -1192,7 +1139,6 @@ mod highlighting_tests {
     use tsz_parser::ParserState;
 
     /// Helper to create a provider from source text.
-    #[allow(dead_code)]
     fn make_provider(source: &str) -> (ParserState, BinderState, NodeIndex) {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();

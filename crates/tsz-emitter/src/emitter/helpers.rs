@@ -10,20 +10,6 @@ impl<'a> Printer<'a> {
     }
 
     // =========================================================================
-    // Safe String Slicing Helpers
-    // =========================================================================
-
-    /// Safely get a slice of text, returning empty string if out of bounds.
-    /// This prevents panics from invalid string indices.
-    ///
-    /// Used for safe extraction of source text segments during emission,
-    /// particularly for comment extraction and source mapping.
-    #[allow(dead_code)] // Available for future use in comment extraction
-    pub(super) fn safe_slice_text<'b>(&self, text: &'b str, start: u32, end: u32) -> &'b str {
-        safe_slice::slice(text, start as usize, end as usize)
-    }
-
-    // =========================================================================
     // Output Helpers (delegate to SourceWriter)
     // pub(super) for access from submodules (expressions, statements, declarations)
     // =========================================================================

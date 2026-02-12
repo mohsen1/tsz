@@ -22,7 +22,6 @@ pub struct DeclarationChecker<'a, 'ctx> {
 /// Note: Currently unused as property initialization is handled by CheckerState.
 /// These types will be used when property initialization is migrated to DeclarationChecker.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-#[allow(dead_code)]
 enum PropertyKey {
     Ident(String),
     Private(String),
@@ -31,26 +30,20 @@ enum PropertyKey {
 
 /// Computed property key.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-#[allow(dead_code)]
 enum ComputedKey {
     Ident(String),
     String(String),
     Number(String),
-    Qualified(String),
-    /// Symbol call like Symbol("key") or Symbol() - stores optional description
-    Symbol(Option<String>),
 }
 
 /// Result of control flow analysis for property assignments.
 /// Note: Currently unused as property initialization is handled by CheckerState.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 struct FlowResult {
     normal: Option<FxHashSet<PropertyKey>>,
     exits: Option<FxHashSet<PropertyKey>>,
 }
 
-#[allow(dead_code)]
 impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Create a new declaration checker with a mutable context reference.
     pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {

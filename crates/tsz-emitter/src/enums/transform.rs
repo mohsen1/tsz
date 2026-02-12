@@ -440,17 +440,14 @@ impl<'a> EnumTransformer<'a> {
 }
 
 /// Inline const enum usages in a source file
-#[allow(dead_code)] // Infrastructure for const enum inlining
 pub struct ConstEnumInliner<'a> {
     transformer: EnumTransformer<'a>,
-    source_text: &'a str,
 }
 
 impl<'a> ConstEnumInliner<'a> {
-    pub fn new(arena: &'a NodeArena, source_text: &'a str) -> Self {
+    pub fn new(arena: &'a NodeArena) -> Self {
         ConstEnumInliner {
             transformer: EnumTransformer::new(arena),
-            source_text,
         }
     }
 

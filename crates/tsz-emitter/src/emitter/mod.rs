@@ -230,16 +230,6 @@ pub struct Printer<'a> {
     /// Source text for source map generation (kept separate from comment emission).
     pub(super) source_map_text: Option<&'a str>,
 
-    /// Last processed position in source text for comment gap detection.
-    ///
-    /// This tracks the last source position that was processed, enabling detection
-    /// of comment gaps between statements. Used by fine-grained comment emission
-    /// to identify where comments should be inserted relative to emitted code.
-    ///
-    /// Note: Currently used for basic comment emission in emit_source_file.
-    /// Future improvements could use this for more precise comment positioning.
-    pub(super) last_processed_pos: u32,
-
     /// Pending source position for mapping the next write.
     pub(super) pending_source_pos: Option<SourcePosition>,
 
@@ -326,7 +316,6 @@ impl<'a> Printer<'a> {
             emit_missing_initializer_as_void_0: false,
             source_text: None,
             source_map_text: None,
-            last_processed_pos: 0,
             pending_source_pos: None,
             emit_recursion_depth: 0,
             all_comments: Vec::new(),

@@ -74,7 +74,6 @@ struct LspServer {
 }
 
 /// State for an open document
-#[allow(dead_code)]
 struct DocumentState {
     content: String,
     version: i32,
@@ -277,7 +276,6 @@ impl Default for ServerCapabilities {
 
 /// JSON-RPC message structures
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct JsonRpcMessage {
     jsonrpc: String,
     id: Option<Value>,

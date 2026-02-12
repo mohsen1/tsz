@@ -111,23 +111,15 @@ struct FlowContext {
     context_type: FlowContextType,
     /// Finally block to execute on exit (for try statements)
     finally_block: NodeIndex,
-    /// Flow state before entering finally (for routing exits through finally)
-    #[allow(dead_code)] // Infrastructure for try-finally flow analysis
-    pre_finally_flow: FlowNodeId,
-    /// Flow state after exiting finally (for routing exits through finally)
-    #[allow(dead_code)] // Infrastructure for try-finally flow analysis
-    post_finally_flow: FlowNodeId,
     /// Label identifier for this context (for labeled statements)
     label: NodeIndex,
 }
 
 #[derive(Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Infrastructure for flow control analysis
 enum FlowContextType {
     Loop,
     Switch,
     Try,
-    AsyncFunction,
 }
 
 impl<'a> FlowGraphBuilder<'a> {
@@ -522,8 +514,6 @@ impl<'a> FlowGraphBuilder<'a> {
             continue_label: Some(loop_label),
             context_type: FlowContextType::Loop,
             finally_block: NodeIndex::NONE,
-            pre_finally_flow: FlowNodeId::NONE,
-            post_finally_flow: FlowNodeId::NONE,
             label: NodeIndex::NONE,
         });
 
@@ -573,8 +563,6 @@ impl<'a> FlowGraphBuilder<'a> {
             continue_label: Some(loop_label),
             context_type: FlowContextType::Loop,
             finally_block: NodeIndex::NONE,
-            pre_finally_flow: FlowNodeId::NONE,
-            post_finally_flow: FlowNodeId::NONE,
             label: NodeIndex::NONE,
         });
 
@@ -631,8 +619,6 @@ impl<'a> FlowGraphBuilder<'a> {
             continue_label: Some(loop_label),
             context_type: FlowContextType::Loop,
             finally_block: NodeIndex::NONE,
-            pre_finally_flow: FlowNodeId::NONE,
-            post_finally_flow: FlowNodeId::NONE,
             label: NodeIndex::NONE,
         });
 
@@ -703,8 +689,6 @@ impl<'a> FlowGraphBuilder<'a> {
             continue_label: Some(loop_label),
             context_type: FlowContextType::Loop,
             finally_block: NodeIndex::NONE,
-            pre_finally_flow: FlowNodeId::NONE,
-            post_finally_flow: FlowNodeId::NONE,
             label: NodeIndex::NONE,
         });
 
@@ -745,8 +729,6 @@ impl<'a> FlowGraphBuilder<'a> {
             continue_label: Some(loop_label),
             context_type: FlowContextType::Loop,
             finally_block: NodeIndex::NONE,
-            pre_finally_flow: FlowNodeId::NONE,
-            post_finally_flow: FlowNodeId::NONE,
             label: NodeIndex::NONE,
         });
 
@@ -784,8 +766,6 @@ impl<'a> FlowGraphBuilder<'a> {
             continue_label: None,
             context_type: FlowContextType::Switch,
             finally_block: NodeIndex::NONE,
-            pre_finally_flow: FlowNodeId::NONE,
-            post_finally_flow: FlowNodeId::NONE,
             label: NodeIndex::NONE,
         });
 
@@ -897,8 +877,6 @@ impl<'a> FlowGraphBuilder<'a> {
                 continue_label: None,
                 context_type: FlowContextType::Try,
                 finally_block: try_data.finally_block,
-                pre_finally_flow: pre_finally_label,
-                post_finally_flow: FlowNodeId::NONE, // Will be set after building finally
                 label: NodeIndex::NONE,
             })
         } else {
@@ -977,8 +955,6 @@ impl<'a> FlowGraphBuilder<'a> {
             continue_label: None, // Labeled statements don't have continue targets unless they're loops
             context_type: FlowContextType::Loop, // Use Loop type to enable breaks
             finally_block: NodeIndex::NONE,
-            pre_finally_flow: FlowNodeId::NONE,
-            post_finally_flow: FlowNodeId::NONE,
             label: labeled_data.label,
         });
 

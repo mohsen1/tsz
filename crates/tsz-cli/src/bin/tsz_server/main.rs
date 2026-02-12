@@ -266,7 +266,6 @@ enum Protocol {
 
 /// tsserver protocol message (incoming request)
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub(crate) struct TsServerRequest {
     pub(crate) seq: u64,
     #[serde(rename = "type")]
@@ -293,7 +292,6 @@ pub(crate) struct TsServerResponse {
 
 /// tsserver protocol event (outgoing, unsolicited)
 #[derive(Debug, Serialize)]
-#[allow(dead_code)]
 struct TsServerEvent {
     seq: u64,
     #[serde(rename = "type")]
@@ -330,7 +328,6 @@ enum LegacyRequest {
 /// Full compiler options for a check request (expanded for tsc compatibility)
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct CheckOptions {
     // === Strict Type Checking ===
     #[serde(default)]

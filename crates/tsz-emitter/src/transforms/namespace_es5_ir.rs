@@ -897,34 +897,6 @@ impl<'a> NamespaceTransformContext<'a> {
         }
     }
 
-    /// Flatten a module name into parts (for simple/qualified names)
-    #[allow(dead_code)]
-    fn flatten_module_name(&self, name_idx: NodeIndex) -> Option<Vec<String>> {
-        let mut parts = Vec::new();
-        self.collect_name_parts(name_idx, &mut parts);
-        if parts.is_empty() { None } else { Some(parts) }
-    }
-
-    /// Recursively collect name parts from qualified names
-    #[allow(dead_code)]
-    fn collect_name_parts(&self, idx: NodeIndex, parts: &mut Vec<String>) {
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            // QualifiedName has left and right
-            if let Some(qn_data) = self.arena.qualified_names.get(node.data_index as usize) {
-                self.collect_name_parts(qn_data.left, parts);
-                self.collect_name_parts(qn_data.right, parts);
-            }
-        } else if node.kind == SyntaxKind::Identifier as u16
-            && let Some(ident) = self.arena.get_identifier(node)
-        {
-            parts.push(ident.escaped_text.clone());
-        }
-    }
-
     /// Transform namespace body
     fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
         let mut result = Vec::new();

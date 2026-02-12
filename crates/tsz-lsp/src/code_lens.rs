@@ -266,53 +266,6 @@ impl<'a> CodeLensProvider<'a> {
 
         Some(CodeLens::resolved(lens.range, command))
     }
-
-    /// Check if a function is a test function (heuristic based).
-    #[allow(dead_code)]
-    fn is_test_function(&self, node_idx: NodeIndex) -> bool {
-        if self.arena.get(node_idx).is_none() {
-            return false;
-        }
-
-        // Get the function name
-        let name = self.get_declaration_name(node_idx);
-
-        // Check for common test patterns
-        if let Some(name) = name {
-            let name_lower = name.to_lowercase();
-            return name_lower.starts_with("test")
-                || name_lower.starts_with("it_")
-                || name_lower.ends_with("_test")
-                || name_lower.ends_with("_spec");
-        }
-
-        // Check for decorators like @test
-        // (Would need decorator support in parser)
-
-        false
-    }
-
-    /// Get the name of a declaration.
-    fn get_declaration_name(&self, node_idx: NodeIndex) -> Option<String> {
-        // Look for an Identifier child that is the name
-        for (i, node) in self.arena.nodes.iter().enumerate() {
-            let idx = NodeIndex(i as u32);
-            let parent = self
-                .arena
-                .get_extended(idx)
-                .map_or(tsz_parser::NodeIndex::NONE, |ext| ext.parent);
-
-            if parent == node_idx && node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                // Get the identifier text
-                let start = node.pos as usize;
-                let end = node.end as usize;
-                if end <= self.source_text.len() {
-                    return Some(self.source_text[start..end].to_string());
-                }
-            }
-        }
-        None
-    }
 }
 
 #[cfg(test)]
