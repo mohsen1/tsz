@@ -147,6 +147,9 @@ pub struct CompilerOptions {
     /// Enable experimental support for legacy experimental decorators
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub experimental_decorators: Option<bool>,
+    /// Import emit helpers from tslib instead of inlining them per-file
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub import_helpers: Option<bool>,
     /// Allow JavaScript files to be a part of your program
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_js: Option<bool>,
@@ -250,6 +253,7 @@ pub struct ResolvedCompilerOptions {
     pub incremental: bool,
     pub no_emit: bool,
     pub no_emit_on_error: bool,
+    pub import_helpers: bool,
     /// Disable full type checking (only parse and emit errors reported).
     pub no_check: bool,
     /// Custom conditions for package.json exports resolution
@@ -425,6 +429,9 @@ pub fn resolve_compiler_options(
     if let Some(resolve_json_module) = options.resolve_json_module {
         resolved.resolve_json_module = resolve_json_module;
         resolved.checker.resolve_json_module = resolve_json_module;
+    }
+    if let Some(import_helpers) = options.import_helpers {
+        resolved.import_helpers = import_helpers;
     }
     if let Some(allow_arbitrary_extensions) = options.allow_arbitrary_extensions {
         resolved.allow_arbitrary_extensions = allow_arbitrary_extensions;
@@ -798,6 +805,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             es_module_interop,
             allow_synthetic_default_imports,
             experimental_decorators,
+            import_helpers,
             allow_js,
             check_js,
             always_strict,

@@ -44,6 +44,7 @@ use tsz::parser::NodeIndex;
 use tsz::parser::ParseDiagnostic;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::parser::syntax_kind_ext;
+use tsz::scanner::SyntaxKind;
 use tsz::solver::{TypeFormatter, TypeId};
 
 /// Reason why a file was included in compilation
@@ -2514,7 +2515,102 @@ fn collect_diagnostics(
         c.export_hashes.retain(|path, _| used_paths.contains(path));
     }
 
+    if let Some(helper_diag) = detect_missing_tslib_helper_diagnostic(program, options) {
+        diagnostics.push(helper_diag);
+    }
+
     diagnostics
+}
+
+fn detect_missing_tslib_helper_diagnostic(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+) -> Option<Diagnostic> {
+    if !options.import_helpers {
+        return None;
+    }
+
+    let tslib_file = program.files.iter().find(|file| {
+        Path::new(&file.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("tslib.d.ts"))
+    })?;
+
+    let tslib_exports_empty = program
+        .module_exports
+        .get(&tslib_file.file_name)
+        .map(|exports| exports.is_empty())
+        .unwrap_or(true);
+
+    if !tslib_exports_empty {
+        return None;
+    }
+
+    for file in &program.files {
+        if file.file_name == tslib_file.file_name || file.file_name.ends_with(".d.ts") {
+            continue;
+        }
+
+        if let Some((helper_name, start, length)) = first_required_helper(file) {
+            return Some(Diagnostic::error(
+                file.file_name.clone(),
+                start,
+                length,
+                format!(
+                    "This syntax requires an imported helper named '{}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.",
+                    helper_name
+                ),
+                2343,
+            ));
+        }
+    }
+
+    None
+}
+
+fn first_required_helper(file: &BoundFile) -> Option<(&'static str, u32, u32)> {
+    let mut saw_await: Option<(u32, u32)> = None;
+    let mut saw_yield: Option<(u32, u32)> = None;
+
+    for node_idx_raw in 0..file.arena.len() {
+        let node_idx = NodeIndex(node_idx_raw as u32);
+        let Some(node) = file.arena.get(node_idx) else {
+            continue;
+        };
+
+        if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+            return Some((
+                "__classPrivateFieldSet",
+                node.pos,
+                node.end.saturating_sub(node.pos),
+            ));
+        }
+
+        if node.kind == syntax_kind_ext::DECORATOR {
+            return Some(("__decorate", node.pos, node.end.saturating_sub(node.pos)));
+        }
+
+        if node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class_data) = file.arena.get_class(node)
+            && !class_data.heritage_clauses.is_none()
+        {
+            return Some(("__extends", node.pos, node.end.saturating_sub(node.pos)));
+        }
+
+        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+            saw_await = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+        if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
+            saw_yield = Some((node.pos, node.end.saturating_sub(node.pos)));
+        }
+    }
+
+    if let (Some((start, length)), Some(_)) = (saw_await, saw_yield) {
+        return Some(("__asyncGenerator", start, length));
+    }
+
+    None
 }
 
 /// Check a single file for the parallel checking path.
@@ -3276,6 +3372,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.incremental {
         options.incremental = true;
+    }
+    if args.import_helpers {
+        options.import_helpers = true;
     }
     if args.strict {
         options.checker.strict = true;
