@@ -555,7 +555,14 @@ impl<'a> IRPrinter<'a> {
                 class_name,
                 method_name,
                 function,
+                leading_comment,
             } => {
+                // Emit leading JSDoc comment if present
+                if let Some(comment) = leading_comment {
+                    self.emit_multiline_comment(comment);
+                    self.write_line();
+                    self.write_indent();
+                }
                 self.write(class_name);
                 self.write(".prototype");
                 self.emit_method_name(method_name);
@@ -567,7 +574,14 @@ impl<'a> IRPrinter<'a> {
                 class_name,
                 method_name,
                 function,
+                leading_comment,
             } => {
+                // Emit leading JSDoc comment if present
+                if let Some(comment) = leading_comment {
+                    self.emit_multiline_comment(comment);
+                    self.write_line();
+                    self.write_indent();
+                }
                 self.write(class_name);
                 self.emit_method_name(method_name);
                 self.write(" = ");
@@ -1462,6 +1476,27 @@ impl<'a> IRPrinter<'a> {
     fn decrease_indent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;
+        }
+    }
+
+    /// Emit a multiline comment with proper indentation for each line.
+    /// Normalizes indentation to match TypeScript's output format:
+    /// - First line: current indentation + comment start (`/**`)
+    /// - Subsequent lines: current indentation + ` *` or ` */`
+    fn emit_multiline_comment(&mut self, comment: &str) {
+        let mut first = true;
+        for line in comment.split('\n') {
+            if !first {
+                self.write_line();
+                self.write_indent();
+            }
+            // Strip leading whitespace, then add one space before * or */
+            let trimmed = line.trim_start();
+            if !first && (trimmed.starts_with('*') || trimmed.starts_with('/')) {
+                self.write(" ");
+            }
+            self.write(trimmed.trim_end());
+            first = false;
         }
     }
 }

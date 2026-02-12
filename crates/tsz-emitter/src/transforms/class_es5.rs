@@ -89,6 +89,7 @@ impl<'a> ClassES5Emitter<'a> {
     /// Set the source text (for ASTRef emission)
     pub fn set_source_text(&mut self, source_text: &'a str) {
         self.source_text = Some(source_text);
+        self.transformer.set_source_text(source_text);
     }
 
     /// Set source map context
@@ -98,6 +99,7 @@ impl<'a> ClassES5Emitter<'a> {
     pub fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
         self.source_text = Some(source_text);
         self.source_index = source_index;
+        self.transformer.set_source_text(source_text);
     }
 
     /// Take accumulated source mappings
