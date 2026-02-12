@@ -1653,21 +1653,52 @@ impl<'a> CheckerState<'a> {
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // The driver's ModuleResolver may have a more specific error code than TS2307.
         if let Some(error) = self.ctx.get_resolution_error(module_specifier) {
-            let error_code = error.code;
-            let error_message = error.message.clone();
+            let mut error_code = error.code;
+            let mut error_message = error.message.clone();
+            if error_code
+                == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+            {
+                let module_kind_prefers_2792 = matches!(
+                    self.ctx.compiler_options.module,
+                    tsz_common::common::ModuleKind::System
+                        | tsz_common::common::ModuleKind::AMD
+                        | tsz_common::common::ModuleKind::UMD
+                        | tsz_common::common::ModuleKind::ES2015
+                        | tsz_common::common::ModuleKind::ES2020
+                        | tsz_common::common::ModuleKind::ES2022
+                        | tsz_common::common::ModuleKind::ESNext
+                        | tsz_common::common::ModuleKind::Preserve
+                );
+                if module_kind_prefers_2792 {
+                    let fallback_message = format_message(
+                        diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
+                        &[module_specifier],
+                    );
+                    error_code = diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O;
+                    error_message = fallback_message;
+                }
+            }
             self.error(start, length, error_message, error_code);
             return;
         }
 
-        // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
+        // Use TS2792 when module resolution is "classic"-like (non-Node module kinds),
         // otherwise TS2307.
         use crate::types::diagnostics::{diagnostic_messages, format_message};
         use tsz_common::common::ModuleKind;
 
-        let use_2792 = matches!(
+        let module_kind_prefers_2792 = matches!(
             self.ctx.compiler_options.module,
-            ModuleKind::System | ModuleKind::AMD | ModuleKind::UMD
+            ModuleKind::System
+                | ModuleKind::AMD
+                | ModuleKind::UMD
+                | ModuleKind::ES2015
+                | ModuleKind::ES2020
+                | ModuleKind::ES2022
+                | ModuleKind::ESNext
+                | ModuleKind::Preserve
         );
+        let use_2792 = module_kind_prefers_2792;
 
         if use_2792 {
             let message = format_message(
@@ -1711,6 +1742,89 @@ impl<'a> CheckerState<'a> {
         decl_node: NodeIndex,
     ) {
         use crate::types::diagnostics::diagnostic_codes;
+
+        let mut named_default_specifier_node: Option<NodeIndex> = None;
+
+        if let Some(node) = self.ctx.arena.get(decl_node) {
+            if node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
+                if let Some(specifier) = self.ctx.arena.get_specifier(node) {
+                    let imported_name_idx = if specifier.property_name.is_none() {
+                        specifier.name
+                    } else {
+                        specifier.property_name
+                    };
+                    if let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx)
+                        && let Some(imported_ident) =
+                            self.ctx.arena.get_identifier(imported_name_node)
+                        && imported_ident.escaped_text.as_str() == "default"
+                    {
+                        named_default_specifier_node = Some(decl_node);
+                    }
+                }
+            }
+        }
+
+        if named_default_specifier_node.is_none() {
+            let mut current = decl_node;
+            let mut import_decl_idx = NodeIndex::NONE;
+            for _ in 0..8 {
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                let parent = ext.parent;
+                if parent.is_none() {
+                    break;
+                }
+                let Some(parent_node) = self.ctx.arena.get(parent) else {
+                    break;
+                };
+                if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    import_decl_idx = parent;
+                    break;
+                }
+                current = parent;
+            }
+
+            if !import_decl_idx.is_none()
+                && let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx)
+                && let Some(import_decl) = self.ctx.arena.get_import_decl(import_decl_node)
+                && let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause)
+                && let Some(clause) = self.ctx.arena.get_import_clause(clause_node)
+                && let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings)
+                && bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS
+                && let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node)
+            {
+                for &element_idx in &named_imports.elements.nodes {
+                    let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                        continue;
+                    };
+                    let imported_name_idx = if specifier.property_name.is_none() {
+                        specifier.name
+                    } else {
+                        specifier.property_name
+                    };
+                    let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx) else {
+                        continue;
+                    };
+                    let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node)
+                    else {
+                        continue;
+                    };
+                    if imported_ident.escaped_text.as_str() == "default" {
+                        named_default_specifier_node = Some(element_idx);
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(specifier_node) = named_default_specifier_node {
+            self.emit_no_exported_member_error(module_specifier, "default", specifier_node);
+            return;
+        }
 
         // Check if this is a JSON file import without resolveJsonModule enabled
         // TS2732 takes precedence over TS1192 for JSON files
@@ -1765,6 +1879,24 @@ impl<'a> CheckerState<'a> {
         };
 
         use crate::types::diagnostics::{diagnostic_messages, format_message};
+
+        let has_export_equals = self.module_has_export_equals(module_specifier)
+            || self.module_has_export_assignment_declaration(module_specifier);
+
+        if has_export_equals {
+            let message = format_message(
+                diagnostic_messages::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
+                &[module_specifier, "allowSyntheticDefaultImports"],
+            );
+            self.error(
+                start,
+                length,
+                message,
+                diagnostic_codes::MODULE_CAN_ONLY_BE_DEFAULT_IMPORTED_USING_THE_FLAG,
+            );
+            return;
+        }
+
         let message = format_message(
             diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
             &[module_specifier],
@@ -1775,6 +1907,45 @@ impl<'a> CheckerState<'a> {
             message,
             diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
         );
+    }
+
+    pub(crate) fn module_has_export_equals(&self, module_specifier: &str) -> bool {
+        if self
+            .ctx
+            .binder
+            .module_exports
+            .get(module_specifier)
+            .is_some_and(|exports| exports.has("export="))
+        {
+            return true;
+        }
+
+        if self
+            .resolve_cross_file_namespace_exports(module_specifier)
+            .is_some_and(|exports| exports.has("export="))
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn module_has_export_assignment_declaration(&self, module_specifier: &str) -> bool {
+        self.ctx
+            .resolve_import_target(module_specifier)
+            .and_then(|file_idx| {
+                self.ctx
+                    .all_arenas
+                    .as_ref()
+                    .and_then(|arenas| arenas.get(file_idx))
+            })
+            .is_some_and(|arena| {
+                (0..arena.len()).any(|i| {
+                    arena
+                        .get(NodeIndex(i as u32))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT)
+                })
+            })
     }
 
     /// Emit TS2305 error when a module has no exported member with the given name.

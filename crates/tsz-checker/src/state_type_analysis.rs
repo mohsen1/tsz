@@ -2343,6 +2343,24 @@ impl<'a> CheckerState<'a> {
                 if module_exists {
                     // Module exists but export not found
                     if export_name == "default" {
+                        let has_export_equals = self.module_has_export_equals(module_name);
+
+                        if has_export_equals {
+                            self.emit_no_default_export_error(module_name, value_decl);
+                            return (TypeId::ERROR, Vec::new());
+                        }
+
+                        // `import { default as X } from 'mod'` is a named import lookup,
+                        // so missing `default` should be TS2305 (not TS1192).
+                        if !self.is_true_default_import_binding(value_decl) {
+                            self.emit_no_exported_member_error(
+                                module_name,
+                                export_name,
+                                value_decl,
+                            );
+                            return (TypeId::ERROR, Vec::new());
+                        }
+
                         // For default imports without a default export:
                         // If allowSyntheticDefaultImports is enabled, return namespace type
                         if self.ctx.allow_synthetic_default_imports() {
@@ -2396,6 +2414,83 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
+    }
+
+    fn is_true_default_import_binding(&self, decl_idx: NodeIndex) -> bool {
+        if decl_idx.is_none() {
+            return true;
+        }
+
+        // If this declaration is (or is nested under) `import { default as X }`,
+        // it's a named import lookup, not a default import binding.
+        let mut probe = decl_idx;
+        for _ in 0..8 {
+            let Some(node) = self.ctx.arena.get(probe) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                && let Some(specifier) = self.ctx.arena.get_specifier(node)
+            {
+                let imported_name_idx = if specifier.property_name.is_none() {
+                    specifier.name
+                } else {
+                    specifier.property_name
+                };
+                if let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx)
+                    && let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node)
+                    && imported_ident.escaped_text.as_str() == "default"
+                {
+                    return false;
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(probe) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            probe = ext.parent;
+        }
+
+        let mut current = decl_idx;
+        let mut import_decl_idx = NodeIndex::NONE;
+        for _ in 0..8 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                import_decl_idx = parent;
+                break;
+            }
+            current = parent;
+        }
+
+        if import_decl_idx.is_none() {
+            // Unknown shape: prefer default-import semantics to avoid false TS2305.
+            return true;
+        }
+
+        let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx) else {
+            return false;
+        };
+        let Some(import_decl) = self.ctx.arena.get_import_decl(import_decl_node) else {
+            return false;
+        };
+        let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
+            return false;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return false;
+        };
+
+        !clause.name.is_none()
     }
 
     pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {

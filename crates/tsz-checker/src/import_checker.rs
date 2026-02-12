@@ -28,16 +28,29 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Returns the appropriate "module not found" diagnostic code and message.
-    /// Uses TS2792 when module resolution is "classic" (system/amd/umd modules),
+    /// Uses TS2792 when module resolution is "classic"-like (non-Node module kinds),
     /// otherwise TS2307.
     fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if let Some(error) = self.ctx.get_resolution_error(module_name) {
+            return (error.message.clone(), error.code);
+        }
+
         use tsz_common::common::ModuleKind;
 
-        let use_2792 = matches!(
+        let module_kind_prefers_2792 = matches!(
             self.ctx.compiler_options.module,
-            ModuleKind::System | ModuleKind::AMD | ModuleKind::UMD
+            ModuleKind::System
+                | ModuleKind::AMD
+                | ModuleKind::UMD
+                | ModuleKind::ES2015
+                | ModuleKind::ES2020
+                | ModuleKind::ES2022
+                | ModuleKind::ESNext
+                | ModuleKind::Preserve
         );
+        let use_2792 = module_kind_prefers_2792;
 
         if use_2792 {
             (
@@ -108,6 +121,40 @@ impl<'a> CheckerState<'a> {
         let bindings_node = self.ctx.arena.get(clause.named_bindings);
         let has_named_imports = bindings_node
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS);
+        let mut has_named_default_binding = false;
+
+        if has_named_imports {
+            if let Some(bindings_node) = bindings_node
+                && let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node)
+            {
+                for element_idx in &named_imports.elements.nodes {
+                    let Some(element_node) = self.ctx.arena.get(*element_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                        continue;
+                    };
+                    let imported_name_idx = if specifier.property_name.is_none() {
+                        specifier.name
+                    } else {
+                        specifier.property_name
+                    };
+
+                    let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx) else {
+                        continue;
+                    };
+                    let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node)
+                    else {
+                        continue;
+                    };
+
+                    if imported_ident.escaped_text.as_str() == "default" {
+                        has_named_default_binding = true;
+                        break;
+                    }
+                }
+            }
+        }
 
         // Nothing to check
         if !has_default_import && !has_named_imports {
@@ -190,19 +237,11 @@ impl<'a> CheckerState<'a> {
 
         // Check default import: import X from "module"
         // If the module has no "default" export and allowSyntheticDefaultImports is off,
-        // emit TS1192.
-        if has_default_import {
+        // emit the canonical diagnostic (TS1192/TS1259) from the shared helper.
+        if has_default_import && !has_named_default_binding {
             if let Some(ref table) = exports_table {
                 if !table.has("default") && !self.ctx.allow_synthetic_default_imports() {
-                    let message = format_message(
-                        diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
-                        &[module_name],
-                    );
-                    self.error_at_node(
-                        clause.name,
-                        &message,
-                        diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
-                    );
+                    self.emit_no_default_export_error(module_name, clause.name);
                 }
             } else if self
                 .ctx
@@ -213,15 +252,7 @@ impl<'a> CheckerState<'a> {
                 && !self.ctx.allow_synthetic_default_imports()
             {
                 // Module resolved but no exports table found - still emit TS1192
-                let message = format_message(
-                    diagnostic_messages::MODULE_HAS_NO_DEFAULT_EXPORT,
-                    &[module_name],
-                );
-                self.error_at_node(
-                    clause.name,
-                    &message,
-                    diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT,
-                );
+                self.emit_no_default_export_error(module_name, clause.name);
             }
         }
 
@@ -1198,8 +1229,15 @@ impl<'a> CheckerState<'a> {
         let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
             // Extract error values before mutable borrow
-            let error_code = error.code;
-            let error_message = error.message.clone();
+            let mut error_code = error.code;
+            let mut error_message = error.message.clone();
+            if error_code
+                == crate::types::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+            {
+                let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
+                error_code = fallback_code;
+                error_message = fallback_message;
+            }
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
                 self.ctx
                     .modules_with_ts2307_emitted
@@ -1598,8 +1636,15 @@ impl<'a> CheckerState<'a> {
         let module_key = module_name.to_string();
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
             // Extract error values before mutable borrow
-            let error_code = error.code;
-            let error_message = error.message.clone();
+            let mut error_code = error.code;
+            let mut error_message = error.message.clone();
+            if error_code
+                == crate::types::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+            {
+                let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
+                error_code = fallback_code;
+                error_message = fallback_message;
+            }
             tracing::trace!(%module_name, error_code, "check_import_declaration: resolution error found");
             // Check if we've already emitted an error for this module (prevents duplicate emissions)
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {

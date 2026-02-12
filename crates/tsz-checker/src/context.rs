@@ -1214,9 +1214,26 @@ impl<'a> CheckerContext<'a> {
     /// Get the resolution error for a specifier, if any.
     /// Returns the specific error (TS2834, TS2835, TS2792, etc.) if the module resolution failed with a known error.
     pub fn get_resolution_error(&self, specifier: &str) -> Option<&ResolutionError> {
-        self.resolved_module_errors
-            .as_ref()
-            .and_then(|errors| errors.get(&(self.current_file_idx, specifier.to_string())))
+        let errors = self.resolved_module_errors.as_ref()?;
+
+        if let Some(error) = errors.get(&(self.current_file_idx, specifier.to_string())) {
+            return Some(error);
+        }
+
+        let normalized = specifier.trim_matches('"').trim_matches('\'');
+        if normalized != specifier {
+            if let Some(error) = errors.get(&(self.current_file_idx, normalized.to_string())) {
+                return Some(error);
+            }
+        }
+
+        let quoted = format!("\"{}\"", normalized);
+        if let Some(error) = errors.get(&(self.current_file_idx, quoted)) {
+            return Some(error);
+        }
+
+        let single_quoted = format!("'{}'", normalized);
+        errors.get(&(self.current_file_idx, single_quoted))
     }
 
     /// Set the current file index.
