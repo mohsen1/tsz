@@ -3763,7 +3763,7 @@ impl<'a> CheckerState<'a> {
     /// Also reports import declarations where ALL imports are unused (TS6192).
     pub(crate) fn check_unused_declarations(&mut self) {
         use crate::types::diagnostics::Diagnostic;
-        use std::collections::HashMap;
+        use std::collections::{HashMap, HashSet};
         use tsz_binder::ContainerKind;
         use tsz_binder::symbol_flags;
 
@@ -3841,6 +3841,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Second pass: track variable declarations (for TS6199)
+        // We need to track VARIABLE_DECLARATION nodes (not individual variables)
+        // to distinguish `var x, y;` (2 decls) from `const {a, b} = obj;` (1 decl with multiple bindings)
+        let mut var_decl_list_children: HashMap<NodeIndex, HashSet<NodeIndex>> = HashMap::new();
+        let mut unused_var_decls: HashSet<NodeIndex> = HashSet::new();
+
         for (_sym_id, _name) in &symbols_to_check {
             let sym_id = *_sym_id;
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -3870,15 +3875,34 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Find the parent VARIABLE_DECLARATION node
-            if let Some(var_decl_idx) = self.find_parent_variable_declaration(decl_idx) {
-                let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
-                let entry = variable_declarations.entry(var_decl_idx).or_insert((0, 0));
-                entry.0 += 1; // total count
-                if !is_used {
-                    entry.1 += 1; // unused count
+            // Find the parent VARIABLE_DECLARATION and VARIABLE_DECLARATION_LIST
+            if let Some(var_decl_node_idx) = self.find_parent_variable_decl_node(decl_idx) {
+                if let Some(var_decl_list_idx) =
+                    self.find_parent_variable_declaration(var_decl_node_idx)
+                {
+                    // Track this VARIABLE_DECLARATION node under its parent list
+                    var_decl_list_children
+                        .entry(var_decl_list_idx)
+                        .or_default()
+                        .insert(var_decl_node_idx);
+
+                    // Check if this variable is unused
+                    let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
+                    if !is_used {
+                        unused_var_decls.insert(var_decl_node_idx);
+                    }
                 }
             }
+        }
+
+        // Now count VARIABLE_DECLARATION nodes (not variables) in each list
+        for (var_decl_list_idx, decl_nodes) in &var_decl_list_children {
+            let total_count = decl_nodes.len();
+            let unused_count = decl_nodes
+                .iter()
+                .filter(|n| unused_var_decls.contains(n))
+                .count();
+            variable_declarations.insert(*var_decl_list_idx, (total_count, unused_count));
         }
 
         for (sym_id, name) in symbols_to_check {
@@ -4174,6 +4198,36 @@ impl<'a> CheckerState<'a> {
 
             if let Some(node) = self.ctx.arena.get(idx) {
                 if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    return Some(idx);
+                }
+            }
+
+            // Move to parent
+            idx = self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+        }
+
+        None
+    }
+
+    /// Find the parent VARIABLE_DECLARATION node for a variable symbol's declaration.
+    /// This returns the VARIABLE_DECLARATION node itself, not the VARIABLE_DECLARATION_LIST.
+    fn find_parent_variable_decl_node(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Walk up the parent chain to find VARIABLE_DECLARATION
+        for _ in 0..10 {
+            // Limit iterations to prevent infinite loops
+            if idx.is_none() {
+                return None;
+            }
+
+            if let Some(node) = self.ctx.arena.get(idx) {
+                if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                     return Some(idx);
                 }
             }
