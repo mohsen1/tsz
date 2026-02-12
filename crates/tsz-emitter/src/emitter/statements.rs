@@ -16,7 +16,11 @@ impl<'a> Printer<'a> {
         };
 
         // Check if this block needs `var _this = this;` injection
-        let needs_this_capture = self.transforms.needs_this_capture(idx);
+        let this_capture_name: Option<String> = self
+            .transforms
+            .this_capture_name(idx)
+            .map(|s| s.to_string());
+        let needs_this_capture = this_capture_name.is_some();
 
         // Empty blocks: check for comments inside and preserve original format
         if block.statements.nodes.is_empty() && !needs_this_capture {
@@ -71,8 +75,10 @@ impl<'a> Printer<'a> {
         self.increase_indent();
 
         // Inject `var _this = this;` at the start of the block for arrow function _this capture
-        if needs_this_capture {
-            self.write("var _this = this;");
+        if let Some(ref capture_name) = this_capture_name {
+            self.write("var ");
+            self.write(capture_name);
+            self.write(" = this;");
             self.write_line();
         }
 

@@ -96,6 +96,10 @@ pub struct LoweringPass<'a> {
     /// When an arrow function captures `this`, the top of this stack is the
     /// scope that needs `var _this = this;`.
     enclosing_function_bodies: Vec<NodeIndex>,
+    /// Stack of capture variable names matching `enclosing_function_bodies`.
+    /// Each entry is the name to use for `_this` capture in that scope
+    /// (e.g., "_this" or "_this_1" if there's a collision with a user-defined `_this`).
+    enclosing_capture_names: Vec<Arc<str>>,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -118,6 +122,7 @@ impl<'a> LoweringPass<'a> {
             in_assignment_target: false,
             in_es5_class: false,
             enclosing_function_bodies: Vec::new(),
+            enclosing_capture_names: Vec::new(),
         }
     }
 
@@ -126,11 +131,14 @@ impl<'a> LoweringPass<'a> {
         self.init_module_state(source_file);
         // Push source file as the top-level _this capture scope
         if self.ctx.target_es5 {
+            let capture_name = self.compute_this_capture_name(source_file);
             self.enclosing_function_bodies.push(source_file);
+            self.enclosing_capture_names.push(capture_name);
         }
         self.visit(source_file);
         if self.ctx.target_es5 {
             self.enclosing_function_bodies.pop();
+            self.enclosing_capture_names.pop();
         }
         self.maybe_wrap_module(source_file);
         self.transforms.mark_helpers_populated();
@@ -179,8 +187,13 @@ impl<'a> LoweringPass<'a> {
             k if k == SyntaxKind::ThisKeyword as u16 => {
                 // If we're inside a capturing arrow function, substitute 'this' with '_this'
                 if self.this_capture_level > 0 {
+                    let capture_name = self
+                        .enclosing_capture_names
+                        .last()
+                        .cloned()
+                        .unwrap_or_else(|| Arc::from("_this"));
                     self.transforms
-                        .insert(idx, TransformDirective::SubstituteThis);
+                        .insert(idx, TransformDirective::SubstituteThis { capture_name });
                 }
             }
             k if k == SyntaxKind::Identifier as u16 => {
@@ -346,11 +359,17 @@ impl<'a> LoweringPass<'a> {
                     }
                     if !method.body.is_none() {
                         if self.ctx.target_es5 {
+                            let cn = self.compute_this_capture_name_with_params(
+                                method.body,
+                                Some(&method.parameters),
+                            );
                             self.enclosing_function_bodies.push(method.body);
+                            self.enclosing_capture_names.push(cn);
                         }
                         self.visit(method.body);
                         if self.ctx.target_es5 {
                             self.enclosing_function_bodies.pop();
+                            self.enclosing_capture_names.pop();
                         }
                     }
                 }
@@ -367,11 +386,17 @@ impl<'a> LoweringPass<'a> {
                     }
                     if !ctor.body.is_none() {
                         if self.ctx.target_es5 {
+                            let cn = self.compute_this_capture_name_with_params(
+                                ctor.body,
+                                Some(&ctor.parameters),
+                            );
                             self.enclosing_function_bodies.push(ctor.body);
+                            self.enclosing_capture_names.push(cn);
                         }
                         self.visit(ctor.body);
                         if self.ctx.target_es5 {
                             self.enclosing_function_bodies.pop();
+                            self.enclosing_capture_names.pop();
                         }
                     }
                 }
@@ -389,11 +414,17 @@ impl<'a> LoweringPass<'a> {
                     }
                     if !accessor.body.is_none() {
                         if self.ctx.target_es5 {
+                            let cn = self.compute_this_capture_name_with_params(
+                                accessor.body,
+                                Some(&accessor.parameters),
+                            );
                             self.enclosing_function_bodies.push(accessor.body);
+                            self.enclosing_capture_names.push(cn);
                         }
                         self.visit(accessor.body);
                         if self.ctx.target_es5 {
                             self.enclosing_function_bodies.pop();
+                            self.enclosing_capture_names.pop();
                         }
                     }
                 }
@@ -405,11 +436,17 @@ impl<'a> LoweringPass<'a> {
                     }
                     if !func.body.is_none() {
                         if self.ctx.target_es5 {
+                            let cn = self.compute_this_capture_name_with_params(
+                                func.body,
+                                Some(&func.parameters),
+                            );
                             self.enclosing_function_bodies.push(func.body);
+                            self.enclosing_capture_names.push(cn);
                         }
                         self.visit(func.body);
                         if self.ctx.target_es5 {
                             self.enclosing_function_bodies.pop();
+                            self.enclosing_capture_names.pop();
                         }
                     }
                 }
@@ -1213,11 +1250,15 @@ impl<'a> LoweringPass<'a> {
         if !func.body.is_none() {
             // Track this function body as a potential _this capture scope
             if self.ctx.target_es5 {
+                let cn =
+                    self.compute_this_capture_name_with_params(func.body, Some(&func.parameters));
                 self.enclosing_function_bodies.push(func.body);
+                self.enclosing_capture_names.push(cn);
             }
             self.visit(func.body);
             if self.ctx.target_es5 {
                 self.enclosing_function_bodies.pop();
+                self.enclosing_capture_names.pop();
             }
         }
 
@@ -1414,7 +1455,13 @@ impl<'a> LoweringPass<'a> {
                 self.this_capture_level += 1;
                 if !self.in_es5_class {
                     if let Some(&enclosing_body) = self.enclosing_function_bodies.last() {
-                        self.transforms.mark_this_capture_scope(enclosing_body);
+                        let capture_name = self
+                            .enclosing_capture_names
+                            .last()
+                            .cloned()
+                            .unwrap_or_else(|| Arc::from("_this"));
+                        self.transforms
+                            .mark_this_capture_scope(enclosing_body, capture_name);
                     }
                 }
             }
@@ -1470,11 +1517,14 @@ impl<'a> LoweringPass<'a> {
         }
         if !ctor.body.is_none() {
             if self.ctx.target_es5 {
+                let cn = self.compute_this_capture_name(ctor.body);
                 self.enclosing_function_bodies.push(ctor.body);
+                self.enclosing_capture_names.push(cn);
             }
             self.visit(ctor.body);
             if self.ctx.target_es5 {
                 self.enclosing_function_bodies.pop();
+                self.enclosing_capture_names.pop();
             }
         }
 
@@ -1603,11 +1653,15 @@ impl<'a> LoweringPass<'a> {
         if !func.body.is_none() {
             // Track this function body as a potential _this capture scope
             if self.ctx.target_es5 {
+                let cn =
+                    self.compute_this_capture_name_with_params(func.body, Some(&func.parameters));
                 self.enclosing_function_bodies.push(func.body);
+                self.enclosing_capture_names.push(cn);
             }
             self.visit(func.body);
             if self.ctx.target_es5 {
                 self.enclosing_function_bodies.pop();
+                self.enclosing_capture_names.pop();
             }
         }
 
@@ -2552,6 +2606,107 @@ impl<'a> LoweringPass<'a> {
         };
 
         Some(literal.text.clone())
+    }
+
+    /// Compute the capture variable name for `_this` in a given scope.
+    /// If the scope contains a variable declaration or function parameter named `_this`,
+    /// returns `_this_1`. Otherwise returns `_this`.
+    fn compute_this_capture_name(&self, body_idx: NodeIndex) -> Arc<str> {
+        self.compute_this_capture_name_with_params(body_idx, None)
+    }
+
+    /// Compute capture name, also checking function parameters for collision.
+    fn compute_this_capture_name_with_params(
+        &self,
+        body_idx: NodeIndex,
+        params: Option<&NodeList>,
+    ) -> Arc<str> {
+        if self.scope_has_name(body_idx, "_this") || self.params_have_name(params, "_this") {
+            Arc::from("_this_1")
+        } else {
+            Arc::from("_this")
+        }
+    }
+
+    /// Check if any parameter in the list has the given name.
+    fn params_have_name(&self, params: Option<&NodeList>, name: &str) -> bool {
+        let Some(params) = params else {
+            return false;
+        };
+        for &param_idx in &params.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            if let Some(param) = self.arena.get_parameter(param_node) {
+                if self.get_identifier_text_ref(param.name) == Some(name) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a function body (block or source file) contains a variable
+    /// declaration or parameter with the given name at its direct scope level.
+    fn scope_has_name(&self, body_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(body_idx) else {
+            return false;
+        };
+
+        // Get statements from block or source file
+        let statements = if let Some(block) = self.arena.get_block(node) {
+            &block.statements
+        } else if let Some(sf) = self.arena.get_source_file(node) {
+            &sf.statements
+        } else {
+            return false;
+        };
+
+        // Check each statement for variable declarations with the given name
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                // VariableStatement → VariableData.declarations contains a VariableDeclarationList
+                if let Some(var_stmt_data) = self.arena.get_variable(stmt) {
+                    for &decl_list_idx in &var_stmt_data.declarations.nodes {
+                        let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                            continue;
+                        };
+                        // VariableDeclarationList → VariableData.declarations contains VariableDeclarations
+                        if let Some(decl_list_data) = self.arena.get_variable(decl_list_node) {
+                            for &decl_idx in &decl_list_data.declarations.nodes {
+                                let Some(decl_node) = self.arena.get(decl_idx) else {
+                                    continue;
+                                };
+                                if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
+                                    if self.get_identifier_text_ref(decl.name) == Some(name) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                        // Also handle VariableDeclaration directly (in case it's not nested)
+                        if let Some(decl) = self.arena.get_variable_declaration(decl_list_node) {
+                            if self.get_identifier_text_ref(decl.name) == Some(name) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            // Also check function declarations (their name occupies the scope)
+            if stmt.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                if let Some(func) = self.arena.get_function(stmt) {
+                    if self.get_identifier_text_ref(func.name) == Some(name) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
 }
 

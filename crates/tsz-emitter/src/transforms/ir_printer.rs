@@ -885,12 +885,12 @@ impl<'a> IRPrinter<'a> {
                             }
 
                             // Handle SubstituteThis directive
-                            if matches!(
-                                directive,
-                                crate::transform_context::TransformDirective::SubstituteThis
-                            ) {
+                            if let crate::transform_context::TransformDirective::SubstituteThis {
+                                ref capture_name,
+                            } = directive
+                            {
                                 if let Some(_ident) = arena.get_identifier(node) {
-                                    self.write("_this");
+                                    self.write(capture_name);
                                     return;
                                 }
                             }
