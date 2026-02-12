@@ -944,6 +944,10 @@ impl<'a> Printer<'a> {
         body: NodeIndex,
         this_expr: &str,
     ) {
+        // For ES2015/ES2016 targets, use function* + yield pattern
+        // For ES5, use function + __generator state machine pattern
+        let use_native_generators = !self.ctx.target_es5;
+
         // function name(params) {
         self.write("function");
         if !func_name.is_empty() {
@@ -951,57 +955,90 @@ impl<'a> Printer<'a> {
             self.write(func_name);
         }
         self.write("(");
-        let param_transforms = self.emit_function_parameters_es5(params);
+        if use_native_generators {
+            // ES2015: emit parameters normally (no ES5 destructuring transforms)
+            self.emit_function_parameters_js(params);
+        } else {
+            // ES5: apply destructuring/default transforms
+            let param_transforms = self.emit_function_parameters_es5(params);
+            self.write(") {");
+            self.write_line();
+            self.increase_indent();
+            self.emit_param_prologue(&param_transforms);
+
+            // ES5 path: __awaiter + __generator state machine
+            let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
+            async_emitter.set_indent_level(self.writer.indent_level() + 1);
+            if let Some(text) = self.source_text_for_map()
+                && self.writer.has_source_map()
+            {
+                async_emitter.set_source_map_context(text, self.writer.current_source_index());
+            }
+            async_emitter.set_lexical_this(this_expr != "this");
+
+            let generator_body = if async_emitter.body_contains_await(body) {
+                async_emitter.emit_generator_body_with_await(body)
+            } else {
+                async_emitter.emit_simple_generator_body(body)
+            };
+            let generator_mappings = async_emitter.take_mappings();
+
+            // Write with surrounding __awaiter wrapper
+            self.write("return __awaiter(");
+            self.write(this_expr);
+            self.write(", void 0, void 0, function () {");
+            self.write_line();
+            self.increase_indent();
+            if !generator_mappings.is_empty() && self.writer.has_source_map() {
+                self.writer.write("");
+                let base_line = self.writer.current_line();
+                let base_column = self.writer.current_column();
+                self.writer
+                    .add_offset_mappings(base_line, base_column, &generator_mappings);
+                self.writer.write(&generator_body);
+            } else {
+                self.write(&generator_body);
+            }
+            self.decrease_indent();
+            self.write_line();
+            self.write("});");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            self.pop_temp_scope();
+            return;
+        }
+
+        // ES2015 path: __awaiter + function* with yield
         self.write(") {");
         self.write_line();
         self.increase_indent();
 
-        self.emit_param_prologue(&param_transforms);
-
-        // Emit indented __awaiter body
-        //     return __awaiter(this, void 0, void 0, function () {
-        //         return __generator(this, function (_a) { ... });
-        //     });
-        let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
-        // Transform emitter handles its own indentation inside __awaiter
-        async_emitter.set_indent_level(self.writer.indent_level() + 1);
-        if let Some(text) = self.source_text_for_map()
-            && self.writer.has_source_map()
-        {
-            async_emitter.set_source_map_context(text, self.writer.current_source_index());
-        }
-        async_emitter.set_lexical_this(this_expr != "this");
-
-        let generator_body = if async_emitter.body_contains_await(body) {
-            async_emitter.emit_generator_body_with_await(body)
-        } else {
-            async_emitter.emit_simple_generator_body(body)
-        };
-        let generator_mappings = async_emitter.take_mappings();
-
-        // Write with surrounding __awaiter wrapper
+        // return __awaiter(this, void 0, void 0, function* () {
         self.write("return __awaiter(");
         self.write(this_expr);
-        self.write(", void 0, void 0, function () {");
+        self.write(", void 0, void 0, function* () {");
         self.write_line();
         self.increase_indent();
-        if !generator_mappings.is_empty() && self.writer.has_source_map() {
-            self.writer.write("");
-            let base_line = self.writer.current_line();
-            let base_column = self.writer.current_column();
-            self.writer
-                .add_offset_mappings(base_line, base_column, &generator_mappings);
-            self.writer.write(&generator_body);
-        } else {
-            self.write(&generator_body);
+
+        // Emit function body with await→yield substitution
+        self.ctx.emit_await_as_yield = true;
+        // Emit the block body's statements directly
+        if let Some(body_node) = self.arena.get(body)
+            && let Some(block) = self.arena.get_block(body_node)
+        {
+            for &stmt in &block.statements.nodes {
+                self.emit(stmt);
+                self.write_line();
+            }
         }
+        self.ctx.emit_await_as_yield = false;
+
         self.decrease_indent();
-        self.write_line();
         self.write("});");
         self.write_line();
         self.decrease_indent();
         self.write("}");
-        self.pop_temp_scope();
     }
 
     pub(super) fn emit_function_parameters_es5(

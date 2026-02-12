@@ -27,6 +27,12 @@ impl<'a> Printer<'a> {
     /// Emit native ES6+ arrow function syntax
     #[tracing::instrument(level = "trace", skip(self, func), fields(param_count = func.parameters.nodes.len()))]
     fn emit_arrow_function_native(&mut self, func: &tsz_parser::parser::node::FunctionData) {
+        // For ES2015/ES2016, lower async arrows: () => __awaiter(this, void 0, void 0, function* () { ... })
+        if func.is_async && self.ctx.needs_async_lowering {
+            self.emit_arrow_function_async_lowered(func);
+            return;
+        }
+
         if func.is_async {
             self.write("async ");
         }
@@ -60,6 +66,61 @@ impl<'a> Printer<'a> {
 
         // Body
         self.emit(func.body);
+    }
+
+    /// Emit an async arrow function lowered for ES2015/ES2016 targets.
+    /// Transforms: `async (p) => body` → `(p) => __awaiter(this, void 0, void 0, function* () { body })`
+    fn emit_arrow_function_async_lowered(&mut self, func: &tsz_parser::parser::node::FunctionData) {
+        // Don't emit `async` - it's lowered away
+
+        // Parameters (same paren logic as native)
+        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
+        let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
+        let needs_parens = source_had_parens || !is_simple;
+
+        if needs_parens {
+            self.write("(");
+        }
+        self.emit_function_parameters_js(&func.parameters.nodes);
+        if needs_parens {
+            self.write(")");
+        }
+
+        // Arrow functions capture `this` lexically, so we use `this` directly
+        self.write(" => __awaiter(this, void 0, void 0, function* () {");
+        self.write_line();
+        self.increase_indent();
+
+        // Emit body with await→yield substitution
+        self.ctx.emit_await_as_yield = true;
+
+        let body_node = self.arena.get(func.body);
+        let is_block = body_node
+            .map(|n| n.kind == syntax_kind_ext::BLOCK)
+            .unwrap_or(false);
+
+        if is_block {
+            // Block body: emit statements directly
+            if let Some(body_node) = self.arena.get(func.body)
+                && let Some(block) = self.arena.get_block(body_node)
+            {
+                for &stmt in &block.statements.nodes {
+                    self.emit(stmt);
+                    self.write_line();
+                }
+            }
+        } else {
+            // Concise expression body: wrap in return
+            self.write("return ");
+            self.emit_expression(func.body);
+            self.write(";");
+            self.write_line();
+        }
+
+        self.ctx.emit_await_as_yield = false;
+
+        self.decrease_indent();
+        self.write("})");
     }
 
     /// Check if the source had parentheses around the parameters
@@ -205,7 +266,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if func.is_async && self.ctx.target_es5 && !func.asterisk_token {
+        if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if !func.name.is_none() {
                 self.get_identifier_text_idx(func.name)
             } else {

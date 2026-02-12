@@ -1189,8 +1189,8 @@ impl<'a> LoweringPass<'a> {
             self.declared_names.insert(name.to_string());
         }
 
-        // Check if this is an async function targeting ES5
-        let base_directive = if self.ctx.target_es5 && self.has_async_modifier(idx) {
+        // Check if this is an async function needing lowering (target < ES2017)
+        let base_directive = if self.ctx.needs_async_lowering && self.has_async_modifier(idx) {
             self.mark_async_helpers();
             TransformDirective::ES5AsyncFunction { function_node: idx }
         } else if self.ctx.target_es5
@@ -1495,6 +1495,9 @@ impl<'a> LoweringPass<'a> {
             if captures_arguments {
                 self.arguments_capture_level += 1;
             }
+        } else if self.ctx.needs_async_lowering && arrow.is_async {
+            // ES2015/ES2016: arrow syntax is native but async needs lowering
+            self.mark_async_helpers();
         }
 
         for &param_idx in &arrow.parameters.nodes {
@@ -1855,7 +1858,10 @@ impl<'a> LoweringPass<'a> {
     fn mark_async_helpers(&mut self) {
         let helpers = self.transforms.helpers_mut();
         helpers.awaiter = true;
-        helpers.generator = true;
+        // __generator is only needed for ES5 (ES2015+ has native generators)
+        if self.ctx.target_es5 {
+            helpers.generator = true;
+        }
     }
 
     fn mark_class_helpers(&mut self, class_node: NodeIndex, heritage: Option<NodeIndex>) {
