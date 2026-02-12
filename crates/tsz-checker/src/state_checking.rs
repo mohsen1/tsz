@@ -462,6 +462,9 @@ impl<'a> CheckerState<'a> {
         let compute_final_type = |checker: &mut CheckerState| -> TypeId {
             let mut has_type_annotation = !var_decl.type_annotation.is_none();
             let mut declared_type = if has_type_annotation {
+                // Check for undefined type names in nested types (e.g., function type parameters)
+                // Skip top-level TYPE_REFERENCE to avoid duplicates with get_type_from_type_node
+                checker.check_type_for_missing_names_skip_top_level_ref(var_decl.type_annotation);
                 let type_id = checker.get_type_from_type_node(var_decl.type_annotation);
 
                 // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
