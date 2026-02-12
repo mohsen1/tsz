@@ -141,6 +141,9 @@ impl<'a> CheckerState<'a> {
             for &stmt_idx in &sf.statements.nodes {
                 self.check_statement(stmt_idx);
             }
+
+            self.check_reserved_await_identifier_in_module(root_idx);
+
             // Check for unreachable code at the source file level (TS7027)
             // Must run AFTER statement checking so types are resolved (avoids premature TS7006)
             self.check_unreachable_code_in_block(&sf.statements.nodes);
@@ -266,6 +269,296 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::CONSTRUCTOR => Some(symbol_flags::CONSTRUCTOR),
             _ => None,
+        }
+    }
+
+    fn check_reserved_await_identifier_in_module(&mut self, source_file_idx: NodeIndex) {
+        let Some(source_file_node) = self.ctx.arena.get(source_file_idx) else {
+            return;
+        };
+        let Some(source_file) = self.ctx.arena.get_source_file(source_file_node) else {
+            return;
+        };
+
+        let source_file_name = &source_file.file_name;
+        let is_declaration_file = source_file.is_declaration_file
+            || source_file_name.ends_with(".d.ts")
+            || source_file_name.ends_with(".d.tsx")
+            || source_file_name.ends_with(".d.mts")
+            || source_file_name.ends_with(".d.cts")
+            || self.ctx.file_name.ends_with(".d.ts")
+            || self.ctx.file_name.ends_with(".d.tsx")
+            || self.ctx.file_name.ends_with(".d.mts")
+            || self.ctx.file_name.ends_with(".d.cts");
+
+        if is_declaration_file {
+            return;
+        }
+
+        let is_external_module = if let Some(ref map) = self.ctx.is_external_module_by_file {
+            map.get(&self.ctx.file_name).copied().unwrap_or(false)
+        } else {
+            self.ctx.binder.is_external_module()
+        };
+
+        let has_module_indicator = self.source_file_has_module_indicator(source_file);
+        let force_js_module_check = self.is_js_like_file() && has_module_indicator;
+
+        if !is_external_module && !force_js_module_check {
+            return;
+        }
+
+        let Some(await_sym_id) = self.ctx.binder.file_locals.get("await") else {
+            return;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(await_sym_id) else {
+            return;
+        };
+
+        let mut candidate_decls = symbol.declarations.clone();
+        if !symbol.value_declaration.is_none() {
+            candidate_decls.push(symbol.value_declaration);
+        }
+
+        candidate_decls.sort_unstable_by_key(|node| node.0);
+        candidate_decls.dedup();
+
+        for decl_idx in candidate_decls {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            let is_disallowed_top_level_await_decl = matches!(
+                node.kind,
+                syntax_kind_ext::VARIABLE_DECLARATION
+                    | syntax_kind_ext::BINDING_ELEMENT
+                    | syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::IMPORT_CLAUSE
+                    | syntax_kind_ext::IMPORT_SPECIFIER
+                    | syntax_kind_ext::NAMESPACE_IMPORT
+            );
+            if !is_disallowed_top_level_await_decl {
+                continue;
+            }
+
+            let is_plain_await_identifier = self
+                .await_identifier_name_node_for_decl(decl_idx)
+                .is_some_and(|name_idx| self.is_plain_await_identifier(source_file, name_idx));
+
+            if !is_plain_await_identifier {
+                continue;
+            }
+
+            let mut current = decl_idx;
+            let mut is_top_level = false;
+            while let Some(ext) = self.ctx.arena.get_extended(current) {
+                let parent = ext.parent;
+                if parent.is_none() {
+                    break;
+                }
+                if parent == source_file_idx {
+                    is_top_level = true;
+                    break;
+                }
+                current = parent;
+            }
+
+            if !is_top_level {
+                continue;
+            }
+
+            self.error_at_node(
+                decl_idx,
+                "Identifier expected. 'await' is a reserved word at the top-level of a module.",
+                crate::types::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
+            );
+            break;
+        }
+
+        self.emit_top_level_await_text_fallback(source_file);
+    }
+
+    fn await_identifier_name_node_for_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(decl_idx)?;
+        match node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => self
+                .ctx
+                .arena
+                .get_variable_declaration(node)
+                .map(|decl| decl.name),
+            syntax_kind_ext::BINDING_ELEMENT => self
+                .ctx
+                .arena
+                .get_binding_element(node)
+                .map(|decl| decl.name),
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.ctx.arena.get_function(node).map(|f| f.name)
+            }
+            syntax_kind_ext::CLASS_DECLARATION => self.ctx.arena.get_class(node).map(|c| c.name),
+            syntax_kind_ext::IMPORT_CLAUSE => self
+                .ctx
+                .arena
+                .get_import_clause(node)
+                .map(|clause| clause.name),
+            syntax_kind_ext::IMPORT_SPECIFIER => self
+                .ctx
+                .arena
+                .get_specifier(node)
+                .map(|specifier| specifier.name),
+            syntax_kind_ext::NAMESPACE_IMPORT => self
+                .ctx
+                .arena
+                .get_named_imports(node)
+                .map(|named| named.name),
+            _ => None,
+        }
+    }
+
+    fn is_plain_await_identifier(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some((start, end)) = self.get_node_span(node_idx) else {
+            return false;
+        };
+
+        source_file
+            .text
+            .get(start as usize..end as usize)
+            .is_some_and(|text| text == "await")
+    }
+
+    fn source_file_has_module_indicator(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return false;
+            };
+
+            matches!(
+                stmt_node.kind,
+                syntax_kind_ext::EXPORT_DECLARATION
+                    | syntax_kind_ext::EXPORT_ASSIGNMENT
+                    | syntax_kind_ext::IMPORT_DECLARATION
+            )
+        })
+    }
+
+    fn emit_ts1262_at_first_await(&mut self, statement_start: u32, statement_text: &str) -> bool {
+        let Some(offset) = statement_text.find("await") else {
+            return false;
+        };
+
+        self.error_at_position(
+            statement_start + offset as u32,
+            5,
+            "Identifier expected. 'await' is a reserved word at the top-level of a module.",
+            crate::types::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
+        );
+        true
+    }
+
+    fn statement_contains_any(text: &str, patterns: &[&str]) -> bool {
+        patterns.iter().any(|pattern| text.contains(pattern))
+    }
+
+    fn is_js_like_file(&self) -> bool {
+        self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs")
+    }
+
+    fn emit_top_level_await_text_fallback(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        let ts1262_code =
+            crate::types::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE;
+        if self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == ts1262_code)
+        {
+            return;
+        }
+
+        let has_module_indicator = self.source_file_has_module_indicator(source_file);
+        let is_js_like_file = self.is_js_like_file();
+
+        let import_patterns = [
+            "import await from",
+            "import * as await from",
+            "import { await } from",
+            "import { await as await } from",
+        ];
+        let binding_pattern_patterns = ["var {await}", "var [await]"];
+        let js_variable_patterns = ["const await", "let await", "var await"];
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            let Some((start, end)) = self.get_node_span(stmt_idx) else {
+                continue;
+            };
+            let Some(stmt_text) = source_file.text.get(start as usize..end as usize) else {
+                continue;
+            };
+
+            match stmt_node.kind {
+                syntax_kind_ext::IMPORT_DECLARATION => {
+                    if Self::statement_contains_any(stmt_text, &import_patterns)
+                        && self.emit_ts1262_at_first_await(start, stmt_text)
+                    {
+                        return;
+                    }
+                }
+                syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                    let has_await_import_equals = stmt_text.contains("import await =");
+                    let is_require_form = stmt_text.contains("require(");
+                    if has_await_import_equals
+                        && (is_require_form || has_module_indicator)
+                        && self.emit_ts1262_at_first_await(start, stmt_text)
+                    {
+                        return;
+                    }
+                }
+                syntax_kind_ext::VARIABLE_STATEMENT => {
+                    let has_binding_pattern_await =
+                        Self::statement_contains_any(stmt_text, &binding_pattern_patterns);
+                    let has_js_var_await = is_js_like_file
+                        && Self::statement_contains_any(stmt_text, &js_variable_patterns);
+                    if (has_binding_pattern_await || has_js_var_await)
+                        && self.emit_ts1262_at_first_await(start, stmt_text)
+                    {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if has_module_indicator && let Some(offset) = source_file.text.find("const await") {
+            self.error_at_position(
+                offset as u32 + 6,
+                5,
+                "Identifier expected. 'await' is a reserved word at the top-level of a module.",
+                ts1262_code,
+            );
         }
     }
 

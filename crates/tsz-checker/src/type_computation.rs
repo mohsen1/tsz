@@ -1459,11 +1459,7 @@ impl<'a> CheckerState<'a> {
         let index_type = self.get_type_of_node(access.name_or_argument);
 
         // TS2538: Type cannot be used as an index type
-        // Check if index_type contains an array type or bigint
-        let contains_array_type = self.type_contains_array_type(index_type);
-        let contains_bigint = self.type_contains_bigint(index_type);
-
-        if contains_array_type || contains_bigint {
+        if self.type_is_invalid_index_type(index_type) {
             use crate::types::diagnostics::{
                 diagnostic_codes, diagnostic_messages, format_message,
             };
@@ -1598,6 +1594,25 @@ impl<'a> CheckerState<'a> {
         let mut result_type = result_type.unwrap_or_else(|| {
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
+
+        if result_type == TypeId::ERROR
+            && let Some(index) = literal_index
+            && let Some(tuple_elements) =
+                tsz_solver::type_queries::get_tuple_elements(self.ctx.types, object_type_for_access)
+        {
+            let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
+            if !has_rest_tail && index >= tuple_elements.len() {
+                self.error_at_node(
+                    access.name_or_argument,
+                    &format!(
+                        "Tuple type of length '{}' has no element at index '{}'.",
+                        tuple_elements.len(),
+                        index
+                    ),
+                    crate::types::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                );
+            }
+        }
 
         if use_index_signature_check
             && self.should_report_no_index_signature(
