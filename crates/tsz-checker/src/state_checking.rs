@@ -735,6 +735,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a single variable declaration.
+    #[tracing::instrument(level = "trace", skip(self), fields(decl_idx = ?decl_idx))]
     pub(crate) fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return;
@@ -826,9 +827,16 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS1210: 'arguments'/'eval' as variable name inside class body (implicit strict mode)
+        tracing::trace!(
+            "Checking TS1210: enclosing_class={}, var_name={:?}",
+            self.ctx.enclosing_class.is_some(),
+            var_name
+        );
         if self.ctx.enclosing_class.is_some() {
             if let Some(ref name) = var_name {
+                tracing::trace!("TS1210 check: name='{}', in_class=true", name);
                 if name == "arguments" || name == "eval" {
+                    tracing::trace!("TS1210: Emitting error for '{}'", name);
                     use crate::types::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         var_decl.name,
