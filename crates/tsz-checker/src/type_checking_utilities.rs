@@ -1800,8 +1800,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 _ => {
-                    // Computed value - fall back to NUMBER for numeric enums
-                    // TODO: Evaluate constant expression to get literal value
+                    // Try to evaluate constant expression
+                    if let Some(value) = self.evaluate_constant_expression(member.initializer) {
+                        return self.ctx.types.literal_number(value);
+                    }
                 }
             }
         }
@@ -1810,6 +1812,80 @@ impl<'a> CheckerState<'a> {
         // This could be an auto-incremented numeric member
         // Fall back to NUMBER type (not a specific literal)
         TypeId::NUMBER
+    }
+
+    /// Evaluate a constant numeric expression (for enum member initializers).
+    ///
+    /// Handles: numeric literals, unary +/-/~, binary +/-/*/ // /%/|/&/^/<</>>/>>>,
+    /// and parenthesized expressions. Returns None if the expression cannot be
+    /// evaluated at compile time.
+    fn evaluate_constant_expression(&self, expr_idx: NodeIndex) -> Option<f64> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let lit = self.ctx.arena.get_literal(node)?;
+                lit.value.or_else(|| lit.text.parse::<f64>().ok())
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.ctx.arena.get_unary_expr(node)?;
+                let operand = self.evaluate_constant_expression(unary.operand)?;
+                match unary.operator {
+                    op if op == SyntaxKind::MinusToken as u16 => Some(-operand),
+                    op if op == SyntaxKind::PlusToken as u16 => Some(operand),
+                    op if op == SyntaxKind::TildeToken as u16 => Some(!(operand as i32) as f64),
+                    _ => None,
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let bin = self.ctx.arena.get_binary_expr(node)?;
+                let left = self.evaluate_constant_expression(bin.left)?;
+                let right = self.evaluate_constant_expression(bin.right)?;
+                match bin.operator_token {
+                    op if op == SyntaxKind::PlusToken as u16 => Some(left + right),
+                    op if op == SyntaxKind::MinusToken as u16 => Some(left - right),
+                    op if op == SyntaxKind::AsteriskToken as u16 => Some(left * right),
+                    op if op == SyntaxKind::SlashToken as u16 => {
+                        if right == 0.0 {
+                            None
+                        } else {
+                            Some(left / right)
+                        }
+                    }
+                    op if op == SyntaxKind::PercentToken as u16 => {
+                        if right == 0.0 {
+                            None
+                        } else {
+                            Some(left % right)
+                        }
+                    }
+                    op if op == SyntaxKind::BarToken as u16 => {
+                        Some((left as i32 | right as i32) as f64)
+                    }
+                    op if op == SyntaxKind::AmpersandToken as u16 => {
+                        Some((left as i32 & right as i32) as f64)
+                    }
+                    op if op == SyntaxKind::CaretToken as u16 => {
+                        Some((left as i32 ^ right as i32) as f64)
+                    }
+                    op if op == SyntaxKind::LessThanLessThanToken as u16 => {
+                        Some(((left as i32) << (right as u32 & 0x1f)) as f64)
+                    }
+                    op if op == SyntaxKind::GreaterThanGreaterThanToken as u16 => {
+                        Some(((left as i32) >> (right as u32 & 0x1f)) as f64)
+                    }
+                    op if op == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
+                        Some(((left as u32) >> (right as u32 & 0x1f)) as f64)
+                    }
+                    op if op == SyntaxKind::AsteriskAsteriskToken as u16 => Some(left.powf(right)),
+                    _ => None,
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.ctx.arena.get_parenthesized(node)?;
+                self.evaluate_constant_expression(paren.expression)
+            }
+            _ => None,
+        }
     }
 
     // =========================================================================

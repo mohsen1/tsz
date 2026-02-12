@@ -225,6 +225,58 @@ impl<'a> ES5ClassTransformer<'a> {
         IRNode::func_decl(class_name, vec![], body)
     }
 
+    /// Extract arguments from the super() call in a constructor body.
+    /// Returns the transformed arguments and the NodeIndex of the super call statement
+    /// (so it can be skipped when transforming the rest of the body).
+    fn extract_super_call_args(&self, body_idx: NodeIndex) -> (Vec<IRNode>, Option<NodeIndex>) {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return (vec![], None);
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return (vec![], None);
+        };
+
+        for &stmt_idx in &block.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(call_node) = self.arena.get(expr_stmt.expression) else {
+                continue;
+            };
+            if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                continue;
+            }
+            let Some(call_data) = self.arena.get_call_expr(call_node) else {
+                continue;
+            };
+            // Check if the callee is `super`
+            let Some(callee_node) = self.arena.get(call_data.expression) else {
+                continue;
+            };
+            if callee_node.kind != SyntaxKind::SuperKeyword as u16 {
+                continue;
+            }
+            // Found super() call — extract arguments
+            let mut args = Vec::new();
+            if let Some(ref arg_list) = call_data.arguments {
+                for &arg_idx in &arg_list.nodes {
+                    if let Some(arg) = self.transform_expression(arg_idx) {
+                        args.push(arg);
+                    }
+                }
+            }
+            return (args, Some(stmt_idx));
+        }
+
+        (vec![], None)
+    }
+
     /// Transform constructor body
     fn transform_constructor_body(
         &mut self,
@@ -237,14 +289,19 @@ impl<'a> ES5ClassTransformer<'a> {
 
         if has_extends {
             // For derived classes, emit super() transformation
-            // var _this = _super.call(this, ...args) || this;
+            // var _this = _super.call(this, arg1, arg2, ...) || this;
             self.use_this_capture = true;
+
+            let (super_args, super_stmt_idx) = self.extract_super_call_args(body_idx);
+            let mut call_args = vec![IRNode::this()];
+            call_args.extend(super_args);
+
             stmts.push(IRNode::var_decl(
                 "_this",
                 Some(IRNode::LogicalOr {
                     left: Box::new(IRNode::call(
                         IRNode::prop(IRNode::id("_super"), "call"),
-                        vec![IRNode::this()], // TODO: pass super args
+                        call_args,
                     )),
                     right: Box::new(IRNode::this()),
                 }),
@@ -257,8 +314,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
 
-            // Transform body statements
-            stmts.extend(self.transform_block_contents(body_idx));
+            // Transform body statements, skipping the super() call we already handled
+            let body_stmts = self.transform_block_contents_skip(body_idx, super_stmt_idx);
+            stmts.extend(body_stmts);
 
             // Add return _this
             stmts.push(IRNode::ret(Some(IRNode::id("_this"))));
@@ -525,6 +583,14 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Transform block contents to IR
     fn transform_block_contents(&self, body_idx: NodeIndex) -> Vec<IRNode> {
+        self.transform_block_contents_skip(body_idx, None)
+    }
+
+    fn transform_block_contents_skip(
+        &self,
+        body_idx: NodeIndex,
+        skip_stmt: Option<NodeIndex>,
+    ) -> Vec<IRNode> {
         let Some(body_node) = self.arena.get(body_idx) else {
             return vec![];
         };
@@ -534,6 +600,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let mut stmts = Vec::new();
         for &stmt_idx in &block.statements.nodes {
+            if skip_stmt == Some(stmt_idx) {
+                continue;
+            }
             if let Some(ir) = self.transform_statement(stmt_idx) {
                 stmts.push(ir);
             }

@@ -24,7 +24,6 @@ use tsz_solver::types::{TypeId, TypeKey};
 #[derive(Clone)]
 pub struct TypePrinter<'a> {
     interner: &'a TypeInterner,
-    string_interner_cache: std::sync::Arc<dyn Fn(Atom) -> String + Sync + Send>,
     /// Symbol arena for checking symbol visibility
     symbol_arena: Option<&'a SymbolArena>,
     /// Type cache for resolving Lazy(DefId) types
@@ -39,10 +38,6 @@ impl<'a> TypePrinter<'a> {
     pub fn new(interner: &'a TypeInterner) -> Self {
         Self {
             interner,
-            string_interner_cache: std::sync::Arc::new(|atom| {
-                // Resolve the atom from the interner
-                format!("<atom:{}>", atom.0)
-            }),
             symbol_arena: None,
             type_cache: None,
             current_depth: 0,
@@ -211,14 +206,12 @@ impl<'a> TypePrinter<'a> {
     fn print_literal(&self, literal: &tsz_solver::types::LiteralValue) -> String {
         match literal {
             tsz_solver::types::LiteralValue::String(atom) => {
-                // TODO: Look up actual string from interner
-                format!("\"{}\"", (self.string_interner_cache)(*atom))
+                format!("\"{}\"", self.resolve_atom(*atom))
             }
             tsz_solver::types::LiteralValue::Number(n) => n.0.to_string(),
             tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
             tsz_solver::types::LiteralValue::BigInt(atom) => {
-                // TODO: Look up actual string from interner
-                format!("{}n", (self.string_interner_cache)(*atom))
+                format!("{}n", self.resolve_atom(*atom))
             }
         }
     }
@@ -375,10 +368,80 @@ impl<'a> TypePrinter<'a> {
         )
     }
 
-    fn print_callable(&self, _callable_id: tsz_solver::types::CallableShapeId) -> String {
-        // TODO: Implement callable type printing (for overloaded call signatures)
-        // For now, treat as a simple function type
-        "Function".to_string()
+    fn print_callable(&self, callable_id: tsz_solver::types::CallableShapeId) -> String {
+        let callable = self.interner.callable_shape(callable_id);
+
+        // Collect all signatures (call + construct)
+        let mut parts = Vec::new();
+
+        for sig in &callable.call_signatures {
+            parts.push(self.print_call_signature(sig, false));
+        }
+        for sig in &callable.construct_signatures {
+            parts.push(self.print_call_signature(sig, true));
+        }
+
+        // Add properties
+        for prop in &callable.properties {
+            let optional = if prop.optional { "?" } else { "" };
+            parts.push(format!(
+                "{}{}: {}",
+                self.resolve_atom(prop.name),
+                optional,
+                self.print_type(prop.type_id)
+            ));
+        }
+
+        if parts.is_empty() {
+            return "{}".to_string();
+        }
+
+        format!("{{ {} }}", parts.join("; "))
+    }
+
+    fn print_call_signature(
+        &self,
+        sig: &tsz_solver::types::CallSignature,
+        is_construct: bool,
+    ) -> String {
+        let prefix = if is_construct { "new " } else { "" };
+
+        let type_params_str = if !sig.type_params.is_empty() {
+            let params: Vec<String> = sig
+                .type_params
+                .iter()
+                .map(|tp| self.print_type_parameter(tp))
+                .collect();
+            format!("<{}>", params.join(", "))
+        } else {
+            String::new()
+        };
+
+        let mut params = Vec::new();
+        for param in &sig.params {
+            let mut param_str = String::new();
+            if param.rest {
+                param_str.push_str("...");
+            }
+            if let Some(name) = param.name {
+                param_str.push_str(&self.resolve_atom(name));
+                if param.optional {
+                    param_str.push('?');
+                }
+                param_str.push_str(": ");
+            }
+            param_str.push_str(&self.print_type(param.type_id));
+            params.push(param_str);
+        }
+
+        let return_type = self.print_type(sig.return_type);
+        format!(
+            "{}{}({}): {}",
+            prefix,
+            type_params_str,
+            params.join(", "),
+            return_type
+        )
     }
 
     fn print_type_parameter(&self, param_info: &tsz_solver::types::TypeParamInfo) -> String {
@@ -434,9 +497,19 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    fn print_enum(&self, _def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
-        // TODO: Implement enum type printing
-        "any".to_string()
+    fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
+        // Try to resolve the enum name via DefId -> SymbolId -> symbol name
+        if let Some(cache) = self.type_cache {
+            if let Some(&sym_id) = cache.def_to_symbol.get(&def_id) {
+                if let Some(arena) = self.symbol_arena {
+                    if let Some(symbol) = arena.get(sym_id) {
+                        return symbol.escaped_name.clone();
+                    }
+                }
+            }
+        }
+        // Fallback: print the member type structure
+        format!("enum({})", def_id.0)
     }
 
     fn print_type_application(&self, app_id: tsz_solver::types::TypeApplicationId) -> String {
@@ -450,9 +523,15 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    fn print_conditional(&self, _cond_id: tsz_solver::types::ConditionalTypeId) -> String {
-        // TODO: Implement conditional type printing
-        "any".to_string()
+    fn print_conditional(&self, cond_id: tsz_solver::types::ConditionalTypeId) -> String {
+        let cond = self.interner.conditional_type(cond_id);
+        format!(
+            "{} extends {} ? {} : {}",
+            self.print_type(cond.check_type),
+            self.print_type(cond.extends_type),
+            self.print_type(cond.true_type),
+            self.print_type(cond.false_type),
+        )
     }
 
     fn print_template_literal(&self, template_id: tsz_solver::types::TemplateLiteralId) -> String {
@@ -476,23 +555,52 @@ impl<'a> TypePrinter<'a> {
         result
     }
 
-    fn print_mapped_type(&self, _mapped_id: tsz_solver::types::MappedTypeId) -> String {
-        // TODO: Implement mapped type printing
-        "any".to_string()
+    fn print_mapped_type(&self, mapped_id: tsz_solver::types::MappedTypeId) -> String {
+        let mapped = self.interner.mapped_type(mapped_id);
+
+        let readonly_prefix = match mapped.readonly_modifier {
+            Some(tsz_solver::types::MappedModifier::Add) => "+readonly ",
+            Some(tsz_solver::types::MappedModifier::Remove) => "-readonly ",
+            None => "",
+        };
+
+        let optional_suffix = match mapped.optional_modifier {
+            Some(tsz_solver::types::MappedModifier::Add) => "+?",
+            Some(tsz_solver::types::MappedModifier::Remove) => "-?",
+            None => "",
+        };
+
+        let param_name = self.resolve_atom(mapped.type_param.name);
+        let constraint = self.print_type(mapped.constraint);
+        let template = self.print_type(mapped.template);
+
+        let as_clause = if let Some(name_type) = mapped.name_type {
+            format!(" as {}", self.print_type(name_type))
+        } else {
+            String::new()
+        };
+
+        format!(
+            "{{ {readonly_prefix}[{param_name} in {constraint}{as_clause}]{optional_suffix}: {template} }}"
+        )
     }
 
-    fn print_index_access(&self, _container: TypeId, _index: TypeId) -> String {
-        // TODO: Implement index access type printing
-        "any".to_string()
+    fn print_index_access(&self, container: TypeId, index: TypeId) -> String {
+        format!("{}[{}]", self.print_type(container), self.print_type(index))
     }
 
     fn print_string_intrinsic(
         &self,
-        _kind: tsz_solver::types::StringIntrinsicKind,
-        _type_arg: TypeId,
+        kind: tsz_solver::types::StringIntrinsicKind,
+        type_arg: TypeId,
     ) -> String {
-        // TODO: Implement string intrinsic type printing
-        "string".to_string()
+        let kind_name = match kind {
+            tsz_solver::types::StringIntrinsicKind::Uppercase => "Uppercase",
+            tsz_solver::types::StringIntrinsicKind::Lowercase => "Lowercase",
+            tsz_solver::types::StringIntrinsicKind::Capitalize => "Capitalize",
+            tsz_solver::types::StringIntrinsicKind::Uncapitalize => "Uncapitalize",
+        };
+        format!("{}<{}>", kind_name, self.print_type(type_arg))
     }
 }
 
