@@ -50,7 +50,9 @@ fn test_node_arena_basic() {
     assert_eq!(node.kind, SyntaxKind::Identifier as u16);
     assert!(node.has_data());
 
-    let data = arena.get_identifier(node).expect("identifier data should exist");
+    let data = arena
+        .get_identifier(node)
+        .expect("identifier data should exist");
     assert_eq!(data.escaped_text, "hello");
 }
 
@@ -203,20 +205,26 @@ fn test_parent_mapping() {
     );
 
     // Verify parent mapping
-    let left_extended = arena.get_extended(left_ident).expect("extended data should exist");
+    let left_extended = arena
+        .get_extended(left_ident)
+        .expect("extended data should exist");
     assert_eq!(
         left_extended.parent, binary_expr,
         "Left identifier should have binary expression as parent"
     );
 
-    let right_extended = arena.get_extended(right_ident).expect("extended data should exist");
+    let right_extended = arena
+        .get_extended(right_ident)
+        .expect("extended data should exist");
     assert_eq!(
         right_extended.parent, binary_expr,
         "Right identifier should have binary expression as parent"
     );
 
     // Verify binary expression has no parent (it's the root)
-    let binary_extended = arena.get_extended(binary_expr).expect("extended data should exist");
+    let binary_extended = arena
+        .get_extended(binary_expr)
+        .expect("extended data should exist");
     assert!(
         binary_extended.parent.is_none(),
         "Binary expression should have no parent (it's the root)"
@@ -294,11 +302,41 @@ fn test_parent_mapping_nested() {
     );
 
     // Verify parent chain: a -> add -> multiply
-    assert_eq!(arena.get_extended(a).expect("extended data should exist").parent, add);
-    assert_eq!(arena.get_extended(b).expect("extended data should exist").parent, add);
-    assert_eq!(arena.get_extended(add).expect("extended data should exist").parent, multiply);
-    assert_eq!(arena.get_extended(c).expect("extended data should exist").parent, multiply);
-    assert!(arena.get_extended(multiply).expect("extended data should exist").parent.is_none());
+    assert_eq!(
+        arena
+            .get_extended(a)
+            .expect("extended data should exist")
+            .parent,
+        add
+    );
+    assert_eq!(
+        arena
+            .get_extended(b)
+            .expect("extended data should exist")
+            .parent,
+        add
+    );
+    assert_eq!(
+        arena
+            .get_extended(add)
+            .expect("extended data should exist")
+            .parent,
+        multiply
+    );
+    assert_eq!(
+        arena
+            .get_extended(c)
+            .expect("extended data should exist")
+            .parent,
+        multiply
+    );
+    assert!(
+        arena
+            .get_extended(multiply)
+            .expect("extended data should exist")
+            .parent
+            .is_none()
+    );
 }
 
 #[test]
@@ -381,27 +419,43 @@ fn test_parent_mapping_function() {
 
     // Verify parent chain
     assert_eq!(
-        arena.get_extended(name).expect("extended data should exist").parent,
+        arena
+            .get_extended(name)
+            .expect("extended data should exist")
+            .parent,
         func,
         "Function name should have function as parent"
     );
     assert_eq!(
-        arena.get_extended(block).expect("extended data should exist").parent,
+        arena
+            .get_extended(block)
+            .expect("extended data should exist")
+            .parent,
         func,
         "Function body should have function as parent"
     );
     assert_eq!(
-        arena.get_extended(return_stmt).expect("extended data should exist").parent,
+        arena
+            .get_extended(return_stmt)
+            .expect("extended data should exist")
+            .parent,
         block,
         "Return statement should have block as parent"
     );
     assert_eq!(
-        arena.get_extended(literal).expect("extended data should exist").parent,
+        arena
+            .get_extended(literal)
+            .expect("extended data should exist")
+            .parent,
         return_stmt,
         "Literal should have return statement as parent"
     );
     assert!(
-        arena.get_extended(func).expect("extended data should exist").parent.is_none(),
+        arena
+            .get_extended(func)
+            .expect("extended data should exist")
+            .parent
+            .is_none(),
         "Function should have no parent"
     );
 }

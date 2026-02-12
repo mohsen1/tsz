@@ -378,7 +378,9 @@ function foo() {
 const c = 3;"#;
 
     // Parse from the start of "function foo()"
-    let offset = source.find("function").expect("pattern should exist in source") as u32;
+    let offset = source
+        .find("function")
+        .expect("pattern should exist in source") as u32;
 
     let mut parser = ParserState::new("test.ts".to_string(), String::new());
     let result = parser.parse_source_file_statements_from_offset(
@@ -482,7 +484,9 @@ const b = ;
 const c = 3;"#;
 
     // Parse from start of "const b = ;" (syntax error)
-    let offset = source.find("const b").expect("pattern should exist in source") as u32;
+    let offset = source
+        .find("const b")
+        .expect("pattern should exist in source") as u32;
 
     let mut parser = ParserState::new("test.ts".to_string(), String::new());
     let result = parser.parse_source_file_statements_from_offset(
