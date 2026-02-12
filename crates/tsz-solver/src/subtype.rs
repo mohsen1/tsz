@@ -3417,8 +3417,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
-        if let Some(shape) = self.apparent_primitive_shape_for_type(source) {
-            if let Some(t_shape_id) = object_shape_id(self.interner, target) {
+        // Resolve ref types (interfaces, type aliases) to their structural forms.
+        // Without this, interface types (TypeKey::Lazy) won't match the object_shape_id
+        // check below, causing TS2322 instead of TS2741/TS2739/TS2740.
+        let resolved_source = self.resolve_ref_type(source);
+        let resolved_target = self.resolve_ref_type(target);
+
+        if let Some(shape) = self.apparent_primitive_shape_for_type(resolved_source) {
+            if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 return self.explain_object_failure(
                     source,
@@ -3428,15 +3434,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     &t_shape.properties,
                 );
             }
-            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
+            if let Some(t_shape_id) = object_with_index_shape_id(self.interner, resolved_target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 return self.explain_indexed_object_failure(source, target, &shape, None, &t_shape);
             }
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
-            object_shape_id(self.interner, source),
-            object_shape_id(self.interner, target),
+            object_shape_id(self.interner, resolved_source),
+            object_shape_id(self.interner, resolved_target),
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
@@ -3450,8 +3456,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
-            object_with_index_shape_id(self.interner, source),
-            object_with_index_shape_id(self.interner, target),
+            object_with_index_shape_id(self.interner, resolved_source),
+            object_with_index_shape_id(self.interner, resolved_target),
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
@@ -3465,8 +3471,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
-            object_with_index_shape_id(self.interner, source),
-            object_shape_id(self.interner, target),
+            object_with_index_shape_id(self.interner, resolved_source),
+            object_shape_id(self.interner, resolved_target),
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
@@ -3480,8 +3486,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let (Some(s_shape_id), Some(t_shape_id)) = (
-            object_shape_id(self.interner, source),
-            object_with_index_shape_id(self.interner, target),
+            object_shape_id(self.interner, resolved_source),
+            object_with_index_shape_id(self.interner, resolved_target),
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
