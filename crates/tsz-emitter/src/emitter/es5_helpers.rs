@@ -1202,4 +1202,184 @@ impl<'a> Printer<'a> {
         }
         vars
     }
+
+    /// Emit a call expression with spread arguments transformed for ES5
+    ///
+    /// Examples:
+    /// - `foo(...arr)` -> `foo.apply(void 0, arr)`
+    /// - `foo(...arr, 1, 2)` -> `foo.apply(void 0, __spreadArray(__spreadArray([], arr, false), [1, 2], false))`
+    /// - `obj.method(...arr)` -> `obj.method.apply(obj, arr)`
+    pub(super) fn emit_call_expression_es5_spread(&mut self, node: &Node) {
+        let Some(call) = self.arena.get_call_expr(node) else {
+            return;
+        };
+
+        let Some(ref args) = call.arguments else {
+            // No arguments - shouldn't happen if we detected spread
+            self.emit(call.expression);
+            self.write("()");
+            return;
+        };
+
+        // Check if this is a method call (property access)
+        let callee_node = self.arena.get(call.expression);
+        let is_method_call = callee_node
+            .map(|n| n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
+            .unwrap_or(false);
+
+        if is_method_call {
+            self.emit_method_call_with_spread(call.expression, args);
+        } else {
+            self.emit_function_call_with_spread(call.expression, args);
+        }
+    }
+
+    fn emit_function_call_with_spread(
+        &mut self,
+        callee_idx: NodeIndex,
+        args: &tsz_parser::parser::NodeList,
+    ) {
+        // foo(...args) -> foo.apply(void 0, args_array)
+        self.emit(callee_idx);
+        self.write(".apply(void 0, ");
+        self.emit_spread_args_array(&args.nodes);
+        self.write(")");
+    }
+
+    fn emit_method_call_with_spread(
+        &mut self,
+        access_idx: NodeIndex,
+        args: &tsz_parser::parser::NodeList,
+    ) {
+        // obj.method(...args) -> obj.method.apply(obj, args_array)
+        let Some(access_node) = self.arena.get(access_idx) else {
+            return;
+        };
+        let Some(access) = self.arena.get_access_expr(access_node) else {
+            return;
+        };
+
+        // Emit: obj.method.apply(obj, args_array)
+        self.emit(access.expression);
+        self.write(".");
+        self.emit(access.name_or_argument);
+        self.write(".apply(");
+        self.emit(access.expression);
+        self.write(", ");
+        self.emit_spread_args_array(&args.nodes);
+        self.write(")");
+    }
+
+    fn emit_spread_args_array(&mut self, args: &[NodeIndex]) {
+        // Build arguments array using __spreadArray for spread elements
+        if args.is_empty() {
+            self.write("[]");
+            return;
+        }
+
+        // Check if there are any spread elements
+        let has_spread = args.iter().any(|&arg_idx| self.is_spread_element(arg_idx));
+
+        if !has_spread {
+            // No spreads, just emit an array literal
+            self.write("[");
+            self.emit_comma_separated(args);
+            self.write("]");
+            return;
+        }
+
+        // Build segments by grouping consecutive non-spread and spread elements
+        let mut segments: Vec<ArraySegment> = Vec::new();
+        let mut current_start = 0;
+
+        for (i, &arg_idx) in args.iter().enumerate() {
+            if self.is_spread_element(arg_idx) {
+                // Add non-spread segment before this spread
+                if current_start < i {
+                    segments.push(ArraySegment::Elements(&args[current_start..i]));
+                }
+                // Add the spread element
+                segments.push(ArraySegment::Spread(arg_idx));
+                current_start = i + 1;
+            }
+        }
+
+        // Add remaining elements after last spread
+        if current_start < args.len() {
+            segments.push(ArraySegment::Elements(&args[current_start..]));
+        }
+
+        // Emit using nested __spreadArray calls
+        self.emit_spread_segments(&segments);
+    }
+
+    fn emit_spread_segments(&mut self, segments: &[ArraySegment]) {
+        if segments.is_empty() {
+            self.write("[]");
+            return;
+        }
+
+        if segments.len() == 1 {
+            match &segments[0] {
+                ArraySegment::Spread(spread_idx) => {
+                    // Just a spread: __spreadArray([], spread, false)
+                    self.write("__spreadArray([], ");
+                    if let Some(spread_node) = self.arena.get(*spread_idx) {
+                        self.emit_spread_expression(spread_node);
+                    }
+                    self.write(", false)");
+                }
+                ArraySegment::Elements(elems) => {
+                    // Just elements: [1, 2, 3]
+                    self.write("[");
+                    self.emit_comma_separated(elems);
+                    self.write("]");
+                }
+            }
+            return;
+        }
+
+        // Multiple segments: build nested __spreadArray calls
+        // Pattern: __spreadArray(__spreadArray(base, segment1, false), segment2, false)
+
+        // Open __spreadArray calls for all but the last segment
+        for _ in 0..segments.len() - 1 {
+            self.write("__spreadArray(");
+        }
+
+        // Emit the first segment as a complete unit
+        match &segments[0] {
+            ArraySegment::Elements(elems) => {
+                self.write("[");
+                self.emit_comma_separated(elems);
+                self.write("]");
+            }
+            ArraySegment::Spread(spread_idx) => {
+                // First segment is spread: emit as __spreadArray([], spread, false)
+                self.write("__spreadArray([], ");
+                if let Some(spread_node) = self.arena.get(*spread_idx) {
+                    self.emit_spread_expression(spread_node);
+                }
+                self.write(", false)");
+            }
+        }
+
+        // Emit remaining segments - each closes one __spreadArray call
+        for segment in &segments[1..] {
+            match segment {
+                ArraySegment::Elements(elems) => {
+                    self.write(", [");
+                    self.emit_comma_separated(elems);
+                    self.write("], false)");
+                }
+                ArraySegment::Spread(spread_idx) => {
+                    self.write(", ");
+                    if let Some(spread_node) = self.arena.get(*spread_idx) {
+                        self.emit_spread_expression(spread_node);
+                    }
+                    self.write(", false)");
+                }
+            }
+        }
+    }
 }
