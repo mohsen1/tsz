@@ -1477,8 +1477,6 @@ impl<'a> CheckerState<'a> {
     ///
     /// This is determined by checking if the variable's declaration is in an ancestor scope.
     fn is_captured_variable(&self, sym_id: SymbolId, reference: NodeIndex) -> bool {
-        use tsz_binder::ScopeId;
-
         let symbol = match self.ctx.binder.get_symbol(sym_id) {
             Some(sym) => sym,
             None => return false,
@@ -1500,8 +1498,6 @@ impl<'a> CheckerState<'a> {
         };
 
         // Find the enclosing scope of the usage site (where the variable is accessed).
-        // Previously this used `binder.current_scope_id` which is stale after binding
-        // completes. Now we compute the usage scope on-demand from the reference node.
         let usage_scope_id = match self
             .ctx
             .binder
@@ -1516,11 +1512,24 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Check if declaration scope is an ancestor of usage scope
-        let mut scope_id = usage_scope_id;
+        // A variable is "captured" only if it crosses a function boundary.
+        // Block scopes (if, while, for) within the same function don't count.
+        // We walk up from the declaration scope and usage scope to find
+        // their enclosing function/source-file scopes, then compare those.
+        let decl_fn_scope = self.find_enclosing_function_scope(decl_scope_id);
+        let usage_fn_scope = self.find_enclosing_function_scope(usage_scope_id);
+
+        // If both are in the same function scope, the variable is NOT captured
+        if decl_fn_scope == usage_fn_scope {
+            return false;
+        }
+
+        // The declaration's function scope must be an ancestor of the usage's function scope
+        // for the variable to be considered captured
+        let mut scope_id = usage_fn_scope;
         let mut iterations = 0;
         while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
-            if scope_id == decl_scope_id {
+            if scope_id == decl_fn_scope {
                 return true;
             }
 
@@ -1530,12 +1539,37 @@ impl<'a> CheckerState<'a> {
                 .scopes
                 .get(scope_id.0 as usize)
                 .map(|scope| scope.parent)
-                .unwrap_or(ScopeId::NONE);
+                .unwrap_or(tsz_binder::ScopeId::NONE);
 
             iterations += 1;
         }
 
         false
+    }
+
+    /// Walk up the scope chain to find the nearest function/source-file/module scope.
+    /// Block scopes are skipped.
+    fn find_enclosing_function_scope(&self, scope_id: tsz_binder::ScopeId) -> tsz_binder::ScopeId {
+        use tsz_binder::ContainerKind;
+
+        let mut current = scope_id;
+        let mut iterations = 0;
+        while !current.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
+            if let Some(scope) = self.ctx.binder.scopes.get(current.0 as usize) {
+                match scope.kind {
+                    ContainerKind::Function | ContainerKind::SourceFile | ContainerKind::Module => {
+                        return current;
+                    }
+                    _ => {
+                        current = scope.parent;
+                    }
+                }
+            } else {
+                break;
+            }
+            iterations += 1;
+        }
+        current
     }
 
     /// Check flow-aware usage of a variable (definite assignment + type narrowing).
