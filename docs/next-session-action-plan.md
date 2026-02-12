@@ -1,260 +1,251 @@
 # Next Session Action Plan - Conformance Testing
 
-## Current State Summary
-- **Slice 4/4 Pass Rate**: 53.6% (1678/3134 passing)
+## Current State Summary (2026-02-12 Update)
+- **Overall Pass Rate**: 60.9% (7638/12545 passing)
+- **Slice 3/4**: 61.5% (1934/3145 passing) - improved from 60.1%
 - **Unit Tests**: ✅ 2396/2396 passing
-- **Implementations Added**: 2 (both need fixes)
-  - TS2428: Disabled due to binder scope bug
-  - TS2630: Implemented but not emitting errors
+- **Recent Fixes**:
+  - TS2630: Function assignment check (completed)
+  - TS2365: '+' operator with null/undefined (completed)
 
 ## Immediate Actions (Highest Priority)
 
-### Action 1: Fix TS2630 Implementation (Impact: 12 tests)
-**Status**: Code exists but doesn't emit errors in manual testing
+### Action 1: Reduce TS2322 False Positives (Impact: 91 tests in slice 3)
+**Status**: High-impact opportunity
+
+**Problem**: We emit TS2322 (type not assignable) in 91 tests where TypeScript doesn't.
 
 **Debug Steps**:
-1. Test with a real conformance test case:
+1. Analyze pattern in false positive tests:
    ```bash
-   # Find a test that should emit TS2630
-   grep -r "2630" TypeScript/tests/baselines/reference/*.errors.txt | head -1
-   # Run that specific test
-   ./scripts/conformance.sh run --filter "<test-name>"
+   ./scripts/conformance.sh analyze --offset 6292 --max 3146 --category false-positive 2>&1 | grep "TS2322" -A5
    ```
 
-2. Add tracing to `check_function_assignment()`:
-   ```rust
-   eprintln!("DEBUG: checking function assignment for {:?}", name);
-   eprintln!("DEBUG: symbol flags: {:?}", symbol.flags);
-   eprintln!("DEBUG: FUNCTION flag: {}", symbol_flags::FUNCTION);
+2. Pick a specific test to investigate:
+   ```bash
+   ./scripts/conformance.sh run --offset 6292 --max 3146 --verbose --filter "variance" | less
    ```
 
-3. Check if the function is being called at all:
-   - Add `eprintln!("DEBUG: check_function_assignment called");` at start
-   - Run test and verify it prints
+3. Common patterns to investigate:
+   - Variance-related types
+   - Index signature relationships
+   - Generic type inference
 
-4. If not called, check `check_assignment_expression` is invoked:
-   - The call site is in `type_computation.rs:886`
-   - Verify binary expressions with `EqualsToken` trigger it
+**Potential Root Causes**:
+- Over-strict assignability checking in certain contexts
+- Missing special cases in subtype checking
+- Incorrect handling of contravariance/covariance
 
-**Location**: `crates/tsz-checker/src/assignment_checker.rs:176`
+### Action 2: Reduce TS2339 False Positives (Impact: 76 tests)
+**Status**: Pattern identified - ES5 Symbol properties
 
-### Action 2: Create Minimal Test Case for TS2630
-**Why**: Verify implementation works before conformance testing
+**Problem**: We emit "Property doesn't exist" for Symbol properties in ES5 target.
 
-```typescript
-// test-ts2630.ts
-function foo() { return 42; }
-foo = null;  // Should emit TS2630
+**Example Tests**:
+- ES5SymbolProperty1.ts, ES5SymbolProperty3.ts, ES5SymbolProperty4.ts, ES5SymbolProperty5.ts, ES5SymbolProperty7.ts
+
+**Investigation**:
+1. Check how we handle Symbol properties for different targets
+2. ES5 should allow Symbol as property key even though Symbol doesn't exist at runtime
+3. Look at `crates/tsz-checker/src/type_checking.rs` - property access resolution
+
+**Location**: Likely in property access checking or symbol resolution
+
+### Action 3: Implement TS1362/TS1361 (Impact: 27 tests)
+**Status**: Not implemented at all
+
+**TS1362**: "'await' expressions are only allowed within async functions and at the top levels of modules."
+**TS1361**: "'await' expressions are only allowed at the top level of a file when that file is a module..."
+
+**Implementation Strategy**:
+1. Track async function context in checker state
+2. Add check when visiting await expressions
+3. Verify file is a module for top-level await
+4. Check module/target options for ES2022+ top-level await
+
+**Files to Modify**:
+- `crates/tsz-checker/src/context.rs` - Add `in_async_function` flag
+- `crates/tsz-checker/src/type_computation.rs` or `dispatch.rs` - Check await expressions
+- `crates/tsz-checker/src/statements.rs` - Track function context
+
+**Example Code to Add**:
+```rust
+// In context.rs
+pub in_async_function: bool,
+
+// When checking await expression
+if !self.ctx.in_async_function && !self.is_top_level_module() {
+    self.error(node, "TS1362: 'await' expressions are only allowed within async functions...");
+}
 ```
 
-**Run**:
-```bash
-cargo build --profile dist-fast
-.target/dist-fast/tsz test-ts2630.ts
-```
+## Quick Wins (Easier to Implement)
 
-**Expected**: `error TS2630: Cannot assign to 'foo' because it is a function.`
-**Actual**: No error (bug to fix)
+### Quick Win 1: Improve TS2454 Coverage (Impact: 15+ tests)
+**Why**: Already implemented, just needs broader coverage in for-in/for-of loops
 
-### Action 3: Fix Binder Scope Bug (Blocks TS2428)
-**Impact**: Enables interface type parameter validation
+**Tests Affected**:
+- unusedLocalsInForInOrOf1.ts
+- classStaticBlockUseBeforeDef3.ts
 
-**Problem**: Binder merges symbols from different scopes incorrectly.
+**Investigation**: Check why definite assignment analysis isn't running for these contexts.
 
-**Investigation Steps**:
-1. Read `crates/tsz-binder/src/state.rs` - find `declare_symbol()`
-2. Understand how symbols are stored:
-   - `file_locals: FxHashMap<String, SymbolId>`
-   - `scopes: Vec<Scope>`
-3. Check if namespace symbols go into a separate scope
-4. Test case to debug:
-   ```typescript
-   namespace M {
-       interface A<T> { x: T; }
-   }
-   namespace M2 {
-       interface A<T> { x: T; }  // Different scope!
-   }
-   ```
+### Quick Win 2: Fix Missing TS2538 (Impact: 2+ tests)
+**TS2538**: "Type 'X' cannot be used as an index type."
 
-**Expected**: These should be separate symbols
-**Actual**: They merge into one symbol
+**Tests**:
+- asyncFunctionDeclarationParameterEvaluation.ts
+- asyncGeneratorParameterEvaluation.ts
 
-**Fix Direction**: Likely need to check scope when merging symbols
+**Status**: Likely already partially implemented, needs specific case coverage.
 
-## Quick Wins (If Above is Too Hard)
+### Quick Win 3: Implement TS2636/TS2637 Variance Errors (Impact: 2+ tests)
+**TS2636**: "The 'in' modifier can only be used on a type parameter of a type."
+**TS2637**: "The 'out' modifier can only be used on a type parameter of a type."
 
-### Quick Win 1: Test TS2630 with Conformance Runner
-**Why**: Maybe it works for conformance tests but not manual tests
-
-```bash
-# Find tests expecting TS2630
-grep -l "2630" TypeScript/tests/baselines/reference/*.errors.txt | \
-  sed 's/.*\///' | sed 's/\.errors\.txt//'
-
-# Run one of those tests
-./scripts/conformance.sh run --filter "<test-name>" --verbose
-```
-
-If TS2630 appears in actual output, the implementation works!
-
-### Quick Win 2: Document Exact Test Count Impact
-```bash
-# Before any changes
-./scripts/conformance.sh run --offset 9411 --max 3134 2>&1 | \
-  grep "FINAL RESULTS"
-
-# Save this as baseline
-# Then after each fix, re-run and compare
-```
-
-### Quick Win 3: Focus on Single-Code Quick Wins
-From analysis, these have only ONE missing error:
-- TS2322: 36 tests (type not assignable)
-- TS2339: 21 tests (property doesn't exist)
-- TS2304: 16 tests (cannot find name)
-
-These are already implemented, just need broader coverage.
-
-**Strategy**: Pick one failing test, debug why error isn't emitted, fix that case.
+**Simple Implementation**: Add validation when binding/checking type parameters with variance annotations.
 
 ## Implementation Recipes
 
-### Recipe: Implementing a New Error Code
+### Recipe: Reducing False Positives
+When we emit errors TypeScript doesn't:
 
-1. **Find the diagnostic**:
+1. **Find the test and read it**:
    ```bash
-   grep "CODEXXXX\|code: XXXX" crates/tsz-common/src/diagnostics.rs
+   ./scripts/conformance.sh run --offset <offset> --max <max> --verbose --filter "<test-name>"
    ```
 
-2. **Find where it should be emitted**:
-   - Search TypeScript compiler source: `github.com/microsoft/TypeScript`
-   - Look for the error code in `src/compiler/diagnosticMessages.json`
-   - Find emitting code in TypeScript `src/compiler/checker.ts`
-
-3. **Find similar code in tsz**:
+2. **Run both compilers side-by-side**:
    ```bash
-   # If TS2630, look for TS2588 (both "cannot assign" errors)
-   grep -r "2588\|CANNOT_ASSIGN" crates/tsz-checker/src/
+   # TypeScript
+   cd TypeScript && npx tsc --noEmit tests/cases/compiler/<test>.ts
+
+   # tsz
+   ./.target/dist-fast/tsz TypeScript/tests/cases/compiler/<test>.ts
    ```
 
-4. **Implement in appropriate file**:
-   - Assignment errors → `assignment_checker.rs`
-   - Type errors → `type_checking.rs`
-   - Name resolution → `symbol_resolver.rs`
-   - Module errors → `import_checker.rs`
-
-5. **Test**:
-   ```bash
-   cargo nextest run  # Unit tests
-   ./scripts/conformance.sh run --error-code XXXX  # Conformance
+3. **Add tracing to understand why we emit**:
+   ```rust
+   #[tracing::instrument(level = "debug")]
+   fn check_that_emits_error(&mut self, node: NodeIndex) {
+       debug!("Checking node that might emit false positive");
+       // ... existing code
+   }
    ```
 
-### Recipe: Debugging Missing Errors
-
-1. **Find a failing test**:
+4. **Run with tracing**:
    ```bash
-   ./scripts/conformance.sh run --offset 9411 --max 3134 --verbose 2>&1 | \
-     grep -A20 "FAIL.*enumTag.ts"
+   TSZ_LOG="tsz_checker=debug" TSZ_LOG_FORMAT=tree ./.target/dist-fast/tsz test.ts 2>&1 | less
    ```
 
-2. **Read the test file**:
+5. **Identify the condition** that should suppress the error
+
+6. **Add the check** and verify it doesn't break existing tests
+
+### Recipe: Implementing New Error Codes
+
+1. **Verify the diagnostic exists**:
    ```bash
-   cat TypeScript/tests/cases/conformance/jsdoc/enumTag.ts
+   grep "<code>" crates/tsz-common/src/diagnostics.rs
    ```
 
-3. **See expected errors**:
-   ```bash
-   cat TypeScript/tests/baselines/reference/enumTag.errors.txt
+2. **Find where TypeScript emits it**:
+   - Search TypeScript compiler source on GitHub
+   - Look in `src/compiler/checker.ts` for the error code
+
+3. **Add the check in the appropriate file**:
+   - Await expressions → `type_computation.rs` or `dispatch.rs`
+   - Type parameters → `type_checking.rs` or `state_type_resolution.rs`
+   - Declarations → `binder` or `statements.rs`
+
+4. **Test with a minimal case first**:
+   ```typescript
+   // test.ts
+   await 42; // Should emit TS1362 if not in async function
    ```
 
-4. **Run tsz with tracing**:
+5. **Run conformance tests**:
    ```bash
-   TSZ_LOG=debug TSZ_LOG_FORMAT=tree .target/dist-fast/tsz \
-     TypeScript/tests/cases/conformance/jsdoc/enumTag.ts 2>&1 | \
-     grep -i "enum\|error" | head -50
+   ./scripts/conformance.sh run --error-code <code>
    ```
-
-5. **Compare**: What path does TSC take vs tsz?
 
 ## Measuring Success
 
 ### Before Making Changes
 ```bash
-./scripts/conformance.sh run --offset 9411 --max 3134 2>&1 | tee baseline.txt
-grep "FINAL RESULTS" baseline.txt
-# Note the pass rate
+./scripts/conformance.sh run --offset 6292 --max 3146 2>&1 | tee baseline-slice3.txt
+grep "FINAL RESULTS" baseline-slice3.txt
 ```
 
 ### After Each Fix
 ```bash
-./scripts/conformance.sh run --offset 9411 --max 3134 2>&1 | tee after-fix.txt
-grep "FINAL RESULTS" after-fix.txt
-# Compare: did pass rate improve?
+./scripts/conformance.sh run --offset 6292 --max 3146 2>&1 | tee after-fix.txt
+diff <(grep "PASS\|FAIL" baseline-slice3.txt) <(grep "PASS\|FAIL" after-fix.txt) | wc -l
 ```
 
-### Diff to See Which Tests Now Pass
+### Full Suite
 ```bash
-diff <(grep "PASS\|FAIL" baseline.txt | sort) \
-     <(grep "PASS\|FAIL" after-fix.txt | sort)
+./scripts/conformance.sh run 2>&1 | grep "FINAL RESULTS"
 ```
 
 ## Common Pitfalls to Avoid
 
-1. **Don't implement without testing**: 
-   - TS2630 was implemented but never verified to work
-   - Always test with a minimal case first
-
-2. **Don't commit broken code**:
-   - Run `cargo nextest run` before every commit
-   - Verify no regressions
-
-3. **Don't work without debugging**:
-   - Use `TSZ_LOG=debug` to understand code flow
-   - Add `eprintln!` liberally during development
-   - Remove debug code before committing
-
-4. **Don't guess at implementations**:
-   - Look at TypeScript source code
-   - Find similar existing code in tsz
-   - Follow established patterns
+1. **Don't implement without testing**: Always verify with minimal test case first
+2. **Don't commit broken code**: Run `cargo nextest run` before every commit
+3. **MANDATORY sync after EVERY commit**: `git pull --rebase origin main && git push origin main`
+4. **Don't work without debugging**: Use tracing to understand code flow
+5. **Don't guess at implementations**: Look at TypeScript source and existing patterns
 
 ## Files to Know
 
-### Error Emission
-- `crates/tsz-checker/src/error_reporter.rs` - Helper methods
-- `crates/tsz-checker/src/error_handler.rs` - Error handling trait
+### Error Checking & Reporting
+- `crates/tsz-checker/src/error_reporter.rs` - Error emission helpers
+- `crates/tsz-checker/src/type_checking.rs` - Main type checking logic
+- `crates/tsz-checker/src/assignment_checker.rs` - Assignment validation
 - `crates/tsz-common/src/diagnostics.rs` - All error codes and messages
 
-### Checking Logic
-- `crates/tsz-checker/src/type_checking.rs` - Main type checking
-- `crates/tsz-checker/src/assignment_checker.rs` - Assignment validation
-- `crates/tsz-checker/src/import_checker.rs` - Import/module errors
-- `crates/tsz-checker/src/symbol_resolver.rs` - Name resolution
+### Context & State
+- `crates/tsz-checker/src/context.rs` - Checker context and state
+- `crates/tsz-checker/src/state.rs` - Main checker state
+
+### Type Computation
+- `crates/tsz-checker/src/type_computation.rs` - Type inference
+- `crates/tsz-checker/src/dispatch.rs` - AST node dispatch
 
 ### Binder
 - `crates/tsz-binder/src/state.rs` - Symbol table management
-- `crates/tsz-binder/src/lib.rs` - Binder entry point
 
-## Success Criteria
+## Success Criteria for Next Session
 
-- ✅ At least one error code implementation that works (verified by manual test)
-- ✅ Pass rate improvement (even 1-2 tests is progress)
-- ✅ All 2396 unit tests still passing
-- ✅ Code committed with clear explanation
-- ✅ Documented what works, what doesn't, and why
+- ✅ Reduce false positives by at least 20 tests
+- ✅ Implement at least one new error code (TS1362 recommended)
+- ✅ Maintain 100% unit test pass rate (2396/2396)
+- ✅ Improve slice 3 pass rate by at least 1-2%
+- ✅ Sync with remote after every commit
+- ✅ Document findings and create session summary
 
 ## If Stuck
 
-1. Focus on debugging TS2630 - it's already mostly done
-2. Use the tsz-gemini skill if available
-3. Read similar error code implementations in the codebase
+1. Use tracing to understand code flow: `TSZ_LOG=debug TSZ_LOG_FORMAT=tree`
+2. Compare with TypeScript behavior side-by-side
+3. Look at similar existing error code implementations
 4. Start with the simplest possible test case
-5. Don't be afraid to ask for clarification on architecture
+5. Check docs/HOW_TO_CODE.md for patterns and conventions
 
-## Time Estimates
+## Notes from This Session
 
-- Debugging TS2630: 1-2 hours
-- Fixing binder scope bug: 3-4 hours (complex)
-- Implementing new error code: 2-3 hours
-- Running full conformance suite: 5-10 minutes
+**What Worked Well**:
+- Using `binder.resolve_identifier()` instead of `node_symbols.get()` for reference lookup
+- Systematic analysis with conformance.sh analyze command
+- Focusing on high-impact opportunities first
+
+**Lessons Learned**:
+- False positives are just as important as missing errors
+- Many tests are very close to passing (diff=1-2 errors)
+- Pattern analysis reveals clusters of similar failures
+- Symbol resolution context matters (declarations vs references)
+
+**Next Time**:
+- Start with false positive reduction - high impact, lower risk
+- Consider implementing TS1362/TS1361 if time permits
+- Look for patterns in ES5Symbol property tests
