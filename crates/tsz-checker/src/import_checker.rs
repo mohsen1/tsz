@@ -1837,7 +1837,7 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         visited: &mut FxHashSet<String>,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         if visited.contains(module_name) {
             let cycle_path: Vec<&str> = visited
