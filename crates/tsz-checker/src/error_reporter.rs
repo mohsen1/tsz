@@ -1719,10 +1719,71 @@ impl<'a> CheckerState<'a> {
         }
 
         // Track nullish operands for proper error reporting
-        // NOTE: TSC emits TS2365 for binary operators with null/undefined operands, not TS18050
+        // NOTE: TSC emits TS2365 for '+' operator with null/undefined, but TS18050 for other arithmetic operators
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
-        let emitted_nullish_error = false; // Track if we emit TS18050 (we won't for binary ops)
+        let mut emitted_nullish_error = false;
+
+        // TS18050 is emitted for null/undefined operands in arithmetic operators (except +)
+        // The + operator gets TS2365 instead because it can be string concatenation or arithmetic
+        let should_emit_ts18050 = matches!(
+            op,
+            "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
+        );
+
+        // Emit TS18050 for null/undefined operands in arithmetic operations (except +)
+        if left_is_nullish && should_emit_ts18050 {
+            let value_name = if left_type == TypeId::NULL {
+                "null"
+            } else {
+                "undefined"
+            };
+            if let Some(loc) = self.get_source_location(left_idx) {
+                let message = format_message(
+                    diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
+                    &[value_name],
+                );
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+                emitted_nullish_error = true;
+            }
+        }
+
+        if right_is_nullish && should_emit_ts18050 {
+            let value_name = if right_type == TypeId::NULL {
+                "null"
+            } else {
+                "undefined"
+            };
+            if let Some(loc) = self.get_source_location(right_idx) {
+                let message = format_message(
+                    diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
+                    &[value_name],
+                );
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
+                emitted_nullish_error = true;
+            }
+        }
+
+        // If BOTH operands are null/undefined AND we emitted TS18050 for them, we're done
+        if left_is_nullish && right_is_nullish && emitted_nullish_error {
+            return;
+        }
 
         use tsz_solver::BinaryOpEvaluator;
 
