@@ -631,7 +631,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1147: Import declarations in a namespace cannot reference a module
-        // Check if this import = require("module") appears inside a namespace
+        // TS2303: Circular definition of import alias
+        // Check if this import = require("module") appears inside a namespace or ambient module
         if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
             if ref_node.kind == SyntaxKind::StringLiteral as u16 {
                 // This is an external module reference (require("..."))
@@ -639,13 +640,30 @@ impl<'a> CheckerState<'a> {
                 let mut current = stmt_idx;
                 let mut inside_namespace = false;
                 let mut namespace_is_exported = false;
+                let mut containing_module_name: Option<String> = None;
 
                 while !current.is_none() {
                     if let Some(node) = self.ctx.arena.get(current) {
                         if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                            inside_namespace = true;
-                            // Check if this namespace is exported
-                            namespace_is_exported = self.has_export_modifier(current);
+                            // Check if this is an ambient module (declare module "...") or namespace
+                            if let Some(module_decl) = self.ctx.arena.get_module(node) {
+                                if let Some(name_node) = self.ctx.arena.get(module_decl.name) {
+                                    if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                                        // This is an ambient module: declare module "foo"
+                                        if let Some(name_literal) =
+                                            self.ctx.arena.get_literal(name_node)
+                                        {
+                                            containing_module_name =
+                                                Some(name_literal.text.clone());
+                                        }
+                                    } else {
+                                        // This is a namespace: namespace Foo
+                                        inside_namespace = true;
+                                        // Check if this namespace is exported
+                                        namespace_is_exported = self.has_export_modifier(current);
+                                    }
+                                }
+                            }
                             break;
                         }
                         // Move to parent
@@ -659,6 +677,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // TS1147: Only emit for namespaces (not ambient modules)
                 if inside_namespace {
                     self.error_at_node(
                         import.module_specifier,
@@ -669,6 +688,35 @@ impl<'a> CheckerState<'a> {
                     // TypeScript emits both TS1147 and TS2307 for exported namespaces
                     if !namespace_is_exported {
                         return;
+                    }
+                }
+
+                // TS2303: Check for circular import in ambient modules
+                if let Some(ref ambient_module_name) = containing_module_name {
+                    if let Some(literal) = self.ctx.arena.get_literal(ref_node) {
+                        let imported_module = &literal.text;
+                        // Check if the imported module matches the containing module
+                        if ambient_module_name == imported_module {
+                            // Emit TS2303: Circular definition of import alias
+                            if let Some(import_name) = self
+                                .ctx
+                                .arena
+                                .get(import.import_clause)
+                                .and_then(|n| self.ctx.arena.get_identifier(n))
+                                .map(|id| id.escaped_text.clone())
+                            {
+                                let message = format_message(
+                                    diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                                    &[&import_name],
+                                );
+                                self.error_at_node(
+                                    import.import_clause,
+                                    &message,
+                                    diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                                );
+                                return;
+                            }
+                        }
                     }
                 }
             }
