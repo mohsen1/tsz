@@ -336,7 +336,7 @@ fn test_ir_private_field_helpers() {
 
 #[test]
 fn test_ir_object_literal() {
-    let obj = IRNode::ObjectLiteral(vec![
+    let obj = IRNode::object(vec![
         IRProperty {
             key: IRPropertyKey::Identifier("x".to_string()),
             value: IRNode::number("1"),
@@ -350,7 +350,9 @@ fn test_ir_object_literal() {
     ]);
 
     match obj {
-        IRNode::ObjectLiteral(props) => {
+        IRNode::ObjectLiteral {
+            properties: props, ..
+        } => {
             assert_eq!(props.len(), 2);
             assert!(matches!(&props[0].key, IRPropertyKey::Identifier(k) if k == "x"));
             assert!(matches!(&props[1].key, IRPropertyKey::StringLiteral(k) if k == "y"));
