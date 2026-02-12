@@ -1388,6 +1388,8 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
                     diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
                 );
+                // Return ERROR to prevent fallthrough to normal resolution which would emit TS2304
+                return TypeId::ERROR;
             }
 
             // Inside a regular (non-arrow) function body, `arguments` is the implicit
