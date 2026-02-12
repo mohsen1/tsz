@@ -67,7 +67,27 @@ impl<'a> CheckerState<'a> {
         // Check that properties are assignable to index signatures (TS2411)
         // This includes both directly declared and inherited index signatures.
         // Get the interface type to check for any index signatures (direct or inherited)
-        let iface_type = self.get_type_of_node(stmt_idx);
+        // NOTE: Use get_type_of_symbol to get the cached type, avoiding recursion issues
+        let iface_type = if !iface.name.is_none() {
+            // Get symbol from the interface name and resolve its type
+            if let Some(name_node) = self.ctx.arena.get(iface.name) {
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(&ident.escaped_text) {
+                        self.get_type_of_symbol(sym_id)
+                    } else {
+                        TypeId::ERROR
+                    }
+                } else {
+                    TypeId::ERROR
+                }
+            } else {
+                TypeId::ERROR
+            }
+        } else {
+            // Anonymous interface - compute type directly
+            self.get_type_of_interface(stmt_idx)
+        };
+
         let index_info = self.ctx.types.get_index_signatures(iface_type);
 
         // If there are any index signatures (direct or inherited), check compatibility
@@ -135,21 +155,44 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 // Type references like "string", "number", "symbol" (referring to built-in types)
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) {
+                    tracing::trace!(
+                        type_name_idx = type_ref.type_name.0,
+                        "check_index_signature_parameter_type: got type_ref"
+                    );
                     if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
+                        tracing::trace!(
+                            name_node_kind = name_node.kind,
+                            "check_index_signature_parameter_type: got name_node"
+                        );
                         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                            matches!(ident.escaped_text.as_str(), "string" | "number" | "symbol")
+                            let name = ident.escaped_text.as_str();
+                            tracing::trace!(
+                                type_name = name,
+                                "check_index_signature_parameter_type: got identifier"
+                            );
+                            matches!(name, "string" | "number" | "symbol")
                         } else {
+                            tracing::trace!(
+                                "check_index_signature_parameter_type: not an identifier"
+                            );
                             false
                         }
                     } else {
+                        tracing::trace!("check_index_signature_parameter_type: no name_node");
                         false
                     }
                 } else {
+                    tracing::trace!("check_index_signature_parameter_type: no type_ref");
                     false
                 }
             }
             _ => false,
         };
+
+        tracing::trace!(
+            is_valid,
+            "check_index_signature_parameter_type: validation result"
+        );
 
         if !is_valid {
             self.error_at_node(
@@ -247,8 +290,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Extract property name based on member kind
-            let (prop_name, name_idx) = if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+            // Extract property name and type annotation based on member kind
+            let (prop_name, name_idx, type_annotation_idx) = if member_node.kind
+                == syntax_kind_ext::PROPERTY_SIGNATURE
                 || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
             {
                 // Interface members
@@ -256,7 +300,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let name = self.get_member_name_text(sig.name).unwrap_or_default();
-                (name, sig.name)
+                (name, sig.name, sig.type_annotation)
             } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                 // Class property declarations
                 let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
@@ -269,7 +313,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let name = self.get_member_name_text(prop.name).unwrap_or_default();
-                (name, prop.name)
+                (name, prop.name, prop.type_annotation)
             } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
                 // Class method declarations
                 let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
@@ -282,15 +326,43 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let name = self.get_member_name_text(method.name).unwrap_or_default();
-                (name, method.name)
+                (name, method.name, NodeIndex::NONE) // Methods use member_idx for type
             } else {
                 // Skip other member kinds (index signatures, constructors, etc.)
                 continue;
             };
 
-            let prop_type = self.get_type_of_node(member_idx);
+            // Get property type from type annotation if available, otherwise from member node
+            let prop_type = if !type_annotation_idx.is_none() {
+                self.get_type_from_type_node(type_annotation_idx)
+            } else {
+                // For methods without type annotations, use the member node type
+                self.get_type_of_node(member_idx)
+            };
+
+            let is_numeric_property = prop_name.parse::<f64>().is_ok();
+
+            // Check against number index signature first (for numeric properties)
+            if let Some(ref number_idx) = index_info.number_index {
+                if is_numeric_property
+                    && !self
+                        .ctx
+                        .types
+                        .is_assignable_to(prop_type, number_idx.value_type)
+                {
+                    let prop_type_str = self.format_type(prop_type);
+                    let index_type_str = self.format_type(number_idx.value_type);
+
+                    self.error_at_node_msg(
+                        name_idx,
+                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                        &[&prop_name, &prop_type_str, "number", &index_type_str],
+                    );
+                }
+            }
 
             // Check against string index signature
+            // Note: ALL properties (including numeric ones) must satisfy string index
             if let Some(ref string_idx) = index_info.string_index {
                 if !self
                     .ctx
@@ -304,26 +376,6 @@ impl<'a> CheckerState<'a> {
                         name_idx,
                         diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                         &[&prop_name, &prop_type_str, "string", &index_type_str],
-                    );
-                }
-            }
-
-            // Check against number index signature if property name is numeric
-            if let Some(ref number_idx) = index_info.number_index {
-                let is_numeric = prop_name.parse::<f64>().is_ok();
-                if is_numeric
-                    && !self
-                        .ctx
-                        .types
-                        .is_assignable_to(prop_type, number_idx.value_type)
-                {
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(number_idx.value_type);
-
-                    self.error_at_node_msg(
-                        name_idx,
-                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &[&prop_name, &prop_type_str, "number", &index_type_str],
                     );
                 }
             }
