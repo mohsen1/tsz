@@ -997,6 +997,57 @@ impl<'a> TypeLowering<'a> {
                     } else {
                         string_index = Some(index_info);
                     }
+                    continue;
+                }
+
+                // Handle accessor declarations (get/set) in type literals
+                if (member.kind == syntax_kind_ext::GET_ACCESSOR
+                    || member.kind == syntax_kind_ext::SET_ACCESSOR)
+                    && let Some(accessor) = self.arena.get_accessor(member)
+                    && let Some(name) = self.lower_signature_name(accessor.name)
+                {
+                    let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
+                    if is_getter {
+                        let getter_type = self.lower_type(accessor.type_annotation);
+                        if let Some(existing) = properties.iter_mut().find(|p| p.name == name) {
+                            existing.type_id = getter_type;
+                        } else {
+                            properties.push(PropertyInfo {
+                                name,
+                                type_id: getter_type,
+                                write_type: getter_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            });
+                        }
+                    } else {
+                        let setter_type = accessor
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&param_idx| self.arena.get(param_idx))
+                            .and_then(|param_node| self.arena.get_parameter(param_node))
+                            .map(|param| self.lower_type(param.type_annotation))
+                            .unwrap_or(TypeId::UNKNOWN);
+                        if let Some(existing) = properties.iter_mut().find(|p| p.name == name) {
+                            existing.write_type = setter_type;
+                            existing.readonly = false;
+                        } else {
+                            properties.push(PropertyInfo {
+                                name,
+                                type_id: setter_type,
+                                write_type: setter_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            });
+                        }
+                    }
                 }
             }
 
@@ -1281,6 +1332,71 @@ impl<'a> TypeLowering<'a> {
                 && let Some(index_info) = self.lower_index_signature(index_sig)
             {
                 parts.merge_index_signature(index_info);
+                continue;
+            }
+
+            // Handle accessor declarations (get/set) in interfaces and type literals
+            if (member.kind == syntax_kind_ext::GET_ACCESSOR
+                || member.kind == syntax_kind_ext::SET_ACCESSOR)
+                && let Some(accessor) = self.arena.get_accessor(member)
+                && let Some(name) = self.lower_signature_name(accessor.name)
+            {
+                let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
+                if is_getter {
+                    let getter_type = self.lower_type(accessor.type_annotation);
+                    // Merge with existing accessor entry or create new one
+                    match parts.properties.entry(name) {
+                        indexmap::map::Entry::Occupied(mut entry) => {
+                            // Update existing property with getter type as read type
+                            if let PropertyMerge::Property(prop) = entry.get_mut() {
+                                prop.type_id = getter_type;
+                            }
+                        }
+                        indexmap::map::Entry::Vacant(entry) => {
+                            entry.insert(PropertyMerge::Property(PropertyInfo {
+                                name,
+                                type_id: getter_type,
+                                write_type: getter_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            }));
+                        }
+                    }
+                } else {
+                    // Set accessor - extract parameter type
+                    let setter_type = accessor
+                        .parameters
+                        .nodes
+                        .first()
+                        .and_then(|&param_idx| self.arena.get(param_idx))
+                        .and_then(|param_node| self.arena.get_parameter(param_node))
+                        .map(|param| self.lower_type(param.type_annotation))
+                        .unwrap_or(TypeId::UNKNOWN);
+                    match parts.properties.entry(name) {
+                        indexmap::map::Entry::Occupied(mut entry) => {
+                            // Update existing property with setter type as write type
+                            if let PropertyMerge::Property(prop) = entry.get_mut() {
+                                prop.write_type = setter_type;
+                                prop.readonly = false;
+                            }
+                        }
+                        indexmap::map::Entry::Vacant(entry) => {
+                            entry.insert(PropertyMerge::Property(PropertyInfo {
+                                name,
+                                type_id: setter_type,
+                                write_type: setter_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            }));
+                        }
+                    }
+                }
             }
         }
     }

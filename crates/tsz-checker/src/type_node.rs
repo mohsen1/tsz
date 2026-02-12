@@ -835,6 +835,68 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 } else {
                     string_index = Some(info);
                 }
+                continue;
+            }
+
+            // Handle accessor declarations (get/set) in type literals
+            if (member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
+                || member.kind == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR)
+                && let Some(accessor) = self.ctx.arena.get_accessor(member)
+                && let Some(name) = self.get_property_name(accessor.name)
+            {
+                let name_atom = self.ctx.types.intern_string(&name);
+                let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
+                if is_getter {
+                    let getter_type = if !accessor.type_annotation.is_none() {
+                        self.check(accessor.type_annotation)
+                    } else {
+                        TypeId::ANY
+                    };
+                    if let Some(existing) = properties.iter_mut().find(|p| p.name == name_atom) {
+                        existing.type_id = getter_type;
+                    } else {
+                        properties.push(PropertyInfo {
+                            name: name_atom,
+                            type_id: getter_type,
+                            write_type: getter_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                        });
+                    }
+                } else {
+                    let setter_type = accessor
+                        .parameters
+                        .nodes
+                        .first()
+                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                        .and_then(|param| {
+                            if !param.type_annotation.is_none() {
+                                Some(self.check(param.type_annotation))
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(TypeId::UNKNOWN);
+                    if let Some(existing) = properties.iter_mut().find(|p| p.name == name_atom) {
+                        existing.write_type = setter_type;
+                        existing.readonly = false;
+                    } else {
+                        properties.push(PropertyInfo {
+                            name: name_atom,
+                            type_id: setter_type,
+                            write_type: setter_type,
+                            optional: false,
+                            readonly: false,
+                            is_method: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                        });
+                    }
+                }
             }
         }
 
