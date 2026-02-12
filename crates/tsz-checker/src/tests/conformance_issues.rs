@@ -187,6 +187,36 @@ interface void {}
 }
 
 #[test]
+fn test_class_extends_primitive_reports_ts2863() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class C extends number {}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2863),
+        "Expected TS2863 when class extends primitive type. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_class_implements_primitive_reports_ts2864() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class C implements number {}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2864),
+        "Expected TS2864 when class implements primitive type. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_unresolved_import_namespace_access_suppresses_ts2708() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
