@@ -76,61 +76,6 @@ fn test_no_errors(source: &str) {
     );
 }
 
-#[allow(dead_code)]
-fn test_expect_error(source: &str, expected_error_code: u32) {
-    let source = format!(
-        "// @strictFunctionTypes: true\n{}\n{}",
-        GLOBAL_TYPE_MOCKS, source
-    );
-
-    let ctx = TestContext::new();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source);
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), root, &ctx.lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    // Set lib contexts for global symbol resolution
-    if !ctx.lib_files.is_empty() {
-        let lib_contexts: Vec<crate::checker::context::LibContext> = ctx
-            .lib_files
-            .iter()
-            .map(|lib| crate::checker::context::LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-    }
-
-    checker.check_source_file(root);
-
-    let error_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == expected_error_code)
-        .count();
-
-    assert!(
-        error_count >= 1,
-        "Expected at least 1 TS{} error, got {}: {:?}",
-        expected_error_code,
-        error_count,
-        checker.ctx.diagnostics
-    );
-}
-
 /// Test that any is assignable to any type (Top type behavior)
 #[test]
 fn test_any_assignable_to_string() {

@@ -53,7 +53,6 @@ pub struct ClassES5Emitter<'a> {
     source_text: Option<&'a str>,
     indent_level: u32,
     /// Source index for source maps (currently unused in IR-based approach)
-    #[allow(dead_code)]
     source_index: u32,
     /// Mappings for source maps (currently empty in IR-based approach)
     mappings: Vec<Mapping>,

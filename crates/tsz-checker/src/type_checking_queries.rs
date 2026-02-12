@@ -29,7 +29,6 @@ impl SyntacticTruthiness {
     }
 }
 
-#[allow(dead_code)]
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Helper Functions
@@ -102,45 +101,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    /// Check if a node is inside an ambient context (declare namespace/module or .d.ts file).
-    /// Used for TS1038: 'declare' modifier cannot be used in an already ambient context.
-    pub(crate) fn is_in_ambient_context(&self, node_idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        // Check if we're in a .d.ts file
-        if self.ctx.file_name.ends_with(".d.ts") {
-            return true;
-        }
-
-        // Walk up parent chain looking for a declared namespace/module
-        let mut current = node_idx;
-        loop {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
-            let parent = ext.parent;
-            if parent.is_none() {
-                return false;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return false;
-            };
-            // Check if parent is a module/namespace with declare modifier
-            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                if let Some(module) = self.ctx.arena.get_module(parent_node) {
-                    if self.has_declare_modifier(&module.modifiers) {
-                        return true;
-                    }
-                }
-            }
-            // Stop at source file
-            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
-                return false;
-            }
-            current = parent;
-        }
     }
 
     /// Find the `declare` modifier NodeIndex in a modifier list, if present.
@@ -917,63 +877,6 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(parsed as usize)
-    }
-
-    // =========================================================================
-    // Section 34: Type Validation Utilities
-    // =========================================================================
-
-    /// Check if a type can be array-destructured.
-    /// Returns true for arrays, tuples, strings, and types with [Symbol.iterator].
-    pub(crate) fn is_array_destructurable_type(&mut self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries;
-
-        // Handle primitive types
-        if type_id == TypeId::STRING {
-            return true;
-        }
-
-        // Use type_queries for Array and Tuple detection
-        if type_queries::is_array_type(self.ctx.types, type_id) {
-            return true;
-        }
-        if type_queries::is_tuple_type(self.ctx.types, type_id) {
-            return true;
-        }
-
-        // Handle ReadonlyType by unwrapping and recursing
-        let unwrapped = type_queries::unwrap_readonly(self.ctx.types, type_id);
-        if unwrapped != type_id {
-            return self.is_array_destructurable_type(unwrapped);
-        }
-
-        // Union types: all members must be destructurable
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, type_id) {
-            return members
-                .iter()
-                .all(|&t| self.is_array_destructurable_type(t));
-        }
-
-        // Intersection types: at least one member must be array-like
-        if let Some(members) = type_queries::get_intersection_members(self.ctx.types, type_id) {
-            return members
-                .iter()
-                .any(|&t| self.is_array_destructurable_type(t));
-        }
-
-        // Object types: check if they have [Symbol.iterator] or numeric index (array-like)
-        if type_queries::is_object_type(self.ctx.types, type_id) {
-            // Check if iterable (has [Symbol.iterator]) or has numeric index signature
-            return self.is_iterable_type(type_id) || self.has_numeric_index_signature(type_id);
-        }
-
-        // Literal types: check the base type (string literals are destructurable)
-        if type_queries::is_string_literal(self.ctx.types, type_id) {
-            return true;
-        }
-
-        // Other types are not array-destructurable
-        false
     }
 
     // =========================================================================
@@ -3488,37 +3391,6 @@ impl<'a> CheckerState<'a> {
         // The expression is a variable/parameter/property with an enum type
         // (e.g., `x.toString()` where `let x: Foo`)
         true
-    }
-
-    /// Get the namespace name if the type is a namespace/module type.
-    ///
-    /// This function checks if a type is a reference to a namespace or module
-    /// and returns the namespace name if so.
-    ///
-    /// ## Returns:
-    /// - `Some(name)` if the type is a namespace/module reference
-    /// - `None` if the type is not a namespace/module
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// namespace NS { export const x = 1; }
-    /// // get_namespace_name(typeof NS) → Some("NS")
-    ///
-    /// const obj = { x: 1 };
-    /// // get_namespace_name(typeof obj) → None
-    /// ```
-    pub(crate) fn get_namespace_name(&self, type_id: TypeId) -> Option<String> {
-        // Phase 4.2: Use resolve_type_to_symbol_id instead of get_ref_symbol
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                // Check if this is a namespace/module symbol
-                if symbol.flags & (symbol_flags::MODULE | symbol_flags::NAMESPACE) != 0 {
-                    return Some(symbol.escaped_name.clone());
-                }
-            }
-        }
-
-        None
     }
 
     /// Check if a symbol is type-only (from `import type`).

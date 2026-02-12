@@ -553,22 +553,10 @@ pub struct ModuleResolver {
     resolve_json_module: bool,
     allow_arbitrary_extensions: bool,
     allow_importing_ts_extensions: bool,
-    #[allow(dead_code)] // Used by CLI validation before emit stages
-    rewrite_relative_import_extensions: bool,
     jsx: Option<JsxEmit>,
     /// Cache of resolved modules
     resolution_cache: FxHashMap<(PathBuf, String), Result<ResolvedModule, ResolutionFailure>>,
-    /// Extensions to try for TypeScript resolution
-    #[allow(dead_code)] // Infrastructure for future extension-based resolution
-    ts_extensions: Vec<&'static str>,
-    /// Extensions to try for JavaScript resolution
-    #[allow(dead_code)] // Infrastructure for future extension-based resolution
-    js_extensions: Vec<&'static str>,
-    /// Declaration extensions to try
-    #[allow(dead_code)] // Infrastructure for .d.ts resolution
-    dts_extensions: Vec<&'static str>,
     /// Custom conditions from tsconfig (for customConditions option)
-    #[allow(dead_code)] // Infrastructure for customConditions support
     custom_conditions: Vec<String>,
     /// Whether allowJs is enabled (affects extension candidates)
     allow_js: bool,
@@ -606,12 +594,8 @@ impl ModuleResolver {
             resolve_json_module: options.resolve_json_module,
             allow_arbitrary_extensions: options.allow_arbitrary_extensions,
             allow_importing_ts_extensions: options.allow_importing_ts_extensions,
-            rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             jsx: options.jsx,
             resolution_cache: FxHashMap::default(),
-            ts_extensions: vec![".ts", ".tsx", ".d.ts"],
-            js_extensions: vec![".js", ".jsx"],
-            dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
             custom_conditions: options.custom_conditions.clone(),
             allow_js: options.allow_js,
             package_type_cache: FxHashMap::default(),
@@ -633,12 +617,8 @@ impl ModuleResolver {
             resolve_json_module: false,
             allow_arbitrary_extensions: false,
             allow_importing_ts_extensions: false,
-            rewrite_relative_import_extensions: false,
             jsx: None,
             resolution_cache: FxHashMap::default(),
-            ts_extensions: vec![".ts", ".tsx", ".d.ts"],
-            js_extensions: vec![".js", ".jsx"],
-            dts_extensions: vec![".d.ts", ".d.mts", ".d.cts"],
             custom_conditions: Vec::new(),
             allow_js: false,
             package_type_cache: FxHashMap::default(),

@@ -108,10 +108,6 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) flow_cache: Option<&'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>>,
     /// Optional TypeEnvironment for resolving Lazy types during narrowing
     pub(crate) type_environment: Option<Rc<RefCell<tsz_solver::TypeEnvironment>>>,
-    /// Cache for loop mutation analysis: (LoopNodeId, SymbolId) -> is_mutated
-    /// This prevents O(N^2) complexity when checking mutations in nested loops
-    #[allow(dead_code)]
-    loop_mutation_cache: RefCell<FxHashMap<(FlowNodeId, SymbolId), bool>>,
     /// Cache for switch-reference relevance checks.
     /// Key: (switch_expr_node, reference_node) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
@@ -156,7 +152,6 @@ impl<'a> FlowAnalyzer<'a> {
             flow_graph,
             flow_cache: None,
             type_environment: None,
-            loop_mutation_cache: RefCell::new(FxHashMap::default()),
             switch_reference_cache: RefCell::new(FxHashMap::default()),
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
         }
@@ -177,7 +172,6 @@ impl<'a> FlowAnalyzer<'a> {
             flow_graph,
             flow_cache: None,
             type_environment: None,
-            loop_mutation_cache: RefCell::new(FxHashMap::default()),
             switch_reference_cache: RefCell::new(FxHashMap::default()),
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
         }
@@ -1183,44 +1177,6 @@ impl<'a> FlowAnalyzer<'a> {
         cache.extend(local_cache);
 
         final_result
-    }
-
-    /// Check if this is a direct assignment to a reference (e.g., `x = value`)
-    /// as opposed to a destructuring assignment (e.g., `[x] = [value]`)
-    #[allow(dead_code)]
-    pub(crate) fn is_direct_assignment_to_reference(
-        &self,
-        assignment_node: NodeIndex,
-        target: NodeIndex,
-    ) -> bool {
-        let Some(node) = self.arena.get(assignment_node) else {
-            return false;
-        };
-
-        // Check if it's a binary expression (x = value)
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(bin) = self.arena.get_binary_expr(node)
-            && self.is_assignment_operator(bin.operator_token)
-        {
-            // Check if the left side is directly the target (not a destructuring pattern)
-            let left = self.skip_parenthesized(bin.left);
-            let target = self.skip_parenthesized(target);
-            return self.is_matching_reference(left, target);
-        }
-
-        // Increment/decrement operators (x++, --x) are also direct assignments
-        if (node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
-            && let Some(unary) = self.arena.get_unary_expr(node)
-            && (unary.operator == SyntaxKind::PlusPlusToken as u16
-                || unary.operator == SyntaxKind::MinusMinusToken as u16)
-        {
-            let operand = self.skip_parenthesized(unary.operand);
-            let target = self.skip_parenthesized(target);
-            return self.is_matching_reference(operand, target);
-        }
-
-        false
     }
 
     /// Widen literal types to their primitive types for array destructuring.
@@ -2599,171 +2555,6 @@ impl<'a> FlowAnalyzer<'a> {
         // For other node types, check the node's own flags
         let flags = decl_node.flags as u32;
         (flags & node_flags::CONST) != 0
-    }
-
-    /// Check if a symbol is mutated within a loop body.
-    ///
-    /// This performs a backward traversal from the loop's back-edges to determine
-    /// if any assignment targets the given symbol within the loop.
-    ///
-    /// Used to implement selective widening: only reset narrowing at loop headers
-    /// if the variable is actually mutated in the loop body.
-    ///
-    /// Results are cached to prevent O(N^2) complexity.
-    #[allow(dead_code)]
-    fn is_symbol_mutated_in_loop(&self, loop_id: FlowNodeId, sym_id: SymbolId) -> bool {
-        // Check cache first
-        if let Some(&is_mutated) = self.loop_mutation_cache.borrow().get(&(loop_id, sym_id)) {
-            return is_mutated;
-        }
-
-        use std::collections::VecDeque;
-
-        let Some(loop_flow) = self.binder.flow_nodes.get(loop_id) else {
-            return false;
-        };
-
-        // Start traversal from all back-edges (antecedent[1..])
-        // antecedent[0] is the entry flow, antecedent[1..] are back-edges from loop body
-        let back_edges: Vec<_> = loop_flow.antecedent.iter().skip(1).copied().collect();
-
-        if back_edges.is_empty() {
-            return false; // No back-edges means loop body never executes
-        }
-
-        let mut worklist: VecDeque<FlowNodeId> = back_edges.into_iter().collect();
-        let mut visited: FxHashSet<FlowNodeId> = FxHashSet::default();
-        let mut found_mutation = false;
-
-        while let Some(current_flow) = worklist.pop_front() {
-            if current_flow == loop_id {
-                // Reached the loop header - stop traversal
-                continue;
-            }
-
-            if !visited.insert(current_flow) {
-                continue; // Already processed
-            }
-
-            let Some(flow) = self.binder.flow_nodes.get(current_flow) else {
-                continue;
-            };
-
-            // Check if this node mutates the symbol
-            if flow.has_any_flags(flow_flags::ASSIGNMENT) {
-                if self.node_mutates_symbol(flow.node, sym_id) {
-                    found_mutation = true;
-                    break;
-                }
-            }
-
-            // Add antecedents to worklist for further traversal
-            for &ant in &flow.antecedent {
-                if ant != loop_id && !visited.contains(&ant) {
-                    worklist.push_back(ant);
-                }
-            }
-        }
-
-        // Cache the result
-        self.loop_mutation_cache
-            .borrow_mut()
-            .insert((loop_id, sym_id), found_mutation);
-
-        found_mutation
-    }
-
-    /// Check if a node mutates a specific symbol.
-    ///
-    /// This checks for direct assignments (reassignments) to the symbol.
-    /// Note: Array method calls like push() do NOT mutate the variable binding,
-    /// only the array contents. CFA tracks variable reassignments, not object mutations.
-    #[allow(dead_code)]
-    fn node_mutates_symbol(&self, node_idx: NodeIndex, sym_id: SymbolId) -> bool {
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-
-        // Check for direct assignment (binary expression with assignment operator)
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if self.assignment_targets_symbol(node_idx, sym_id) {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check if an assignment node targets a specific symbol.
-    ///
-    /// This is a SymbolId-aware version of assignment_targets_reference that
-    /// checks if the left side of an assignment refers to the given symbol.
-    #[allow(dead_code)]
-    fn assignment_targets_symbol(&self, node_idx: NodeIndex, sym_id: SymbolId) -> bool {
-        let node_idx = self.skip_parenthesized(node_idx);
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-
-        // Check if this node directly references the symbol
-        if let Some(node_sym) = self.binder.resolve_identifier(self.arena, node_idx) {
-            if node_sym == sym_id {
-                return true;
-            }
-        }
-
-        // Handle binary expressions (assignment)
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = self.arena.get_binary_expr(node) {
-                if self.is_assignment_operator(bin.operator_token) {
-                    return self.assignment_targets_symbol(bin.left, sym_id);
-                }
-            }
-        }
-
-        // Handle property/element access (e.g., obj.prop = value, obj[index] = value)
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            if let Some(access) = self.arena.get_access_expr(node) {
-                // Check if the base object is our symbol
-                if let Some(base_sym) = self
-                    .binder
-                    .resolve_identifier(self.arena, access.expression)
-                {
-                    if base_sym == sym_id {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        // Handle destructuring patterns
-        if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-        {
-            // Recursively check pattern elements
-            if let Some(pattern) = self.arena.get_binding_pattern(node) {
-                for &elem in &pattern.elements.nodes {
-                    if elem.is_none() {
-                        continue;
-                    }
-                    if self.assignment_targets_symbol(elem, sym_id) {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        if node.kind == syntax_kind_ext::BINDING_ELEMENT {
-            if let Some(binding) = self.arena.get_binding_element(node) {
-                if self.assignment_targets_symbol(binding.name, sym_id) {
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 
     /// Check if a type is a unit type (literal, null, undefined, or unique symbol).

@@ -597,7 +597,6 @@ fn resolve_compiler_options_no_lib_disables_lib_loading() {
     assert!(!resolved.lib_is_default);
 }
 
-#[allow(dead_code)]
 fn canonicalize_or_owned(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }

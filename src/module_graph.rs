@@ -9,7 +9,7 @@
 
 use crate::exports::ExportTracker;
 use crate::imports::ImportTracker;
-use crate::module_resolver::{ModuleResolver, ResolutionFailure, ResolvedModule};
+use crate::module_resolver::{ResolutionFailure, ResolvedModule};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -117,9 +117,6 @@ pub struct ModuleGraph {
     entry_points: Vec<ModuleId>,
     /// Detected circular dependencies
     circular_dependencies: Vec<CircularDependency>,
-    /// Module resolver (optional)
-    #[allow(dead_code)] // Infrastructure for module resolution
-    resolver: Option<ModuleResolver>,
 }
 
 impl ModuleGraph {
@@ -132,20 +129,6 @@ impl ModuleGraph {
             edges: Vec::new(),
             entry_points: Vec::new(),
             circular_dependencies: Vec::new(),
-            resolver: None,
-        }
-    }
-
-    /// Create a module graph with a resolver
-    pub fn with_resolver(resolver: ModuleResolver) -> Self {
-        Self {
-            modules: FxHashMap::default(),
-            path_to_id: FxHashMap::default(),
-            next_id: 0,
-            edges: Vec::new(),
-            entry_points: Vec::new(),
-            circular_dependencies: Vec::new(),
-            resolver: Some(resolver),
         }
     }
 

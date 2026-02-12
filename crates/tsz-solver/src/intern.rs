@@ -22,7 +22,7 @@
 
 use crate::def::DefId;
 use crate::types::*;
-use crate::visitor::{is_literal_type, is_object_like_type, is_unit_type};
+use crate::visitor::{is_literal_type, is_unit_type};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet, FxHasher};
@@ -1905,18 +1905,6 @@ impl TypeInterner {
     /// Uses the visitor pattern from solver::visitor.
     fn is_literal(&self, type_id: TypeId) -> bool {
         is_literal_type(self, type_id)
-    }
-
-    /// Check if a type is object-like (object, array, tuple, function, etc.).
-    /// Uses the visitor pattern from solver::visitor.
-    #[allow(dead_code)] // Infrastructure for type introspection
-    fn is_object_like_type(&self, type_id: TypeId) -> bool {
-        // Note: The visitor's is_object_like_type doesn't include functions
-        // This version explicitly includes functions for object-likeness
-        match self.lookup(type_id) {
-            Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_)) => true,
-            _ => is_object_like_type(self, type_id),
-        }
     }
 
     fn intersection_has_disjoint_object_literals(&self, members: &[TypeId]) -> bool {

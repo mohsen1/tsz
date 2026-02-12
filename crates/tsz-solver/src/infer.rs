@@ -910,7 +910,6 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Get the interner reference
-    #[allow(dead_code)]
     pub fn interner(&self) -> &dyn TypeDatabase {
         self.interner
     }

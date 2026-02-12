@@ -1346,9 +1346,6 @@ pub struct BinderTypeDatabase<'a> {
     pub query_cache: &'a QueryCache<'a>,
     pub binder: &'a tsz_binder::BinderState,
     pub type_env: Rc<RefCell<crate::subtype::TypeEnvironment>>,
-    /// Cached array base type params (to avoid RefCell lifetime issues)
-    #[allow(dead_code)]
-    cached_array_base_params: std::sync::Mutex<Option<Box<[TypeParamInfo]>>>,
 }
 
 impl<'a> BinderTypeDatabase<'a> {
@@ -1361,7 +1358,6 @@ impl<'a> BinderTypeDatabase<'a> {
             query_cache,
             binder,
             type_env,
-            cached_array_base_params: std::sync::Mutex::new(None),
         }
     }
 

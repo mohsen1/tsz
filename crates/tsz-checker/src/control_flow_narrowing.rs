@@ -11,15 +11,13 @@ use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    LiteralValue, NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate,
-    TypePredicateTarget, TypeofKind,
+    NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget, TypeofKind,
     type_queries::{
-        ConstructorInstanceKind, FalsyComponentKind, LiteralValueKind, NonObjectKind,
-        PredicateSignatureKind, PropertyPresenceKind, TypeParameterConstraintKind,
-        UnionMembersKind, classify_for_constructor_instance, classify_for_falsy_component,
-        classify_for_literal_value, classify_for_non_object, classify_for_predicate_signature,
-        classify_for_property_presence, classify_for_type_parameter_constraint,
-        classify_for_union_members,
+        ConstructorInstanceKind, LiteralValueKind, NonObjectKind, PredicateSignatureKind,
+        PropertyPresenceKind, TypeParameterConstraintKind, UnionMembersKind,
+        classify_for_constructor_instance, classify_for_literal_value, classify_for_non_object,
+        classify_for_predicate_signature, classify_for_property_presence,
+        classify_for_type_parameter_constraint, classify_for_union_members,
     },
 };
 
@@ -1225,85 +1223,6 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn narrow_to_falsy(&self, type_id: TypeId) -> TypeId {
-        if type_id == TypeId::ANY {
-            return type_id;
-        }
-        // For UNKNOWN, we can narrow to the union of all falsy types
-        // TypeScript allows narrowing unknown through type guards
-        if type_id == TypeId::UNKNOWN {
-            return self.interner.union(vec![
-                TypeId::NULL,
-                TypeId::UNDEFINED,
-                self.interner.literal_boolean(false),
-                self.interner.literal_string(""),
-                self.interner.literal_number(0.0),
-                self.interner.literal_bigint("0"),
-            ]);
-        }
-
-        match self.falsy_component(type_id) {
-            Some(falsy) => falsy,
-            None => TypeId::NEVER,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn falsy_component(&self, type_id: TypeId) -> Option<TypeId> {
-        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
-            return Some(type_id);
-        }
-        if type_id == TypeId::BOOLEAN {
-            return Some(self.interner.literal_boolean(false));
-        }
-        if type_id == TypeId::STRING {
-            return Some(self.interner.literal_string(""));
-        }
-        if type_id == TypeId::NUMBER {
-            return Some(self.interner.literal_number(0.0));
-        }
-        if type_id == TypeId::BIGINT {
-            return Some(self.interner.literal_bigint("0"));
-        }
-
-        match classify_for_falsy_component(self.interner, type_id) {
-            FalsyComponentKind::Literal(literal) => {
-                if self.literal_is_falsy(&literal) {
-                    Some(type_id)
-                } else {
-                    None
-                }
-            }
-            FalsyComponentKind::Union(members) => {
-                let mut falsy_members = Vec::new();
-                for member in members {
-                    if let Some(falsy) = self.falsy_component(member) {
-                        falsy_members.push(falsy);
-                    }
-                }
-                match falsy_members.len() {
-                    0 => None,
-                    1 => Some(falsy_members[0]),
-                    _ => Some(self.interner.union(falsy_members)),
-                }
-            }
-            FalsyComponentKind::TypeParameter => Some(type_id),
-            FalsyComponentKind::None => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn literal_is_falsy(&self, literal: &LiteralValue) -> bool {
-        match literal {
-            LiteralValue::Boolean(false) => true,
-            LiteralValue::Number(value) => value.0 == 0.0,
-            LiteralValue::String(atom) => self.interner.resolve_atom(*atom).is_empty(),
-            LiteralValue::BigInt(atom) => self.interner.resolve_atom(*atom) == "0",
-            _ => false,
-        }
-    }
-
     pub(crate) fn strip_numeric_separators<'b>(&self, text: &'b str) -> Cow<'b, str> {
         if !text.as_bytes().contains(&b'_') {
             return Cow::Borrowed(text);
@@ -2011,7 +1930,6 @@ impl<'a> FlowAnalyzer<'a> {
     /// // isString(x) -> Some(TypeGuard::Predicate { ... }, x_node, false)
     /// // obj?.isString(x) -> Some(TypeGuard::Predicate { ... }, x_node, true)
     /// ```
-    #[allow(dead_code)]
     pub(crate) fn extract_type_guard(
         &self,
         condition: NodeIndex,
