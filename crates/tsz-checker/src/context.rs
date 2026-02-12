@@ -332,6 +332,10 @@ pub struct CheckerContext<'a> {
     /// Uses RefCell to allow tracking from &self methods (e.g., resolve_identifier_symbol).
     pub referenced_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
 
+    /// Set of symbols that have been written to (used for write-only variable detection).
+    /// Uses RefCell to allow tracking from &self methods.
+    pub written_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
+
     // --- Diagnostics ---
     /// Whether the source file has parse errors.
     /// Set by the driver before type checking to suppress noise-sensitive diagnostics
@@ -633,6 +637,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            written_symbols: std::cell::RefCell::new(FxHashSet::default()),
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
@@ -744,6 +749,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            written_symbols: std::cell::RefCell::new(FxHashSet::default()),
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
@@ -858,6 +864,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            written_symbols: std::cell::RefCell::new(FxHashSet::default()),
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
@@ -971,6 +978,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: cache.symbol_dependencies,
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            written_symbols: std::cell::RefCell::new(FxHashSet::default()),
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
@@ -1097,6 +1105,7 @@ impl<'a> CheckerContext<'a> {
             symbol_dependencies: parent.symbol_dependencies.clone(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            written_symbols: std::cell::RefCell::new(FxHashSet::default()),
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
