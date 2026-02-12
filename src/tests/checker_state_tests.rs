@@ -4993,7 +4993,6 @@ c.ro = "error: lhs of assignment can't be readonly";
 }
 
 #[test]
-#[ignore = "Stack overflow - infinite recursion in lib context handling"]
 fn test_readonly_element_access_assignment_2540() {
     // Error 2540: Cannot assign to 'name' because it is a read-only property.
     use crate::parser::ParserState;
@@ -5986,7 +5985,6 @@ c.bar;
 }
 
 #[test]
-#[ignore = "TODO: Computed property names with 'this' for static members"]
 fn test_ts2339_computed_name_this_missing_static() {
     use crate::parser::ParserState;
 
@@ -6028,7 +6026,6 @@ class C {
 }
 
 #[test]
-#[ignore = "TODO: Computed property names with 'this' in class expressions"]
 fn test_ts2339_computed_name_this_in_class_expression() {
     use crate::parser::ParserState;
 
@@ -19501,7 +19498,6 @@ const result = new AdvancedBuilder()
 ///
 /// Interfaces can also use `this` type for fluent patterns.
 #[test]
-#[ignore = "TODO: pre-existing failure - this type in interface covariant pattern"]
 fn test_covariant_this_interface_pattern() {
     use crate::parser::ParserState;
 
