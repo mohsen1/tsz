@@ -5588,7 +5588,6 @@ fn test_contextual_typing_for_object_properties() {
 }
 
 #[test]
-#[ignore = "TODO: Lazy contextual type resolution conflicts with contravariance checking"]
 fn test_contextual_property_type_infers_callback_param() {
     use crate::parser::ParserState;
 
