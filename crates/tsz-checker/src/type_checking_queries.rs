@@ -2434,7 +2434,14 @@ impl<'a> CheckerState<'a> {
                         .map(|arc| arc.as_ref())
                         .unwrap_or(fallback_arena);
                     let value_lowering = lowering.with_arena(value_arena);
-                    lib_types.push(value_lowering.lower_type(decl_idx));
+                    let val_type = value_lowering.lower_type(decl_idx);
+                    // Only include non-ERROR types. Value declaration lowering can fail
+                    // when type references (e.g., `PromiseConstructor`) can't be resolved
+                    // during TypeLowering. Including ERROR in the lib_types vector would
+                    // cause intersection2 to collapse a valid interface type to ERROR.
+                    if val_type != TypeId::ERROR {
+                        lib_types.push(val_type);
+                    }
                 }
             }
         }
