@@ -856,13 +856,17 @@ impl<'a> CheckerState<'a> {
             expr_checker.compute_type_uncached(idx)
         };
 
-        // If ExpressionChecker handled it, return the result
-        if expr_result != TypeId::DELEGATE {
-            return expr_result;
-        }
+        let result = if expr_result != TypeId::DELEGATE {
+            expr_result
+        } else {
+            // ExpressionChecker returned DELEGATE - use full CheckerState implementation
+            self.compute_type_of_node_complex(idx)
+        };
 
-        // ExpressionChecker returned DELEGATE - use full CheckerState implementation
-        self.compute_type_of_node_complex(idx)
+        // Validate regex literal flags against compilation target (TS1501)
+        self.validate_regex_literal_flags(idx);
+
+        result
     }
 
     /// Complex type computation that needs full CheckerState context.

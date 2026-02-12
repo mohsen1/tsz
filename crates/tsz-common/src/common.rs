@@ -72,6 +72,16 @@ impl ScriptTarget {
         (self as u8) >= (ScriptTarget::ES2020 as u8)
     }
 
+    /// Check if this target supports ES2018+ features (async generators, dotAll regex, etc.)
+    pub fn supports_es2018(self) -> bool {
+        (self as u8) >= (ScriptTarget::ES2018 as u8)
+    }
+
+    /// Check if this target supports ES2022+ features (class fields, regex 'd' flag, etc.)
+    pub fn supports_es2022(self) -> bool {
+        (self as u8) >= (ScriptTarget::ES2022 as u8)
+    }
+
     /// Check if this is an ES5 or earlier target (requires downleveling)
     pub fn is_es5(self) -> bool {
         (self as u8) <= (ScriptTarget::ES5 as u8)
