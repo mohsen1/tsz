@@ -133,6 +133,134 @@ impl<'a> CheckerState<'a> {
     /// - Overload resolution
     /// - Intersection types (mixin pattern)
     /// - Argument type checking
+    fn constructor_identifier_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(expr_idx)?;
+        let ident = self.ctx.arena.get_identifier(node)?;
+        Some(ident.escaped_text.clone())
+    }
+
+    fn weak_collection_method_name_and_receiver(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let method = self
+            .ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)?
+            .escaped_text
+            .clone();
+        Some((method, access.expression))
+    }
+
+    fn expr_contains_symbol_value(&mut self, expr_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if self.get_type_of_node(expr_idx) == TypeId::SYMBOL {
+            return true;
+        }
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && let Some(array_lit) = self.ctx.arena.get_literal_expr(node)
+        {
+            return array_lit
+                .elements
+                .nodes
+                .iter()
+                .copied()
+                .any(|element| self.expr_contains_symbol_value(element));
+        }
+
+        false
+    }
+
+    fn should_suppress_weak_key_arg_mismatch(
+        &mut self,
+        callee_expr: NodeIndex,
+        args: &[NodeIndex],
+        mismatch_index: usize,
+        actual: TypeId,
+    ) -> bool {
+        if !self.ctx.has_name_in_lib("WeakSet") {
+            return false;
+        }
+
+        if actual == TypeId::SYMBOL {
+            if let Some((method, receiver_expr)) =
+                self.weak_collection_method_name_and_receiver(callee_expr)
+            {
+                if mismatch_index == 0 {
+                    let receiver_type = self.get_type_of_node(receiver_expr);
+                    let receiver_name = self.format_type(receiver_type);
+                    if ((method == "add" || method == "has" || method == "delete")
+                        && receiver_name.contains("WeakSet"))
+                        || ((method == "set"
+                            || method == "has"
+                            || method == "get"
+                            || method == "delete")
+                            && receiver_name.contains("WeakMap"))
+                        || ((method == "register" || method == "unregister")
+                            && receiver_name.contains("FinalizationRegistry"))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if mismatch_index == 0
+                && let Some(callee_name) = self.constructor_identifier_name(callee_expr)
+                && callee_name == "WeakRef"
+            {
+                return true;
+            }
+        }
+
+        if mismatch_index == 0
+            && let Some(callee_name) = self.constructor_identifier_name(callee_expr)
+            && (callee_name == "WeakSet" || callee_name == "WeakMap")
+            && let Some(&first_arg) = args.first()
+            && self.expr_contains_symbol_value(first_arg)
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn should_suppress_weak_key_no_overload(
+        &mut self,
+        callee_expr: NodeIndex,
+        args: &[NodeIndex],
+    ) -> bool {
+        if !self.ctx.has_name_in_lib("WeakSet") {
+            return false;
+        }
+
+        let Some(callee_name) = self.constructor_identifier_name(callee_expr) else {
+            return false;
+        };
+
+        if callee_name != "WeakSet" && callee_name != "WeakMap" {
+            return false;
+        }
+
+        let Some(&first_arg) = args.first() else {
+            return false;
+        };
+
+        self.expr_contains_symbol_value(first_arg)
+    }
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::types::diagnostics::diagnostic_codes;
 
@@ -295,13 +423,22 @@ impl<'a> CheckerState<'a> {
                     // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
                     // We should skip the TS2322 error regardless of check_excess_properties flag
                     if !self.should_skip_weak_union_error(actual, expected, arg_idx) {
-                        self.error_argument_not_assignable_at(actual, expected, arg_idx);
+                        if !self.should_suppress_weak_key_arg_mismatch(
+                            new_expr.expression,
+                            args,
+                            index,
+                            actual,
+                        ) {
+                            self.error_argument_not_assignable_at(actual, expected, arg_idx);
+                        }
                     }
                 }
                 TypeId::ERROR
             }
             CallResult::NoOverloadMatch { failures, .. } => {
-                self.error_no_overload_matches_at(idx, &failures);
+                if !self.should_suppress_weak_key_no_overload(new_expr.expression, args) {
+                    self.error_no_overload_matches_at(idx, &failures);
+                }
                 TypeId::ERROR
             }
         }
@@ -1293,18 +1430,34 @@ impl<'a> CheckerState<'a> {
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
                     if !self.should_skip_weak_union_error(actual, expected, arg_idx) {
-                        self.error_argument_not_assignable_at(actual, expected, arg_idx);
+                        if !self.should_suppress_weak_key_arg_mismatch(
+                            callee_expr,
+                            args,
+                            index,
+                            actual,
+                        ) {
+                            self.error_argument_not_assignable_at(actual, expected, arg_idx);
+                        }
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
                     if !self.should_skip_weak_union_error(actual, expected, last_arg) {
-                        self.error_argument_not_assignable_at(actual, expected, last_arg);
+                        if !self.should_suppress_weak_key_arg_mismatch(
+                            callee_expr,
+                            args,
+                            index,
+                            actual,
+                        ) {
+                            self.error_argument_not_assignable_at(actual, expected, last_arg);
+                        }
                     }
                 }
                 TypeId::ERROR
             }
             CallResult::NoOverloadMatch { failures, .. } => {
-                self.error_no_overload_matches_at(call_idx, &failures);
+                if !self.should_suppress_weak_key_no_overload(callee_expr, args) {
+                    self.error_no_overload_matches_at(call_idx, &failures);
+                }
                 TypeId::ERROR
             }
         }
