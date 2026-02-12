@@ -2564,8 +2564,8 @@ impl ParserState {
                 if seen_static {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        "'static' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
                 // TS1029: static must come after accessibility, before certain others
@@ -2582,8 +2582,8 @@ impl ParserState {
                 if seen_abstract {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        "'abstract' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
                 if seen_readonly || seen_override || seen_accessor || seen_async {
@@ -2599,8 +2599,8 @@ impl ParserState {
                 if seen_readonly {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        "'readonly' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
                 if seen_override || seen_accessor || seen_async {
@@ -2616,8 +2616,8 @@ impl ParserState {
                 if seen_override {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        "'override' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
                 if seen_accessor || seen_async {
@@ -2633,8 +2633,8 @@ impl ParserState {
                 if seen_accessor {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        "'accessor' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
                 if seen_async {
@@ -2650,8 +2650,8 @@ impl ParserState {
                 if seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
-                        "Unexpected keyword or identifier.",
-                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        "'async' modifier already seen.",
+                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
                 seen_async = true;
