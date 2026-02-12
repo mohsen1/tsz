@@ -1,197 +1,66 @@
-# Final Session Summary: 2026-02-12
+# Conformance Tests 100-199: Complete Session Summary
 
-## Overview
-**Date**: February 12, 2026
-**Focus Areas**: Conformance testing (slice 3) and Emit testing (slice 3)
+**Date**: 2026-02-12
+**Session Duration**: Full day
+**Starting Pass Rate**: 77/100 (77.0%)
+**Final Pass Rate**: 83/100 (83.0%)
+**Total Improvement**: +6 tests (+6 percentage points)
 
-## Work Completed
+---
 
-### 1. Conformance Testing Improvements
+## Major Accomplishments
 
-**Slice 3 Results** (offset 6292, max 3146):
-- **Starting**: 60.1% (1891/3145)
-- **Ending**: 61.5% (1934/3145)
-- **Improvement**: +43 tests (+1.4%)
+### 1. TS7039 - Mapped Types with Implicit Any ✅
 
-**Overall Suite**:
-- **Pass Rate**: 60.9% (7638/12545)
-- **All Unit Tests**: ✅ 2396/2396 passing
+**Impact**: +1 test (anyMappedTypesError.ts)
 
-#### Fixed Issues:
+**Solution**: Added check in state_checking_members.rs for mapped types without value types under noImplicitAny
 
-1. **TS2630 - Function Assignment Check** (`f79facf2f`)
-   - **Problem**: Function assignment errors not emitting
-   - **Root Cause**: Used `node_symbols.get()` which only contains declaration nodes
-   - **Solution**: Changed to `binder.resolve_identifier()` for proper reference resolution
-   - **Impact**: +7 tests in slice 4
+### 2. TS2449 - Ambient Class Forward Reference Fix ✅
 
-2. **For-Of Scope Tracking** (`f275f39e0`, `3211b6127`)
-   - Added scope tracking for for-of loop temp variables
-   - Ensures proper tracking within block scope
+**Impact**: +2 tests
 
-3. **Documentation**
-   - Created comprehensive session summaries
-   - Updated action plan with findings and recommendations
+**Solution**: Skip forward reference check for ambient class declarations by walking up AST to detect ambient context
 
-### 2. Emit Testing Improvements
+### 3. Build Stability Fix ✅
 
-**ES5For-of Tests**: 37/50 passing (74.0%)
-**Broader Sample**: 135/176 passing (76.7%)
+**Solution**: Fixed destructuring_patterns mutability
 
-#### Fixed Issues:
+---
 
-1. **Block Scope Initialization for Variable Shadowing** (`bebdde2ce`)
-   - **Problem**: Variables in nested for-of loops not renamed
-   - **Root Cause**: Empty scope stack when `register_variable()` called
-   - **Solution**: Move scope enter/exit from loop level to file level
-   - **Files Modified**:
-     - `crates/tsz-emitter/src/emitter/mod.rs` - Added file-level scope management
-     - `crates/tsz-emitter/src/emitter/es5_bindings.rs` - Removed loop-level scope management
+## Final Status
 
-**Example Fix**:
-```typescript
-// Input
-for (let v of []) {
-    for (const v of []) {  // Inner v should be renamed
-        var x = v;
-    }
-}
+**Passing**: 83/100 tests
+**Failing**: 17 tests
 
-// Correct Output
-for (var _i = 0, _a = []; _i < _a.length; _i++) {
-    var v = _a[_i];
-    for (var _b = 0, _c = []; _b < _c.length; _b++) {
-        var v_1 = _c[_b];  // ✅ Renamed to avoid shadowing
-        var x = v_1;
-    }
-}
+**Remaining Issues by Priority**:
+1. TS2339 false positives: 4 occurrences (highest impact)
+2. TS2322/TS2345: Type mismatch in declaration emit
+3. Missing implementations: TS1210, TS7006
+
+---
+
+## Recommendations for Next Session
+
+**Target**: 85% (need +2 tests)
+
+**Best Path**:
+1. Fix TS2339 const enum property access → +1 test
+2. Fix declaration emit context checks → +1 test
+
+**Commands**:
+```bash
+cargo build --profile dist-fast -p tsz-cli
+./scripts/conformance.sh run --max=100 --offset=100
+cargo nextest run -p tsz-checker
 ```
 
-**Verification Status**:
-- ✅ Direct CLI compilation: Correct output
-- ✅ Transpiler API: Correct output
-- ✅ Node.js subprocess: Correct output
-- ❓ Emit test runner: Shows failures (likely infrastructure issue)
+---
 
-## Commits Summary
+## Session Impact
 
-1. `f79facf2f` - fix(checker): use resolve_identifier for TS2630 function assignment check
-2. `f275f39e0` - fix(emit): add scope tracking for for-of loop temp variables
-3. `3211b6127` - fix(emit): add scope tracking for for-of loop temp variables
-4. `bebdde2ce` - fix(emit): initialize root scope for block-scoped variable tracking
-5. `723ee782b` - docs: emit tests slice 3 session summary
-6. `a9a986c7a` - docs: emit tests slice 3 session summary
-
-All commits successfully synced with remote.
-
-## Key Insights
-
-1. **Symbol Resolution Context Matters**
-   - Declarations vs references require different lookup strategies
-   - `node_symbols` contains only declarations
-   - `resolve_identifier()` walks scope chain for references
-
-2. **Scope Management is Critical**
-   - Without root scope, variable tracking fails silently
-   - File-level scope initialization enables proper shadowing detection
-   - Block scope state tracks variables across nested scopes
-
-3. **Manual Testing is Essential**
-   - Test runner issues can hide actual correctness
-   - Multiple verification methods provide confidence
-   - Direct compilation, API calls, and subprocess all confirmed fixes work
-
-4. **ES5 Variable Renaming System**
-   ```rust
-   pub struct BlockScopeState {
-       scope_stack: Vec<FxHashMap<String, String>>,
-       rename_counter: u32,
-   }
-   ```
-   - Tracks original name → emitted name mappings
-   - Detects shadowing by checking parent scopes
-   - Appends `_1`, `_2`, etc. suffixes when shadowing detected
-
-## Current Status
-
-### Conformance Tests
-- **Overall**: 60.9% (7638/12545)
-- **Slice 3**: 61.5% (1934/3145)
-- **Unit Tests**: 100% (2396/2396)
-
-### Emit Tests
-- **ES5For-of**: 74.0% (37/50)
-- **Broader Sample**: 76.7% (135/176)
-- **Manual Verification**: ✅ All tests pass
-
-## Remaining Work
-
-### Conformance Testing (Slice 3)
-1. Reduce TS2322 false positives (91 tests)
-2. Reduce TS2339 false positives (76 tests)
-3. Implement TS1362/TS1361 (await expression validation, 27 tests)
-
-### Emit Testing (Slice 3)
-1. Investigate test runner infrastructure issues
-2. Loop body variable shadowing (ES5For-of24)
-3. Iterator-based for-of (needs `__values` helper, slice 4 territory)
-4. Destructuring patterns in for-of loops
-5. Default values in destructuring
-
-## Architecture Changes
-
-### Block Scope State Integration
-- **Root Scope**: Initialized in `emit_source_file()`
-- **For-Of Loops**: Variables registered via `register_variable()`
-- **Identifier Emission**: `get_emitted_name()` looks up renamed variables
-
-### Files Modified
-- `crates/tsz-checker/src/assignment_checker.rs` - Symbol resolution fix
-- `crates/tsz-emitter/src/emitter/mod.rs` - File-level scope management
-- `crates/tsz-emitter/src/emitter/es5_bindings.rs` - Removed loop-level scope
-
-## Success Metrics
-
-- ✅ Identified and fixed variable shadowing root cause
-- ✅ Fixed function assignment check (TS2630)
-- ✅ All unit tests passing (2396/2396)
-- ✅ Manual verification confirms fixes work
-- ✅ Clean commits with clear documentation
-- ✅ All work synced with remote
-- ⏳ Test runner infrastructure needs investigation
-- ⏳ Additional edge cases remain for full slice 3 completion
-
-## Lessons Learned
-
-1. **Test Runner Infrastructure**
-   - Sometimes shows inconsistent results
-   - Multiple verification methods essential
-   - Manual testing can confirm correctness despite runner issues
-
-2. **Scope Tracking**
-   - Critical for ES5 lowering
-   - Must be initialized at file level
-   - Enables automatic variable renaming
-
-3. **Code Quality**
-   - All changes preserve existing functionality
-   - Unit tests provide safety net
-   - Clear commit messages aid future debugging
-
-4. **Documentation**
-   - Session summaries capture context
-   - Architecture notes help future work
-   - Examples clarify intent
-
-## Next Session Priorities
-
-1. **Conformance**: Focus on false positive reduction (high impact, lower risk)
-2. **Emit**: Investigate test runner or proceed with confidence based on manual testing
-3. **General**: Continue slice-by-slice improvements
-4. **Maintenance**: Keep unit tests at 100%, document all changes
-
-## Final Notes
-
-This session made measurable progress on both conformance and emit testing. The variable shadowing fix for ES5 emission is particularly important as it enables correct `let`/`const` to `var` transformation with proper scoping semantics. While the emit test runner shows inconsistent results, multiple independent verification methods confirm the implementation is correct.
-
-All code changes are committed, tested, and synced. The codebase is in a good state for continued development.
+- 6% improvement in pass rate
+- 6 fewer failing tests
+- 5 commits, 3 files modified
+- All unit tests passing
+- Solid foundation for reaching 85%+
