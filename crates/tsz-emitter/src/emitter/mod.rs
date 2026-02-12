@@ -1409,6 +1409,9 @@ impl<'a> Printer<'a> {
             k if k == SyntaxKind::StringLiteral as u16 => {
                 self.emit_string_literal(node);
             }
+            k if k == SyntaxKind::RegularExpressionLiteral as u16 => {
+                self.emit_regex_literal(node);
+            }
             k if k == SyntaxKind::TrueKeyword as u16 => {
                 self.write("true");
             }
