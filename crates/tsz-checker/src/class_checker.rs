@@ -424,25 +424,40 @@ impl<'a> CheckerState<'a> {
                 let member_type_str = self.format_type(member_type);
                 let base_type_str = self.format_type(base_type);
 
-                self.error_at_node(
-                    member_name_idx,
-                    &format!(
-                        "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
-                        member_name, derived_class_name, base_class_name
-                    ),
-                    diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                );
-
-                if let Some((pos, end)) = self.get_node_span(member_name_idx) {
-                    self.error(
-                        pos,
-                        end - pos,
-                        format!(
-                            "Type '{}' is not assignable to type '{}'.",
-                            member_type_str, base_type_str
+                // TS2417: Static members use different error message and code
+                // TS2416: Instance members use standard property incompatibility error
+                if is_static {
+                    // TS2417: Class static side '{0}' incorrectly extends base class static side '{1}'.
+                    self.error_at_node(
+                        member_name_idx,
+                        &format!(
+                            "Class static side '{}' incorrectly extends base class static side '{}'.",
+                            derived_class_name, base_class_name
+                        ),
+                        diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
+                    );
+                } else {
+                    // TS2416: Instance member incompatibility
+                    self.error_at_node(
+                        member_name_idx,
+                        &format!(
+                            "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
+                            member_name, derived_class_name, base_class_name
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
+
+                    if let Some((pos, end)) = self.get_node_span(member_name_idx) {
+                        self.error(
+                            pos,
+                            end - pos,
+                            format!(
+                                "Type '{}' is not assignable to type '{}'.",
+                                member_type_str, base_type_str
+                            ),
+                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                        );
+                    }
                 }
             }
         }
