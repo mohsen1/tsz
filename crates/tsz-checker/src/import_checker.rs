@@ -1121,6 +1121,22 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // TS2439: Ambient modules cannot use relative imports
+                if containing_module_name.is_some() {
+                    if let Some(literal) = self.ctx.arena.get_literal(ref_node) {
+                        let imported_module = &literal.text;
+                        // Check if this is a relative import (starts with ./ or ../)
+                        if imported_module.starts_with("./") || imported_module.starts_with("../") {
+                            self.error_at_node(
+                                import.module_specifier,
+                                diagnostic_messages::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
+                                diagnostic_codes::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
+                            );
+                            // Don't return - let TS2307 also be emitted for module resolution
+                        }
+                    }
+                }
+
                 // TS2303: Check for circular import in ambient modules
                 if let Some(ref ambient_module_name) = containing_module_name {
                     if let Some(literal) = self.ctx.arena.get_literal(ref_node) {
