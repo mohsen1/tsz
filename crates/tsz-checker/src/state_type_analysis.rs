@@ -2160,6 +2160,13 @@ impl<'a> CheckerState<'a> {
                             });
 
                         if let Some(exports_table) = exports_table {
+                            // For `export = X`, the binder stores a synthetic `export=` entry
+                            // that points to the assigned symbol. Prefer that symbol type over
+                            // flattening exports into an object shape.
+                            if let Some(export_equals_sym) = exports_table.get("export=") {
+                                return (self.get_type_of_symbol(export_equals_sym), Vec::new());
+                            }
+
                             // Create an object type with all the module's exports
                             use tsz_solver::PropertyInfo;
                             let mut props: Vec<PropertyInfo> = Vec::new();

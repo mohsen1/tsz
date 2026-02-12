@@ -107,6 +107,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        self.check_truthy_or_falsy(cond.condition);
+
         // Get condition type for type computation
         let condition_type = self.get_type_of_node(cond.condition);
 
@@ -1003,8 +1005,8 @@ impl<'a> CheckerState<'a> {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
-                // TS2872: This kind of expression is always truthy.
-                self.check_always_truthy(left_idx, left_type);
+                // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
+                self.check_truthy_or_falsy(left_idx);
                 type_stack.push(self.ctx.types.union2(left_type, right_type));
                 continue;
             }

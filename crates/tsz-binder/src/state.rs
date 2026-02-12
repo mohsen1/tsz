@@ -2492,6 +2492,10 @@ impl BinderState {
                             .get(name)
                             .or_else(|| self.file_locals.get(name))
                         {
+                            // Track the explicit `export =` target so require-import resolution
+                            // can recover the assigned symbol directly.
+                            self.file_locals.set("export=".to_string(), sym_id);
+
                             // Copy the symbol's exports to the current module's exports
                             // This makes export = Namespace; work correctly
                             if let Some(symbol) = self.symbols.get(sym_id) {
