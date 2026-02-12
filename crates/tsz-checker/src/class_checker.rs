@@ -373,6 +373,36 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // TS2425/TS2426: Check for method/property/accessor kind mismatch (INSTANCE members only)
+            // Static members use TS2417 instead
+            if !is_static {
+                // TS2425: Base has property (not method, not accessor), derived has method
+                if is_method && !base_info.is_method && !base_info.is_accessor {
+                    self.error_at_node(
+                        member_name_idx,
+                        &format!(
+                            "Class '{}' defines instance member property '{}', but extended class '{}' defines it as instance member function.",
+                            base_class_name, member_name, derived_class_name
+                        ),
+                        diagnostic_codes::CLASS_DEFINES_INSTANCE_MEMBER_PROPERTY_BUT_EXTENDED_CLASS_DEFINES_IT_AS_INSTANCE,
+                    );
+                    continue;
+                }
+
+                // TS2426: Base has accessor, derived has method
+                if is_method && base_info.is_accessor {
+                    self.error_at_node(
+                        member_name_idx,
+                        &format!(
+                            "Class '{}' defines instance member accessor '{}', but extended class '{}' defines it as instance member function.",
+                            base_class_name, member_name, derived_class_name
+                        ),
+                        diagnostic_codes::CLASS_DEFINES_INSTANCE_MEMBER_ACCESSOR_BUT_EXTENDED_CLASS_DEFINES_IT_AS_INSTANCE,
+                    );
+                    continue;
+                }
+            }
+
             // Skip type compatibility check if either type is ANY
             if member_type == TypeId::ANY || base_type == TypeId::ANY {
                 continue;
