@@ -95,7 +95,7 @@ impl<'a> Printer<'a> {
             return;
         };
         if let Some(ident) = self.arena.get_identifier(node) {
-            self.write(&ident.escaped_text);
+            self.write_identifier(&ident.escaped_text);
         }
     }
 

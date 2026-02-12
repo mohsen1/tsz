@@ -1899,10 +1899,10 @@ impl<'a> LoweringPass<'a> {
                     if let Some(decl_node) = self.arena.get(decl_idx) {
                         if let Some(decl_data) = self.arena.get_variable_declaration(decl_node) {
                             if let Some(name_node) = self.arena.get(decl_data.name) {
-                                // Check if name is a binding pattern
-                                if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                    || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                {
+                                // Check if name is an ARRAY binding pattern
+                                // __read helper is only needed for array destructuring, not object destructuring
+                                // Object destructuring accesses properties by name, not by iterator position
+                                if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
                                     return true;
                                 }
                             }
