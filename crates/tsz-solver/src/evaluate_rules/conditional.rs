@@ -202,6 +202,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate(substituted_true);
                     }
                 }
+                // When the type parameter has a constraint, use it to determine
+                // which branch to take. This matches tsc's "restrictive instantiation"
+                // approach: if the constraint definitely doesn't extend the extends type,
+                // evaluate to the false branch. This is critical for types like
+                // `Awaited<T>` where T extends Record<string, unknown> — since Record
+                // doesn't have a `then` method, Awaited<T> evaluates to T.
+                if let Some(constraint) = param.constraint {
+                    let evaluated_constraint = self.evaluate(constraint);
+                    if !self.type_contains_infer(extends_type) {
+                        let mut checker =
+                            SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                        if !checker.is_subtype_of(evaluated_constraint, extends_type) {
+                            // Constraint doesn't satisfy the condition → false branch
+                            // For tail-recursion, check if false branch is another conditional
+                            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
+                                if let Some(TypeKey::Conditional(next_cond_id)) =
+                                    self.interner().lookup(cond.false_type)
+                                {
+                                    let next_cond = self.interner().conditional_type(next_cond_id);
+                                    current_cond = (*next_cond).clone();
+                                    tail_recursion_count += 1;
+                                    continue;
+                                }
+                            }
+                            return self.evaluate(cond.false_type);
+                        }
+                    }
+                }
+
                 // Type parameter hasn't been substituted - defer evaluation
                 return self.interner().conditional(cond.clone());
             }

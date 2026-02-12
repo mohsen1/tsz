@@ -1065,21 +1065,98 @@ impl<'a> CheckerState<'a> {
                         .copied()
                         .unwrap_or(NodeIndex::NONE)
                 };
-                if !decl_idx.is_none()
-                    && let Some(node) = self.ctx.arena.get(decl_idx)
-                    && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
-                {
-                    let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
-                    let alias_type = self.get_type_from_type_node(type_alias.type_node);
-                    self.pop_type_parameters(updates);
 
-                    // Phase 4.2.1: Store type parameters for DefId-based resolution
-                    // This enables the Solver to expand Application(Lazy(DefId), Args)
-                    if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                        self.ctx.insert_def_type_params(def_id, params.clone());
+                if !decl_idx.is_none() {
+                    // Try user arena first (fast path for user-defined type aliases)
+                    if let Some(node) = self.ctx.arena.get(decl_idx)
+                        && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
+                    {
+                        let (params, updates) =
+                            self.push_type_parameters(&type_alias.type_parameters);
+                        let alias_type = self.get_type_from_type_node(type_alias.type_node);
+                        self.pop_type_parameters(updates);
+
+                        if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                            self.ctx.insert_def_type_params(def_id, params.clone());
+                        }
+
+                        return (alias_type, params);
                     }
 
-                    return (alias_type, params);
+                    // For lib type aliases (e.g. Awaited<T>), use TypeLowering with the
+                    // correct lib arena. get_type_from_type_node uses self.ctx.arena which
+                    // doesn't have lib nodes, so we must use TypeLowering directly.
+                    let lib_arena = self
+                        .ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .map(|arc| arc.as_ref())
+                        .or_else(|| {
+                            self.ctx
+                                .binder
+                                .symbol_arenas
+                                .get(&sym_id)
+                                .map(|arc| arc.as_ref())
+                        });
+
+                    if let Some(lib_arena) = lib_arena
+                        && let Some(node) = lib_arena.get(decl_idx)
+                        && let Some(type_alias) = lib_arena.get_type_alias(node)
+                    {
+                        let type_param_bindings = self.get_type_param_bindings();
+                        let binder = &self.ctx.binder;
+                        let lib_binders = self.get_lib_binders();
+
+                        let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
+                            let ident_name = lib_arena.get_identifier_text(node_idx)?;
+                            if tsz_solver::types::is_compiler_managed_type(ident_name) {
+                                return None;
+                            }
+                            let sym_id = binder.file_locals.get(ident_name)?;
+                            let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+                            if (symbol.flags & symbol_flags::TYPE) != 0 {
+                                Some(sym_id.0)
+                            } else {
+                                None
+                            }
+                        };
+                        let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+                            self.resolve_value_symbol_for_lowering(node_idx)
+                        };
+                        let def_id_resolver =
+                            |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
+                                let ident_name = lib_arena.get_identifier_text(node_idx)?;
+                                if tsz_solver::types::is_compiler_managed_type(ident_name) {
+                                    return None;
+                                }
+                                let sym_id = binder.file_locals.get(ident_name)?;
+                                let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+                                if (symbol.flags & symbol_flags::TYPE) != 0 {
+                                    Some(self.ctx.get_or_create_def_id(sym_id))
+                                } else {
+                                    None
+                                }
+                            };
+
+                        let lowering = TypeLowering::with_hybrid_resolver(
+                            lib_arena,
+                            self.ctx.types,
+                            &type_resolver,
+                            &def_id_resolver,
+                            &value_resolver,
+                        )
+                        .with_type_param_bindings(type_param_bindings);
+
+                        let (alias_type, params) =
+                            lowering.lower_type_alias_declaration(&type_alias);
+
+                        if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                            self.ctx.insert_def_type_params(def_id, params.clone());
+                        }
+
+                        return (alias_type, params);
+                    }
                 }
             }
         }
