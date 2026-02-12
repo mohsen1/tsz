@@ -265,9 +265,7 @@ impl<'a> IRPrinter<'a> {
                 // For anonymous functions with empty bodies, use inline format: { }
                 // Named functions (constructors) keep multi-line format
                 if !has_defaults && body.is_empty() && name.is_none() {
-                    self.write("{");
-                    self.write_line();
-                    self.write("}");
+                    self.write("{ }");
                     return;
                 }
                 // Single-line function body: { return expr; }
