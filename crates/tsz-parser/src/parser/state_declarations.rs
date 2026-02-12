@@ -120,7 +120,7 @@ impl ParserState {
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
             let start_pos = self.token_pos();
-            let member = self.parse_type_member();
+            let member = self.parse_type_member(true);
             if !member.is_none() {
                 members.push(member);
             }
@@ -139,7 +139,7 @@ impl ParserState {
     }
 
     /// Parse a single type member (property signature, method signature, call signature, construct signature)
-    pub(crate) fn parse_type_member(&mut self) -> NodeIndex {
+    pub(crate) fn parse_type_member(&mut self, in_interface_declaration: bool) -> NodeIndex {
         let start_pos = self.token_pos();
 
         // Handle invalid access modifiers (private/protected/public) on type members.
@@ -352,9 +352,24 @@ impl ParserState {
                 NodeIndex::NONE
             };
 
-            // Skip initializer if present (invalid in type context but should produce error, not crash)
-            // Example: { bar: number = 5 } - the "= 5" is invalid but we parse it for recovery
+            // Parse/skip initializer if present (invalid in type context) while preserving recovery.
+            // Example: { bar: number = 5 } / interface I { bar: number = 5 }
             if self.parse_optional(SyntaxKind::EqualsToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+
+                let (message, code) = if in_interface_declaration {
+                    (
+                        "An interface property cannot have an initializer.",
+                        diagnostic_codes::AN_INTERFACE_PROPERTY_CANNOT_HAVE_AN_INITIALIZER,
+                    )
+                } else {
+                    (
+                        "A type literal property cannot have an initializer.",
+                        diagnostic_codes::A_TYPE_LITERAL_PROPERTY_CANNOT_HAVE_AN_INITIALIZER,
+                    )
+                };
+
+                self.parse_error_at_current_token(message, code);
                 self.parse_assignment_expression();
             }
 

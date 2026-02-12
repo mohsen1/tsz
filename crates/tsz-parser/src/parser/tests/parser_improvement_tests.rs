@@ -256,6 +256,50 @@ function foo(
     );
 }
 
+#[test]
+fn test_interface_property_initializer_emits_ts1246() {
+    let source = r#"
+interface I {
+    x: number = 1;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let ts1246_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1246)
+        .count();
+    assert_eq!(
+        ts1246_count, 1,
+        "Expected 1 TS1246 error for interface property initializer, got {}",
+        ts1246_count
+    );
+}
+
+#[test]
+fn test_type_literal_property_initializer_emits_ts1247() {
+    let source = r#"
+type T = {
+    x: number = 1;
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let ts1247_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == 1247)
+        .count();
+    assert_eq!(
+        ts1247_count, 1,
+        "Expected 1 TS1247 error for type literal property initializer, got {}",
+        ts1247_count
+    );
+}
+
 // =============================================================================
 // Primitive Type Keywords Tests
 // =============================================================================
