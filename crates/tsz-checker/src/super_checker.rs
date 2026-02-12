@@ -453,6 +453,273 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn is_super_call_root_level_statement_in_constructor(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let call_idx = ext.parent;
+        let Some(call_node) = self.ctx.arena.get(call_idx) else {
+            return false;
+        };
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+
+        let Some(call_data) = self.ctx.arena.get_call_expr(call_node) else {
+            return false;
+        };
+        if call_data.expression != idx {
+            return false;
+        }
+
+        let Some(call_ext) = self.ctx.arena.get_extended(call_idx) else {
+            return false;
+        };
+        let expr_stmt_idx = call_ext.parent;
+        let Some(expr_stmt_node) = self.ctx.arena.get(expr_stmt_idx) else {
+            return false;
+        };
+        if expr_stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return false;
+        }
+
+        let Some(expr_stmt_data) = self.ctx.arena.get_expression_statement(expr_stmt_node) else {
+            return false;
+        };
+        if expr_stmt_data.expression != call_idx {
+            return false;
+        }
+
+        let Some(stmt_ext) = self.ctx.arena.get_extended(expr_stmt_idx) else {
+            return false;
+        };
+        let block_idx = stmt_ext.parent;
+        let Some(block_node) = self.ctx.arena.get(block_idx) else {
+            return false;
+        };
+        if block_node.kind != syntax_kind_ext::BLOCK {
+            return false;
+        }
+
+        let Some(block_ext) = self.ctx.arena.get_extended(block_idx) else {
+            return false;
+        };
+        let ctor_idx = block_ext.parent;
+        let Some(ctor_node) = self.ctx.arena.get(ctor_idx) else {
+            return false;
+        };
+        ctor_node.kind == syntax_kind_ext::CONSTRUCTOR
+    }
+
+    fn is_super_call_first_statement_in_constructor(&self, idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let call_idx = ext.parent;
+        let Some(call_node) = self.ctx.arena.get(call_idx) else {
+            return false;
+        };
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+
+        let Some(call_data) = self.ctx.arena.get_call_expr(call_node) else {
+            return false;
+        };
+        if call_data.expression != idx {
+            return false;
+        }
+
+        let Some(call_ext) = self.ctx.arena.get_extended(call_idx) else {
+            return false;
+        };
+        let expr_stmt_idx = call_ext.parent;
+        let Some(expr_stmt_node) = self.ctx.arena.get(expr_stmt_idx) else {
+            return false;
+        };
+        if expr_stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return false;
+        }
+
+        let Some(stmt_ext) = self.ctx.arena.get_extended(expr_stmt_idx) else {
+            return false;
+        };
+        let block_idx = stmt_ext.parent;
+        let Some(block_node) = self.ctx.arena.get(block_idx) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(block_node) else {
+            return false;
+        };
+
+        block
+            .statements
+            .nodes
+            .first()
+            .map(|&first| first == expr_stmt_idx)
+            .unwrap_or(false)
+    }
+
+    fn enclosing_constructor_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return None;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return None;
+            };
+            if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                return Some(parent_idx);
+            }
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return None;
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
+    fn is_directly_in_constructor_body(&self, idx: NodeIndex, ctor_idx: NodeIndex) -> bool {
+        let mut current = idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            if parent_idx == ctor_idx {
+                return true;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
+                || (parent_node.kind == syntax_kind_ext::CONSTRUCTOR && parent_idx != ctor_idx)
+            {
+                return false;
+            }
+
+            current = parent_idx;
+        }
+        false
+    }
+
+    fn is_descendant_of_node(&self, node_idx: NodeIndex, ancestor_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            if parent_idx == ancestor_idx {
+                return true;
+            }
+            current = parent_idx;
+        }
+        false
+    }
+
+    fn constructor_has_pre_super_this_or_super_property_reference(
+        &self,
+        ctor_idx: NodeIndex,
+    ) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(ctor_node) = self.ctx.arena.get(ctor_idx) else {
+            return false;
+        };
+        let Some(ctor) = self.ctx.arena.get_constructor(ctor_node) else {
+            return false;
+        };
+        if ctor.body.is_none() {
+            return false;
+        }
+
+        let Some(body_node) = self.ctx.arena.get(ctor.body) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        let Some(first_super_stmt) = block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find(|&stmt| self.is_super_call_statement(stmt))
+        else {
+            return false;
+        };
+
+        let Some(first_super_stmt_index) = block
+            .statements
+            .nodes
+            .iter()
+            .position(|&stmt| stmt == first_super_stmt)
+        else {
+            return false;
+        };
+
+        let pre_super_statements = &block.statements.nodes[..first_super_stmt_index];
+        if pre_super_statements.is_empty() {
+            return false;
+        }
+
+        for i in 0..self.ctx.arena.len() {
+            let node_idx = NodeIndex(i as u32);
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+
+            if !self.is_directly_in_constructor_body(node_idx, ctor_idx) {
+                continue;
+            }
+
+            let in_pre_super_statement = pre_super_statements.iter().any(|&stmt_idx| {
+                self.is_descendant_of_node(node_idx, stmt_idx) || node_idx == stmt_idx
+            });
+
+            if !in_pre_super_statement {
+                continue;
+            }
+
+            if node.kind == SyntaxKind::ThisKeyword as u16
+                && self.is_this_before_super_in_derived_constructor(node_idx)
+            {
+                return true;
+            }
+
+            if node.kind == SyntaxKind::SuperKeyword as u16 {
+                let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
+                    continue;
+                };
+                let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+                    continue;
+                };
+
+                let is_super_property = parent_node.kind
+                    == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+
+                if is_super_property {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     /// Find the enclosing class by walking up the parent chain.
     ///
     /// This is more reliable than relying on `enclosing_class` which may not be set
@@ -681,6 +948,16 @@ impl<'a> CheckerState<'a> {
             .map(|class| self.class_extends_null(class))
             .unwrap_or(false);
 
+        let requires_super_call = class_data
+            .as_ref()
+            .map(|class| self.class_requires_super_call(class))
+            .unwrap_or(false);
+
+        let has_position_sensitive_members = class_data
+            .as_ref()
+            .map(|class| self.class_has_super_call_position_sensitive_members(class))
+            .unwrap_or(false);
+
         // TS2335: super can only be referenced in a derived class
         if !has_base_class {
             self.error_at_node(
@@ -698,6 +975,42 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::A_CONSTRUCTOR_CANNOT_CONTAIN_A_SUPER_CALL_WHEN_ITS_CLASS_EXTENDS_NULL,
             );
             return;
+        }
+
+        if is_super_call
+            && requires_super_call
+            && has_position_sensitive_members
+            && self.is_in_constructor(idx)
+            && !self.is_super_in_nested_function(idx)
+        {
+            let diagnostic_node = self.enclosing_constructor_node(idx).unwrap_or(idx);
+
+            if !self.is_super_call_root_level_statement_in_constructor(idx) {
+                self.error_at_node(
+                    diagnostic_node,
+                    diagnostic_messages::A_SUPER_CALL_MUST_BE_A_ROOT_LEVEL_STATEMENT_WITHIN_A_CONSTRUCTOR_OF_A_DERIVED_CL,
+                    diagnostic_codes::A_SUPER_CALL_MUST_BE_A_ROOT_LEVEL_STATEMENT_WITHIN_A_CONSTRUCTOR_OF_A_DERIVED_CL,
+                );
+                return;
+            }
+
+            if !self.is_super_call_first_statement_in_constructor(idx) {
+                let should_emit_ts2376 = self
+                    .enclosing_constructor_node(idx)
+                    .map(|ctor_idx| {
+                        self.constructor_has_pre_super_this_or_super_property_reference(ctor_idx)
+                    })
+                    .unwrap_or(false);
+
+                if should_emit_ts2376 {
+                    self.error_at_node(
+                        diagnostic_node,
+                        diagnostic_messages::A_SUPER_CALL_MUST_BE_THE_FIRST_STATEMENT_IN_THE_CONSTRUCTOR_TO_REFER_TO_SUPER_OR,
+                        diagnostic_codes::A_SUPER_CALL_MUST_BE_THE_FIRST_STATEMENT_IN_THE_CONSTRUCTOR_TO_REFER_TO_SUPER_OR,
+                    );
+                }
+                return;
+            }
         }
 
         // TS2336/TS17011: super property access in constructor parameters is not allowed.
