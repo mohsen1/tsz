@@ -59,6 +59,35 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
     references
 }
 
+/// Extract `/// <amd-module name="..." />` directives from source text.
+///
+/// Returns a vector of (module_name, line_number) tuples for each amd-module directive found.
+/// Used to detect multiple AMD module name assignments (TS2458).
+pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
+    let mut amd_modules = Vec::new();
+
+    for (line_num, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+
+        // Check if line starts with ///
+        if !trimmed.starts_with("///") {
+            continue;
+        }
+
+        // Check if it contains <amd-module name=
+        if !trimmed.contains("<amd-module") || !trimmed.contains("name=") {
+            continue;
+        }
+
+        // Extract the name value between quotes
+        if let Some(name) = extract_quoted_attr(trimmed, "name") {
+            amd_modules.push((name, line_num));
+        }
+    }
+
+    amd_modules
+}
+
 /// Extract the value of a named attribute from a reference directive line.
 fn extract_quoted_attr(line: &str, attr: &str) -> Option<String> {
     let idx = line.find(attr)?;
@@ -198,5 +227,29 @@ const x = 1;
 
         // Clean up
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_extract_amd_module_names() {
+        let source = r#"
+///<amd-module name="FirstModuleName"/>
+///<amd-module name='SecondModuleName'/>
+class Foo {}
+"#;
+        let amd_modules = extract_amd_module_names(source);
+        assert_eq!(amd_modules.len(), 2);
+        assert_eq!(amd_modules[0].0, "FirstModuleName");
+        assert_eq!(amd_modules[1].0, "SecondModuleName");
+    }
+
+    #[test]
+    fn test_extract_amd_module_names_no_duplicates() {
+        let source = r#"
+///<amd-module name="ModuleName"/>
+class Foo {}
+"#;
+        let amd_modules = extract_amd_module_names(source);
+        assert_eq!(amd_modules.len(), 1);
+        assert_eq!(amd_modules[0].0, "ModuleName");
     }
 }
