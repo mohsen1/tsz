@@ -564,7 +564,12 @@ impl<'a> Printer<'a> {
                 es5_emitter.set_source_text(text);
             }
             let output = es5_emitter.emit_namespace(idx);
-            self.write(output.trim_end_matches('\n'));
+
+            // The IRPrinter creates output with built-in indentation.
+            // Write it using write_raw_text() to avoid adding indentation on top.
+            let trimmed = output.trim_end_matches('\n');
+            self.writer.write_raw_text(trimmed);
+
             // Skip comments within the namespace body range since the ES5 namespace emitter
             // doesn't use the main comment system. Without this, comments would be dumped
             // at end of file.
