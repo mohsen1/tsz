@@ -376,6 +376,83 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn is_in_object_literal_member(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::*;
+        let mut current = idx;
+        let mut saw_object_member = false;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if parent_node.kind == METHOD_DECLARATION
+                || parent_node.kind == GET_ACCESSOR
+                || parent_node.kind == SET_ACCESSOR
+            {
+                saw_object_member = true;
+            }
+
+            if parent_node.kind == OBJECT_LITERAL_EXPRESSION {
+                return saw_object_member;
+            }
+
+            if parent_node.kind == FUNCTION_DECLARATION
+                || parent_node.kind == FUNCTION_EXPRESSION
+                || parent_node.kind == ARROW_FUNCTION
+            {
+                return false;
+            }
+
+            if parent_node.kind == CLASS_DECLARATION || parent_node.kind == CLASS_EXPRESSION {
+                return false;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
+    fn is_super_property_in_super_call_arguments(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let mut current = idx;
+
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.ctx.arena.get_call_expr(parent_node)
+                && let Some(callee) = self.ctx.arena.get(call.expression)
+                && callee.kind == SyntaxKind::SuperKeyword as u16
+            {
+                return true;
+            }
+
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                break;
+            }
+
+            current = parent_idx;
+        }
+
+        false
+    }
+
     /// Find the enclosing class by walking up the parent chain.
     ///
     /// This is more reliable than relying on `enclosing_class` which may not be set
@@ -465,6 +542,19 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(false);
 
+        let is_super_new = parent_info
+            .as_ref()
+            .map(|(_, parent_node)| {
+                parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                    && self
+                        .ctx
+                        .arena
+                        .get_call_expr(parent_node)
+                        .map(|new_expr| new_expr.expression == idx)
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
         let is_super_property_access = parent_info
             .as_ref()
             .map(|(_, parent_node)| {
@@ -490,6 +580,15 @@ impl<'a> CheckerState<'a> {
         }
 
         if !is_super_call && !is_super_property_access {
+            if is_super_new && self.is_in_constructor(idx) {
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                    diagnostic_codes::SUPER_MUST_BE_CALLED_BEFORE_ACCESSING_A_PROPERTY_OF_SUPER_IN_THE_CONSTRUCTOR_OF,
+                );
+                return;
+            }
+
             self.error_at_node(
                 idx,
                 diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
@@ -522,6 +621,26 @@ impl<'a> CheckerState<'a> {
         let class_idx = match self.find_enclosing_class(idx) {
             Some(idx) => idx,
             None => {
+                if is_super_property_access {
+                    if self.is_in_object_literal_member(idx) {
+                        if self.ctx.compiler_options.target.is_es5() {
+                            self.error_at_node(
+                                idx,
+                                diagnostic_messages::SUPER_IS_ONLY_ALLOWED_IN_MEMBERS_OF_OBJECT_LITERAL_EXPRESSIONS_WHEN_OPTION_TARGE,
+                                diagnostic_codes::SUPER_IS_ONLY_ALLOWED_IN_MEMBERS_OF_OBJECT_LITERAL_EXPRESSIONS_WHEN_OPTION_TARGE,
+                            );
+                        }
+                        return;
+                    }
+
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
+                        diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_MEMBERS_OF_DERIVED_CLASSES_OR_OBJECT_LITERAL_EXP,
+                    );
+                    return;
+                }
+
                 // Emit TS2337 for super() calls, TS2335 for super property access
                 // This matches TypeScript's behavior when super is used outside a class
                 if is_super_call {
@@ -545,12 +664,21 @@ impl<'a> CheckerState<'a> {
         // We check for the existence of an extends heritage clause, not whether the
         // base class symbol resolves. This matches TypeScript's behavior where
         // `class B extends A {}` is always a derived class even if `A` can't be resolved.
-        let has_base_class = self
+        let class_data = self
             .ctx
             .arena
             .get(class_idx)
             .and_then(|node| self.ctx.arena.get_class(node))
+            .cloned();
+
+        let has_base_class = class_data
+            .as_ref()
             .map(|class| self.class_has_base(class))
+            .unwrap_or(false);
+
+        let extends_null = class_data
+            .as_ref()
+            .map(|class| self.class_extends_null(class))
             .unwrap_or(false);
 
         // TS2335: super can only be referenced in a derived class
@@ -559,6 +687,15 @@ impl<'a> CheckerState<'a> {
                 idx,
                 diagnostic_messages::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
                 diagnostic_codes::SUPER_CAN_ONLY_BE_REFERENCED_IN_A_DERIVED_CLASS,
+            );
+            return;
+        }
+
+        if is_super_call && extends_null {
+            self.error_at_node(
+                idx,
+                diagnostic_messages::A_CONSTRUCTOR_CANNOT_CONTAIN_A_SUPER_CALL_WHEN_ITS_CLASS_EXTENDS_NULL,
+                diagnostic_codes::A_CONSTRUCTOR_CANNOT_CONTAIN_A_SUPER_CALL_WHEN_ITS_CLASS_EXTENDS_NULL,
             );
             return;
         }
@@ -603,7 +740,8 @@ impl<'a> CheckerState<'a> {
         // TS17011: super property access before super() call in derived constructors.
         if is_super_property_access
             && self.is_in_constructor(idx)
-            && self.is_super_property_before_super_call_in_constructor(idx)
+            && (self.is_super_property_before_super_call_in_constructor(idx)
+                || self.is_super_property_in_super_call_arguments(idx))
         {
             self.error_at_node(
                 idx,

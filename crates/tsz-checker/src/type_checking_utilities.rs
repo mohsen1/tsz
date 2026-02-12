@@ -1619,6 +1619,67 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check whether a class extends `null`.
+    pub(crate) fn class_extends_null(&self, class: &tsz_parser::parser::node::ClassData) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(ref heritage_clauses) = class.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            let Some(&first_type_idx) = heritage.types.nodes.first() else {
+                continue;
+            };
+
+            let expr_idx = if let Some(type_node) = self.ctx.arena.get(first_type_idx)
+                && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+            {
+                expr_type_args.expression
+            } else {
+                first_type_idx
+            };
+
+            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                continue;
+            };
+
+            if expr_node.kind == SyntaxKind::NullKeyword as u16 {
+                return true;
+            }
+
+            if expr_node.kind == SyntaxKind::Identifier as u16
+                && self
+                    .ctx
+                    .arena
+                    .get_identifier(expr_node)
+                    .is_some_and(|id| id.escaped_text == "null")
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check whether a class requires a super() call in its constructor.
+    pub(crate) fn class_requires_super_call(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        self.class_has_base(class) && !self.class_extends_null(class)
+    }
+
     /// Check if a type includes undefined (directly or in a union).
     ///
     /// Returns true if type_id is UNDEFINED or a union containing UNDEFINED.

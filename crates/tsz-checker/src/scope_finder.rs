@@ -264,6 +264,7 @@ impl<'a> CheckerState<'a> {
     /// 1. `super(this)` — `this` is an argument to the super() call itself
     /// 2. `constructor(x = this.prop)` — `this` in a parameter default of
     ///    a derived class constructor (evaluated before super() can run)
+    /// 3. `this.prop; super();` — direct constructor-body access before first super call
     pub(crate) fn is_this_before_super_in_derived_constructor(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::*;
         let mut current = idx;
@@ -317,15 +318,76 @@ impl<'a> CheckerState<'a> {
                     || k == ARROW_FUNCTION
                     || k == METHOD_DECLARATION
                     || k == GET_ACCESSOR
-                    || k == SET_ACCESSOR
-                    || k == CONSTRUCTOR =>
+                    || k == SET_ACCESSOR =>
                 {
                     return false;
+                }
+
+                // Pattern 3: direct constructor body access before first super() statement
+                k if k == CONSTRUCTOR => {
+                    return self.is_this_before_super_in_constructor(current, idx);
                 }
 
                 _ => continue,
             }
         }
+    }
+
+    fn is_this_before_super_in_constructor(
+        &self,
+        ctor_idx: NodeIndex,
+        this_idx: NodeIndex,
+    ) -> bool {
+        let Some(ctor_node) = self.ctx.arena.get(ctor_idx) else {
+            return false;
+        };
+        let Some(ctor) = self.ctx.arena.get_constructor(ctor_node) else {
+            return false;
+        };
+
+        // Only classes that actually require super() are subject to TS17009.
+        let Some(ext) = self.ctx.arena.get_extended(ctor_idx) else {
+            return false;
+        };
+        let class_idx = ext.parent;
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+            return false;
+        };
+        if !self.class_requires_super_call(class_data) {
+            return false;
+        }
+
+        if ctor.body.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.ctx.arena.get(ctor.body) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        let Some(first_super_stmt) = block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find(|&stmt| self.is_super_call_statement(stmt))
+        else {
+            return false;
+        };
+
+        let Some(super_stmt_node) = self.ctx.arena.get(first_super_stmt) else {
+            return false;
+        };
+        let Some(this_node) = self.ctx.arena.get(this_idx) else {
+            return false;
+        };
+
+        this_node.pos < super_stmt_node.pos
     }
 
     /// Check if a node is inside a constructor of a derived class.
@@ -349,7 +411,7 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
                 let class_idx = ext.parent;
-                return self.class_node_is_derived(class_idx);
+                return self.class_node_requires_super_call(class_idx);
             }
 
             // Stop at other function boundaries
@@ -372,14 +434,14 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a class node (or its parent class) has an extends clause.
-    fn class_node_is_derived(&self, class_idx: NodeIndex) -> bool {
+    fn class_node_requires_super_call(&self, class_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(class_idx) else {
             return false;
         };
         let Some(class_data) = self.ctx.arena.get_class(node) else {
             return false;
         };
-        self.class_has_base(class_data)
+        self.class_requires_super_call(class_data)
     }
 
     // =========================================================================
