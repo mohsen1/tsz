@@ -12,6 +12,302 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
 impl<'a> CheckerState<'a> {
+    fn enclosing_class_constructor_param_names(&self) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return names;
+        };
+
+        for &member_idx in &class_info.member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                continue;
+            };
+
+            for &param_idx in &ctor.parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if let Some(name) = self.get_node_text(param.name) {
+                    names.insert(name);
+                }
+            }
+        }
+
+        names
+    }
+
+    fn symbol_declared_within_subtree(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        root_idx: NodeIndex,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        if !symbol.value_declaration.is_none()
+            && self.is_node_within(symbol.value_declaration, root_idx)
+        {
+            return true;
+        }
+
+        symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| self.is_node_within(decl_idx, root_idx))
+    }
+
+    fn enclosing_constructor_of_node(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        let mut steps = 0;
+        while steps < 256 {
+            steps += 1;
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            let parent_idx = ext.parent;
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
+                return Some(parent_idx);
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
+    fn symbol_is_constructor_parameter_of_current_class(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let mut decl_nodes = symbol.declarations.clone();
+        if !symbol.value_declaration.is_none() {
+            decl_nodes.push(symbol.value_declaration);
+        }
+
+        decl_nodes.into_iter().any(|decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if self.ctx.arena.get_parameter(decl_node).is_none() {
+                return false;
+            }
+
+            self.enclosing_constructor_of_node(decl_idx)
+                .is_some_and(|ctor_idx| class_info.member_nodes.contains(&ctor_idx))
+        })
+    }
+
+    fn collect_unqualified_identifier_references(
+        &self,
+        node_idx: NodeIndex,
+        refs: &mut Vec<(String, NodeIndex)>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                refs.push((ident.escaped_text.clone(), node_idx));
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                self.collect_unqualified_identifier_references(access.expression, refs);
+            }
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                self.collect_unqualified_identifier_references(access.expression, refs);
+                self.collect_unqualified_identifier_references(access.name_or_argument, refs);
+            }
+            return;
+        }
+
+        if let Some(func) = self.ctx.arena.get_function(node) {
+            for &param_idx in &func.parameters.nodes {
+                if let Some(param_node) = self.ctx.arena.get(param_idx)
+                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                    && !param.initializer.is_none()
+                {
+                    self.collect_unqualified_identifier_references(param.initializer, refs);
+                }
+            }
+            if !func.body.is_none() {
+                self.collect_unqualified_identifier_references(func.body, refs);
+            }
+            return;
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::BLOCK => {
+                if let Some(block) = self.ctx.arena.get_block(node) {
+                    for &stmt_idx in &block.statements.nodes {
+                        self.collect_unqualified_identifier_references(stmt_idx, refs);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
+                    self.collect_unqualified_identifier_references(expr_stmt.expression, refs);
+                }
+            }
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+                    for &list_idx in &var_stmt.declarations.nodes {
+                        if let Some(list_node) = self.ctx.arena.get(list_idx)
+                            && let Some(decl_list) = self.ctx.arena.get_variable(list_node)
+                        {
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                    && let Some(var_decl) =
+                                        self.ctx.arena.get_variable_declaration(decl_node)
+                                    && !var_decl.initializer.is_none()
+                                {
+                                    self.collect_unqualified_identifier_references(
+                                        var_decl.initializer,
+                                        refs,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.ctx.arena.get_call_expr(node) {
+                    self.collect_unqualified_identifier_references(call.expression, refs);
+                    if let Some(args) = &call.arguments {
+                        for &arg_idx in &args.nodes {
+                            self.collect_unqualified_identifier_references(arg_idx, refs);
+                        }
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.collect_unqualified_identifier_references(paren.expression, refs);
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(binary) = self.ctx.arena.get_binary_expr(node) {
+                    self.collect_unqualified_identifier_references(binary.left, refs);
+                    self.collect_unqualified_identifier_references(binary.right, refs);
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    self.collect_unqualified_identifier_references(cond.condition, refs);
+                    self.collect_unqualified_identifier_references(cond.when_true, refs);
+                    self.collect_unqualified_identifier_references(cond.when_false, refs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn check_constructor_param_capture_in_instance_initializer(
+        &mut self,
+        member_name: &str,
+        initializer_idx: NodeIndex,
+    ) {
+        use crate::types::diagnostics::diagnostic_codes;
+
+        let ctor_param_names = self.enclosing_class_constructor_param_names();
+        if ctor_param_names.is_empty() {
+            return;
+        }
+
+        let mut refs = Vec::new();
+        self.collect_unqualified_identifier_references(initializer_idx, &mut refs);
+
+        for (name, ident_idx) in refs {
+            if !ctor_param_names.contains(&name) {
+                continue;
+            }
+
+            if let Some(sym_id) = self
+                .ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, ident_idx)
+            {
+                if self.symbol_is_constructor_parameter_of_current_class(sym_id) {
+                    self.error_at_node_msg(
+                        ident_idx,
+                        diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
+                        &[&name],
+                    );
+                    continue;
+                }
+
+                let treat_as_unresolved =
+                    self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                        let source_is_external_module = self
+                            .ctx
+                            .get_binder_for_file(symbol.decl_file_idx as usize)
+                            .map(|binder| binder.is_external_module())
+                            .unwrap_or(false);
+
+                        self.ctx.binder.is_external_module()
+                            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+                            && (source_is_external_module || symbol.is_exported)
+                            && (symbol.flags
+                                & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE))
+                                != 0
+                    });
+
+                if treat_as_unresolved {
+                    self.error_at_node_msg(
+                        ident_idx,
+                        diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
+                        &[&name],
+                    );
+                    continue;
+                }
+
+                if self.symbol_declared_within_subtree(sym_id, initializer_idx) {
+                    continue;
+                }
+
+                self.error_at_node_msg(
+                    ident_idx,
+                    diagnostic_codes::INITIALIZER_OF_INSTANCE_MEMBER_VARIABLE_CANNOT_REFERENCE_IDENTIFIER_DECLARED_IN,
+                    &[member_name, &name],
+                );
+            } else {
+                self.error_at_node_msg(
+                    ident_idx,
+                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
+                    &[&name],
+                );
+            }
+        }
+    }
+
     /// Check an interface declaration.
     pub(crate) fn check_interface_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::types::diagnostics::diagnostic_codes;
@@ -2174,6 +2470,16 @@ impl<'a> CheckerState<'a> {
             if let Some(ref mut class_info) = self.ctx.enclosing_class {
                 class_info.in_static_property_initializer = true;
             }
+        }
+
+        if !is_static
+            && !prop.initializer.is_none()
+            && let Some(member_name) = self.get_property_name(prop.name)
+        {
+            self.check_constructor_param_capture_in_instance_initializer(
+                &member_name,
+                prop.initializer,
+            );
         }
 
         // TS18045: accessor modifier only allowed when targeting ES2015+

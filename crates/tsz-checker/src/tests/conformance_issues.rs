@@ -254,6 +254,83 @@ interface I extends number {}
 }
 
 #[test]
+fn test_instance_member_initializer_constructor_param_capture_reports_ts2301() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare var console: {
+    log(msg?: any): void;
+};
+var field1: string;
+
+class Test1 {
+    constructor(private field1: string) {
+    }
+    messageHandler = () => {
+        console.log(field1);
+    };
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2301),
+        "Expected TS2301 for constructor parameter capture in instance initializer. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_instance_member_initializer_missing_name_reports_ts2663() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare var console: {
+    log(msg?: any): void;
+};
+
+export class Test1 {
+    constructor(private field1: string) {
+    }
+    messageHandler = () => {
+        console.log(field1);
+    };
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2663),
+        "Expected TS2663 for missing free name in module instance initializer. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_instance_member_initializer_local_shadow_does_not_report_ts2301() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+declare var console: {
+    log(msg?: any): void;
+};
+
+class Test {
+    constructor(private field: string) {
+    }
+    messageHandler = () => {
+        var field = this.field;
+        console.log(field);
+    };
+}
+        "#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2301),
+        "Did not expect TS2301 for locally shadowed identifier in initializer. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_unresolved_import_namespace_access_suppresses_ts2708() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
