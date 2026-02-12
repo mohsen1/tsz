@@ -1452,6 +1452,13 @@ impl<'a> Printer<'a> {
                     self.emit_identifier(node);
                 }
             }
+            k if k == SyntaxKind::PrivateIdentifier as u16 => {
+                // Private identifiers (#name) are emitted as-is for ES2022+ targets.
+                // For ES5/ES2015 targets, they should be lowered by the class transform.
+                if let Some(ident) = self.arena.get_identifier(node) {
+                    self.write(&ident.escaped_text);
+                }
+            }
             k if k == syntax_kind_ext::TYPE_PARAMETER => {
                 self.emit_type_parameter(node);
             }

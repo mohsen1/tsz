@@ -186,7 +186,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Convert an AST statement to IR (avoids ASTRef when possible)
     fn convert_statement(&self, idx: NodeIndex) -> IRNode {
-        let mut converter = AstToIr::new(self.arena);
+        let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
         }
@@ -196,7 +196,9 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Convert an AST statement to IR with `this` captured as `_this`.
     /// Used in derived constructors after super() where `this` → `_this`.
     fn convert_statement_this_captured(&self, idx: NodeIndex) -> IRNode {
-        let mut converter = AstToIr::new(self.arena).with_this_captured(true);
+        let mut converter = AstToIr::new(self.arena)
+            .with_this_captured(true)
+            .with_super(self.has_extends);
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
         }
@@ -205,7 +207,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Convert an AST expression to IR (avoids ASTRef when possible)
     fn convert_expression(&self, idx: NodeIndex) -> IRNode {
-        let mut converter = AstToIr::new(self.arena);
+        let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
         }
@@ -1695,6 +1697,8 @@ pub struct AstToIr<'a> {
     transforms: Option<TransformContext>,
     /// Current class alias to use for `this` substitution in static methods
     current_class_alias: Cell<Option<String>>,
+    /// Whether we're inside a derived class (has extends clause) — needed for super lowering
+    has_super: bool,
 }
 
 impl<'a> AstToIr<'a> {
@@ -1704,7 +1708,14 @@ impl<'a> AstToIr<'a> {
             this_captured: Cell::new(false),
             transforms: None,
             current_class_alias: Cell::new(None),
+            has_super: false,
         }
+    }
+
+    /// Set whether we're inside a derived class (for super lowering)
+    pub fn with_super(mut self, has_super: bool) -> Self {
+        self.has_super = has_super;
+        self
     }
 
     /// Set transform directives from LoweringPass
@@ -2197,8 +2208,7 @@ impl<'a> AstToIr<'a> {
     fn convert_call_expression(&self, idx: NodeIndex) -> IRNode {
         let node = self.arena.get(idx).unwrap();
         if let Some(call) = self.arena.get_call_expr(node) {
-            let callee = self.convert_expression(call.expression);
-            let args = if let Some(ref args) = call.arguments {
+            let args: Vec<IRNode> = if let Some(ref args) = call.arguments {
                 args.nodes
                     .iter()
                     .map(|&a| self.convert_expression(a))
@@ -2206,6 +2216,17 @@ impl<'a> AstToIr<'a> {
             } else {
                 vec![]
             };
+
+            // Check for super.method(args) or super[expr](args) → _super.prototype.method.call(this, args)
+            if self.has_super {
+                if let Some(super_call) =
+                    self.try_convert_super_method_call(call.expression, args.clone())
+                {
+                    return super_call;
+                }
+            }
+
+            let callee = self.convert_expression(call.expression);
             IRNode::CallExpr {
                 callee: Box::new(callee),
                 arguments: args,
@@ -2213,6 +2234,77 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    /// Check if a call expression callee is super.method or super[expr] and transform to
+    /// _super.prototype.method.call(this, args) or _super.prototype[expr].call(this, args)
+    fn try_convert_super_method_call(
+        &self,
+        callee_idx: NodeIndex,
+        args: Vec<IRNode>,
+    ) -> Option<IRNode> {
+        let callee_node = self.arena.get(callee_idx)?;
+
+        // Check for super.method(args) → _super.prototype.method.call(this, args)
+        if callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(callee_node)?;
+            let obj_node = self.arena.get(access.expression)?;
+            if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
+                let method_name = get_identifier_text(self.arena, access.name_or_argument)?;
+                // Build: _super.prototype.method.call(this, args...)
+                let super_proto_method = IRNode::PropertyAccess {
+                    object: Box::new(IRNode::PropertyAccess {
+                        object: Box::new(IRNode::id("_super")),
+                        property: "prototype".to_string(),
+                    }),
+                    property: method_name,
+                };
+                let call_method = IRNode::PropertyAccess {
+                    object: Box::new(super_proto_method),
+                    property: "call".to_string(),
+                };
+                let mut call_args = vec![IRNode::This {
+                    captured: self.this_captured.get(),
+                }];
+                call_args.extend(args);
+                return Some(IRNode::CallExpr {
+                    callee: Box::new(call_method),
+                    arguments: call_args,
+                });
+            }
+        }
+
+        // Check for super[expr](args) → _super.prototype[expr].call(this, args)
+        if callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(callee_node)?;
+            let obj_node = self.arena.get(access.expression)?;
+            if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
+                let index_expr = self.convert_expression(access.name_or_argument);
+                // Build: _super.prototype[expr].call(this, args...)
+                let super_proto = IRNode::PropertyAccess {
+                    object: Box::new(IRNode::id("_super")),
+                    property: "prototype".to_string(),
+                };
+                let super_proto_elem = IRNode::ElementAccess {
+                    object: Box::new(super_proto),
+                    index: Box::new(index_expr),
+                };
+                let call_method = IRNode::PropertyAccess {
+                    object: Box::new(super_proto_elem),
+                    property: "call".to_string(),
+                };
+                let mut call_args = vec![IRNode::This {
+                    captured: self.this_captured.get(),
+                }];
+                call_args.extend(args);
+                return Some(IRNode::CallExpr {
+                    callee: Box::new(call_method),
+                    arguments: call_args,
+                });
+            }
+        }
+
+        None
     }
 
     fn convert_new_expression(&self, idx: NodeIndex) -> IRNode {
@@ -2241,6 +2333,24 @@ impl<'a> AstToIr<'a> {
         let node = self.arena.get(idx).unwrap();
         // PropertyAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
+            // Check for super.property → _super.prototype.property
+            if self.has_super {
+                if let Some(obj_node) = self.arena.get(access.expression) {
+                    if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
+                        if let Some(name) = get_identifier_text(self.arena, access.name_or_argument)
+                        {
+                            return IRNode::PropertyAccess {
+                                object: Box::new(IRNode::PropertyAccess {
+                                    object: Box::new(IRNode::id("_super")),
+                                    property: "prototype".to_string(),
+                                }),
+                                property: name,
+                            };
+                        }
+                    }
+                }
+            }
+
             let object = self.convert_expression(access.expression);
             if let Some(name) = get_identifier_text(self.arena, access.name_or_argument) {
                 return IRNode::PropertyAccess {
@@ -2256,6 +2366,22 @@ impl<'a> AstToIr<'a> {
         let node = self.arena.get(idx).unwrap();
         // ElementAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
+            // Check for super[expr] → _super.prototype[expr]
+            if self.has_super {
+                if let Some(obj_node) = self.arena.get(access.expression) {
+                    if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
+                        let index = self.convert_expression(access.name_or_argument);
+                        return IRNode::ElementAccess {
+                            object: Box::new(IRNode::PropertyAccess {
+                                object: Box::new(IRNode::id("_super")),
+                                property: "prototype".to_string(),
+                            }),
+                            index: Box::new(index),
+                        };
+                    }
+                }
+            }
+
             let object = self.convert_expression(access.expression);
             let index = self.convert_expression(access.name_or_argument);
             IRNode::ElementAccess {

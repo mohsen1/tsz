@@ -942,7 +942,12 @@ impl<'a> Printer<'a> {
 
         // For JavaScript: Skip property declarations without initializers
         // (they are TypeScript-only declarations: typed props, bare props)
-        if prop.initializer.is_none() {
+        // Exception: Private fields (#name) are always emitted — they are runtime declarations.
+        let is_private = self
+            .arena
+            .get(prop.name)
+            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+        if prop.initializer.is_none() && !is_private {
             return;
         }
 
