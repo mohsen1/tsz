@@ -461,30 +461,20 @@ clean_cache() {
     echo -e "${GREEN}Cache cleaned${NC}"
 }
 
-# Check if the TypeScript submodule has dirty/untracked files
+# Ensure the TypeScript submodule is pristine before running tests.
 # tsc can emit .d.ts/.js files next to test files, polluting the submodule
+# and causing cache misses (extra .js files get picked up as test inputs).
+# Always run git clean -xf to guarantee a clean state.
 check_submodule_clean() {
     local ts_dir="$REPO_ROOT/TypeScript"
     if [ ! -d "$ts_dir/.git" ] && [ ! -f "$ts_dir/.git" ]; then
         return 0  # Not a git repo/submodule, skip check
     fi
 
-    local dirty_count
-    dirty_count=$(cd "$ts_dir" && git status --short 2>/dev/null | wc -l | tr -d ' ')
-
-    if [ "$dirty_count" -gt 0 ]; then
-        echo -e "${YELLOW}⚠ TypeScript submodule has $dirty_count dirty/untracked file(s):${NC}"
-        (cd "$ts_dir" && git status --short | head -10)
-        if [ "$dirty_count" -gt 10 ]; then
-            echo "  ... and $((dirty_count - 10)) more"
-        fi
-        echo ""
-        echo -e "${YELLOW}This is usually caused by tsc emitting files next to test sources.${NC}"
-        echo -e "${YELLOW}Cleaning with: git -C TypeScript checkout -- . && git -C TypeScript clean -fd${NC}"
-        (cd "$ts_dir" && git checkout -- . 2>/dev/null; git clean -fd 2>/dev/null)
-        echo -e "${GREEN}✓ TypeScript submodule cleaned${NC}"
-        echo ""
-    fi
+    echo -e "${YELLOW}Cleaning TypeScript submodule (git checkout + clean -xfd)...${NC}"
+    (cd "$ts_dir" && git checkout -- . 2>/dev/null; git clean -xfd 2>/dev/null)
+    echo -e "${GREEN}✓ TypeScript submodule clean${NC}"
+    echo ""
 }
 
 # Parse arguments
