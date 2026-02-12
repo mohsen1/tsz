@@ -263,10 +263,30 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // Also emit TS2322 for wrapper types (Boolean, Number, String) instead of TS2741.
+                // These built-in types inherit properties from Object, and object literals don't
+                // explicitly list inherited properties, so TS2741 would be incorrect.
+                // Example: `b: Boolean = {}` → TS2322 "Type '{}' is not assignable to type 'Boolean'"
+                //          NOT TS2741 "Property 'valueOf' is missing in type '{}'..."
+                let tgt_str = self.format_type(*target_type);
+                if tgt_str == "Boolean" || tgt_str == "Number" || tgt_str == "String" {
+                    let src_str = self.format_type(*source_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let src_str = self.format_type(*source_type);
-                let tgt_str = self.format_type(*target_type);
                 let message = format_message(
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     &[&prop_name, &src_str, &tgt_str],
