@@ -287,3 +287,43 @@ class C {
         ts2300_errors
     );
 }
+
+/// Test that duplicate `import =` alias declarations emit TS2300.
+#[test]
+fn test_duplicate_import_equals_alias_emits_ts2300() {
+    let source = r#"
+namespace m {
+    export const x = 1;
+}
+import a = m;
+import a = m;
+"#;
+    let diagnostics = check(source);
+
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert!(
+        !ts2300_errors.is_empty(),
+        "Should emit TS2300 for duplicate import alias declarations, got: {:?}",
+        diagnostics
+    );
+}
+
+/// Test that import alias conflicting with local declaration emits TS2440.
+#[test]
+fn test_import_equals_alias_conflicts_with_local_declaration() {
+    let source = r#"
+namespace m {
+    export const x = 1;
+}
+import a = m;
+const a = 1;
+"#;
+    let diagnostics = check(source);
+
+    let ts2440_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2440).collect();
+    assert!(
+        !ts2440_errors.is_empty(),
+        "Should emit TS2440 when import alias conflicts with local declaration, got: {:?}",
+        diagnostics
+    );
+}
