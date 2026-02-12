@@ -216,8 +216,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Look up the symbol for this identifier
-        let sym_id = self.ctx.binder.node_symbols.get(&inner.0).copied();
+        // Look up the symbol for this identifier by resolving it through the scope chain
+        // Note: We use resolve_identifier instead of node_symbols because node_symbols
+        // only contains declaration nodes, not identifier references.
+        let sym_id = self.ctx.binder.resolve_identifier(self.ctx.arena, inner);
         let Some(sym_id) = sym_id else {
             return;
         };
