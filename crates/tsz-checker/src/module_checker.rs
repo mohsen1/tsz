@@ -482,19 +482,31 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Create a Promise<any> type.
-    fn create_promise_any(&self) -> tsz_solver::TypeId {
+    fn create_promise_any(&mut self) -> tsz_solver::TypeId {
         self.create_promise_of(tsz_solver::TypeId::ANY)
     }
 
-    /// Create a Promise<T> type.
+    /// Create a Promise<T> type for dynamic import expressions.
     ///
-    /// Uses the synthetic PROMISE_BASE type to create Promise<T>.
-    /// This works even without lib files since PROMISE_BASE is a built-in type.
-    fn create_promise_of(&self, inner_type: tsz_solver::TypeId) -> tsz_solver::TypeId {
+    /// Uses the same type resolution path as `var p: Promise<T>` to ensure
+    /// structural compatibility. Falls back to PROMISE_BASE without lib files.
+    fn create_promise_of(&mut self, inner_type: tsz_solver::TypeId) -> tsz_solver::TypeId {
         use tsz_solver::TypeId;
 
-        // Use PROMISE_BASE as the Promise constructor
-        // This is a synthetic type that allows Promise<T> to work without lib files
+        // Resolve Promise as Lazy(DefId), the same form that type annotations use.
+        // `var p: Promise<T>` goes through create_lazy_type_ref → Application(Lazy(DefId), [T]).
+        // We must do the same here so that `import()` returns a structurally compatible type.
+        let lib_binders = self.get_lib_binders();
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_global_type_with_libs("Promise", &lib_binders)
+        {
+            let promise_base = self.ctx.create_lazy_type_ref(sym_id);
+            return self.ctx.types.application(promise_base, vec![inner_type]);
+        }
+
+        // Fallback: use synthetic PROMISE_BASE (works without lib files)
         self.ctx
             .types
             .application(TypeId::PROMISE_BASE, vec![inner_type])
