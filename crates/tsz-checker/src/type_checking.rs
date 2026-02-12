@@ -3273,6 +3273,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// TypeScript requires that when multiple interface declarations merge, they must have
     /// the same type parameter names in the same order.
+    #[allow(dead_code)] // TODO: Re-enable after fixing binder scope merging bug
     pub(crate) fn check_interface_type_parameters(&mut self) {
         use crate::types::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashSet;
