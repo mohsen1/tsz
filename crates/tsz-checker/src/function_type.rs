@@ -1090,6 +1090,33 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ANY;
                     }
 
+                    // TS2576: super.member where `member` exists on the base class static side.
+                    if self.is_super_expression(access.expression)
+                        && let Some(ref class_info) = self.ctx.enclosing_class
+                        && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
+                        && self
+                            .is_method_member_in_class_hierarchy(base_idx, property_name, true)
+                            .is_some()
+                    {
+                        use crate::types::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+
+                        let base_name = self.get_class_name_from_decl(base_idx);
+                        let static_member_name = format!("{}.{}", base_name, property_name);
+                        let object_type_str = self.format_type(original_object_type);
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
+                            &[property_name, &object_type_str, &static_member_name],
+                        );
+                        self.error_at_node(
+                            idx,
+                            &message,
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
+                        );
+                        return TypeId::ERROR;
+                    }
+
                     // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
                     if !property_name.starts_with('#') {
                         // Property access expressions are VALUE context - always emit TS2339.
