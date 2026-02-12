@@ -663,15 +663,24 @@ impl<'a> CheckerState<'a> {
             ) => {
                 let derived_shape = self.ctx.types.object_shape(derived_shape_id);
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
+                tracing::trace!(
+                    ?derived_shape_id,
+                    ?base_shape_id,
+                    has_base_string_index = base_shape.string_index.is_some(),
+                    has_base_number_index = base_shape.number_index.is_some(),
+                    "merge_interface_types: Object + ObjectWithIndex"
+                );
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.object_with_index(ObjectShape {
+                let result = self.ctx.types.object_with_index(ObjectShape {
                     flags: ObjectFlags::empty(),
                     properties,
                     string_index: base_shape.string_index.clone(),
                     number_index: base_shape.number_index.clone(),
                     symbol: None,
-                })
+                });
+                tracing::trace!(result_type = %result.0, "merge_interface_types: created merged type");
+                result
             }
             (
                 InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
