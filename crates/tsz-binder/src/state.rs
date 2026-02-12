@@ -284,6 +284,10 @@ pub struct BinderState {
     /// Imports from these modules should resolve to `any` type
     pub shorthand_ambient_modules: FxHashSet<String>,
 
+    /// Modules that use `export =` syntax (CommonJS-style exports)
+    /// Used by the import checker to validate require-style imports
+    pub modules_with_export_equals: FxHashSet<String>,
+
     /// Flag indicating lib symbols have been merged into this binder's symbol arena.
     /// When true, get_symbol() should prefer local symbols over lib_binders lookups,
     /// since all lib symbols now have unique IDs in the local arena.
@@ -371,6 +375,7 @@ impl BinderState {
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
+            modules_with_export_equals: FxHashSet::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
             file_features: FileFeatures::NONE,
@@ -633,6 +638,7 @@ impl BinderState {
             resolved_export_cache: std::sync::RwLock::new(FxHashMap::default()),
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules,
+            modules_with_export_equals,
             lib_symbols_merged: false,
             break_targets: Vec::new(),
             file_features: FileFeatures::NONE,
