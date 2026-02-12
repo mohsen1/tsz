@@ -1849,12 +1849,153 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if a type annotation node is a simple type reference to a given class.
+    /// Returns true if the type annotation is a TypeReference to the class by name.
+    fn type_annotation_refers_to_current_class(
+        &self,
+        type_annotation_idx: NodeIndex,
+        class_idx: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_annotation_idx) else {
+            return false;
+        };
+
+        // Check if it's a type reference
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+
+        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
+            return false;
+        };
+
+        // Get the name from the type reference
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+
+        let type_ref_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            &ident.escaped_text
+        } else {
+            return false;
+        };
+
+        // Get the class name
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+
+        let Some(class) = self.ctx.arena.get_class(class_node) else {
+            return false;
+        };
+
+        if class.name.is_none() {
+            return false;
+        }
+
+        let Some(class_name_node) = self.ctx.arena.get(class.name) else {
+            return false;
+        };
+
+        let class_name = if let Some(ident) = self.ctx.arena.get_identifier(class_name_node) {
+            &ident.escaped_text
+        } else {
+            return false;
+        };
+
+        // Compare names
+        type_ref_name == class_name
+    }
+
+    /// Get the type annotation of an explicit `this` parameter if present.
+    /// Returns Some(type_annotation_idx) if the first parameter is named "this" with a type annotation.
+    /// Returns None otherwise.
+    fn get_explicit_this_type_annotation(&self, params: &[NodeIndex]) -> Option<NodeIndex> {
+        let first_param_idx = params.first().copied()?;
+        let param_node = self.ctx.arena.get(first_param_idx)?;
+        let param = self.ctx.arena.get_parameter(param_node)?;
+
+        // Check if parameter name is "this"
+        // Must check both ThisKeyword and Identifier("this") to match parser behavior
+        let is_this = if let Some(name_node) = self.ctx.arena.get(param.name) {
+            if name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                true
+            } else if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                ident.escaped_text == "this"
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        // Explicit `this` parameter must have a type annotation
+        if is_this && !param.type_annotation.is_none() {
+            Some(param.type_annotation)
+        } else {
+            None
+        }
+    }
+
     /// Get the this type for a class member.
     pub(crate) fn class_member_this_type(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
         let class_info = self.ctx.enclosing_class.as_ref()?;
         let class_idx = class_info.class_idx;
         let cached_instance_this = class_info.cached_instance_this_type;
         let is_static = self.class_member_is_static(member_idx);
+
+        // Check if this method/accessor has an explicit `this` parameter.
+        // If so, extract and return its type instead of the default class type.
+        if let Some(node) = self.ctx.arena.get(member_idx) {
+            let explicit_this_type_annotation = match node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                        self.get_explicit_this_type_annotation(&method.parameters.nodes)
+                    } else {
+                        None
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                        self.get_explicit_this_type_annotation(&accessor.parameters.nodes)
+                    } else {
+                        None
+                    }
+                }
+                k if k == syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                        self.get_explicit_this_type_annotation(&accessor.parameters.nodes)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+            if let Some(type_annotation_idx) = explicit_this_type_annotation {
+                // Check if the explicit `this` type refers to the current class.
+                // If so, we should use the cached instance type to avoid resolution timing issues.
+                let refers_to_current_class =
+                    self.type_annotation_refers_to_current_class(type_annotation_idx, class_idx);
+
+                if refers_to_current_class && !is_static {
+                    // For instance methods with `this: CurrentClass`, use the cached instance type
+                    // This ensures we get the fully-constructed class type with all properties
+                    if let Some(cached) = cached_instance_this {
+                        return Some(cached);
+                    }
+                    if let Some(node) = self.ctx.arena.get(class_idx)
+                        && let Some(class) = self.ctx.arena.get_class(node)
+                    {
+                        return Some(self.get_class_instance_type(class_idx, class));
+                    }
+                }
+
+                // Otherwise, resolve the explicit type normally
+                let explicit_this_type = self.get_type_from_type_node(type_annotation_idx);
+                return Some(explicit_this_type);
+            }
+        }
 
         if !is_static {
             if let Some(cached) = cached_instance_this {
