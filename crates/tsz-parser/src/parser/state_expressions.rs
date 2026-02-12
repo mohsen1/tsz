@@ -1634,7 +1634,10 @@ impl ParserState {
 
                 // Check for illegal initializer: {...x = value} - emit TS1186
                 if self.is_token(SyntaxKind::EqualsToken) {
-                    self.parse_error_at_current_token("A rest element cannot have an initializer.", 1186);
+                    self.parse_error_at_current_token(
+                        "A rest element cannot have an initializer.",
+                        1186,
+                    );
                     // Consume the = token and value to continue parsing
                     self.next_token();
                     self.parse_assignment_expression();
@@ -1777,7 +1780,10 @@ impl ParserState {
                 init
             } else if dot_dot_dot && self.is_token(SyntaxKind::EqualsToken) {
                 // Rest element with initializer: [...x = value] - emit TS1186
-                self.parse_error_at_current_token("A rest element cannot have an initializer.", 1186);
+                self.parse_error_at_current_token(
+                    "A rest element cannot have an initializer.",
+                    1186,
+                );
                 // Consume the = token and value to continue parsing
                 self.next_token();
                 self.parse_assignment_expression();

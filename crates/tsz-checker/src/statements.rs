@@ -348,6 +348,7 @@ impl StatementChecker {
                     // for-await-of requires async function context
                     if await_modifier {
                         state.check_await_expression(expression);
+                        state.check_for_await_statement(stmt_idx);
                     }
 
                     // Determine the element type for the loop variable (for-of) or key type (for-in).

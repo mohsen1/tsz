@@ -905,7 +905,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut final_subst = TypeSubstitution::new();
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             let constraints = infer_ctx.get_constraints(var);
-            let has_constraints = constraints.is_some_and(|c| !c.is_empty());
+            let has_constraints = constraints.as_ref().is_some_and(|c| !c.is_empty());
 
             trace!(
                 type_param_name = ?self.interner.resolve_atom(tp.name),
