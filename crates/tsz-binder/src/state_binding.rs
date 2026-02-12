@@ -1130,6 +1130,16 @@ impl BinderState {
                                             }
                                         }
                                         self.node_symbols.insert(spec_idx.0, export_sym_id);
+
+                                        // Add alias to file_locals so it appears in
+                                        // module_exports for cross-file import resolution.
+                                        // Only needed when the exported name differs from the
+                                        // original (i.e., `export { v as v1 }` — v1 needs to be
+                                        // findable). When orig == exp, the original symbol is
+                                        // already in file_locals and marked exported.
+                                        if orig != exp {
+                                            self.file_locals.set(exp.to_string(), sym_id);
+                                        }
                                     }
                                 }
                             }
