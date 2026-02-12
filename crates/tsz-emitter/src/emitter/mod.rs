@@ -570,6 +570,9 @@ impl<'a> Printer<'a> {
                     array_literal: *array_literal,
                 }
             }
+            TransformDirective::ES5CallSpread { call_expr } => EmitDirective::ES5CallSpread {
+                call_expr: *call_expr,
+            },
             TransformDirective::ES5VariableDeclarationList { decl_list } => {
                 EmitDirective::ES5VariableDeclarationList {
                     decl_list: *decl_list,

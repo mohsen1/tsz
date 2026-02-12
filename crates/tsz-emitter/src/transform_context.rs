@@ -198,6 +198,22 @@ pub enum TransformDirective {
         array_literal: NodeIndex,
     },
 
+    /// ES5 Call Expression with Spread: Transform spread arguments to .apply() with __spreadArray.
+    ///
+    /// ```typescript
+    /// foo(...arr, 1, 2);
+    /// ```
+    ///
+    /// Becomes:
+    ///
+    /// ```javascript
+    /// foo.apply(void 0, __spreadArray(__spreadArray([], arr, false), [1, 2], false));
+    /// ```
+    ES5CallSpread {
+        /// Original call expression node
+        call_expr: NodeIndex,
+    },
+
     /// ES5 Variable Declaration List: Transform destructuring declarations to assignments.
     ES5VariableDeclarationList {
         /// Original variable declaration list node
