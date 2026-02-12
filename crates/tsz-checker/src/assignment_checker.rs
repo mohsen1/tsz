@@ -172,6 +172,9 @@ impl<'a> CheckerState<'a> {
     /// foo = bar;  // Error TS2630: Cannot assign to 'foo' because it is a function.
     /// ```
     ///
+    /// Also checks for built-in global functions (eval, arguments) which always
+    /// emit TS2630 when assigned to, even without explicit function declarations.
+    ///
     /// This check helps catch common mistakes where users try to reassign function names.
     pub(crate) fn check_function_assignment(&mut self, target_idx: NodeIndex) {
         let inner = self.skip_parenthesized_expression(target_idx);
@@ -189,6 +192,29 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let name = &id_data.escaped_text;
+
+        // Check for built-in global functions that always error with TS2630
+        // These are: eval, arguments
+        // TypeScript always treats these as functions, even if not explicitly declared
+        if name == "eval" || name == "arguments" {
+            use crate::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+            let message = format_message(
+                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
+                &[name],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                file: self.ctx.file_name.clone(),
+                start: node.pos,
+                length: node.end.saturating_sub(node.pos),
+                message_text: message,
+                category: DiagnosticCategory::Error,
+                code: diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
+                related_information: Vec::new(),
+            });
+            return;
+        }
 
         // Look up the symbol for this identifier
         let sym_id = self.ctx.binder.node_symbols.get(&inner.0).copied();
