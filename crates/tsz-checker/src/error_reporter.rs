@@ -305,7 +305,11 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_type,
             } => {
-                // TSC emits TS2322 instead of TS2739/TS2740 when the source is a primitive type.
+                // TSC emits TS2322 (generic assignability error) instead of TS2739/TS2740
+                // when the source is a primitive type. Primitives can't have "missing properties".
+                // Example: `arguments = 10` where arguments is IArguments
+                //          → "Type 'number' is not assignable to type '...'"
+                //          NOT "Type 'number' is missing properties from type '...'"
                 if tsz_solver::is_primitive_type(self.ctx.types, *source_type) {
                     let src_str = self.format_type(*source_type);
                     let tgt_str = self.format_type(*target_type);
@@ -322,7 +326,9 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // Also emit TS2322 for wrapper types (Boolean, Number, String)
+                // Also emit TS2322 for wrapper types (Boolean, Number, String) instead of TS2739/TS2740.
+                // These built-in types inherit properties from Object, and object literals don't
+                // explicitly list inherited properties, so TS2739 would be incorrect.
                 let tgt_str_check = self.format_type(*target_type);
                 if tgt_str_check == "Boolean"
                     || tgt_str_check == "Number"
