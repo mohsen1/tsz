@@ -903,6 +903,25 @@ impl<'a> CheckerState<'a> {
     /// Recursively check a type node for parameter properties in function types.
     /// Function types (like `(x: T) => R` or `new (x: T) => R`) cannot have parameter properties.
     /// Walk a type node and emit TS2304 for unresolved type names inside complex types.
+    /// Check type for missing names, but skip top-level TYPE_REFERENCE nodes.
+    /// This is used when the caller will separately check TYPE_REFERENCE nodes
+    /// to avoid duplicate error emissions.
+    pub(crate) fn check_type_for_missing_names_skip_top_level_ref(&mut self, type_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return;
+        };
+
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Skip TYPE_REFERENCE at top level to avoid duplicates
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return;
+        }
+
+        // For all other types, use the normal check
+        self.check_type_for_missing_names(type_idx);
+    }
+
     pub(crate) fn check_type_for_missing_names(&mut self, type_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
@@ -3322,6 +3341,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check return type annotation for parameter properties in function types
         if !func.type_annotation.is_none() {
             self.check_type_for_parameter_properties(func.type_annotation);
+            // Check for undefined type names in return type
+            self.check_type_for_missing_names(func.type_annotation);
         }
 
         // Check parameter type annotations for parameter properties
@@ -3331,6 +3352,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 && !param.type_annotation.is_none()
             {
                 self.check_type_for_parameter_properties(param.type_annotation);
+                // Check for undefined type names in parameter type
+                self.check_type_for_missing_names(param.type_annotation);
             }
         }
 

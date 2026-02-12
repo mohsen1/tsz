@@ -214,6 +214,8 @@ impl<'a> CheckerState<'a> {
                 let type_id = if !param.type_annotation.is_none() {
                     // Check parameter type for parameter properties in function types
                     self.check_type_for_parameter_properties(param.type_annotation);
+                    // Check for undefined type names in parameter type
+                    self.check_type_for_missing_names(param.type_annotation);
                     self.get_type_from_type_node(param.type_annotation)
                 } else if is_this_param {
                     // For `this` parameter without type annotation:
@@ -293,6 +295,8 @@ impl<'a> CheckerState<'a> {
         let (mut return_type, type_predicate) = if has_type_annotation {
             // Check return type for parameter properties in function types
             self.check_type_for_parameter_properties(type_annotation);
+            // Check for undefined type names in return type
+            self.check_type_for_missing_names(type_annotation);
             self.return_type_and_predicate(type_annotation)
         } else {
             // Use UNKNOWN as default to enforce strict checking
