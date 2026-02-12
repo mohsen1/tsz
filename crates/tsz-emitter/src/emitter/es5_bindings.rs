@@ -407,6 +407,126 @@ impl<'a> Printer<'a> {
         self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
     }
 
+    /// Emit ES5 destructuring using __read helper for downlevelIteration
+    /// Transforms: `[a = 0, b = 1] = expr`
+    /// Into: `_d = __read(expr, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, _f = _d[1], b = _f === void 0 ? 1 : _f`
+    fn emit_es5_destructuring_with_read(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_expr: &str,
+        _first: &mut bool,
+    ) {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+
+        // Only handle array binding patterns for now
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            // Fall back to regular destructuring for object patterns
+            let temp_name = self.get_temp_var_name();
+            // Note: caller has already handled the comma and set first=false
+            self.write(&temp_name);
+            self.write(" = ");
+            self.write(source_expr);
+            self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+            return;
+        }
+
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        // Count non-rest elements to pass to __read
+        let element_count = pattern
+            .elements
+            .nodes
+            .iter()
+            .filter(|&&elem_idx| {
+                self.arena
+                    .get(elem_idx)
+                    .and_then(|n| self.arena.get_binding_element(n))
+                    .map(|e| !e.dot_dot_dot_token)
+                    .unwrap_or(false)
+            })
+            .count();
+
+        // Emit: _d = __read(expr, N)
+        let read_temp = self.get_temp_var_name();
+        // Note: caller has already handled the comma and set first=false
+        self.write(&read_temp);
+        self.write(" = __read(");
+        self.write(source_expr);
+        self.write(", ");
+        self.write(&element_count.to_string());
+        self.write(")");
+
+        // Now emit each element binding
+        for (index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+
+            // Skip elided elements
+            if elem.name.is_none() {
+                continue;
+            }
+
+            // Handle rest elements (not applicable for for-of with __read, but included for completeness)
+            if elem.dot_dot_dot_token {
+                continue;
+            }
+
+            // Get element from array: _e = _d[0]
+            let elem_temp = self.get_temp_var_name();
+            self.write(", ");
+            self.write(&elem_temp);
+            self.write(" = ");
+            self.write(&read_temp);
+            self.write("[");
+            self.write(&index.to_string());
+            self.write("]");
+
+            // If there's a default value, emit: a = _e === void 0 ? 0 : _e
+            // If no default, emit: a = _e
+            if let Some(name_node) = self.arena.get(elem.name) {
+                if name_node.kind == SyntaxKind::Identifier as u16 {
+                    self.write(", ");
+                    self.emit(elem.name);
+                    self.write(" = ");
+                    if !elem.initializer.is_none() {
+                        self.write(&elem_temp);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(elem.initializer);
+                        self.write(" : ");
+                        self.write(&elem_temp);
+                    } else {
+                        self.write(&elem_temp);
+                    }
+                } else if self.is_binding_pattern(elem.name) {
+                    // Nested binding pattern - handle recursively
+                    let nested_temp = if !elem.initializer.is_none() {
+                        let defaulted = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&defaulted);
+                        self.write(" = ");
+                        self.write(&elem_temp);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(elem.initializer);
+                        self.write(" : ");
+                        self.write(&elem_temp);
+                        defaulted
+                    } else {
+                        elem_temp
+                    };
+                    self.emit_es5_destructuring_pattern_idx(elem.name, &nested_temp);
+                }
+            }
+        }
+    }
+
     fn get_binding_element_property_key(&self, elem: &BindingElementData) -> Option<NodeIndex> {
         let key_idx = if !elem.property_name.is_none() {
             elem.property_name
@@ -1667,10 +1787,24 @@ impl<'a> Printer<'a> {
                             self.write(", ");
                         }
                         first = false;
-                        self.emit(decl.name);
-                        self.write(" = ");
-                        self.write(result_name);
-                        self.write(".value");
+
+                        // Check if name is a binding pattern (array or object destructuring)
+                        if self.is_binding_pattern(decl.name) {
+                            // For downlevelIteration with binding patterns, use __read
+                            // Transform: var [a = 0, b = 1] = _c.value
+                            // Into: var _d = __read(_c.value, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, ...
+                            self.emit_es5_destructuring_with_read(
+                                decl.name,
+                                &format!("{}.value", result_name),
+                                &mut first,
+                            );
+                        } else {
+                            // Simple identifier binding
+                            self.emit(decl.name);
+                            self.write(" = ");
+                            self.write(result_name);
+                            self.write(".value");
+                        }
                     }
                 }
             }
