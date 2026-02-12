@@ -1193,6 +1193,7 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::Success {
                     type_id: prop_type,
                     from_index_signature,
+                    ..
                 } => {
                     // Check for error 4111: property access from index signature
                     if from_index_signature

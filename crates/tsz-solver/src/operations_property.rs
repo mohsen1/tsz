@@ -27,6 +27,10 @@ pub enum PropertyAccessResult {
     /// Property exists, returns its type
     Success {
         type_id: TypeId,
+        /// The write type (setter parameter type) when different from read type.
+        /// Used for assignment checking with divergent accessors (TS 4.3+).
+        /// `None` means write_type == type_id (no divergence).
+        write_type: Option<TypeId>,
         /// True if this property was resolved via an index signature
         /// (not an explicit property declaration). Used for error 4111.
         from_index_signature: bool,
@@ -129,12 +133,14 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         match kind {
             IntrinsicKind::Any => Some(PropertyAccessResult::Success {
                 type_id: TypeId::ANY,
+                write_type: None,
                 from_index_signature: false,
             }),
             IntrinsicKind::Never => {
                 // Property access on never returns never (code is unreachable)
                 Some(PropertyAccessResult::Success {
                     type_id: TypeId::NEVER,
+                    write_type: None,
                     from_index_signature: false,
                 })
             }
@@ -246,8 +252,14 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
+            let write = if prop.write_type != prop.type_id {
+                Some(prop.write_type)
+            } else {
+                None
+            };
             return Some(PropertyAccessResult::Success {
                 type_id: self.optional_property_type(prop),
+                write_type: write,
                 from_index_signature: false,
             });
         }
@@ -270,6 +282,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             if let Some(value_type) = resolver.resolve_string_index(obj_type) {
                 return Some(PropertyAccessResult::Success {
                     type_id: self.add_undefined_if_unchecked(value_type),
+                    write_type: None,
                     from_index_signature: true,
                 });
             }
@@ -280,6 +293,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             if let Some(value_type) = resolver.resolve_number_index(obj_type) {
                 return Some(PropertyAccessResult::Success {
                     type_id: self.add_undefined_if_unchecked(value_type),
+                    write_type: None,
                     from_index_signature: true,
                 });
             }
@@ -312,8 +326,14 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
+            let write = if prop.write_type != prop.type_id {
+                Some(prop.write_type)
+            } else {
+                None
+            };
             return Some(PropertyAccessResult::Success {
                 type_id: self.optional_property_type(prop),
+                write_type: write,
                 from_index_signature: false,
             });
         }
@@ -327,6 +347,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if let Some(ref idx) = shape.string_index {
             return Some(PropertyAccessResult::Success {
                 type_id: self.add_undefined_if_unchecked(idx.value_type),
+                write_type: None,
                 from_index_signature: true,
             });
         }
@@ -337,6 +358,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
             if let Some(ref idx) = shape.number_index {
                 return Some(PropertyAccessResult::Success {
                     type_id: self.add_undefined_if_unchecked(idx.value_type),
+                    write_type: None,
                     from_index_signature: true,
                 });
             }
@@ -476,8 +498,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
+            let write = if prop.write_type != prop.type_id {
+                Some(prop.write_type)
+            } else {
+                None
+            };
             return Some(PropertyAccessResult::Success {
                 type_id: self.optional_property_type(prop),
+                write_type: write,
                 from_index_signature: false,
             });
         }
@@ -500,6 +528,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(value_type) = resolver.resolve_string_index(obj_type) {
                 return Some(PropertyAccessResult::Success {
                     type_id: self.add_undefined_if_unchecked(value_type),
+                    write_type: None,
                     from_index_signature: true,
                 });
             }
@@ -510,6 +539,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(value_type) = resolver.resolve_number_index(obj_type) {
                 return Some(PropertyAccessResult::Success {
                     type_id: self.add_undefined_if_unchecked(value_type),
+                    write_type: None,
                     from_index_signature: true,
                 });
             }
@@ -540,8 +570,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
+            let write = if prop.write_type != prop.type_id {
+                Some(prop.write_type)
+            } else {
+                None
+            };
             return Some(PropertyAccessResult::Success {
                 type_id: self.optional_property_type(prop),
+                write_type: write,
                 from_index_signature: false,
             });
         }
@@ -555,6 +591,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if let Some(ref idx) = shape.string_index {
             return Some(PropertyAccessResult::Success {
                 type_id: self.add_undefined_if_unchecked(idx.value_type),
+                write_type: None,
                 from_index_signature: true,
             });
         }
@@ -565,6 +602,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(ref idx) = shape.number_index {
                 return Some(PropertyAccessResult::Success {
                     type_id: self.add_undefined_if_unchecked(idx.value_type),
+                    write_type: None,
                     from_index_signature: true,
                 });
             }
@@ -611,6 +649,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if members.contains(&TypeId::ANY) {
             return Some(PropertyAccessResult::Success {
                 type_id: TypeId::ANY,
+                write_type: None,
                 from_index_signature: false,
             });
         }
@@ -619,6 +658,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if members.contains(&TypeId::ERROR) {
             return Some(PropertyAccessResult::Success {
                 type_id: TypeId::ERROR,
+                write_type: None,
                 from_index_signature: false,
             });
         }
@@ -667,6 +707,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 PropertyAccessResult::Success {
                     type_id,
                     from_index_signature,
+                    ..
                 } => {
                     valid_results.push(type_id);
                     if from_index_signature {
@@ -705,6 +746,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(value_type) = resolver.resolve_string_index(obj_type) {
                     return Some(PropertyAccessResult::Success {
                         type_id: self.add_undefined_if_unchecked(value_type),
+                        write_type: None,
                         from_index_signature: true,
                     });
                 }
@@ -714,6 +756,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(value_type) = resolver.resolve_number_index(obj_type) {
                     return Some(PropertyAccessResult::Success {
                         type_id: self.add_undefined_if_unchecked(value_type),
+                        write_type: None,
                         from_index_signature: true,
                     });
                 }
@@ -762,6 +805,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Union of all result types
         Some(PropertyAccessResult::Success {
             type_id,
+            write_type: None,
             from_index_signature: any_from_index, // Contagious across union members
         })
     }
@@ -884,6 +928,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         Some(PropertyAccessResult::Success {
             type_id: final_type,
+            write_type: None,
             from_index_signature: false,
         })
     }
@@ -1124,6 +1169,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     match kind {
                         IntrinsicKind::Any => Some(PropertyAccessResult::Success {
                             type_id: TypeId::ANY,
+                            write_type: None,
                             from_index_signature: false,
                         }),
                         IntrinsicKind::Unknown => Some(PropertyAccessResult::IsUnknown),
@@ -1201,6 +1247,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 {
                     return PropertyAccessResult::Success {
                         type_id: self.optional_property_type(prop),
+                        write_type: None,
                         from_index_signature: false,
                     };
                 }
@@ -1218,6 +1265,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(value_type) = resolver.resolve_string_index(obj_type) {
                         return PropertyAccessResult::Success {
                             type_id: self.add_undefined_if_unchecked(value_type),
+                            write_type: None,
                             from_index_signature: true,
                         };
                     }
@@ -1228,6 +1276,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(value_type) = resolver.resolve_number_index(obj_type) {
                         return PropertyAccessResult::Success {
                             type_id: self.add_undefined_if_unchecked(value_type),
+                            write_type: None,
                             from_index_signature: true,
                         };
                     }
@@ -1248,6 +1297,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 {
                     return PropertyAccessResult::Success {
                         type_id: self.optional_property_type(prop),
+                        write_type: None,
                         from_index_signature: false,
                     };
                 }
@@ -1260,6 +1310,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(ref idx) = shape.string_index {
                     return PropertyAccessResult::Success {
                         type_id: self.add_undefined_if_unchecked(idx.value_type),
+                        write_type: None,
                         from_index_signature: true,
                     };
                 }
@@ -1271,6 +1322,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if let Some(ref idx) = shape.number_index {
                         return PropertyAccessResult::Success {
                             type_id: self.add_undefined_if_unchecked(idx.value_type),
+                            write_type: None,
                             from_index_signature: true,
                         };
                     }
@@ -1296,6 +1348,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     if prop.name == prop_atom {
                         return PropertyAccessResult::Success {
                             type_id: self.optional_property_type(prop),
+                            write_type: None,
                             from_index_signature: false,
                         };
                     }
@@ -1304,6 +1357,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if let Some(ref idx) = shape.string_index {
                     return PropertyAccessResult::Success {
                         type_id: self.add_undefined_if_unchecked(idx.value_type),
+                        write_type: None,
                         from_index_signature: true,
                     };
                 }
@@ -1326,6 +1380,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         PropertyAccessResult::Success {
                             type_id,
                             from_index_signature,
+                            ..
                         } => {
                             results.push(type_id);
                             if from_index_signature {
@@ -1375,6 +1430,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             if let Some(value_type) = resolver.resolve_string_index(member) {
                                 return PropertyAccessResult::Success {
                                     type_id: self.add_undefined_if_unchecked(value_type),
+                                    write_type: None,
                                     from_index_signature: true,
                                 };
                             }
@@ -1387,6 +1443,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             if let Some(value_type) = resolver.resolve_number_index(member) {
                                 return PropertyAccessResult::Success {
                                     type_id: self.add_undefined_if_unchecked(value_type),
+                                    write_type: None,
                                     from_index_signature: true,
                                 };
                             }
@@ -1410,6 +1467,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 PropertyAccessResult::Success {
                     type_id,
+                    write_type: None,
                     from_index_signature: any_from_index,
                 }
             }
@@ -1563,6 +1621,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         // Can't determine the actual type - return ANY to avoid false positives
                         PropertyAccessResult::Success {
                             type_id: TypeId::ANY,
+                            write_type: None,
                             from_index_signature: false,
                         }
                     }
@@ -1587,6 +1646,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         // Can't resolve type query - return ANY to avoid false positives
                         PropertyAccessResult::Success {
                             type_id: TypeId::ANY,
+                            write_type: None,
                             from_index_signature: false,
                         }
                     }
@@ -1626,6 +1686,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         // Can't evaluate - return ANY to avoid false positives
                         PropertyAccessResult::Success {
                             type_id: TypeId::ANY,
+                            write_type: None,
                             from_index_signature: false,
                         }
                     }
@@ -1663,6 +1724,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         // Can't evaluate - return ANY to avoid false positives
                         PropertyAccessResult::Success {
                             type_id: TypeId::ANY,
+                            write_type: None,
                             from_index_signature: false,
                         }
                     }
@@ -1695,6 +1757,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // 'this' type not resolved - return ANY to avoid false positives
                 PropertyAccessResult::Success {
                     type_id: TypeId::ANY,
+                    write_type: None,
                     from_index_signature: false,
                 }
             }
@@ -1731,6 +1794,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         // Can't evaluate - return ANY to avoid false positives
                         PropertyAccessResult::Success {
                             type_id: TypeId::ANY,
+                            write_type: None,
                             from_index_signature: false,
                         }
                     }
@@ -1754,6 +1818,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // This includes UniqueSymbol, Error, and any future type keys
                 PropertyAccessResult::Success {
                     type_id: TypeId::ANY,
+                    write_type: None,
                     from_index_signature: false,
                 }
             }
@@ -1799,6 +1864,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     fn method_result(&self, return_type: TypeId) -> PropertyAccessResult {
         PropertyAccessResult::Success {
             type_id: self.any_args_function(return_type),
+            write_type: None,
             from_index_signature: false,
         }
     }
@@ -1849,6 +1915,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // No type params available, return the property type as-is
                     return PropertyAccessResult::Success {
                         type_id: prop.type_id,
+                        write_type: None,
                         from_index_signature: false,
                     };
                 }
@@ -1870,6 +1937,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 return PropertyAccessResult::Success {
                     type_id: final_type,
+                    write_type: None,
                     from_index_signature: false,
                 };
             }
@@ -1892,6 +1960,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 if type_params.is_empty() {
                     return PropertyAccessResult::Success {
                         type_id: prop.type_id,
+                        write_type: None,
                         from_index_signature: false,
                     };
                 }
@@ -1910,6 +1979,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 return PropertyAccessResult::Success {
                     type_id: final_type,
+                    write_type: None,
                     from_index_signature: false,
                 };
             }
@@ -1918,6 +1988,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if let Some(ref idx) = shape.string_index {
                 return PropertyAccessResult::Success {
                     type_id: self.add_undefined_if_unchecked(idx.value_type),
+                    write_type: None,
                     from_index_signature: true,
                 };
             }
@@ -1946,6 +2017,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     // No type params available, return the property type as-is
                     return PropertyAccessResult::Success {
                         type_id: prop.type_id,
+                        write_type: None,
                         from_index_signature: false,
                     };
                 }
@@ -1972,6 +2044,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 return PropertyAccessResult::Success {
                     type_id: final_type,
+                    write_type: None,
                     from_index_signature: false,
                 };
             }
@@ -2071,17 +2144,24 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     let instantiated_write_type =
                         instantiate_type(self.interner(), prop.write_type, &substitution);
 
+                    let read_type = self.optional_property_type(&PropertyInfo {
+                        name: prop.name,
+                        type_id: instantiated_read_type,
+                        write_type: instantiated_write_type,
+                        readonly: prop.readonly,
+                        optional: prop.optional,
+                        is_method: prop.is_method,
+                        visibility: prop.visibility,
+                        parent_id: prop.parent_id,
+                    });
+                    let write = if instantiated_write_type != instantiated_read_type {
+                        Some(instantiated_write_type)
+                    } else {
+                        None
+                    };
                     return PropertyAccessResult::Success {
-                        type_id: self.optional_property_type(&PropertyInfo {
-                            name: prop.name,
-                            type_id: instantiated_read_type,
-                            write_type: instantiated_write_type,
-                            readonly: prop.readonly,
-                            optional: prop.optional,
-                            is_method: prop.is_method,
-                            visibility: prop.visibility,
-                            parent_id: prop.parent_id,
-                        }),
+                        type_id: read_type,
+                        write_type: write,
                         from_index_signature: false,
                     };
                 }
@@ -2096,6 +2176,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                     return PropertyAccessResult::Success {
                         type_id: self.add_undefined_if_unchecked(instantiated_value),
+                        write_type: None,
                         from_index_signature: true,
                     };
                 }
@@ -2112,6 +2193,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                         return PropertyAccessResult::Success {
                             type_id: self.add_undefined_if_unchecked(instantiated_value),
+                            write_type: None,
                             from_index_signature: true,
                         };
                     }
@@ -2159,6 +2241,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         match apparent_primitive_member_kind(self.interner(), kind, prop_name) {
             Some(ApparentMemberKind::Value(type_id)) => PropertyAccessResult::Success {
                 type_id,
+                write_type: None,
                 from_index_signature: false,
             },
             Some(ApparentMemberKind::Method(return_type)) => self.method_result(return_type),
@@ -2177,6 +2260,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         match apparent_object_member_kind(prop_name) {
             Some(ApparentMemberKind::Value(type_id)) => Some(PropertyAccessResult::Success {
                 type_id,
+                write_type: None,
                 from_index_signature: false,
             }),
             Some(ApparentMemberKind::Method(return_type)) => Some(self.method_result(return_type)),
@@ -2248,6 +2332,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if prop_name == "toString" || prop_name == "valueOf" {
             return PropertyAccessResult::Success {
                 type_id: TypeId::ANY,
+                write_type: None,
                 from_index_signature: false,
             };
         }
@@ -2291,6 +2376,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let element_or_undefined = self.element_type_with_undefined(element_type);
             return PropertyAccessResult::Success {
                 type_id: element_or_undefined,
+                write_type: None,
                 from_index_signature: true,
             };
         }
@@ -2349,14 +2435,17 @@ impl<'a> PropertyAccessEvaluator<'a> {
             "toString" => self.method_result(TypeId::STRING),
             "length" => PropertyAccessResult::Success {
                 type_id: TypeId::NUMBER,
+                write_type: None,
                 from_index_signature: false,
             },
             "prototype" | "arguments" => PropertyAccessResult::Success {
                 type_id: TypeId::ANY,
+                write_type: None,
                 from_index_signature: false,
             },
             "caller" => PropertyAccessResult::Success {
                 type_id: self.any_args_function(TypeId::ANY),
+                write_type: None,
                 from_index_signature: false,
             },
             _ => {
