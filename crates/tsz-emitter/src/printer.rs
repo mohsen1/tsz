@@ -579,11 +579,22 @@ mod tests {
         let mut output = Vec::new();
         {
             let mut printer = StreamingPrinter::new(&mut output);
-            printer.write("hello").unwrap();
-            printer.write(" ").unwrap();
-            printer.write("world").unwrap();
-            printer.flush().unwrap();
+            printer
+                .write("hello")
+                .expect("writing to Vec<u8> should not fail");
+            printer
+                .write(" ")
+                .expect("writing to Vec<u8> should not fail");
+            printer
+                .write("world")
+                .expect("writing to Vec<u8> should not fail");
+            printer
+                .flush()
+                .expect("flushing to Vec<u8> should not fail");
         }
-        assert_eq!(String::from_utf8(output).unwrap(), "hello world");
+        assert_eq!(
+            String::from_utf8(output).expect("output should be valid UTF-8"),
+            "hello world"
+        );
     }
 }
