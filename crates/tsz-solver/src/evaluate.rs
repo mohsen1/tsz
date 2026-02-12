@@ -212,41 +212,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate a type, resolving any meta-types if possible.
     /// Returns the evaluated type (may be the same if no evaluation needed).
-    ///
-    /// # TODO: Application Type Expansion (Worker 2 - Redux test fix)
-    ///
-    /// **Problem**: `Application(Ref(sym), args)` types (like `Reducer<S, A>`) are not
-    /// being expanded to their instantiated form. This causes diagnostics to show
-    /// `Ref(5)<error>` instead of the actual type.
-    ///
-    /// **Current Behavior**: Application types pass through unchanged at line ~202.
-    /// This means when comparing a function type against `Reducer<S, A>`, the
-    /// Application type is not expanded to its underlying function type.
-    ///
-    /// **Observed Diagnostics in redux test**:
-    /// - `Type '(state: undefined | Ref(5)<error>, action: Ref(6)<error>) => any'
-    ///    is not assignable to type 'Ref(1)<Ref(5)<error>, Ref(6)<error>>'`
-    /// - `Ref(5)`, `Ref(6)`, `Ref(7)` etc. should be expanded to actual types
-    ///
-    /// **Fix Approach**: Add a case for `TypeKey::Application(app_id)`:
-    /// 1. Get the base type from the Application
-    /// 2. If base is a `Ref(sym)`, resolve it using `self.resolver.resolve_ref(sym, ...)`
-    /// 3. Get the type parameters from the resolved type (type alias or interface)
-    /// 4. Create a substitution map: type_params[i] -> args[i]
-    /// 5. Instantiate the resolved type body with the substitution
-    /// 6. Return the instantiated type
-    ///
-    /// **Example**:
-    /// ```text
-    /// // Given: type Reducer<S, A> = (state: S | undefined, action: A) => S
-    /// // And: Application(Ref(Reducer), [number, AnyAction])
-    /// // Should expand to: (state: number | undefined, action: AnyAction) => number
-    /// ```
-    ///
-    /// **Related Files**:
-    /// - `instantiate.rs` - Has substitution logic for type parameters
-    /// - `checker/state.rs:2900-2918` - Type alias resolution with type params
-    /// - `lower.rs:856-868` - `lower_type_alias_declaration` with params
     pub fn evaluate(&mut self, type_id: TypeId) -> TypeId {
         use crate::recursion::RecursionResult;
 
