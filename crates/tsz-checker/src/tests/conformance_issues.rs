@@ -239,6 +239,21 @@ class E2<T> extends D2<T> { baz: T; }
 }
 
 #[test]
+fn test_interface_extends_primitive_reports_ts2840() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface I extends number {}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2840),
+        "Expected TS2840 when interface extends primitive type. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_unresolved_import_namespace_access_suppresses_ts2708() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

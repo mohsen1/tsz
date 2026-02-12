@@ -2436,6 +2436,19 @@ impl<'a> CheckerState<'a> {
                                             diagnostic_codes::A_CLASS_CANNOT_IMPLEMENT_A_PRIMITIVE_TYPE_LIKE_IT_CAN_ONLY_IMPLEMENT_OTHER_NAMED,
                                         );
                                     }
+                                } else if is_extends_clause {
+                                    use crate::types::diagnostics::{
+                                        diagnostic_codes, diagnostic_messages, format_message,
+                                    };
+                                    let message = format_message(
+                                        diagnostic_messages::AN_INTERFACE_CANNOT_EXTEND_A_PRIMITIVE_TYPE_LIKE_IT_CAN_ONLY_EXTEND_OTHER_NAMED,
+                                        &[name],
+                                    );
+                                    self.error_at_node(
+                                        expr_idx,
+                                        &message,
+                                        diagnostic_codes::AN_INTERFACE_CANNOT_EXTEND_A_PRIMITIVE_TYPE_LIKE_IT_CAN_ONLY_EXTEND_OTHER_NAMED,
+                                    );
                                 }
 
                                 // Skip further name/type resolution for primitive type keywords.
