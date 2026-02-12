@@ -34,15 +34,12 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 /// ES5 Class Transformer - produces IR nodes for ES5 class lowering
-#[allow(dead_code)]
 pub struct ES5ClassTransformer<'a> {
     arena: &'a NodeArena,
     /// Current class name (for WeakMap naming)
     class_name: String,
     /// Whether we're using _this capture
     use_this_capture: bool,
-    /// Counter for temp variables
-    temp_var_counter: u32,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -51,7 +48,6 @@ impl<'a> ES5ClassTransformer<'a> {
             arena,
             class_name: String::new(),
             use_this_capture: false,
-            temp_var_counter: 0,
         }
     }
 
@@ -877,13 +873,6 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
         None
-    }
-
-    #[allow(dead_code)] // Infrastructure for ES5 transforms
-    fn get_temp_var_name(&mut self) -> String {
-        let name = format!("_{}", (b'a' + (self.temp_var_counter % 26) as u8) as char);
-        self.temp_var_counter += 1;
-        name
     }
 }
 

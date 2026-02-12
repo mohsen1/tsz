@@ -11,7 +11,6 @@ pub struct DecodedMapping {
     pub source_index: u32,
     pub original_line: u32,
     pub original_column: u32,
-    #[allow(dead_code)]
     pub name_index: Option<u32>,
 }
 

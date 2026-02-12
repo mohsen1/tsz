@@ -2606,11 +2606,6 @@ impl<'a> CheckerState<'a> {
                     PropertyKey::Computed(ComputedKey::Ident(s)) => format!("[{}]", s),
                     PropertyKey::Computed(ComputedKey::String(s)) => format!("[\"{}\"]", s),
                     PropertyKey::Computed(ComputedKey::Number(n)) => format!("[{}]", n),
-                    PropertyKey::Computed(ComputedKey::Qualified(q)) => format!("[{}]", q),
-                    PropertyKey::Computed(ComputedKey::Symbol(Some(s))) => {
-                        format!("[Symbol({})]", s)
-                    }
-                    PropertyKey::Computed(ComputedKey::Symbol(None)) => "[Symbol()]".to_string(),
                     PropertyKey::Private(s) => format!("#{}", s),
                     PropertyKey::Ident(s) => s.clone(),
                 }

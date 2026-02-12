@@ -1833,35 +1833,6 @@ impl Project {
         }
     }
 
-    /// Check if a file has a default export.
-    #[allow(dead_code)]
-    fn file_has_default_export(&self, file_name: &str) -> bool {
-        let Some(file) = self.files.get(file_name) else {
-            return false;
-        };
-        let arena = file.arena();
-        let Some(source_file) = arena.get_source_file_at(file.root()) else {
-            return false;
-        };
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                continue;
-            };
-            let Some(export) = arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            if export.is_default_export {
-                return true;
-            }
-        }
-
-        false
-    }
-
     pub(crate) fn completion_from_import_candidate(
         &self,
         candidate: &ImportCandidate,

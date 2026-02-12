@@ -301,7 +301,6 @@ struct ImportCandidateInput {
 /// Maps to TypeScript compiler options.
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)] // Fields are deserialized but some not yet used
 struct CompilerOptions {
     /// Enable all strict type checking options.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
@@ -334,10 +333,6 @@ struct CompilerOptions {
     /// Specify ECMAScript target version (accepts string like "ES5" or numeric).
     #[serde(default, deserialize_with = "deserialize_target_or_module")]
     target: Option<u32>,
-
-    /// Specify module code generation (accepts string like "CommonJS" or numeric).
-    #[serde(default, deserialize_with = "deserialize_target_or_module")]
-    module: Option<u32>,
 
     /// When true, do not include any library files.
     #[serde(default, deserialize_with = "deserialize_bool_option")]
@@ -566,7 +561,7 @@ impl CompilerOptions {
             no_lib: self.no_lib.unwrap_or(false),
             no_types_and_symbols: false,
             target: self.resolve_target(),
-            module: crate::common::ModuleKind::None, // WASM API: use self.module if available
+            module: crate::common::ModuleKind::None,
             es_module_interop: false,
             allow_synthetic_default_imports: false,
             allow_unreachable_code: None,

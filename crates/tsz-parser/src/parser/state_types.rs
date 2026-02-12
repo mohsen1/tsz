@@ -101,49 +101,6 @@ impl ParserState {
             .add_token(SyntaxKind::Identifier as u16, start_pos, end_pos)
     }
 
-    /// Enhanced parse_expected for better error recovery in type annotation contexts
-    #[allow(dead_code)]
-    pub(crate) fn parse_expected_in_type_context(&mut self, kind: SyntaxKind) -> bool {
-        if self.is_token(kind) {
-            self.next_token();
-            true
-        } else {
-            // Enhanced error recovery for type contexts - be more permissive
-            let should_suppress = match kind {
-                SyntaxKind::GreaterThanToken => {
-                    // For missing > in type arguments, if we see statement starters or closing tokens,
-                    // it's likely a type parsing error that shouldn't cascade
-                    if self.is_statement_start()
-                        || self.is_token(SyntaxKind::CloseBraceToken)
-                        || self.is_token(SyntaxKind::CloseParenToken)
-                        || self.is_token(SyntaxKind::CloseBracketToken)
-                    {
-                        return true;
-                    }
-                    false
-                }
-                SyntaxKind::CloseParenToken
-                | SyntaxKind::CloseBracketToken
-                | SyntaxKind::CloseBraceToken => {
-                    // In type contexts, if we see statement starters, suppress the error
-                    self.is_statement_start()
-                        || self.is_token(SyntaxKind::SemicolonToken)
-                        || self.scanner.has_preceding_line_break()
-                }
-                SyntaxKind::ColonToken => {
-                    // For missing colon in type annotations, be more permissive
-                    self.is_statement_start()
-                }
-                _ => false,
-            };
-
-            if !should_suppress {
-                self.error_token_expected(Self::token_to_string(kind));
-            }
-            false
-        }
-    }
-
     /// Parse return type, which may be a type predicate (x is T) or a regular type
     pub(crate) fn parse_return_type(&mut self) -> NodeIndex {
         if self.is_asserts_type_predicate_start() {

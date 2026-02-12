@@ -1446,53 +1446,6 @@ impl<'a> Printer<'a> {
         false
     }
 
-    /// Emit CommonJS module preamble
-    #[allow(dead_code)] // Infrastructure for CommonJS module emit
-    pub(super) fn emit_commonjs_preamble(&mut self, statements: &NodeList) {
-        use crate::transforms::module_commonjs;
-
-        // "use strict";
-        self.write("\"use strict\";");
-        self.write_line();
-
-        // Emit __esModule if this is an ES module (has imports or ES exports)
-        // Note: 'export =' is CommonJS style and doesn't get __esModule
-        if self.should_emit_es_module_marker(statements) {
-            self.write("Object.defineProperty(exports, \"__esModule\", { value: true });");
-            self.write_line();
-        }
-
-        // Collect and emit exports initialization
-        // TypeScript emits: exports.func = func; for hoisted function declarations
-        // and exports.C = void 0; for non-hoisted declarations
-        let (func_exports, other_exports) =
-            module_commonjs::collect_export_names_categorized(self.arena, &statements.nodes);
-
-        // Emit non-hoisted exports first: exports.a = exports.b = void 0;
-        // TypeScript emits void 0 initialization before hoisted function exports
-        if !other_exports.is_empty() {
-            for (i, name) in other_exports.iter().enumerate() {
-                if i > 0 {
-                    self.write(" = ");
-                }
-                self.write("exports.");
-                self.write(name);
-            }
-            self.write(" = void 0;");
-            self.write_line();
-        }
-
-        // Emit hoisted function exports: exports.f = f;
-        for name in &func_exports {
-            self.write("exports.");
-            self.write(name);
-            self.write(" = ");
-            self.write(name);
-            self.write(";");
-            self.write_line();
-        }
-    }
-
     /// Write the appropriate variable declaration keyword based on target.
     /// For ES2015+, use `const` for top-level module imports.
     /// For ES3/ES5, use `var`.

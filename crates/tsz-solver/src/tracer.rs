@@ -26,15 +26,12 @@
 
 use crate::TypeDatabase;
 use crate::diagnostics::{SubtypeFailureReason, SubtypeTracer};
-use crate::subtype::TypeResolver;
 use crate::types::*;
 
 #[cfg(test)]
 use crate::TypeInterner;
 #[cfg(test)]
 use crate::diagnostics::{DiagnosticTracer, FastTracer};
-#[cfg(test)]
-use crate::subtype::NoopResolver;
 
 /// Tracer-based subtype checker.
 ///
@@ -43,12 +40,9 @@ use crate::subtype::NoopResolver;
 ///
 /// The checker maintains its own cycle detection and depth tracking to avoid
 /// interfering with the main `SubtypeChecker` state.
-pub struct TracerSubtypeChecker<'a, R: TypeResolver> {
+pub struct TracerSubtypeChecker<'a> {
     /// Reference to the type database (interner).
     pub(crate) interner: &'a dyn TypeDatabase,
-    /// Reference to the type resolver (for resolving Ref types).
-    #[allow(dead_code)]
-    pub(crate) resolver: &'a R,
     /// Unified recursion guard for cycle detection, depth, and iteration limits.
     pub(crate) guard: crate::recursion::RecursionGuard<(TypeId, TypeId)>,
     /// Whether to use strict function types (contravariant parameters).
@@ -59,12 +53,11 @@ pub struct TracerSubtypeChecker<'a, R: TypeResolver> {
     pub(crate) strict_null_checks: bool,
 }
 
-impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
+impl<'a> TracerSubtypeChecker<'a> {
     /// Create a new tracer-based subtype checker.
-    pub fn new(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         Self {
             interner,
-            resolver,
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
@@ -327,7 +320,7 @@ impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
 // Helper methods (ported from SubtypeChecker with tracer support)
 // =============================================================================
 
-impl<'a, R: TypeResolver> TracerSubtypeChecker<'a, R> {
+impl<'a> TracerSubtypeChecker<'a> {
     /// Evaluate a type (handle Ref, Application, etc.)
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {
         // For now, just return the type as-is
@@ -767,8 +760,7 @@ mod tests {
     #[test]
     fn test_fast_tracer_boolean() {
         let interner = TypeInterner::new();
-        let resolver = NoopResolver;
-        let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
+        let mut checker = TracerSubtypeChecker::new(&interner);
 
         // Same type - use built-in constants
         let string_type = TypeId::STRING;
@@ -790,8 +782,7 @@ mod tests {
     #[test]
     fn test_diagnostic_tracer_collects_reasons() {
         let interner = TypeInterner::new();
-        let resolver = NoopResolver;
-        let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
+        let mut checker = TracerSubtypeChecker::new(&interner);
 
         let string_type = TypeId::STRING;
         let number_type = TypeId::NUMBER;
@@ -819,8 +810,7 @@ mod tests {
     #[test]
     fn test_union_target_tracer() {
         let interner = TypeInterner::new();
-        let resolver = NoopResolver;
-        let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
+        let mut checker = TracerSubtypeChecker::new(&interner);
 
         // string | number
         let string_type = TypeId::STRING;
@@ -842,9 +832,7 @@ mod tests {
     #[test]
     fn test_function_tracer() {
         let interner = TypeInterner::new();
-        let resolver = NoopResolver;
-        let mut checker =
-            TracerSubtypeChecker::new(&interner, &resolver).with_strict_function_types(true);
+        let mut checker = TracerSubtypeChecker::new(&interner).with_strict_function_types(true);
 
         // (x: string) => number
         let string_type = TypeId::STRING;
@@ -878,8 +866,7 @@ mod tests {
     #[test]
     fn benchmark_fast_tracer() {
         let interner = TypeInterner::new();
-        let resolver = NoopResolver;
-        let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
+        let mut checker = TracerSubtypeChecker::new(&interner);
 
         let string_type = TypeId::STRING;
         let number_type = TypeId::NUMBER;
@@ -916,8 +903,7 @@ mod tests {
     #[test]
     fn test_tracer_logic_consistency() {
         let interner = TypeInterner::new();
-        let resolver = NoopResolver;
-        let mut checker = TracerSubtypeChecker::new(&interner, &resolver);
+        let mut checker = TracerSubtypeChecker::new(&interner);
 
         // Test various type pairs using built-in constants
         let test_cases = vec![

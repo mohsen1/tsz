@@ -267,13 +267,6 @@ impl ScannerState {
     // Helper methods (byte-indexed for zero-copy performance)
     // =========================================================================
 
-    /// Get the byte at the given index. Returns None if out of bounds.
-    #[inline]
-    #[allow(dead_code)] // Infrastructure for scanner extensions
-    fn byte_at(&self, index: usize) -> Option<u8> {
-        self.source.as_bytes().get(index).copied()
-    }
-
     /// Get byte at index as u32 char code. Returns 0 if out of bounds.
     /// FAST PATH: For ASCII bytes (0-127), this is the character code.
     #[inline(always)]
@@ -312,12 +305,6 @@ impl ScannerState {
         } else {
             None
         }
-    }
-
-    #[inline]
-    #[allow(dead_code)] // Infrastructure for scanner extensions
-    fn is_at_end(&self) -> bool {
-        self.pos >= self.end
     }
 
     /// Get byte length of character at position (1 for ASCII, 1-4 for UTF-8)

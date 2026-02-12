@@ -78,9 +78,6 @@ pub struct DeclarationEmitter<'a> {
     reserved_names: FxHashSet<String>,
     /// Maps (ModulePath, ExportName) -> AliasName for string-based imports
     import_string_aliases: FxHashMap<(String, String), String>,
-    /// Maps SymbolId -> AliasName for SymbolId-based imports
-    #[allow(dead_code)]
-    symbol_aliases: FxHashMap<SymbolId, String>,
     /// Map of imported SymbolId -> ModuleSpecifier for elision
     /// Tracks which module each imported symbol claims to come from
     import_symbol_map: FxHashMap<SymbolId, String>,
@@ -124,7 +121,6 @@ impl<'a> DeclarationEmitter<'a> {
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
-            symbol_aliases: FxHashMap::default(),
             import_symbol_map: FxHashMap::default(),
             import_name_map: FxHashMap::default(),
             inside_declare_namespace: false,
@@ -159,7 +155,6 @@ impl<'a> DeclarationEmitter<'a> {
             required_imports: FxHashMap::default(),
             reserved_names: FxHashSet::default(),
             import_string_aliases: FxHashMap::default(),
-            symbol_aliases: FxHashMap::default(),
             import_symbol_map: FxHashMap::default(),
             import_name_map: FxHashMap::default(),
             inside_declare_namespace: false,
@@ -2455,33 +2450,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
-    #[allow(dead_code)]
-    fn emit_named_imports(&mut self, imports_idx: NodeIndex, allow_type_prefix: bool) {
-        let Some(imports_node) = self.arena.get(imports_idx) else {
-            return;
-        };
-        let Some(imports) = self.arena.get_named_imports(imports_node) else {
-            return;
-        };
-
-        if !imports.name.is_none() && imports.elements.nodes.is_empty() {
-            self.write("* as ");
-            self.emit_node(imports.name);
-            return;
-        }
-
-        self.write("{ ");
-        let mut first = true;
-        for &spec_idx in &imports.elements.nodes {
-            if !first {
-                self.write(", ");
-            }
-            first = false;
-            self.emit_import_specifier(spec_idx, allow_type_prefix);
-        }
-        self.write(" }");
-    }
-
     /// Emit named imports, filtering out unused specifiers.
     ///
     /// This version only emits import specifiers that are in the used_symbols set.
@@ -3606,18 +3574,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// Resolve name for SymbolId imports, generating alias if needed.
-    #[allow(dead_code)]
-    fn resolve_import_name_for_symbol(&mut self, _module: &str, name: &str, sym_id: SymbolId) {
-        if self.reserved_names.contains(name) {
-            let alias = self.generate_unique_name(name);
-            self.symbol_aliases.insert(sym_id, alias.clone());
-            self.reserved_names.insert(alias);
-        } else {
-            self.reserved_names.insert(name.to_string());
-        }
-    }
-
     /// Generate unique name (e.g., "TypeA_1").
     fn generate_unique_name(&self, base: &str) -> String {
         let mut i = 1;
@@ -3719,50 +3675,6 @@ impl<'a> DeclarationEmitter<'a> {
             // Fallback if no interner available
             "any".to_string()
         }
-    }
-
-    /// Check if a symbol needs an import statement.
-    ///
-    /// A symbol needs an import if:
-    /// - It is used (in used_symbols)
-    /// - It is not already imported (symbol.import_module is None)
-    /// - It is not declared in the current file (we can't check this easily without file_idx)
-    #[allow(dead_code)]
-    fn symbol_needs_import(&self, sym_id: SymbolId) -> bool {
-        // Must have binder and used_symbols
-        let (Some(binder), Some(used)) = (&self.binder, &self.used_symbols) else {
-            return false;
-        };
-
-        // Must be in used_symbols
-        if !used.contains_key(&sym_id) {
-            return false;
-        }
-
-        // Get the symbol
-        let Some(symbol) = binder.symbols.get(sym_id) else {
-            return false;
-        };
-
-        // If already imported, no need to generate import
-        if symbol.import_module.is_some() {
-            return false;
-        }
-
-        // Check if symbol is declared in current file by comparing arena paths
-        if let Some(current_path) = &self.current_file_path {
-            if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
-                let arena_addr = std::sync::Arc::as_ptr(source_arena) as usize;
-                if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
-                    if source_path == current_path {
-                        // Symbol is declared in the current file, no import needed
-                        return false;
-                    }
-                }
-            }
-        }
-
-        true
     }
 
     /// Resolve a foreign symbol to its module path.

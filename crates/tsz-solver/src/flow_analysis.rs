@@ -108,8 +108,6 @@ impl FlowFacts {
 /// This evaluator uses the solver's type operations to compute narrowed types
 /// based on flow facts gathered during control flow analysis.
 pub struct FlowTypeEvaluator<'a> {
-    #[allow(dead_code)]
-    db: &'a dyn QueryDatabase,
     narrowing_context: NarrowingContext<'a>,
 }
 
@@ -117,10 +115,7 @@ impl<'a> FlowTypeEvaluator<'a> {
     /// Create a new flow type evaluator
     pub fn new(db: &'a dyn QueryDatabase) -> Self {
         let narrowing_context = NarrowingContext::new(db);
-        Self {
-            db,
-            narrowing_context,
-        }
+        Self { narrowing_context }
     }
 
     /// Compute the narrowed type for a variable based on flow facts.

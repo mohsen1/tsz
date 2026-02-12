@@ -35,8 +35,6 @@ pub struct TypeHierarchyItem {
 /// Provider for type hierarchy operations.
 pub struct TypeHierarchyProvider<'a> {
     arena: &'a NodeArena,
-    #[allow(dead_code)] // Stored for future cross-file type hierarchy resolution
-    binder: &'a BinderState,
     line_map: &'a LineMap,
     file_name: String,
     source_text: &'a str,
@@ -46,14 +44,13 @@ impl<'a> TypeHierarchyProvider<'a> {
     /// Create a new type hierarchy provider.
     pub fn new(
         arena: &'a NodeArena,
-        binder: &'a BinderState,
+        _binder: &'a BinderState,
         line_map: &'a LineMap,
         file_name: String,
         source_text: &'a str,
     ) -> Self {
         Self {
             arena,
-            binder,
             line_map,
             file_name,
             source_text,

@@ -609,15 +609,12 @@ pub fn get_message_template(code: u32) -> &'static str {
 
 /// Builder for creating type error diagnostics.
 pub struct DiagnosticBuilder<'a> {
-    #[allow(dead_code)]
-    interner: &'a dyn TypeDatabase,
     formatter: TypeFormatter<'a>,
 }
 
 impl<'a> DiagnosticBuilder<'a> {
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         DiagnosticBuilder {
-            interner,
             formatter: TypeFormatter::new(interner),
         }
     }
@@ -631,7 +628,6 @@ impl<'a> DiagnosticBuilder<'a> {
         symbol_arena: &'a tsz_binder::SymbolArena,
     ) -> Self {
         DiagnosticBuilder {
-            interner,
             formatter: TypeFormatter::with_symbols(interner, symbol_arena),
         }
     }

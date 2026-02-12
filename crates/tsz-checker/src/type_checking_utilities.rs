@@ -11,7 +11,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-#[allow(dead_code)]
 impl<'a> CheckerState<'a> {
     // ============================================================================
     // Section 52: Parameter Type Utilities
@@ -1417,179 +1416,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Extract type text from JSDoc comment.
-    ///
-    /// This function parses JSDoc comments to find `@type` tags and
-    /// extracts the type annotation from within curly braces.
-    ///
-    /// ## Parameters:
-    /// - `doc`: The JSDoc comment text
-    ///
-    /// ## Returns:
-    /// - `Some(String)`: The extracted type text
-    /// - `None`: If no `@type` tag found or type is empty
-    ///
-    /// ## Example:
-    /// ```javascript
-    /// /**
-    ///  * @type {string | number} The parameter type
-    ///  * @returns {boolean} The result
-    ///  */
-    /// // extract_jsdoc_type returns: "string | number"
-    /// ```
-    fn extract_jsdoc_type(&self, doc: &str) -> Option<String> {
-        let tag_pos = doc.find("@type")?;
-        let rest = &doc[tag_pos + "@type".len()..];
-        let open = rest.find('{')?;
-        let after_open = &rest[open + 1..];
-        let close = after_open.find('}')?;
-        let type_text = after_open[..close].trim();
-        if type_text.is_empty() {
-            None
-        } else {
-            Some(type_text.to_string())
-        }
-    }
-
-    /// Parse JSDoc type annotation text into a TypeId.
-    ///
-    /// This function parses simple type expressions from JSDoc comments.
-    /// It supports:
-    /// - Primitive types: string, number, boolean, void, any, unknown
-    /// - Function types: function(paramType, ...): returnType
-    ///
-    /// ## Parameters:
-    /// - `text`: The type annotation text to parse
-    ///
-    /// ## Returns:
-    /// - `Some(TypeId)`: The parsed type
-    /// - `None`: If parsing fails
-    ///
-    /// ## Examples:
-    /// ```javascript
-    /// /**
-    ///  * @type {string}
-    ///  */
-    /// // Parses to TypeId::STRING
-    ///
-    /// /**
-    ///  * @type {function(string, number): boolean}
-    ///  */
-    /// // Parses to a function type
-    /// ```
-    fn parse_jsdoc_type(&mut self, text: &str) -> Option<TypeId> {
-        use tsz_solver::{FunctionShape, ParamInfo};
-
-        fn skip_ws(text: &str, pos: &mut usize) {
-            while *pos < text.len() && text.as_bytes()[*pos].is_ascii_whitespace() {
-                *pos += 1;
-            }
-        }
-
-        fn parse_ident<'a>(text: &'a str, pos: &mut usize) -> Option<&'a str> {
-            let start = *pos;
-            while *pos < text.len() {
-                let ch = text.as_bytes()[*pos] as char;
-                if ch.is_ascii_alphanumeric() || ch == '_' {
-                    *pos += 1;
-                } else {
-                    break;
-                }
-            }
-            if *pos > start {
-                Some(&text[start..*pos])
-            } else {
-                None
-            }
-        }
-
-        fn parse_type(
-            checker: &mut crate::state::CheckerState,
-            text: &str,
-            pos: &mut usize,
-        ) -> Option<TypeId> {
-            skip_ws(text, pos);
-            if text[*pos..].starts_with("function") {
-                return parse_function_type(checker, text, pos);
-            }
-
-            let ident = parse_ident(text, pos)?;
-            let type_id = match ident {
-                "string" => TypeId::STRING,
-                "number" => TypeId::NUMBER,
-                "boolean" => TypeId::BOOLEAN,
-                "void" => TypeId::VOID,
-                "any" => TypeId::ANY,
-                "unknown" => TypeId::UNKNOWN,
-                _ => TypeId::ANY,
-            };
-            Some(type_id)
-        }
-
-        fn parse_function_type(
-            checker: &mut crate::state::CheckerState,
-            text: &str,
-            pos: &mut usize,
-        ) -> Option<TypeId> {
-            if !text[*pos..].starts_with("function") {
-                return None;
-            }
-            *pos += "function".len();
-            skip_ws(text, pos);
-            if *pos >= text.len() || text.as_bytes()[*pos] != b'(' {
-                return None;
-            }
-            *pos += 1;
-            let mut params = Vec::new();
-            loop {
-                skip_ws(text, pos);
-                if *pos >= text.len() {
-                    return None;
-                }
-                if text.as_bytes()[*pos] == b')' {
-                    *pos += 1;
-                    break;
-                }
-                let param_type = parse_type(checker, text, pos)?;
-                params.push(ParamInfo {
-                    name: None,
-                    type_id: param_type,
-                    optional: false,
-                    rest: false,
-                });
-                skip_ws(text, pos);
-                if *pos < text.len() && text.as_bytes()[*pos] == b',' {
-                    *pos += 1;
-                    continue;
-                }
-                if *pos < text.len() && text.as_bytes()[*pos] == b')' {
-                    *pos += 1;
-                    break;
-                }
-            }
-            skip_ws(text, pos);
-            if *pos >= text.len() || text.as_bytes()[*pos] != b':' {
-                return None;
-            }
-            *pos += 1;
-            let return_type = parse_type(checker, text, pos)?;
-            let shape = FunctionShape {
-                type_params: Vec::new(),
-                params,
-                this_type: None,
-                return_type,
-                type_predicate: None,
-                is_constructor: false,
-                is_method: false,
-            };
-            Some(checker.ctx.types.function(shape))
-        }
-
-        let mut pos = 0;
-        let type_id = parse_type(self, text, &mut pos)?;
-        Some(type_id)
-    }
-
     // =========================================================================
     // Class Helper Methods
     // =========================================================================
@@ -1808,32 +1634,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn enum_symbol_from_type(&self, type_id: TypeId) -> Option<SymbolId> {
         // Phase 4.2: Use resolve_type_to_symbol_id instead of get_ref_symbol
         let sym_id = self.ctx.resolve_type_to_symbol_id(type_id)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
-            return None;
-        }
-        Some(sym_id)
-    }
-
-    /// Get the enum symbol from a value type.
-    ///
-    /// Handles both direct references and type queries (typeof).
-    pub(crate) fn enum_symbol_from_value_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        use tsz_solver::type_queries::{SymbolRefKind, classify_symbol_ref};
-
-        let sym_id = match classify_symbol_ref(self.ctx.types, type_id) {
-            SymbolRefKind::Lazy(def_id) => {
-                // Phase 4.2: Use DefId -> SymbolId bridge
-                self.ctx.def_to_symbol_id(def_id)?
-            }
-            #[allow(deprecated)]
-            SymbolRefKind::Ref(sym_ref) | SymbolRefKind::TypeQuery(sym_ref) => {
-                // Fallback for legacy SymbolRef (shouldn't happen anymore)
-                SymbolId(sym_ref.0)
-            }
-            SymbolRefKind::Other => return None,
-        };
-
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::ENUM == 0 {
             return None;
@@ -2566,57 +2366,6 @@ impl<'a> CheckerState<'a> {
         prev_type
     }
 
-    /// Check if two symbol flags can be merged.
-    ///
-    /// Returns true if the symbols are compatible for merging.
-    /// Used in symbol table updates for ambient contexts.
-    pub(crate) fn can_merge_symbols(&self, existing_flags: u32, new_flags: u32) -> bool {
-        // Interface can merge with interface
-        if (existing_flags & symbol_flags::INTERFACE) != 0
-            && (new_flags & symbol_flags::INTERFACE) != 0
-        {
-            return true;
-        }
-
-        // Class can merge with interface
-        if ((existing_flags & symbol_flags::CLASS) != 0
-            && (new_flags & symbol_flags::INTERFACE) != 0)
-            || ((existing_flags & symbol_flags::INTERFACE) != 0
-                && (new_flags & symbol_flags::CLASS) != 0)
-        {
-            return true;
-        }
-
-        // Namespace/module can merge with namespace/module
-        if (existing_flags & symbol_flags::MODULE) != 0 && (new_flags & symbol_flags::MODULE) != 0 {
-            return true;
-        }
-
-        // Namespace can merge with class, function, or enum
-        if (existing_flags & symbol_flags::MODULE) != 0
-            && (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
-                != 0
-        {
-            return true;
-        }
-        if (new_flags & symbol_flags::MODULE) != 0
-            && (existing_flags
-                & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
-                != 0
-        {
-            return true;
-        }
-
-        // Function overloads
-        if (existing_flags & symbol_flags::FUNCTION) != 0
-            && (new_flags & symbol_flags::FUNCTION) != 0
-        {
-            return true;
-        }
-
-        false
-    }
-
     // =========================================================================
     // Property Readonly Helper Functions
     // =========================================================================
@@ -2747,39 +2496,6 @@ impl<'a> CheckerState<'a> {
     /// - Intersection types (readonly ONLY if ALL members have readonly property)
     pub(crate) fn is_property_readonly(&self, type_id: TypeId, prop_name: &str) -> bool {
         self.ctx.types.is_property_readonly(type_id, prop_name)
-    }
-
-    /// Check if property existence errors should be emitted for destructuring.
-    ///
-    /// Check if we should emit a "property does not exist" error for the given type in destructuring.
-    /// Returns false for any, unknown, or types that don't have concrete shapes.
-    pub(crate) fn should_emit_property_not_exist_for_destructuring(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries;
-
-        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
-            return false;
-        }
-
-        // Object types are concrete - emit errors for them
-        if type_queries::is_object_type(self.ctx.types, type_id) {
-            return true;
-        }
-
-        // For unions, emit error if any member is a concrete object
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, type_id) {
-            return members
-                .iter()
-                .any(|&t| self.should_emit_property_not_exist_for_destructuring(t));
-        }
-
-        // For intersections, all members should be concrete objects
-        if let Some(members) = type_queries::get_intersection_members(self.ctx.types, type_id) {
-            return members
-                .iter()
-                .all(|&t| self.should_emit_property_not_exist_for_destructuring(t));
-        }
-
-        false
     }
 
     /// Get the class name from a variable declaration.
