@@ -31,10 +31,24 @@ impl<'a> CheckerState<'a> {
         type_args_list: &tsz_parser::parser::NodeList,
         call_idx: NodeIndex,
     ) {
+        use tsz_scanner::SyntaxKind;
         use tsz_solver::AssignabilityChecker;
         use tsz_solver::type_queries::{
             TypeArgumentExtractionKind, classify_for_type_argument_extraction,
         };
+
+        if let Some(call_expr) = self.ctx.arena.get_call_expr_at(call_idx)
+            && let Some(callee_node) = self.ctx.arena.get(call_expr.expression)
+            && callee_node.kind == SyntaxKind::SuperKeyword as u16
+            && !type_args_list.nodes.is_empty()
+        {
+            self.error_at_node(
+                call_idx,
+                crate::types::diagnostics::diagnostic_messages::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
+                crate::types::diagnostics::diagnostic_codes::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
+            );
+            return;
+        }
 
         // Get the type parameters from the callee type
         let type_params = match classify_for_type_argument_extraction(self.ctx.types, callee_type) {

@@ -2542,7 +2542,7 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .and_then(|info| self.ctx.arena.get(info.class_idx))
                 .and_then(|class_node| self.ctx.arena.get_class(class_node))
-                .map(|class| self.class_has_base(class))
+                .map(|class| self.class_requires_super_call(class))
                 .unwrap_or(false);
             let has_super_call = self
                 .ctx
