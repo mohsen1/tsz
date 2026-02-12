@@ -3699,6 +3699,45 @@ impl<'a> CheckerState<'a> {
             variable_declarations.insert(*var_decl_list_idx, (total_count, unused_count));
         }
 
+        // Third pass: track destructuring patterns (for TS6198)
+        // Map from binding pattern NodeIndex to (total_count, unused_count).
+        let mut destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
+        for (_sym_id, _name) in &symbols_to_check {
+            let sym_id = *_sym_id;
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+            let flags = symbol.flags;
+
+            let is_var = (flags
+                & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::FUNCTION_SCOPED_VARIABLE))
+                != 0;
+            if !is_var {
+                continue;
+            }
+
+            let decl_idx = if !symbol.value_declaration.is_none() {
+                symbol.value_declaration
+            } else if let Some(&first) = symbol.declarations.first() {
+                first
+            } else {
+                continue;
+            };
+
+            if self.is_parameter_declaration(decl_idx) {
+                continue;
+            }
+
+            if let Some(pattern_idx) = self.find_parent_binding_pattern(decl_idx) {
+                let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
+                let entry = destructuring_patterns.entry(pattern_idx).or_insert((0, 0));
+                entry.0 += 1;
+                if !is_used {
+                    entry.1 += 1;
+                }
+            }
+        }
+
         for (sym_id, name) in symbols_to_check {
             // Skip if already referenced
             if self.ctx.referenced_symbols.borrow().contains(&sym_id) {
@@ -3891,25 +3930,17 @@ impl<'a> CheckerState<'a> {
                         let is_write_only = self.ctx.written_symbols.borrow().contains(&sym_id);
 
                         // TS6196 for classes, interfaces, type aliases, enums ("never used")
-                        // TS6138 for properties (including parameter properties) ("property value never read")
                         // TS6198 for write-only variables ("assigned but never used")
-                        // TS6133 for variables, functions, imports ("value never read")
+                        // TS6133 for variables, functions, imports, class properties ("value never read")
+                        // Note: TS6138 ("Property 'x' is declared but its value is never read")
+                        // is only for constructor parameter properties, handled in the parameter section below.
                         let is_type_only = (flags & symbol_flags::CLASS) != 0
                             || (flags & symbol_flags::INTERFACE) != 0
                             || (flags & symbol_flags::TYPE_ALIAS) != 0
                             || (flags & symbol_flags::REGULAR_ENUM) != 0
                             || (flags & symbol_flags::CONST_ENUM) != 0;
-                        let is_property = (flags & symbol_flags::PROPERTY) != 0;
                         let (msg, code) = if is_type_only {
                             (format!("'{}' is declared but never used.", name), 6196)
-                        } else if is_property {
-                            (
-                                format!(
-                                    "Property '{}' is declared but its value is never read.",
-                                    name
-                                ),
-                                6138,
-                            )
                         } else if is_write_only {
                             (
                                 format!("'{}' is assigned a value but never used.", name),
