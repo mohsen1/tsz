@@ -3955,32 +3955,56 @@ impl<'a> CheckerState<'a> {
                     (flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)) != 0;
 
                 if is_checkable_local || is_var || is_private_member || is_unused_namespace {
-                    // TS6196 for classes, interfaces, type aliases, enums ("never used")
-                    // TS6133 for variables, functions, imports, private members ("value never read")
-                    let is_type_only = (flags & symbol_flags::CLASS) != 0
-                        || (flags & symbol_flags::INTERFACE) != 0
-                        || (flags & symbol_flags::TYPE_ALIAS) != 0
-                        || (flags & symbol_flags::REGULAR_ENUM) != 0
-                        || (flags & symbol_flags::CONST_ENUM) != 0;
-                    let (msg, code) = if is_type_only {
-                        (format!("'{}' is declared but never used.", name), 6196)
+                    // For imports, check if this is part of an import declaration where ALL imports are unused.
+                    // If so, skip emitting TS6133 here because TS6192 will be emitted for the entire declaration.
+                    // Only skip when there are MULTIPLE imports (single unused imports get TS6133).
+                    let is_import = (flags & symbol_flags::ALIAS) != 0;
+                    let skip_import_ts6133 = if is_import {
+                        if let Some(import_decl_idx) = self.find_parent_import_declaration(decl_idx)
+                        {
+                            if let Some(&(total_count, unused_count)) =
+                                import_declarations.get(&import_decl_idx)
+                            {
+                                // Skip TS6133 only if there are multiple imports and ALL are unused (TS6192 will cover it)
+                                total_count > 1 && unused_count == total_count
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
                     } else {
-                        (
-                            format!("'{}' is declared but its value is never read.", name),
-                            6133,
-                        )
+                        false
                     };
-                    let start = decl_node.pos;
-                    let length = decl_node.end.saturating_sub(decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
-                        start,
-                        length,
-                        message_text: msg,
-                        category: crate::types::diagnostics::DiagnosticCategory::Error,
-                        code,
-                        related_information: Vec::new(),
-                    });
+
+                    if !skip_import_ts6133 {
+                        // TS6196 for classes, interfaces, type aliases, enums ("never used")
+                        // TS6133 for variables, functions, imports, private members ("value never read")
+                        let is_type_only = (flags & symbol_flags::CLASS) != 0
+                            || (flags & symbol_flags::INTERFACE) != 0
+                            || (flags & symbol_flags::TYPE_ALIAS) != 0
+                            || (flags & symbol_flags::REGULAR_ENUM) != 0
+                            || (flags & symbol_flags::CONST_ENUM) != 0;
+                        let (msg, code) = if is_type_only {
+                            (format!("'{}' is declared but never used.", name), 6196)
+                        } else {
+                            (
+                                format!("'{}' is declared but its value is never read.", name),
+                                6133,
+                            )
+                        };
+                        let start = decl_node.pos;
+                        let length = decl_node.end.saturating_sub(decl_node.pos);
+                        self.ctx.push_diagnostic(Diagnostic {
+                            file: file_name.clone(),
+                            start,
+                            length,
+                            message_text: msg,
+                            category: crate::types::diagnostics::DiagnosticCategory::Error,
+                            code,
+                            related_information: Vec::new(),
+                        });
+                    }
                 }
             }
 
@@ -4018,10 +4042,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Emit TS6192 for import declarations where ALL imports are unused.
+        // Only emit this when there are MULTIPLE imports (total_count > 1).
+        // For single unused imports, TS6133 is emitted above.
         if check_locals {
             for (import_decl_idx, (total_count, unused_count)) in import_declarations {
-                // Only emit if ALL imports in this declaration are unused
-                if total_count > 0 && unused_count == total_count {
+                // Only emit if there are multiple imports and ALL are unused
+                if total_count > 1 && unused_count == total_count {
                     if let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx) {
                         let msg = "All imports in import declaration are unused.".to_string();
                         let start = import_decl_node.pos;
