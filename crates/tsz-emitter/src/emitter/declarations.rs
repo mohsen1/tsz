@@ -28,7 +28,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if func.is_async && self.ctx.target_es5 && !func.asterisk_token {
+        if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if !func.name.is_none() {
                 self.get_identifier_text_idx(func.name)
             } else {

@@ -39,11 +39,22 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_await_expression(&mut self, node: &Node) {
         // AwaitExpression is stored with UnaryExprDataEx
         let Some(unary) = self.arena.get_unary_expr_ex(node) else {
-            self.write("await");
+            self.write(if self.ctx.emit_await_as_yield {
+                "yield"
+            } else {
+                "await"
+            });
             return;
         };
 
-        self.write("await ");
+        // For ES2015/ES2016 async lowering, emit yield instead of await
+        let keyword = if self.ctx.emit_await_as_yield {
+            "yield"
+        } else {
+            "await"
+        };
+        self.write(keyword);
+        self.write(" ");
         self.emit_expression(unary.expression);
     }
 

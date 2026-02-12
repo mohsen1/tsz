@@ -182,6 +182,11 @@ pub struct EmitContext {
     /// Whether to emit ES5 (classes→IIFEs, arrows→functions)
     pub target_es5: bool,
 
+    /// Whether async/await needs lowering (target < ES2017)
+    /// ES2015/ES2016 use __awaiter + generators (yield)
+    /// ES5 additionally lowers generators to state machines (__generator)
+    pub needs_async_lowering: bool,
+
     /// Arrow function transformation state
     pub arrow_state: ArrowTransformState,
 
@@ -196,6 +201,10 @@ pub struct EmitContext {
 
     /// Private fields transformation state (#field → WeakMap)
     pub private_field_state: PrivateFieldState,
+
+    /// When true, emit `yield` instead of `await` in expression positions.
+    /// Used for ES2015/ES2016 async lowering (function* + yield pattern).
+    pub emit_await_as_yield: bool,
 
     /// Auto-detect module mode: if true, detect imports/exports and apply CommonJS
     pub auto_detect_module: bool,
@@ -214,16 +223,19 @@ impl EmitContext {
     /// Create a new EmitContext with the given options
     pub fn with_options(options: PrinterOptions) -> Self {
         let target_es5 = matches!(options.target, ScriptTarget::ES3 | ScriptTarget::ES5);
+        let needs_async_lowering = !options.target.supports_es2017();
 
         Self {
             options,
             flags: EmitFlags::default(),
             target_es5,
+            needs_async_lowering,
             arrow_state: ArrowTransformState::default(),
             destructuring_state: DestructuringState::default(),
             module_state: ModuleTransformState::default(),
             block_scope_state: BlockScopeState::default(),
             private_field_state: PrivateFieldState::default(),
+            emit_await_as_yield: false,
             auto_detect_module: false,
             original_module_kind: None,
         }
@@ -233,6 +245,7 @@ impl EmitContext {
     pub fn es5() -> Self {
         let mut ctx = Self::new();
         ctx.target_es5 = true;
+        ctx.needs_async_lowering = true;
         ctx.options.target = ScriptTarget::ES5;
         ctx
     }
@@ -241,6 +254,7 @@ impl EmitContext {
     pub fn es6() -> Self {
         let mut ctx = Self::new();
         ctx.target_es5 = false;
+        ctx.needs_async_lowering = true; // ES2015 still needs async lowering
         ctx.options.target = ScriptTarget::ES2015;
         ctx
     }
