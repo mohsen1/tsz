@@ -1183,9 +1183,21 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else if type_params.is_empty() {
-                    env.insert(SymbolRef(sym_id.0), result);
-                    if let Some(def_id) = def_id {
-                        env.insert_def(def_id, result);
+                    // Check if resolve_lib_type_by_name already registered type params
+                    // for this DefId. This happens for lib interfaces like Promise<T>,
+                    // Array<T> where compute_type_of_symbol returns empty params but
+                    // the lib resolution path registered them via ctx.insert_def_type_params.
+                    let lib_params = def_id.and_then(|d| self.ctx.get_def_type_params(d));
+                    if let Some(params) = lib_params {
+                        env.insert_with_params(SymbolRef(sym_id.0), result, params.clone());
+                        if let Some(def_id) = def_id {
+                            env.insert_def_with_params(def_id, result, params);
+                        }
+                    } else {
+                        env.insert(SymbolRef(sym_id.0), result);
+                        if let Some(def_id) = def_id {
+                            env.insert_def(def_id, result);
+                        }
                     }
                 } else {
                     env.insert_with_params(SymbolRef(sym_id.0), result, type_params.clone());
@@ -1213,6 +1225,20 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+            } else {
+                let sym_name = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|s| s.escaped_name.as_str())
+                    .unwrap_or("<unknown>");
+                tracing::warn!(
+                    sym_id = sym_id.0,
+                    sym_name = sym_name,
+                    type_id = result.0,
+                    type_params_count = type_params.len(),
+                    "type_env try_borrow_mut FAILED - skipping insertion"
+                );
             }
         }
 

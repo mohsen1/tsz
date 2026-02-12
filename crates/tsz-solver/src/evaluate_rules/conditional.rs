@@ -7,6 +7,7 @@ use crate::instantiate::{TypeSubstitution, instantiate_type_with_infer};
 use crate::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::*;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tracing::trace;
 
 use super::super::evaluate::TypeEvaluator;
 
@@ -39,6 +40,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let cond = &current_cond;
             let check_type = self.evaluate(cond.check_type);
             let extends_type = self.evaluate(cond.extends_type);
+
+            trace!(
+                check_raw = cond.check_type.0,
+                check_eval = check_type.0,
+                check_key = ?self.interner().lookup(check_type),
+                extends_raw = cond.extends_type.0,
+                extends_eval = extends_type.0,
+                extends_key = ?self.interner().lookup(extends_type),
+                "evaluate_conditional"
+            );
 
             if cond.is_distributive && check_type == TypeId::NEVER {
                 return TypeId::NEVER;
@@ -249,7 +260,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // to match tsc's `isTypeAssignableTo` which respects strictFunctionTypes.
             let mut strict_checker =
                 SubtypeChecker::with_resolver(self.interner(), self.resolver());
-            let result_branch = if strict_checker.is_subtype_of(check_type, extends_type) {
+            let is_sub = strict_checker.is_subtype_of(check_type, extends_type);
+            trace!(
+                check = check_type.0,
+                extends = extends_type.0,
+                is_subtype = is_sub,
+                "conditional subtype check result"
+            );
+            let result_branch = if is_sub {
                 // T <: U -> true branch
                 cond.true_type
             } else {
