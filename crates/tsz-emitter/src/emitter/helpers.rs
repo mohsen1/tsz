@@ -5,7 +5,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
+    pub(super) fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
     }
 
