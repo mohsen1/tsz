@@ -3763,7 +3763,7 @@ impl<'a> CheckerState<'a> {
     /// Also reports import declarations where ALL imports are unused (TS6192).
     pub(crate) fn check_unused_declarations(&mut self) {
         use crate::types::diagnostics::Diagnostic;
-        use std::collections::HashMap;
+        use std::collections::{HashMap, HashSet};
         use tsz_binder::ContainerKind;
         use tsz_binder::symbol_flags;
 
@@ -3802,6 +3802,10 @@ impl<'a> CheckerState<'a> {
         // Map from import declaration NodeIndex to (total_count, unused_count).
         let mut import_declarations: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
 
+        // Track variable declarations for TS6199.
+        // Map from variable declaration NodeIndex to (total_count, unused_count).
+        let mut variable_declarations: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
+
         // First pass: identify ALL import symbols and track them by import declaration.
         // This includes both used and unused imports.
         for (_sym_id, _name) in &symbols_to_check {
@@ -3834,6 +3838,71 @@ impl<'a> CheckerState<'a> {
                     entry.1 += 1; // unused count
                 }
             }
+        }
+
+        // Second pass: track variable declarations (for TS6199)
+        // We need to track VARIABLE_DECLARATION nodes (not individual variables)
+        // to distinguish `var x, y;` (2 decls) from `const {a, b} = obj;` (1 decl with multiple bindings)
+        let mut var_decl_list_children: HashMap<NodeIndex, HashSet<NodeIndex>> = HashMap::new();
+        let mut unused_var_decls: HashSet<NodeIndex> = HashSet::new();
+
+        for (_sym_id, _name) in &symbols_to_check {
+            let sym_id = *_sym_id;
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+            let flags = symbol.flags;
+
+            // Only track variables (not imports, not parameters)
+            let is_var = (flags
+                & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::FUNCTION_SCOPED_VARIABLE))
+                != 0;
+            if !is_var {
+                continue;
+            }
+
+            // Get the declaration node
+            let decl_idx = if !symbol.value_declaration.is_none() {
+                symbol.value_declaration
+            } else if let Some(&first) = symbol.declarations.first() {
+                first
+            } else {
+                continue;
+            };
+
+            // Skip if this is a parameter
+            if self.is_parameter_declaration(decl_idx) {
+                continue;
+            }
+
+            // Find the parent VARIABLE_DECLARATION and VARIABLE_DECLARATION_LIST
+            if let Some(var_decl_node_idx) = self.find_parent_variable_decl_node(decl_idx) {
+                if let Some(var_decl_list_idx) =
+                    self.find_parent_variable_declaration(var_decl_node_idx)
+                {
+                    // Track this VARIABLE_DECLARATION node under its parent list
+                    var_decl_list_children
+                        .entry(var_decl_list_idx)
+                        .or_default()
+                        .insert(var_decl_node_idx);
+
+                    // Check if this variable is unused
+                    let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
+                    if !is_used {
+                        unused_var_decls.insert(var_decl_node_idx);
+                    }
+                }
+            }
+        }
+
+        // Now count VARIABLE_DECLARATION nodes (not variables) in each list
+        for (var_decl_list_idx, decl_nodes) in &var_decl_list_children {
+            let total_count = decl_nodes.len();
+            let unused_count = decl_nodes
+                .iter()
+                .filter(|n| unused_var_decls.contains(n))
+                .count();
+            variable_declarations.insert(*var_decl_list_idx, (total_count, unused_count));
         }
 
         for (sym_id, name) in symbols_to_check {
@@ -3977,7 +4046,33 @@ impl<'a> CheckerState<'a> {
                         false
                     };
 
-                    if !skip_import_ts6133 {
+                    // For variables, check if this is part of a variable declaration where ALL variables are unused.
+                    // If so, skip emitting TS6133 here because TS6199 will be emitted for the entire declaration.
+                    // Only skip when there are MULTIPLE variables (single unused variables get TS6133).
+                    let is_variable = (flags
+                        & (symbol_flags::BLOCK_SCOPED_VARIABLE
+                            | symbol_flags::FUNCTION_SCOPED_VARIABLE))
+                        != 0
+                        && !self.is_parameter_declaration(decl_idx);
+                    let skip_variable_ts6133 = if is_variable {
+                        if let Some(var_decl_idx) = self.find_parent_variable_declaration(decl_idx)
+                        {
+                            if let Some(&(total_count, unused_count)) =
+                                variable_declarations.get(&var_decl_idx)
+                            {
+                                // Skip TS6133 only if there are multiple variables and ALL are unused (TS6199 will cover it)
+                                total_count > 1 && unused_count == total_count
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if !skip_import_ts6133 && !skip_variable_ts6133 {
                         // TS6196 for classes, interfaces, type aliases, enums ("never used")
                         // TS6133 for variables, functions, imports, private members ("value never read")
                         let is_type_only = (flags & symbol_flags::CLASS) != 0
@@ -4064,6 +4159,29 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+
+            // Emit TS6199 for variable declarations where ALL variables are unused.
+            // Only emit this when there are MULTIPLE variables (total_count > 1).
+            // For single unused variables, TS6133 is emitted above.
+            for (var_decl_idx, (total_count, unused_count)) in variable_declarations {
+                // Only emit if there are multiple variables and ALL are unused
+                if total_count > 1 && unused_count == total_count {
+                    if let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx) {
+                        let msg = "All variables are unused.".to_string();
+                        let start = var_decl_node.pos;
+                        let length = var_decl_node.end.saturating_sub(var_decl_node.pos);
+                        self.ctx.push_diagnostic(Diagnostic {
+                            file: file_name.clone(),
+                            start,
+                            length,
+                            message_text: msg,
+                            category: crate::types::diagnostics::DiagnosticCategory::Error,
+                            code: 6199,
+                            related_information: Vec::new(),
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -4080,6 +4198,66 @@ impl<'a> CheckerState<'a> {
 
             if let Some(node) = self.ctx.arena.get(idx) {
                 if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    return Some(idx);
+                }
+            }
+
+            // Move to parent
+            idx = self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+        }
+
+        None
+    }
+
+    /// Find the parent VARIABLE_DECLARATION node for a variable symbol's declaration.
+    /// This returns the VARIABLE_DECLARATION node itself, not the VARIABLE_DECLARATION_LIST.
+    fn find_parent_variable_decl_node(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Walk up the parent chain to find VARIABLE_DECLARATION
+        for _ in 0..10 {
+            // Limit iterations to prevent infinite loops
+            if idx.is_none() {
+                return None;
+            }
+
+            if let Some(node) = self.ctx.arena.get(idx) {
+                if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                    return Some(idx);
+                }
+            }
+
+            // Move to parent
+            idx = self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .map(|ext| ext.parent)
+                .unwrap_or(NodeIndex::NONE);
+        }
+
+        None
+    }
+
+    /// Find the parent VARIABLE_DECLARATION_LIST node for a variable symbol's declaration.
+    /// This allows us to track all variables declared in a single statement (e.g., `var x, y;`).
+    fn find_parent_variable_declaration(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Walk up the parent chain to find VARIABLE_DECLARATION_LIST
+        for _ in 0..10 {
+            // Limit iterations to prevent infinite loops
+            if idx.is_none() {
+                return None;
+            }
+
+            if let Some(node) = self.ctx.arena.get(idx) {
+                if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
                     return Some(idx);
                 }
             }
