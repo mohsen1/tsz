@@ -262,10 +262,18 @@ impl<'a> IRPrinter<'a> {
                 self.emit_parameters(parameters);
                 self.write(") ");
                 let has_defaults = parameters.iter().any(|p| p.default_value.is_some());
-                // For anonymous functions with empty bodies, use inline format: { }
+                // For anonymous functions with empty bodies, check if single-line in source
                 // Named functions (constructors) keep multi-line format
                 if !has_defaults && body.is_empty() && name.is_none() {
-                    self.write("{ }");
+                    let is_source_single_line = self.is_body_source_single_line(*body_source_range);
+                    if is_source_single_line {
+                        self.write("{ }");
+                    } else {
+                        // Multi-line empty body (preserve source format)
+                        self.write("{");
+                        self.write_line();
+                        self.write("}");
+                    }
                     return;
                 }
                 // Single-line function body: { return expr; }
