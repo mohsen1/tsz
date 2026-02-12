@@ -180,8 +180,14 @@ impl ProjectReferenceGraph {
                     continue;
                 }
                 if let Some(&ref_id) = self.path_to_id.get(&ref_info.config_path) {
-                    self.references.get_mut(&id).unwrap().push(ref_id);
-                    self.dependents.get_mut(&ref_id).unwrap().push(id);
+                    self.references
+                        .get_mut(&id)
+                        .expect("project id exists in references map (inserted in build_graph)")
+                        .push(ref_id);
+                    self.dependents
+                        .get_mut(&ref_id)
+                        .expect("reference id exists in dependents map (inserted in build_graph)")
+                        .push(id);
                 }
             }
         }
@@ -311,7 +317,9 @@ impl ProjectReferenceGraph {
         while let Some(node) = queue.pop() {
             order.push(node);
             for &neighbor in self.get_references(node) {
-                let deg = in_degree.get_mut(&neighbor).unwrap();
+                let deg = in_degree
+                    .get_mut(&neighbor)
+                    .expect("all graph nodes initialized in in_degree map");
                 *deg -= 1;
                 if *deg == 0 {
                     queue.push(neighbor);
@@ -742,7 +750,7 @@ mod tests {
     #[test]
     fn test_parse_project_reference() {
         let json = r#"{ "path": "./packages/core" }"#;
-        let reference: ProjectReference = serde_json::from_str(json).unwrap();
+        let reference: ProjectReference = serde_json::from_str(json).expect("JSON parsing should succeed in test");
         assert_eq!(reference.path, "./packages/core");
         assert!(!reference.prepend);
     }
@@ -750,7 +758,7 @@ mod tests {
     #[test]
     fn test_parse_project_reference_with_prepend() {
         let json = r#"{ "path": "./packages/core", "prepend": true }"#;
-        let reference: ProjectReference = serde_json::from_str(json).unwrap();
+        let reference: ProjectReference = serde_json::from_str(json).expect("JSON parsing should succeed in test");
         assert_eq!(reference.path, "./packages/core");
         assert!(reference.prepend);
     }
@@ -796,12 +804,12 @@ mod tests {
 
     #[test]
     fn test_build_order_simple() {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let root = temp.path();
 
         // Create project A (no dependencies)
         let proj_a = root.join("project-a");
-        std::fs::create_dir_all(&proj_a).unwrap();
+        std::fs::create_dir_all(&proj_a).expect("directory creation should succeed in test");
         create_test_project(
             &proj_a,
             r#"{
@@ -811,7 +819,7 @@ mod tests {
 
         // Create project B (depends on A)
         let proj_b = root.join("project-b");
-        std::fs::create_dir_all(&proj_b).unwrap();
+        std::fs::create_dir_all(&proj_b).expect("directory creation should succeed in test");
         create_test_project(
             &proj_b,
             r#"{
@@ -861,12 +869,12 @@ mod tests {
 
     #[test]
     fn test_detect_cycles() {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let root = temp.path();
 
         // Create project A (depends on B)
         let proj_a = root.join("project-a");
-        std::fs::create_dir_all(&proj_a).unwrap();
+        std::fs::create_dir_all(&proj_a).expect("directory creation should succeed in test");
         create_test_project(
             &proj_a,
             r#"{
@@ -877,7 +885,7 @@ mod tests {
 
         // Create project B (depends on A - cycle!)
         let proj_b = root.join("project-b");
-        std::fs::create_dir_all(&proj_b).unwrap();
+        std::fs::create_dir_all(&proj_b).expect("directory creation should succeed in test");
         create_test_project(
             &proj_b,
             r#"{
@@ -898,12 +906,12 @@ mod tests {
 
     #[test]
     fn test_transitive_dependencies() {
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let root = temp.path();
 
         // A -> B -> C
         let proj_c = root.join("project-c");
-        std::fs::create_dir_all(&proj_c).unwrap();
+        std::fs::create_dir_all(&proj_c).expect("directory creation should succeed in test");
         create_test_project(
             &proj_c,
             r#"{
@@ -912,7 +920,7 @@ mod tests {
         );
 
         let proj_b = root.join("project-b");
-        std::fs::create_dir_all(&proj_b).unwrap();
+        std::fs::create_dir_all(&proj_b).expect("directory creation should succeed in test");
         create_test_project(
             &proj_b,
             r#"{
@@ -922,7 +930,7 @@ mod tests {
         );
 
         let proj_a = root.join("project-a");
-        std::fs::create_dir_all(&proj_a).unwrap();
+        std::fs::create_dir_all(&proj_a).expect("directory creation should succeed in test");
         create_test_project(
             &proj_a,
             r#"{
@@ -954,7 +962,7 @@ mod tests {
         }
         "#;
 
-        let temp = TempDir::new().unwrap();
+        let temp = TempDir::new().expect("temp dir creation should succeed in test");
         let config_path = create_test_project(temp.path(), config);
         let _project = load_project(&config_path).unwrap();
 
