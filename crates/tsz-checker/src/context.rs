@@ -557,6 +557,11 @@ pub struct CheckerContext<'a> {
     /// errors during the second pass.
     pub suppress_definite_assignment_errors: bool,
 
+    /// Set to true during function body checking when the body references `arguments`.
+    /// Used in JS files to add an implicit rest parameter, allowing extra arguments.
+    /// Save/restore pattern ensures correct handling across nested functions.
+    pub js_body_uses_arguments: bool,
+
     /// Track which (node, symbol) pairs have already emitted TS2454 errors
     /// to avoid duplicate errors when the same usage is checked multiple times.
     /// Key: (node_position, symbol_id)
@@ -688,6 +693,7 @@ impl<'a> CheckerContext<'a> {
             label_stack: Vec::new(),
             had_outer_loop: false,
             suppress_definite_assignment_errors: false,
+            js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
@@ -798,6 +804,7 @@ impl<'a> CheckerContext<'a> {
             label_stack: Vec::new(),
             had_outer_loop: false,
             suppress_definite_assignment_errors: false,
+            js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
@@ -911,6 +918,7 @@ impl<'a> CheckerContext<'a> {
             label_stack: Vec::new(),
             had_outer_loop: false,
             suppress_definite_assignment_errors: false,
+            js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
@@ -1023,6 +1031,7 @@ impl<'a> CheckerContext<'a> {
             label_stack: Vec::new(),
             had_outer_loop: false,
             suppress_definite_assignment_errors: false,
+            js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
@@ -1151,6 +1160,7 @@ impl<'a> CheckerContext<'a> {
             label_stack: Vec::new(),
             had_outer_loop: false,
             suppress_definite_assignment_errors: false,
+            js_body_uses_arguments: false,
             emitted_ts2454_errors: FxHashSet::default(),
             type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
             fuel_exhausted: RefCell::new(false),
