@@ -2849,7 +2849,19 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(false)
             });
             if shadowed {
-                return TypeId::ANY;
+                // TS18014: Property is shadowed by another private identifier
+                use crate::types::diagnostics::{
+                    diagnostic_codes, diagnostic_messages, format_message,
+                };
+                let type_string = self
+                    .get_class_name_from_type(original_object_type)
+                    .unwrap_or_else(|| "the type".to_string());
+                let message = format_message(
+                    diagnostic_messages::THE_PROPERTY_CANNOT_BE_ACCESSED_ON_TYPE_WITHIN_THIS_CLASS_BECAUSE_IT_IS_SHADOWED,
+                    &[&property_name, &type_string],
+                );
+                self.error_at_node(name_idx, &message, diagnostic_codes::THE_PROPERTY_CANNOT_BE_ACCESSED_ON_TYPE_WITHIN_THIS_CLASS_BECAUSE_IT_IS_SHADOWED);
+                return TypeId::ERROR;
             }
 
             // Use original_object_type to preserve nominal identity (e.g., D<string>)
