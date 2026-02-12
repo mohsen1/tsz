@@ -1532,10 +1532,13 @@ impl<'a> CheckerState<'a> {
                                 .binder
                                 .get_symbol_with_libs(resolved_sym, &lib_binders)
                             {
-                                // Check if this is a type-only symbol (interface or type alias)
+                                // A symbol is type-only if it has INTERFACE/TYPE_ALIAS flags
+                                // but NO value flags (e.g., a class merged with a namespace
+                                // has both CLASS and NAMESPACE_MODULE — it's NOT type-only)
                                 let is_type_only = (symbol.flags
                                     & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
-                                    != 0;
+                                    != 0
+                                    && (symbol.flags & symbol_flags::VALUE) == 0;
                                 if is_type_only {
                                     if self.should_suppress_namespace_value_error_for_failed_import(
                                         qn.left,

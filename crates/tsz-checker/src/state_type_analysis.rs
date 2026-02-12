@@ -2378,13 +2378,24 @@ impl<'a> CheckerState<'a> {
 
                         // `import { default as X } from 'mod'` is a named import lookup,
                         // so missing `default` should be TS2305 (not TS1192).
-                        if !self.is_true_default_import_binding(value_decl) {
-                            self.emit_no_exported_member_error(
-                                module_name,
-                                export_name,
-                                value_decl,
-                            );
-                            return (TypeId::ERROR, Vec::new());
+                        // Use declarations list as fallback when value_decl is NONE
+                        // (ES6 named imports don't set value_declaration).
+                        let binding_node = if !value_decl.is_none() {
+                            value_decl
+                        } else {
+                            declarations.first().copied().unwrap_or(NodeIndex::NONE)
+                        };
+                        if !self.is_true_default_import_binding(binding_node) {
+                            // With allowSyntheticDefaultImports, `{ default as X }` resolves
+                            // to the module namespace (same as `import X from "mod"`).
+                            if !self.ctx.allow_synthetic_default_imports() {
+                                self.emit_no_exported_member_error(
+                                    module_name,
+                                    export_name,
+                                    value_decl,
+                                );
+                                return (TypeId::ERROR, Vec::new());
+                            }
                         }
 
                         // For default imports without a default export:

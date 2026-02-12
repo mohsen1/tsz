@@ -3503,8 +3503,12 @@ impl<'a> CheckerState<'a> {
             && (export_sym.flags & symbol_flags::ALIAS) != 0
         {
             let mut visited_aliases = Vec::new();
-            self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
-                .unwrap_or(export_equals_sym)
+            match self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases) {
+                Some(resolved) => resolved,
+                // If we can't resolve the alias (e.g., cross-binder `import X = C`
+                // inside an ambient module), don't assume type-only.
+                None => return false,
+            }
         } else {
             export_equals_sym
         };
