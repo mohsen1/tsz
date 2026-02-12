@@ -378,8 +378,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     CallResult::NotCallable { type_id: func_type }
                 }
             }
-            TypeKey::Lazy(_) => {
-                // Resolve lazy types (interfaces, type aliases) to their actual types
+            TypeKey::Lazy(_)
+            | TypeKey::Conditional(_)
+            | TypeKey::IndexAccess(_, _)
+            | TypeKey::Mapped(_)
+            | TypeKey::TemplateLiteral(_) => {
+                // Resolve meta-types to their actual types before checking callability.
+                // This handles cases like conditional types that resolve to function types,
+                // index access types like T["method"], and mapped types.
                 let resolved = crate::evaluate::evaluate_type(self.interner, func_type);
                 if resolved != func_type {
                     self.resolve_call(resolved, arg_types)
@@ -3142,8 +3148,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     CallResult::NotCallable { type_id }
                 }
             }
-            TypeKey::Lazy(_) => {
-                // Resolve lazy types (interfaces, type aliases) to their actual types
+            TypeKey::Lazy(_)
+            | TypeKey::Conditional(_)
+            | TypeKey::IndexAccess(_, _)
+            | TypeKey::Mapped(_)
+            | TypeKey::TemplateLiteral(_) => {
+                // Resolve meta-types to their actual types before checking constructability.
                 let resolved = crate::evaluate::evaluate_type(self.interner, type_id);
                 if resolved != type_id {
                     self.resolve_new(resolved, arg_types)
