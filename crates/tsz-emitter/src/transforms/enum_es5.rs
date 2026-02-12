@@ -459,12 +459,8 @@ impl<'a> EnumES5Transformer<'a> {
     }
 }
 
-/// Legacy enum ES5 emitter for backward compatibility
-/// Deprecated: Use EnumES5Transformer + IRPrinter instead
-#[allow(dead_code)] // Legacy infrastructure, kept for compatibility
+/// Enum ES5 emitter wrapping EnumES5Transformer + IRPrinter
 pub struct EnumES5Emitter<'a> {
-    arena: &'a NodeArena,
-    output: String,
     indent_level: u32,
     transformer: EnumES5Transformer<'a>,
 }
@@ -472,8 +468,6 @@ pub struct EnumES5Emitter<'a> {
 impl<'a> EnumES5Emitter<'a> {
     pub fn new(arena: &'a NodeArena) -> Self {
         EnumES5Emitter {
-            arena,
-            output: String::with_capacity(1024),
             indent_level: 0,
             transformer: EnumES5Transformer::new(arena),
         }
@@ -486,8 +480,6 @@ impl<'a> EnumES5Emitter<'a> {
     /// Emit an enum declaration
     /// Returns empty string for const enums (they are erased)
     pub fn emit_enum(&mut self, enum_idx: NodeIndex) -> String {
-        self.output.clear();
-
         let ir = self.transformer.transform_enum(enum_idx);
         let ir = match ir {
             Some(ir) => ir,

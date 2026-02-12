@@ -1034,38 +1034,6 @@ fn handle_build_single_project(
     Ok(())
 }
 
-// Keep the old function signature for compatibility but this is now handled by handle_build
-#[allow(dead_code)]
-fn handle_build_legacy(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    let result = driver::compile(args, cwd)?;
-
-    if !result.diagnostics.is_empty() {
-        let pretty = args
-            .pretty
-            .unwrap_or_else(|| std::io::stderr().is_terminal());
-        let mut reporter = Reporter::new(pretty);
-        let output = reporter.render(&result.diagnostics);
-        if !output.is_empty() {
-            eprint!("{output}");
-        }
-    }
-
-    let has_errors = result
-        .diagnostics
-        .iter()
-        .any(|diag| diag.category == tsz::checker::types::diagnostics::DiagnosticCategory::Error);
-
-    if has_errors {
-        if args.no_emit || !result.emitted_files.is_empty() {
-            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_GENERATED);
-        } else {
-            std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
-        }
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
