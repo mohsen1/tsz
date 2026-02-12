@@ -291,15 +291,47 @@ impl<'a> CheckerState<'a> {
                         );
 
                     if !found_via_reexport {
-                        let message = format_message(
-                            diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                            &[module_name, import_name],
-                        );
-                        self.error_at_node(
-                            specifier.name,
-                            &message,
-                            diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                        );
+                        // Check if the symbol exists locally in the target module
+                        // to distinguish between TS2459, TS2460, and TS2305
+                        let (exists_locally, exported_as) =
+                            self.check_local_symbol_and_renamed_export(module_name, import_name);
+
+                        if exists_locally {
+                            if let Some(ref renamed_as) = exported_as {
+                                // TS2460: Symbol exists locally and is exported under a different name
+                                let message = format_message(
+                                    diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
+                                    &[module_name, import_name, renamed_as],
+                                );
+                                self.error_at_node(
+                                    specifier.name,
+                                    &message,
+                                    diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
+                                );
+                            } else {
+                                // TS2459: Symbol exists locally but is not exported
+                                let message = format_message(
+                                    diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
+                                    &[module_name, import_name],
+                                );
+                                self.error_at_node(
+                                    specifier.name,
+                                    &message,
+                                    diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
+                                );
+                            }
+                        } else {
+                            // TS2305: Symbol doesn't exist in the module at all
+                            let message = format_message(
+                                diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                                &[module_name, import_name],
+                            );
+                            self.error_at_node(
+                                specifier.name,
+                                &message,
+                                diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                            );
+                        }
                     }
                 }
                 return;
@@ -355,15 +387,47 @@ impl<'a> CheckerState<'a> {
                         );
 
                     if !found_via_reexport {
-                        let message = format_message(
-                            diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                            &[module_name, import_name],
-                        );
-                        self.error_at_node(
-                            specifier.name,
-                            &message,
-                            diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                        );
+                        // Check if the symbol exists locally in the target module
+                        // to distinguish between TS2459, TS2460, and TS2305
+                        let (exists_locally, exported_as) =
+                            self.check_local_symbol_and_renamed_export(module_name, import_name);
+
+                        if exists_locally {
+                            if let Some(ref renamed_as) = exported_as {
+                                // TS2460: Symbol exists locally and is exported under a different name
+                                let message = format_message(
+                                    diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
+                                    &[module_name, import_name, renamed_as],
+                                );
+                                self.error_at_node(
+                                    specifier.name,
+                                    &message,
+                                    diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
+                                );
+                            } else {
+                                // TS2459: Symbol exists locally but is not exported
+                                let message = format_message(
+                                    diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
+                                    &[module_name, import_name],
+                                );
+                                self.error_at_node(
+                                    specifier.name,
+                                    &message,
+                                    diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
+                                );
+                            }
+                        } else {
+                            // TS2305: Symbol doesn't exist in the module at all
+                            let message = format_message(
+                                diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                                &[module_name, import_name],
+                            );
+                            self.error_at_node(
+                                specifier.name,
+                                &message,
+                                diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                            );
+                        }
                     }
                 } else {
                     // Import exists - check if it should be elided from JavaScript output
@@ -399,6 +463,212 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Check if a symbol exists locally in the target module and whether it's
+    /// exported under a different name.
+    ///
+    /// Returns (exists_locally, exported_as) where:
+    /// - exists_locally: true if the symbol is declared in the module's scope
+    /// - exported_as: Some(name) if the symbol is exported under a different name,
+    ///                None if not exported or exported with the same name
+    #[tracing::instrument(level = "debug", skip(self), fields(module = %module_name, import = %import_name))]
+    fn check_local_symbol_and_renamed_export(
+        &self,
+        module_name: &str,
+        import_name: &str,
+    ) -> (bool, Option<String>) {
+        tracing::trace!("Checking if symbol exists locally and is renamed");
+
+        // Try to get the target module's binder
+        let target_binder = if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+            tracing::trace!(target_idx, "Resolved import target");
+            self.ctx.get_binder_for_file(target_idx)
+        } else {
+            tracing::trace!("Could not resolve import target");
+            None
+        };
+
+        let target_binder = match target_binder {
+            Some(binder) => {
+                tracing::trace!("Found target binder directly");
+                binder
+            }
+            None => {
+                tracing::trace!("No direct target binder, checking all binders");
+                // If we can't find the target binder, also check all binders
+                if let Some(all_binders) = &self.ctx.all_binders {
+                    // Try to find the module in any binder's exports
+                    let normalized = module_name.trim_matches('"').trim_matches('\'');
+                    tracing::trace!(num_binders = all_binders.len(), "Checking all binders");
+                    for binder in all_binders.iter() {
+                        if binder.module_exports.contains_key(module_name)
+                            || binder.module_exports.contains_key(normalized)
+                        {
+                            tracing::trace!("Found matching binder via exports");
+                            // Check if the symbol exists locally in this binder
+                            if let Some(exists) =
+                                self.check_symbol_in_binder(binder, import_name, module_name)
+                            {
+                                return exists;
+                            }
+                        }
+                    }
+                }
+                tracing::trace!("No binder found, returning (false, None)");
+                return (false, None);
+            }
+        };
+
+        if let Some(result) = self.check_symbol_in_binder(target_binder, import_name, module_name) {
+            tracing::trace!(exists_locally = result.0, renamed = ?result.1, "Got result from check_symbol_in_binder");
+            result
+        } else {
+            tracing::trace!("check_symbol_in_binder returned None");
+            (false, None)
+        }
+    }
+
+    /// Helper to check if a symbol exists in a specific binder and whether it's renamed on export.
+    #[tracing::instrument(level = "trace", skip(self, binder), fields(import = %import_name, module = %module_name))]
+    fn check_symbol_in_binder(
+        &self,
+        binder: &tsz_binder::BinderState,
+        import_name: &str,
+        module_name: &str,
+    ) -> Option<(bool, Option<String>)> {
+        // Check if the symbol exists in the binder's symbol table
+        let symbol_exists = binder.symbols.find_by_name(import_name).is_some();
+        tracing::trace!(symbol_exists, "Checked if symbol exists in binder");
+
+        if !symbol_exists {
+            return None;
+        }
+
+        // Symbol exists locally. Now check if it's exported under a different name.
+        // We need to look at the module's export specifications to find renames.
+
+        // Get the module's export table to check renamed exports
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let module_keys = [
+            module_name,
+            normalized,
+            &format!("\"{}\"", normalized),
+            &format!("'{}'", normalized),
+        ];
+
+        // Also try to get the target file's name if available
+        let file_name = if let Some(target_idx) = self.ctx.resolve_import_target(module_name) {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            arena.source_files.first().map(|sf| sf.file_name.as_str())
+        } else {
+            None
+        };
+
+        for &key in &module_keys {
+            if let Some(exports) = binder.module_exports.get(key) {
+                // Check if the symbol is exported under a different name
+                // by looking through all export names
+                for (export_name, sym_id) in exports.iter() {
+                    if let Some(sym) = binder.symbols.get(*sym_id) {
+                        // Check if this symbol has a declaration with the import_name
+                        let has_matching_name = sym.declarations.iter().any(|&decl_idx| {
+                            self.declaration_name_matches_string(decl_idx, import_name)
+                        });
+
+                        if has_matching_name && export_name.as_str() != import_name {
+                            // Symbol is exported under a different name
+                            return Some((true, Some(export_name.clone())));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check with file name
+        if let Some(fname) = file_name {
+            if let Some(exports) = binder.module_exports.get(fname) {
+                for (export_name, sym_id) in exports.iter() {
+                    if let Some(sym) = binder.symbols.get(*sym_id) {
+                        let has_matching_name = sym.declarations.iter().any(|&decl_idx| {
+                            self.declaration_name_matches_string(decl_idx, import_name)
+                        });
+
+                        if has_matching_name && export_name.as_str() != import_name {
+                            return Some((true, Some(export_name.clone())));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Symbol exists locally but is not exported
+        Some((true, None))
+    }
+
+    /// Check if a declaration's name matches the expected string.
+    fn declaration_name_matches_string(&self, decl_idx: NodeIndex, expected_name: &str) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        let name_node_idx = match node.kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
+                    var_decl.name
+                } else {
+                    return false;
+                }
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = self.ctx.arena.get_function(node) {
+                    func.name
+                } else {
+                    return false;
+                }
+            }
+            syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = self.ctx.arena.get_class(node) {
+                    class.name
+                } else {
+                    return false;
+                }
+            }
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                if let Some(interface) = self.ctx.arena.get_interface(node) {
+                    interface.name
+                } else {
+                    return false;
+                }
+            }
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                    type_alias.name
+                } else {
+                    return false;
+                }
+            }
+            syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
+                    enum_decl.name
+                } else {
+                    return false;
+                }
+            }
+            _ => return false,
+        };
+
+        let Some(name_node) = self.ctx.arena.get(name_node_idx) else {
+            return false;
+        };
+
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        self.ctx.arena.resolve_identifier_text(ident) == expected_name
     }
 
     fn any_ambient_module_declared(&self, module_name: &str) -> bool {
