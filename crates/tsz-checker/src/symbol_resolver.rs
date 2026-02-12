@@ -284,6 +284,20 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Resolve identifier for write context (assignment target).
+    pub(crate) fn resolve_identifier_symbol_for_write(&self, idx: NodeIndex) -> Option<SymbolId> {
+        let result = self.resolve_identifier_symbol_inner(idx);
+        if let Some(sym_id) = result {
+            self.ctx.written_symbols.borrow_mut().insert(sym_id);
+        }
+        result
+    }
+
+    /// Resolve identifier without marking (for checking only).
+    pub(crate) fn resolve_identifier_symbol_no_mark(&self, idx: NodeIndex) -> Option<SymbolId> {
+        self.resolve_identifier_symbol_inner(idx)
+    }
+
     fn resolve_identifier_symbol_inner(&self, idx: NodeIndex) -> Option<SymbolId> {
         // Get identifier name for tracing
         let ident_name = self
