@@ -3307,6 +3307,46 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
             diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
         );
+
+        if self.is_with_statement_in_strict_mode_context(stmt_idx) {
+            self.error_at_node(
+                stmt_idx,
+                diagnostic_messages::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+                diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+            );
+        }
+    }
+
+    fn is_with_statement_in_strict_mode_context(&self, stmt_idx: NodeIndex) -> bool {
+        if self.ctx.compiler_options.always_strict {
+            return true;
+        }
+
+        let mut current = stmt_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
+                || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
+                || parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                return true;
+            }
+
+            current = parent_idx;
+        }
+
+        false
     }
 
     /// TS1105: A 'break' statement can only be used within an enclosing iteration statement or switch statement.
