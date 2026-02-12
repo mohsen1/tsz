@@ -991,3 +991,89 @@ let m: string = t.foo;   // OK - getter returns string
         ts2339_errors
     );
 }
+
+/// Issue: False-positive TS2345 when interface extends another and adds call signatures
+///
+/// From: addMoreCallSignaturesToBaseSignature2.ts
+/// Expected: No errors - `a(1)` should match inherited `(bar: number): string` signature
+/// Actual: TS2345 (falsely claims argument type mismatch)
+///
+/// When interface Bar extends Foo (which has `(bar: number): string`),
+/// and Bar adds `(key: string): string`, calling `a(1)` with a numeric
+/// argument should match the inherited signature without error.
+#[test]
+fn test_interface_inherited_call_signature_no_false_ts2345() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Foo {
+    (bar:number): string;
+}
+
+interface Bar extends Foo {
+    (key: string): string;
+}
+
+var a: Bar;
+var kitty = a(1);
+        "#,
+    );
+
+    // Filter out TS2318 (missing global types)
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2345),
+        "Should NOT emit TS2345 - a(1) should match inherited (bar: number) => string.\nActual errors: {:#?}",
+        relevant
+    );
+}
+
+/// Issue: False-positive TS2345 with mixin pattern (class extends function return)
+///
+/// From: anonClassDeclarationEmitIsAnon.ts
+/// Expected: No errors - `Timestamped(User)` should work as a valid base class
+/// Actual: TS2345 (falsely claims User is not assignable to Constructor parameter)
+///
+/// The mixin pattern `function Timestamped<TBase extends Constructor>(Base: TBase)`
+/// with `Constructor<T = {}> = new (...args: any[]) => T` should accept any class.
+#[test]
+fn test_mixin_pattern_no_false_ts2345() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Constructor<T = {}> = new (...args: any[]) => T;
+
+function Timestamped<TBase extends Constructor>(Base: TBase) {
+    return class extends Base {
+        timestamp = 0;
+    };
+}
+
+class User {
+    name = '';
+}
+
+class TimestampedUser extends Timestamped(User) {
+    constructor() {
+        super();
+    }
+}
+        "#,
+    );
+
+    // Filter out TS2318 (missing global types)
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2345),
+        "Should NOT emit TS2345 - User should be assignable to Constructor<{{}}>.\nActual errors: {:#?}",
+        relevant
+    );
+}
