@@ -555,6 +555,7 @@ impl BinderState {
             FxHashMap::default(), // symbol_arenas
             FxHashMap::default(), // declaration_arenas
             FxHashSet::default(), // shorthand_ambient_modules
+            FxHashSet::default(), // modules_with_export_equals
             FlowNodeArena::new(),
             FxHashMap::default(), // node_flow
             FxHashMap::default(), // switch_clause_to_switch
@@ -583,6 +584,7 @@ impl BinderState {
         symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
         declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
         shorthand_ambient_modules: FxHashSet<String>,
+        modules_with_export_equals: FxHashSet<String>,
         flow_nodes: FlowNodeArena,
         node_flow: FxHashMap<u32, FlowNodeId>,
         switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
