@@ -471,6 +471,21 @@ check_submodule_clean() {
         return 0  # Not a git repo/submodule, skip check
     fi
 
+    # Verify the submodule SHA matches what's committed in the parent repo.
+    # This catches accidental `cd TypeScript && git checkout <other>` or detached HEAD drift.
+    local expected_sha
+    expected_sha=$(cd "$REPO_ROOT" && git ls-tree HEAD TypeScript 2>/dev/null | awk '{print $3}')
+    local actual_sha
+    actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null)
+
+    if [ -n "$expected_sha" ] && [ -n "$actual_sha" ] && [ "$expected_sha" != "$actual_sha" ]; then
+        echo -e "${YELLOW}⚠ TypeScript submodule SHA mismatch!${NC}"
+        echo "  Expected (committed): $expected_sha"
+        echo "  Actual (checked out): $actual_sha"
+        echo -e "${YELLOW}Resetting to committed SHA...${NC}"
+        (cd "$REPO_ROOT" && git submodule update --init TypeScript 2>/dev/null)
+    fi
+
     echo -e "${YELLOW}Cleaning TypeScript submodule (git checkout + clean -xfd)...${NC}"
     (cd "$ts_dir" && git checkout -- . 2>/dev/null; git clean -xfd 2>/dev/null)
     echo -e "${GREEN}✓ TypeScript submodule clean${NC}"
