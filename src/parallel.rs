@@ -334,6 +334,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         node_scope_ids: binder.node_scope_ids,
         parse_diagnostics,
         shorthand_ambient_modules: binder.shorthand_ambient_modules,
+        modules_with_export_equals: binder.modules_with_export_equals,
         global_augmentations: binder.global_augmentations,
         module_augmentations: binder.module_augmentations,
         reexports: binder.reexports,
