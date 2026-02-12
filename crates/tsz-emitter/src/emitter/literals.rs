@@ -11,7 +11,14 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_identifier(&mut self, node: &Node) {
         if let Some(ident) = self.arena.get_identifier(node) {
-            self.write_identifier(&ident.escaped_text);
+            let original_text = &ident.escaped_text;
+
+            // Check if this variable has been renamed for block scoping (ES5 for-of shadowing)
+            if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text) {
+                self.write(&renamed);
+            } else {
+                self.write_identifier(original_text);
+            }
         }
     }
 
