@@ -1229,6 +1229,11 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::CallResult;
         match result {
             CallResult::Success(return_type) => {
+                // super() calls always return void — they call the parent constructor
+                // on `this`, they don't create a new instance.
+                if is_super_call {
+                    return TypeId::VOID;
+                }
                 let return_type =
                     self.apply_this_substitution_to_call_return(return_type, callee_expr);
                 let return_type =
@@ -2172,8 +2177,8 @@ impl<'a> CheckerState<'a> {
     /// This avoids incorrect type resolution when symbol IDs collide across
     /// binders (current file vs. lib files).
     fn type_of_value_symbol_by_name(&mut self, name: &str) -> TypeId {
-        if let Some(value_decl) = self.find_value_declaration_in_libs(name) {
-            let value_type = self.type_of_value_declaration(value_decl);
+        if let Some((sym_id, value_decl)) = self.find_value_declaration_in_libs(name) {
+            let value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
             if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                 return value_type;
             }

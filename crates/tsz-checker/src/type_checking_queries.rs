@@ -1631,9 +1631,32 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => {
-                // Parameters: check the type annotation (handled via node.kind directly)
-                if let Some(param) = self.ctx.arena.get_parameter(node) {
-                    // Check type annotation if present
+                // Signatures (PropertySignature, MethodSignature, CallSignature, ConstructSignature):
+                // recurse into type parameters, parameters, and return type
+                if let Some(sig) = self.ctx.arena.get_signature(node) {
+                    if let Some(ref tps) = sig.type_parameters {
+                        for &tp_idx in &tps.nodes {
+                            self.collect_infer_type_parameters_inner(tp_idx, params);
+                        }
+                    }
+                    if let Some(ref sig_params) = sig.parameters {
+                        for &param_idx in &sig_params.nodes {
+                            self.collect_infer_type_parameters_inner(param_idx, params);
+                        }
+                    }
+                    if !sig.type_annotation.is_none() {
+                        self.collect_infer_type_parameters_inner(sig.type_annotation, params);
+                    }
+                } else if let Some(index_sig) = self.ctx.arena.get_index_signature(node) {
+                    // IndexSignature: recurse into parameters and type annotation
+                    for &param_idx in &index_sig.parameters.nodes {
+                        self.collect_infer_type_parameters_inner(param_idx, params);
+                    }
+                    if !index_sig.type_annotation.is_none() {
+                        self.collect_infer_type_parameters_inner(index_sig.type_annotation, params);
+                    }
+                } else if let Some(param) = self.ctx.arena.get_parameter(node) {
+                    // Parameters: check the type annotation
                     if param.type_annotation != NodeIndex::NONE {
                         self.collect_infer_type_parameters_inner(param.type_annotation, params);
                     }
