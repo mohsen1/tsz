@@ -1,166 +1,66 @@
-# Emit Test Status
+# Emit Test Status - Slice 4 (Helper Functions + this capture)
 
-**Last Updated**: 2026-02-12
-**Overall JS Emit Pass Rate**: 64.4% (282/438 on 500-test sample)
-**Target**: 90%+
+## Progress Update
 
-*Note: 200-test sample showed 68.2%, but larger 500-test sample is more representative*
+### ✅ Completed: __read Helper Emission
+- Fixed detection of binding patterns in for-of initializers  
+- Properly checks VARIABLE_DECLARATION_LIST → declarations → binding patterns
+- Sets `helpers.read = true` when both `target_es5` and `downlevel_iteration` enabled
+- Helper is now correctly emitted in output
 
-## Current Status by Slice
+**Commit**: fix(emit): emit __read helper for for-of destructuring with downlevelIteration
 
-### Slice 1: Comment Preservation (ASSIGNED)
-**Status**: 🟡 Partial progress - JSDoc for ES5 methods working
+### ❌ Remaining: Destructuring Lowering
+The __read helper is emitted, but destructuring patterns are NOT yet lowered.
 
-**Pass Rate**:
-- Overall sample: 68.2% (includes all test types)
-- Comment-specific tests: 9.7% (18/186)
-
-**Completed**:
-- ✅ JSDoc comments on ES5 class static methods
-- ✅ JSDoc comments on ES5 class instance methods
-- ✅ Auto-extraction of source text from arena
-- ✅ Proper comment indentation in IR printer
-- ✅ Trailing comment infrastructure for namespaces (with some edge cases)
-
-**Test Wins**:
-- `commentBeforeStaticMethod1` ✅
-- `commentBeforeStaticMethod2` ✅ (likely)
-- Similar JSDoc on method tests ✅
-
-**Known Issues**:
-- 🐛 Trailing comments sometimes duplicated on closing brackets
-- 🐛 Indentation off by 4 spaces in nested namespace IIFEs
-  - Example: `ClassAndModuleThatMergeWithStaticVariableAndExportedVarThatShareAName`
-
-**Remaining Work** (still many failing comment tests):
-1. **High Priority**:
-   - Trailing comments in call arguments (`s.map(// comment\nfunction...)`)
-   - End-of-file comments
-   - Comments in parameter lists
-   - Comments on ambient declarations (pinned comments)
-
-2. **Medium Priority**:
-   - AMD module comment handling
-   - Comments in array/object literals
-   - Inline comments in expressions
-   - Comments before closing braces
-
-3. **Complex**:
-   - Comment positioning in parenthesized expressions
-   - Comments in destructuring patterns
-   - Block-end comment handling
-
-**Architecture**:
-Foundation is in place for comment preservation in IR-based transforms:
-- IR nodes can store `leading_comment`/`trailing_comment` fields
-- Comment extraction from source works (backwards scanning)
-- Comment formatting matches TypeScript output
-
-**Next Steps**:
-- Extend comment extraction to other node types (expressions, statements)
-- Implement trailing comment handling
-- Add end-of-scope comment emission
-
-### Slice 2: Object/Expression Formatting
-**Status**: ⏸️ Not started
-
-**Known Issues** (36 failures):
-- Object literals keep short properties on same line
-- Short function bodies should stay on one line
-- Indentation in nested IIFEs
-
-**Test Examples**:
-- `APISample_compile` - object literal formatting
-- `APISample_WatchWithOwnWatchHost` - shorthand property
-
-### Slice 3: Destructuring/For-of Downlevel
-**Status**: ⏸️ Not started
-
-**Known Issues** (30+ failures):
-- Destructuring not lowered for ES5 target
-- Variable renaming (shadowing with `_1`, `_2` suffixes)
-- Temp variable naming differences
-
-**Test Examples**:
-- `ES5For-of*` tests
-- Destructuring in assignments and parameters
-
-### Slice 4: Helper Functions + This Capture
-**Status**: ⏸️ Not started
-
-**Known Issues** (10+ failures):
-- `__values`, `__read`, `__spread` helpers not emitted
-- `_this` capture for arrow functions in methods
-- Regex literal preservation
-
-**Test Examples**:
-- `ES5For-of33` - helper emission
-- `APISample_jsdoc` - `_this` capture
-
-## Recent Changes
-
-### 2026-02-12: JSDoc Comment Preservation for ES5 Methods
-**Commits**:
-- `38f9e18f3` - feat(emit): preserve JSDoc comments for ES5 class methods
-- `254a525b9` - docs: session summary
-- `f8dfd80b5` - docs: emit test status tracking document
-
-**Impact**:
-- Overall pass rate: ~59.6% → 64.4% (+4.8% on 500-test sample)
-- Fixed JSDoc comments on ES5 class method transformations
-- Trailing comment infrastructure already working (just needed rebuild)
-- Established pattern for future comment preservation work
-- 21 more tests passing
-
-**Files Changed**:
-- `crates/tsz-emitter/src/transforms/ir.rs` - Added comment fields to IR nodes
-- `crates/tsz-emitter/src/transforms/class_es5_ir.rs` - Comment extraction logic
-- `crates/tsz-emitter/src/transforms/ir_printer.rs` - Comment emission
-- `crates/tsz-emitter/src/printer.rs` - Auto-extract source text
-
-**Technical Details**:
-- Backwards scanning from method position to find preceding JSDoc
-- Scans to class opening brace or previous member
-- Proper indentation (indent + space before `*` continuation lines)
-- Works for both static and instance methods
-
-## Testing
-
-### Quick Test Run
-```bash
-# Build first
-cargo build --release -p tsz-cli
-
-# Quick sample (200 tests)
-./scripts/emit/run.sh --max=200 --js-only
-
-# Specific slice testing
-./scripts/emit/run.sh --js-only --filter="comment" --max=50
-./scripts/emit/run.sh --js-only --filter="APISample"
+**Current output**:
+```javascript
+var __read = (this && this.__read) || function (o, n) { ... };
+...
+for (var _b = __values([2, 3]), _c = _b.next(); !_c.done; _c = _b.next()) {
+    var [a = 0, b = 1] = _c.value;  // ❌ NOT LOWERED
+    ...
+}
 ```
 
-### Full Test Run
-```bash
-# All ~11K tests (takes several minutes)
-./scripts/emit/run.sh --js-only
+**Expected output**:
+```javascript
+var __read = (this && this.__read) || function (o, n) { ... };
+...
+for (var _b = __values([2, 3]), _c = _b.next(); !_c.done; _c = _b.next()) {
+    var _d = __read(_c.value, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, _f = _d[1], b = _f === void 0 ? 1 : _f;  // ✅ LOWERED
+    ...
+}
 ```
 
-## Priority Order for Future Work
+### Implementation Notes
 
-1. **Short-term wins** (easy, high impact):
-   - Empty function body single-line formatting
-   - Object literal same-line formatting for short properties
+The transformation happens in `crates/tsz-emitter/src/emitter/es5_bindings.rs:1639` in function `emit_for_of_value_binding_iterator_es5()`.
 
-2. **Medium effort** (moderate impact):
-   - Trailing comment preservation in expressions
-   - End-of-file comment emission
+Current code at line 1664:
+```rust
+self.emit(decl.name);  // Emits binding pattern as-is
+self.write(" = ");
+self.write(result_name);
+self.write(".value");
+```
 
-3. **Complex** (high effort, moderate impact):
-   - Full comment positioning system
-   - Destructuring ES5 lowering
-   - Helper function emission
+Needs to become:
+1. Check if `decl.name` is an ARRAY_BINDING_PATTERN or OBJECT_BINDING_PATTERN
+2. If yes, emit lowered destructuring using __read:
+   - `var _d = __read(_c.value, N)` where N is element count
+   - Then emit individual bindings: `_e = _d[0], a = _e === void 0 ? 0 : _e, ...`
+3. If no, emit as current (simple identifier)
 
-4. **Edge cases** (low priority):
-   - AMD comment handling
-   - Ambient declaration comments
-   - Regex literal preservation
+### Test Impact
+- ES5For-of36: Helper emitted ✅, destructuring NOT lowered ❌  
+- ES5For-of37: Similar pattern
+- Other for-of tests with destructuring: Partial progress
+
+### Next Steps
+1. Implement `emit_es5_destructuring_with_read()` helper
+2. Handle array binding patterns with defaults
+3. Handle object binding patterns  
+4. Handle nested patterns
+5. Test with all ES5For-of test cases
+
