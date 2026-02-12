@@ -391,7 +391,10 @@ impl<'a> NarrowingContext<'a> {
     /// For optional properties that don't exist on a specific union member, returns
     /// `TypeId::UNDEFINED` to indicate the property could be undefined (not a definitive mismatch).
     fn get_type_at_path(&self, mut type_id: TypeId, path: &[Atom]) -> Option<TypeId> {
-        let evaluator = PropertyAccessEvaluator::new(self.db); // TODO: Fix to use resolver when available
+        let evaluator = match self.resolver {
+            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
+            None => PropertyAccessEvaluator::new(self.db),
+        };
 
         for (i, &prop_name) in path.iter().enumerate() {
             // Handle ANY - any property access on any returns any
