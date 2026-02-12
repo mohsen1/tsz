@@ -1391,54 +1391,52 @@ impl<'a> Printer<'a> {
     fn emit_for_of_statement_es5_iterator(&mut self, for_in_of: &ForInOfData) {
         let counter = self.ctx.destructuring_state.for_of_counter;
 
-        // Generate variable names:
-        // - iterator: e_1, e_2, e_3, ...
-        // - result: _a, _b, _c, ... (temp var)
-        // - error: e_1_1, e_2_1, e_3_1, ...
-        let iterator_name = format!("e_{}", counter + 1);
-        let result_name = self.get_temp_var_name();
-        let error_name = format!("e_{}_1", counter + 1);
+        // TypeScript's variable naming pattern:
+        // Top-level: e_N (error container), _a (temp for return function)
+        // For loop: _b (iterator), _c (result)
+        // Catch: e_N_1 (error value, not pre-declared)
+        let error_container_name = format!("e_{}", counter + 1);
+        let return_temp_name = self.get_temp_var_name(); // _a
+        let loop_iterator_name = self.get_temp_var_name(); // _b
+        let loop_result_name = self.get_temp_var_name(); // _c
+        let catch_error_name = format!("e_{}_1", counter + 1);
 
         self.ctx.destructuring_state.for_of_counter += 1;
 
-        // Declare variables at the top
+        // Declare only error container and return temp at the top (NOT catch variable)
         self.write("var ");
-        self.write(&iterator_name);
+        self.write(&error_container_name);
         self.write(", ");
-        self.write(&result_name);
-        self.write(", ");
-        self.write(&error_name);
+        self.write(&return_temp_name);
         self.write(";");
         self.write_line();
 
         // try block
-        self.write("try ");
-        self.write("{");
+        self.write("try {");
         self.write_line();
         self.increase_indent();
 
-        // for loop with iterator protocol
-        self.write("for (");
-        self.write(&iterator_name);
+        // for loop with iterator protocol, using NEW temp vars
+        self.write("for (var ");
+        self.write(&loop_iterator_name);
         self.write(" = __values(");
         self.emit_expression(for_in_of.expression);
         self.write("), ");
-        self.write(&result_name);
+        self.write(&loop_result_name);
         self.write(" = ");
-        self.write(&iterator_name);
+        self.write(&loop_iterator_name);
         self.write(".next(); !");
-        self.write(&result_name);
+        self.write(&loop_result_name);
         self.write(".done; ");
-        self.write(&result_name);
+        self.write(&loop_result_name);
         self.write(" = ");
-        self.write(&iterator_name);
-        self.write(".next()) ");
-        self.write("{");
+        self.write(&loop_iterator_name);
+        self.write(".next()) {");
         self.write_line();
         self.increase_indent();
 
-        // Emit the value binding: var item = _a.value;
-        self.emit_for_of_value_binding_iterator_es5(for_in_of.initializer, &result_name);
+        // Emit the value binding: var item = _c.value;
+        self.emit_for_of_value_binding_iterator_es5(for_in_of.initializer, &loop_result_name);
         self.write_line();
 
         // Emit the loop body
@@ -1450,39 +1448,40 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+        self.write_line();
 
         // catch block
-        self.write(" catch (");
-        self.write(&error_name);
+        self.write("catch (");
+        self.write(&catch_error_name);
         self.write(") { ");
-        self.write(&iterator_name);
+        self.write(&error_container_name);
         self.write(" = { error: ");
-        self.write(&error_name);
+        self.write(&catch_error_name);
         self.write(" }; }");
+        self.write_line();
 
         // finally block
-        self.write(" finally ");
-        self.write("{");
+        self.write("finally {");
         self.write_line();
         self.increase_indent();
 
-        self.write("try ");
-        self.write("{");
+        self.write("try {");
         self.write_line();
         self.increase_indent();
 
+        // Cleanup: if (_c && !_c.done && (_a = _b.return)) _a.call(_b);
         self.write("if (");
-        self.write(&result_name);
+        self.write(&loop_result_name);
         self.write(" && !");
-        self.write(&result_name);
+        self.write(&loop_result_name);
         self.write(".done && (");
-        self.write(&result_name);
+        self.write(&return_temp_name);
         self.write(" = ");
-        self.write(&iterator_name);
-        self.write("[\"return\"])) ");
-        self.write(&result_name);
+        self.write(&loop_iterator_name);
+        self.write(".return)) ");
+        self.write(&return_temp_name);
         self.write(".call(");
-        self.write(&iterator_name);
+        self.write(&loop_iterator_name);
         self.write(");");
 
         self.write_line();
@@ -1491,9 +1490,9 @@ impl<'a> Printer<'a> {
         self.write_line();
 
         self.write("finally { if (");
-        self.write(&iterator_name);
+        self.write(&error_container_name);
         self.write(") throw ");
-        self.write(&iterator_name);
+        self.write(&error_container_name);
         self.write(".error; }");
 
         self.write_line();
