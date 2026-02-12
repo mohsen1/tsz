@@ -3600,6 +3600,10 @@ impl<'a> CheckerState<'a> {
         // Map from variable declaration NodeIndex to (total_count, unused_count).
         let mut variable_declarations: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
 
+        // Track destructuring patterns for TS6198.
+        // Map from binding pattern NodeIndex to (total_count, unused_count).
+        let mut destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
+
         // First pass: identify ALL import symbols and track them by import declaration.
         // This includes both used and unused imports.
         for (_sym_id, _name) in &symbols_to_check {
@@ -3700,8 +3704,6 @@ impl<'a> CheckerState<'a> {
         }
 
         // Third pass: track destructuring patterns (for TS6198)
-        // Map from binding pattern NodeIndex to (total_count, unused_count).
-        let mut destructuring_patterns: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
         for (_sym_id, _name) in &symbols_to_check {
             let sym_id = *_sym_id;
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
