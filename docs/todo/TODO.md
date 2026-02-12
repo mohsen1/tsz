@@ -9,14 +9,14 @@
 
 | Crate | Production TODOs | Ignored Tests | Total |
 |-------|-----------------|---------------|-------|
-| tsz-solver | 10 | 15 | 25 |
-| tsz-checker | 8 | 12 | 20 |
-| tsz-emitter | 8 | 0 | 8 |
+| tsz-solver | 7 | 15 | 22 |
+| tsz-checker | 5 | 12 | 17 |
+| tsz-emitter | 1 | 0 | 1 |
 | tsz-lsp | 4 | 9 | 13 |
 | tsz-cli | 3 | 7 | 10 |
-| tsz-wasm | 2 | 0 | 2 |
-| Integration tests (src/) | 0 | 37 | 37 |
-| **Total** | **35** | **80** | **115** |
+| tsz-wasm | 1 | 0 | 1 |
+| Integration tests (src/) | 0 | 32 | 32 |
+| **Total** | **21** | **75** | **96** |
 
 ---
 
@@ -29,7 +29,6 @@ These block conformance progress and affect type correctness.
 | File | Description | Impact |
 |------|-------------|--------|
 | `evaluate_rules/mapped.rs:145` | Array/Tuple preservation for homomorphic mapped types | Mapped types over arrays/tuples produce wrong shapes |
-| `evaluate.rs:216` | Application type expansion (Redux test fix) | Generic application types may not fully expand |
 | `db.rs:1554` | Look up symbol extends clause for class hierarchy | Class hierarchy subtyping incomplete |
 
 ### Medium Priority — Correctness Improvements
@@ -39,17 +38,13 @@ These block conformance progress and affect type correctness.
 | `contextual.rs:176` | Check if `def_id` points to `lib.d.ts` `ThisType` via symbol resolution |
 | `contextual.rs:252` | Blindly picks the first `ThisType` — needs proper selection |
 | `narrowing.rs:824` | Check for static `[Symbol.hasInstance]` method overriding standard narrowing |
-| `narrowing.rs:394` | Pass resolver to `PropertyAccessEvaluator` when available |
-| `db.rs:701` | Apply flags to `CompatChecker` once it supports `apply_flags` |
-| `db.rs:1163` | Configure `SubtypeChecker` with variance flags |
 | `tracer.rs:342` | Return apparent shapes for primitives (`String`, `Number`, etc.) |
 
-### Low Priority — Integration
-
-| File | Description |
-|------|-------------|
-| `operations_property.rs:96` | Integrate resolver into `PropertyAccessEvaluator` |
-| `lib.rs:120` | Fix API mismatches in `mapped_key_remap_tests` (`TypeId::TYPE_PARAM`, `keyof`, etc.) |
+### Completed Items
+- ~~`narrowing.rs:394`~~ Pass resolver to `PropertyAccessEvaluator` — **Done**
+- ~~`db.rs:701`~~ Apply flags to `CompatChecker` — **Done**
+- ~~`lib.rs:120`~~ Fix API mismatches in `mapped_key_remap_tests` — **Done**
+- ~~`evaluate.rs:216`~~ Application type expansion — **Already implemented**, stale TODO removed
 
 ### Ignored Tests (15)
 
@@ -74,27 +69,22 @@ These block conformance progress and affect type correctness.
 
 ## Checker (`tsz-checker`)
 
-### High Priority — Feature Gaps
-
-| File | Description | Impact |
-|------|-------------|--------|
-| `type_checking_utilities.rs:2247` | Implement `get_symbol_by_name` | Symbol lookup gaps |
-| `type_checking_utilities.rs:1760` | Evaluate constant expression to get literal value | Const enum members, etc. |
-
 ### Medium Priority — Improvements
 
 | File | Description |
 |------|-------------|
-| `state.rs:757` | Add more node types for checking (object literals, etc.) |
 | `iterable_checker.rs:124` | Check call signatures for generators when `CallableShape` is implemented |
 | `state_checking_members.rs:1817` | Investigate lib loading for Promise detection |
 | `function_type.rs:335` | Investigate lib loading for Promise detection |
 | `type_node.rs:61` | Add cache key based on type param hash for smarter caching |
-| `type_checking_utilities.rs:1372` | `jsdoc_for_node` lives in LSP module; stub until extracted |
-| `type_checking_utilities.rs:1960,1969` | Consider migrating to `type_queries` / `solver-visitor` pattern |
 | `control_flow_narrowing.rs:304` | Heuristic picks first predicate signature — needs improvement |
-| `import_checker.rs:501` | Check if right member exists (TS2694) when left is resolved |
-| `scope_finder.rs:14` | Remove dead code once methods are used by the checker |
+
+### Completed Items
+- ~~`type_checking_utilities.rs:2247`~~ Implement `get_symbol_by_name` — **Done** (in state.rs)
+- ~~`type_checking_utilities.rs:1760`~~ Evaluate constant expression — **Done**
+- ~~`state.rs:757`~~ Add more node types for `clear_type_cache_recursive` — **Done**
+- ~~`scope_finder.rs:14`~~ Remove dead code — **Done** (removed unused methods)
+- ~~`import_checker.rs:501`~~ Check if right member exists (TS2694) — **Done** (via `report_type_query_missing_member`)
 
 ### Ignored Tests (12)
 
@@ -111,33 +101,19 @@ These block conformance progress and affect type correctness.
 
 ## Emitter (`tsz-emitter`)
 
-### High Priority — Type Printer Completeness
+### Remaining TODOs
 
 | File | Description |
 |------|-------------|
-| `type_printer.rs:213,219` | Look up actual string from interner (2 occurrences) |
-| `type_printer.rs:378` | Implement callable type printing (overloaded call signatures) |
-| `type_printer.rs:437` | Implement enum type printing |
-| `type_printer.rs:453` | Implement conditional type printing |
-| `type_printer.rs:479` | Implement mapped type printing |
-| `type_printer.rs:484` | Implement index access type printing |
-| `type_printer.rs:493` | Implement string intrinsic type printing |
-
-### Medium Priority — Declaration Emitter
-
-| File | Description |
-|------|-------------|
-| `declaration_emitter/mod.rs:3614` | Store symbol alias for symbol-based tracking |
-| `declaration_emitter/mod.rs:3752` | Check if symbol is declared in current file |
-| `declaration_emitter/mod.rs:3842` | Implement proper relative path calculation |
-| `declaration_emitter/usage_analyzer.rs:772` | Walk type arguments in usage analysis |
 | `declaration_emitter/tests/` (10) | All usage analyzer tests need `CheckerContext` initialization |
 
-### Low Priority — Transforms
-
-| File | Description |
-|------|-------------|
-| `transforms/es5.rs:247` | Pass super args instead of just `this()` in class constructors |
+### Completed Items
+- ~~`type_printer.rs`~~ All 7 type printing TODOs — **Done** (conditional, mapped, index access, callable, enum, string intrinsic, string/bigint literal)
+- ~~`declaration_emitter/mod.rs:3614`~~ Store symbol alias — **Done**
+- ~~`declaration_emitter/mod.rs:3752`~~ Check if symbol is declared in current file — **Done**
+- ~~`declaration_emitter/mod.rs:3842`~~ Implement proper relative path calculation — **Done**
+- ~~`declaration_emitter/usage_analyzer.rs:772`~~ Walk type arguments in usage analysis — **Done**
+- ~~`transforms/es5.rs:247`~~ Pass super args in class constructors — **Done**
 
 ---
 
@@ -180,6 +156,9 @@ These block conformance progress and affect type correctness.
 | `bin/tsz_lsp.rs:506,514` | Implement diagnostics / full completions when type checker is complete |
 | `tests/build_tests.rs:123` | Check source file changes in build tests |
 
+### Completed Items
+- ~~Dead code~~ `handle_build_legacy`, `calculate_required_imports`, `diff_paths` — **Removed**
+
 ### Ignored Tests (7)
 
 | File | Reason |
@@ -198,13 +177,15 @@ These block conformance progress and affect type correctness.
 | File | Description | Impact |
 |------|-------------|--------|
 | `wasm_api/emit.rs:178` | Implement source maps | No source map output from WASM API |
-| `wasm_api/language_service.rs:152` | Calculate actual diagnostic length | Diagnostics report `length: 0` |
+
+### Completed Items
+- ~~`wasm_api/language_service.rs:152`~~ Calculate actual diagnostic length — **Done**
 
 ---
 
 ## Integration Tests (`src/tests/checker_state_tests.rs`)
 
-37 ignored tests total. Grouped by category:
+~32 ignored tests remaining. Grouped by category:
 
 ### Stack Overflows (3)
 - Readonly index signature tests cause infinite recursion
@@ -224,14 +205,18 @@ These block conformance progress and affect type correctness.
 | Overload compatibility check — custom covariant parameter checking | 1 |
 | Tuple spread in overload calls — rest parameter handling | 1 |
 | Readonly method signature assignability check | 1 |
-| Lazy contextual type resolution conflicts with contravariance | 1 |
-| Computed property names with `this` for static members | 1 |
-| Computed property names with `this` in class expressions | 1 |
 | Variadic tuple optional tail inference | 1 |
 | Mixin pattern — advanced generic class expression support | 1 |
 | Test infrastructure doesn't populate definition store for type aliases | 1 |
 | Pre-existing failure — `IMixin` resolves to error in intersection type | 1 |
 | `this` in derived constructor typed as `object` instead of Base | 1 |
+
+### Recently Un-ignored (passing now)
+- `test_covariant_this_interface_pattern`
+- `test_readonly_element_access_assignment_2540`
+- `test_ts2339_computed_name_this_missing_static`
+- `test_ts2339_computed_name_this_in_class_expression`
+- `test_contextual_property_type_infers_callback_param`
 
 ---
 
@@ -243,20 +228,17 @@ These block conformance progress and affect type correctness.
 3. **Stack overflows** (3 integration tests) — infinite recursion in class hierarchies
 
 ### Tier 2 — Improves Correctness
-1. **Application type expansion** (`solver/evaluate.rs`) — generic instantiation completeness
-2. **Type printer completeness** (`emitter/type_printer.rs`) — 7 missing type kinds
-3. **Symbol lookup** (`checker/type_checking_utilities.rs`) — `get_symbol_by_name`
-4. **Constant expression evaluation** (`checker/type_checking_utilities.rs`) — const enum values
+1. **Promise detection** (`checker/state_checking_members.rs`, `function_type.rs`) — requires lib loading
+2. **ThisType selection** (`solver/contextual.rs`) — proper union dispatch
+3. **Overload predicate selection** (`checker/control_flow_narrowing.rs`)
 
 ### Tier 3 — Improves Developer Experience
 1. **LSP cross-file search** (`lsp/project.rs`) — find-references across files
 2. **LSP scope cache** (4 ignored tests) — performance for large projects
 3. **Signature help overloads** (3 ignored LSP tests)
 4. **WASM source maps** (`wasm_api/emit.rs`)
-5. **Declaration emitter** — symbol tracking and path calculation
 
 ### Tier 4 — Cleanup & Polish
-1. Remove dead code (`checker/scope_finder.rs`)
-2. Migrate to `solver-visitor` pattern (`checker/type_checking_utilities.rs`)
-3. Initialize usage analyzer tests properly (`emitter/declaration_emitter/tests/`)
-4. Make module resolution configurable (`cli/driver_resolution.rs`)
+1. Migrate to `solver-visitor` pattern (`checker/type_checking_utilities.rs`)
+2. Initialize usage analyzer tests properly (`emitter/declaration_emitter/tests/`)
+3. Make module resolution configurable (`cli/driver_resolution.rs`)
