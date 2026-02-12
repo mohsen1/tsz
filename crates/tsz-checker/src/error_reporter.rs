@@ -793,6 +793,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report a property not exist error using solver diagnostics with source tracking.
+    /// If a similar property name is found on the type, emits TS2551 ("Did you mean?")
+    /// instead of TS2339.
     pub fn error_property_not_exist_at(
         &mut self,
         prop_name: &str,
@@ -818,7 +820,21 @@ impl<'a> CheckerState<'a> {
                 self.ctx.file_name.as_str(),
             )
             .with_def_store(&self.ctx.definition_store);
-            let diag = builder.property_not_exist(prop_name, type_id, loc.start, loc.length());
+
+            // Check for similar property names to provide "did you mean?" suggestions
+            let suggestion = self.find_similar_property(prop_name, type_id);
+
+            let diag = if let Some(ref suggestion) = suggestion {
+                builder.property_not_exist_did_you_mean(
+                    prop_name,
+                    type_id,
+                    suggestion,
+                    loc.start,
+                    loc.length(),
+                )
+            } else {
+                builder.property_not_exist(prop_name, type_id, loc.start, loc.length())
+            };
             // Use push_diagnostic for deduplication
             self.ctx
                 .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
@@ -1276,6 +1292,84 @@ impl<'a> CheckerState<'a> {
                 length: loc.length(),
                 related_information: Vec::new(),
             });
+        }
+    }
+
+    // =========================================================================
+    // Property Suggestion Helpers
+    // =========================================================================
+
+    /// Find a similar property name on a type for "did you mean?" suggestions (TS2551).
+    /// Returns the best matching property name if one is found above the similarity threshold.
+    fn find_similar_property(&self, prop_name: &str, type_id: TypeId) -> Option<String> {
+        let property_names = self.collect_type_property_names(type_id);
+        if property_names.is_empty() {
+            return None;
+        }
+
+        let mut best_match: Option<(String, f64)> = None;
+        for candidate in &property_names {
+            if candidate == prop_name {
+                continue;
+            }
+            let similarity = self.calculate_string_similarity(prop_name, candidate);
+            if similarity > 0.6 {
+                if best_match
+                    .as_ref()
+                    .is_none_or(|(_, best_sim)| similarity > *best_sim)
+                {
+                    best_match = Some((candidate.clone(), similarity));
+                }
+            }
+        }
+
+        best_match.map(|(name, _)| name)
+    }
+
+    /// Collect all property names from a type, handling objects, callables, unions,
+    /// and intersections.
+    fn collect_type_property_names(&self, type_id: TypeId) -> Vec<String> {
+        let mut names = Vec::new();
+        self.collect_type_property_names_inner(type_id, &mut names, 0);
+
+        // Deduplicate
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn collect_type_property_names_inner(
+        &self,
+        type_id: TypeId,
+        names: &mut Vec<String>,
+        depth: usize,
+    ) {
+        use tsz_solver::TypeKey;
+
+        if depth > 5 {
+            return;
+        }
+
+        match self.ctx.types.lookup(type_id) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.ctx.types.object_shape(shape_id);
+                for prop in shape.properties.iter() {
+                    names.push(self.ctx.types.resolve_atom_ref(prop.name).to_string());
+                }
+            }
+            Some(TypeKey::Callable(callable_id)) => {
+                let shape = self.ctx.types.callable_shape(callable_id);
+                for prop in shape.properties.iter() {
+                    names.push(self.ctx.types.resolve_atom_ref(prop.name).to_string());
+                }
+            }
+            Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                for &member in members.iter() {
+                    self.collect_type_property_names_inner(member, names, depth + 1);
+                }
+            }
+            _ => {}
         }
     }
 
