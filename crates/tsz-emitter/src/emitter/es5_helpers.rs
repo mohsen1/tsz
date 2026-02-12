@@ -1322,12 +1322,13 @@ impl<'a> Printer<'a> {
         if segments.len() == 1 {
             match &segments[0] {
                 ArraySegment::Spread(spread_idx) => {
-                    // Just a spread: __spreadArray([], spread, false)
-                    self.write("__spreadArray([], ");
+                    // Just a single spread with no other arguments:
+                    // TypeScript optimization - pass the array directly without __spreadArray
+                    // Example: foo(...args) -> foo.apply(void 0, args)
+                    // NOT: foo.apply(void 0, __spreadArray([], args, false))
                     if let Some(spread_node) = self.arena.get(*spread_idx) {
                         self.emit_spread_expression(spread_node);
                     }
-                    self.write(", false)");
                 }
                 ArraySegment::Elements(elems) => {
                     // Just elements: [1, 2, 3]
