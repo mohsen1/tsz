@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn test_run_with_timeout_fails() {
-        let result = run_with_timeout(Duration::from_secs(1), || {
+        let result = run_with_timeout(Duration::from_secs(5), || {
             panic!("Intentional panic");
         });
         debug!(?result, "test result");

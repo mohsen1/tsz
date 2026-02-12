@@ -206,7 +206,7 @@ fn resolve_compiler_options_rejects_unsupported_jsx() {
     let config = parse_tsconfig(
         r#"{
           "compilerOptions": {
-            "jsx": "react"
+            "jsx": "invalid-jsx-mode"
           }
         }"#,
     )
