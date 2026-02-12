@@ -1617,9 +1617,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 if def_a != def_b {
                     Some(false)
                 } else {
-                    // Same enum: check if same member (a == b) or same enum type
-                    // For enum types (unions of members), fall through to structural check
-                    None
+                    // Same enum DefId: compatible for redeclaration
+                    // This allows: var x: MyEnum; var x = MyEnum.Member;
+                    // where MyEnum.Member (enum member) is compatible with MyEnum (enum type)
+                    Some(true)
                 }
             }
             (Some(_), None) | (None, Some(_)) => {
