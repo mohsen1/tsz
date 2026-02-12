@@ -341,7 +341,10 @@ impl<'a> CheckerState<'a> {
         declarations: &[NodeIndex],
         mut derived_type: TypeId,
     ) -> TypeId {
+        use tracing::trace;
         use tsz_solver::{TypeSubstitution, instantiate_type};
+
+        trace!(decls = declarations.len(), derived_type_id = %derived_type.0, "merge_interface_heritage_types called");
 
         let mut pushed_derived = false;
         let mut derived_param_updates = Vec::new();
@@ -529,8 +532,11 @@ impl<'a> CheckerState<'a> {
     /// # Returns
     /// The merged TypeId
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
+        use tracing::trace;
         use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
         use tsz_solver::{CallableShape, ObjectFlags, ObjectShape};
+
+        trace!(derived_id = %derived.0, base_id = %base.0, "merge_interface_types called");
 
         if derived == base {
             return derived;
@@ -538,6 +544,7 @@ impl<'a> CheckerState<'a> {
 
         let derived_kind = classify_for_interface_merge(self.ctx.types, derived);
         let base_kind = classify_for_interface_merge(self.ctx.types, base);
+        trace!(derived_kind = ?derived_kind, base_kind = ?base_kind, "Classified types for merge");
 
         match (derived_kind, base_kind) {
             (
