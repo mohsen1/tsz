@@ -3800,6 +3800,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
                     // TS2300/TS2309: Check for duplicate export assignments even in ambient modules
                     // TS2300: Check for duplicate import aliases even in ambient modules
+                    // TS2303: Check for circular import aliases in ambient modules
                     // Need to extract statements from module body
                     if let Some(body_node) = self.ctx.arena.get(module.body)
                         && body_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
@@ -3808,6 +3809,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     {
                         self.check_export_assignment(&statements.nodes);
                         self.check_import_alias_duplicates(&statements.nodes);
+                        // Check import equals declarations for circular imports (TS2303)
+                        for &stmt_idx in &statements.nodes {
+                            if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                                if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                                    self.check_import_equals_declaration(stmt_idx);
+                                }
+                            }
+                        }
                     }
                 }
 

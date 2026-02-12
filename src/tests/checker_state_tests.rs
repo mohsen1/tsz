@@ -33686,3 +33686,112 @@ interface Foo {
         checker.ctx.diagnostics
     );
 }
+
+// =============================================================================
+// TS2303: Circular definition of import alias
+// =============================================================================
+
+/// Test that circular import aliases are detected and reported.
+/// e.g., declare module "foo" { import x = require("foo"); }
+#[test]
+fn test_ts2303_circular_import_alias() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+declare module "moduleC" {
+    import self = require("moduleC");
+    export = self;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts2303_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS)
+        .collect();
+
+    assert!(
+        !ts2303_errors.is_empty(),
+        "Expected at least 1 TS2303 error for circular import alias, got 0. Diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that non-circular imports don't trigger TS2303
+#[test]
+fn test_ts2303_no_error_for_different_module() {
+    use crate::checker::types::diagnostics::diagnostic_codes;
+
+    let source = r#"
+declare module "moduleA" {
+    export class A {}
+}
+
+declare module "moduleB" {
+    import A = require("moduleA");
+    export = A;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts2303_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS)
+        .collect();
+
+    assert_eq!(
+        ts2303_errors.len(),
+        0,
+        "Expected 0 TS2303 errors for non-circular import, got {}. Diagnostics: {:?}",
+        ts2303_errors.len(),
+        checker.ctx.diagnostics
+    );
+}
