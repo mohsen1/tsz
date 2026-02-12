@@ -332,8 +332,8 @@ pub struct CheckerContext<'a> {
     /// Uses RefCell to allow tracking from &self methods (e.g., resolve_identifier_symbol).
     pub referenced_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
 
-    /// Set of symbols that have been written to (used for write-only variable detection).
-    /// Uses RefCell to allow tracking from &self methods.
+    /// Set of symbols written to (assignment targets).
+    /// Tracked separately from references for flow/usage checks.
     pub written_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
 
     // --- Diagnostics ---
