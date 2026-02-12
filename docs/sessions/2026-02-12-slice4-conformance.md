@@ -49,19 +49,62 @@ let Some(left_symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_bind
 
 **Impact**: +2 tests passing (though TS2318 issue persists - may need deeper lib symbol merging investigation)
 
+### Fix 2: Interface Type Parameter Scoping in Heritage Clauses
+**File**: `crates/tsz-checker/src/state_checking_members.rs:48-68`
+
+**Problem**: When checking interface declarations with heritage clauses that reference type parameters:
+```typescript
+interface Foo2<T> extends Base2<T> {
+    x: number;
+}
+```
+
+The heritage clause was checked BEFORE type parameters were pushed to the type environment, causing TS2304 "Cannot find name 'T'" errors.
+
+**Root Cause**: Order of operations bug in `check_interface_declaration`:
+```rust
+// Before (lines 48-51):
+self.check_heritage_clauses_for_unresolved_names(&iface.heritage_clauses, false, &[]); // Empty type param list!
+let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+```
+
+Classes correctly pushed type parameters BEFORE checking heritage clauses, but interfaces did not.
+
+**Solution**: Reordered operations to match class pattern:
+1. Push interface type parameters
+2. Collect type parameter names
+3. Check heritage clauses (with type params in scope)
+
+```rust
+// After:
+let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+let interface_type_param_names: Vec<String> = type_param_updates
+    .iter()
+    .map(|(name, _)| name.clone())
+    .collect();
+self.check_heritage_clauses_for_unresolved_names(
+    &iface.heritage_clauses,
+    false,
+    &interface_type_param_names,  // Now includes interface type params!
+);
+```
+
+**Impact**: +7 tests passing, reduced TS2304 false positives by 14
+
 ## Final State
-- Pass rate: 1672/3123 (53.5%)
-- Improvement: +3 tests (+0.1 percentage points)
+- Pass rate: 1679/3123 (53.8%)
+- Improvement: +10 tests (+0.3 percentage points)
 - All unit tests passing (2396 passed, 40 skipped)
+- TS2304 false positives: reduced by 14 (118 → 104)
 
 ## Error Code Trends (Final)
 ```
-  TS2304: missing=138, extra=118
-  TS2339: missing=70, extra=139
-  TS2322: missing=112, extra=69
+  TS2304: missing=138, extra=104  (improved: -14 false positives)
+  TS2339: missing=70, extra=138
+  TS2322: missing=112, extra=68
   TS1005: missing=44, extra=85
   TS6053: missing=103, extra=0
-  TS2345: missing=20, extra=69
+  TS2345: missing=20, extra=70
   TS2318: missing=6, extra=83
   TS1109: missing=18, extra=63
   TS1128: missing=9, extra=48
@@ -167,6 +210,14 @@ This session demonstrated the conformance improvement workflow:
    - Re-ran full slice: 1670 → 1672 tests passing
    - All 2396 unit tests still passing
 
+7. **Second Fix - Type Parameter Scoping** (25 min): Tackled close-to-passing tests
+   - Investigated tests differing by 1 error code (interfaceWithPropertyThatIsPrivateInBaseType)
+   - Found `interface Foo2<T> extends Base2<T>` emitting extra TS2304 for T
+   - Traced to `check_interface_declaration` checking heritage BEFORE pushing type params
+   - Compared with class implementation - classes push type params first
+   - Reordered operations to match class pattern
+   - Result: +7 tests passing (1672 → 1679), -14 TS2304 false positives
+
 ## Key Learnings
 
 **Pattern**: Many false positives stem from lib symbol resolution issues
@@ -186,3 +237,5 @@ This session demonstrated the conformance improvement workflow:
 ## Commits
 - `48068e4ff`: fix: use cross-binder lookup for qualified type name resolution
 - `76a6603ab`: docs: update session summary with additional investigation findings
+- `35a412b8e`: docs: finalize session summary with investigation process and learnings
+- `7d99f6921`: fix: push interface type parameters before checking heritage clauses
