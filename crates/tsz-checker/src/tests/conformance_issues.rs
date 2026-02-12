@@ -768,3 +768,40 @@ type Test4 = Keys<string>;
         diagnostics
     );
 }
+
+/// TS2339: Property access on `this` in static methods should use constructor type
+///
+/// In static methods, `this` refers to `typeof C` (the constructor type), not an
+/// instance of C. Accessing instance properties on `this` in a static method should
+/// emit TS2339 because instance properties don't exist on the constructor type.
+#[test]
+fn test_ts2339_this_in_static_method() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class C {
+    public p = 0;
+    static s = 0;
+    static b() {
+        this.p = 1; // TS2339 - 'p' is instance, doesn't exist on typeof C
+        this.s = 2; // OK - 's' is static
+    }
+}
+        "#,
+    );
+
+    let ts2339_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339_errors.len(),
+        1,
+        "Should emit exactly 1 TS2339 for 'this.p' in static method.\nActual errors: {:#?}",
+        diagnostics
+    );
+    assert!(
+        ts2339_errors[0].1.contains("'p'") || ts2339_errors[0].1.contains("\"p\""),
+        "TS2339 should mention property 'p'. Got: {}",
+        ts2339_errors[0].1
+    );
+}

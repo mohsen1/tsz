@@ -513,22 +513,6 @@ impl<'a> CheckerState<'a> {
         self.resolve_lib_type_by_name(name)
     }
 
-    pub(crate) fn apply_function_interface_for_property_access(
-        &mut self,
-        type_id: TypeId,
-    ) -> TypeId {
-        let Some(function_type) = self.resolve_global_interface_type("Function") else {
-            return type_id;
-        };
-        if function_type == TypeId::ANY
-            || function_type == TypeId::ERROR
-            || function_type == TypeId::UNKNOWN
-        {
-            return type_id;
-        }
-        self.ctx.types.intersection2(type_id, function_type)
-    }
-
     pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
         use rustc_hash::FxHashSet;
 
@@ -674,11 +658,15 @@ impl<'a> CheckerState<'a> {
                 self.resolve_type_for_property_access_inner(inner, visited)
             }
             PropertyAccessResolutionKind::FunctionLike => {
-                // Apply Function interface to get properties like call/apply/bind.
-                // Do NOT recurse into the expanded type: intersection2(T, Function)
-                // produces a NEW TypeId each time, so the visited set can't catch
-                // the loop — each iteration allocates another intersection, causing OOM.
-                self.apply_function_interface_for_property_access(type_id)
+                // Function/Callable types already handle function properties
+                // (call, apply, bind, toString, length, prototype, arguments, caller)
+                // through resolve_function_property in the solver. Creating an
+                // intersection with the Function interface is redundant and harmful:
+                // when the Function Lazy type can't be resolved by the solver,
+                // property access falls back to ANY, masking PropertyNotFound errors
+                // (e.g., this.instanceProp in static methods succeeds instead of
+                // emitting TS2339).
+                type_id
             }
             PropertyAccessResolutionKind::Resolved => type_id,
         };
