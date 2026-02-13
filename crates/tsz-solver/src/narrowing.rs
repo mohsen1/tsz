@@ -550,7 +550,7 @@ impl<'a> NarrowingContext<'a> {
 
         for &member in members.iter() {
             // Special case: any and unknown always match
-            if member == TypeId::ANY || member == TypeId::UNKNOWN {
+            if member.is_any_or_unknown() {
                 trace!("Member {} is any/unknown, keeping in true branch", member.0);
                 matching.push(member);
                 continue;
@@ -697,7 +697,7 @@ impl<'a> NarrowingContext<'a> {
 
         for &member in members.iter() {
             // Special case: any and unknown always kept (could have any property value)
-            if member == TypeId::ANY || member == TypeId::UNKNOWN {
+            if member.is_any_or_unknown() {
                 trace!(
                     "Member {} is any/unknown, keeping in false branch",
                     member.0

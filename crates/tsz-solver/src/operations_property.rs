@@ -771,7 +771,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         for &member in &non_unknown_members {
             // Check for null/undefined directly
-            if member == TypeId::NULL || member == TypeId::UNDEFINED || member == TypeId::VOID {
+            if member.is_nullable() {
                 let cause = if member == TypeId::VOID {
                     TypeId::UNDEFINED
                 } else {
