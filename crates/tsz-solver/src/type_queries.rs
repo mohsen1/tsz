@@ -2665,16 +2665,15 @@ pub fn is_promise_like(db: &dyn crate::db::QueryDatabase, type_id: TypeId) -> bo
     // Use PropertyAccessEvaluator to find 'then' property
     // This handles Lazy/Ref/Intersection/Readonly correctly
     let evaluator = PropertyAccessEvaluator::new(db);
-    match evaluator.resolve_property_access(type_id, "then") {
-        PropertyAccessResult::Success {
-            type_id: then_type, ..
-        } => {
+    evaluator
+        .resolve_property_access(type_id, "then")
+        .success_type()
+        .map(|then_type| {
             // 'then' must be invokable (have call signatures) to be "thenable"
             // A class with only construct signatures is not thenable
             is_invokable_type(db, then_type)
-        }
-        _ => false,
-    }
+        })
+        .unwrap_or(false)
 }
 
 /// Check if a type is a valid target for for...in loops.

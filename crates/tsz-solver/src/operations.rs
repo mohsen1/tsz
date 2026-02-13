@@ -3894,11 +3894,9 @@ pub fn get_iterator_info(
     };
 
     let evaluator = PropertyAccessEvaluator::new(db);
-    let iterator_method_type = match evaluator.resolve_property_access(type_id, symbol_name) {
-        PropertyAccessResult::Success { type_id, .. } => type_id,
-        PropertyAccessResult::PropertyNotFound { .. } => return None,
-        _ => return None, // Other cases (PossiblyNullOrUndefined, IsUnknown) = not iterable
-    };
+    let iterator_method_type = evaluator
+        .resolve_property_access(type_id, symbol_name)
+        .success_type()?;
 
     // Step 2: Get the iterator type by "calling" the method
     // The [Symbol.iterator] property is a method that returns the iterator
@@ -3913,10 +3911,9 @@ pub fn get_iterator_info(
     };
 
     // Step 3: Find the next() method on the iterator
-    let next_method_type = match evaluator.resolve_property_access(iterator_type, "next") {
-        PropertyAccessResult::Success { type_id, .. } => type_id,
-        _ => return None, // No next() method = not a valid iterator
-    };
+    let next_method_type = evaluator
+        .resolve_property_access(iterator_type, "next")
+        .success_type()?;
 
     // Step 4: Extract types from the IteratorResult
     extract_iterator_result_types(db, iterator_type, next_method_type, is_async)
