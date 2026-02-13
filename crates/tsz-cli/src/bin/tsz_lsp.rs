@@ -76,7 +76,6 @@ struct LspServer {
 /// State for an open document
 struct DocumentState {
     content: String,
-    version: i32,
     // Cached parser state
     parser: Option<ParserState>,
     // Cached binder state
@@ -88,10 +87,9 @@ struct DocumentState {
 }
 
 impl DocumentState {
-    fn new(content: String, version: i32) -> Self {
+    fn new(content: String, _version: i32) -> Self {
         Self {
             content,
-            version,
             parser: None,
             binder: None,
             line_map: None,
@@ -277,7 +275,6 @@ impl Default for ServerCapabilities {
 /// JSON-RPC message structures
 #[derive(Debug, Deserialize)]
 struct JsonRpcMessage {
-    jsonrpc: String,
     id: Option<Value>,
     method: Option<String>,
     params: Option<Value>,

@@ -402,13 +402,6 @@ impl<'a> TypeLowering<'a> {
         false
     }
 
-    /// Reset the operation counter (for testing purposes)
-    #[cfg(test)]
-    fn reset_operations(&self) {
-        *self.operations.borrow_mut() = 0;
-        *self.limit_exceeded.borrow_mut() = false;
-    }
-
     pub fn seed_type_params(&self, params: &[(Atom, TypeId)]) {
         if params.is_empty() {
             return;

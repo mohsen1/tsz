@@ -5,7 +5,6 @@
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
-use tsz::checker::context::CheckerOptions;
 use tsz::lib_loader::LibFile;
 use tsz::parallel::MergedProgram;
 use tsz::solver::{TypeFormatter, TypeId, TypeInterner};
@@ -23,18 +22,10 @@ use super::program::TsCompilerOptions;
 /// - `isTypeAssignableTo(source, target)` - Check assignability
 #[wasm_bindgen]
 pub struct TsTypeChecker {
-    /// Reference to program's merged state
-    /// Note: We use indices/IDs rather than holding full references
-    /// to avoid complex lifetime issues with wasm-bindgen
-    program_id: u32,
     /// Type interner pointer (borrowed from program)
     /// SAFETY: The TsTypeChecker is always created from TsProgram and
     /// must not outlive the program that created it
     interner_ptr: *const TypeInterner,
-    /// Checker options
-    options: CheckerOptions,
-    /// Lib file names for global type resolution
-    lib_file_names: Vec<String>,
 }
 
 #[wasm_bindgen]
@@ -286,14 +277,11 @@ impl TsTypeChecker {
     pub(crate) fn new(
         _merged: &MergedProgram,
         interner: &TypeInterner,
-        options: &TsCompilerOptions,
-        lib_files: &[Arc<LibFile>],
+        _options: &TsCompilerOptions,
+        _lib_files: &[Arc<LibFile>],
     ) -> Self {
         TsTypeChecker {
-            program_id: 0,
             interner_ptr: interner as *const TypeInterner,
-            options: options.to_checker_options(),
-            lib_file_names: lib_files.iter().map(|f| f.file_name.clone()).collect(),
         }
     }
 }

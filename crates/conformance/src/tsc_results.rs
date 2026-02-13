@@ -51,28 +51,6 @@ pub enum TestResult {
     Timeout,
 }
 
-impl TestResult {
-    /// Check if test passed
-    pub fn is_pass(&self) -> bool {
-        matches!(self, TestResult::Pass)
-    }
-
-    /// Check if test was skipped
-    pub fn is_skipped(&self) -> bool {
-        matches!(self, TestResult::Skipped(_))
-    }
-
-    /// Check if test crashed
-    pub fn is_crashed(&self) -> bool {
-        matches!(self, TestResult::Crashed)
-    }
-
-    /// Check if test timed out
-    pub fn is_timeout(&self) -> bool {
-        matches!(self, TestResult::Timeout)
-    }
-}
-
 /// Error frequency tracking for summaries
 ///
 /// Uses DashMap for lock-free concurrent access from multiple workers.

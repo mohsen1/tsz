@@ -23,8 +23,6 @@ pub struct CompilationResult {
 pub struct PreparedTest {
     /// Temp directory containing test files and tsconfig.json
     pub temp_dir: tempfile::TempDir,
-    /// Compiler options used
-    pub options: HashMap<String, String>,
 }
 
 /// Compile a TypeScript file and extract error codes (used by tests only).
@@ -300,10 +298,7 @@ pub fn prepare_test_dir(
         copy_tsconfig_to_root_if_needed(dir_path, filenames, options)?;
     }
 
-    Ok(PreparedTest {
-        temp_dir,
-        options: options.clone(),
-    })
+    Ok(PreparedTest { temp_dir })
 }
 
 /// Parse tsz process output into a CompilationResult.
