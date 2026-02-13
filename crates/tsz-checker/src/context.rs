@@ -23,6 +23,7 @@ use tsz_binder::BinderState;
 pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
 
 /// Represents a failed module resolution with specific error details.
 #[derive(Clone, Debug)]
@@ -1345,18 +1346,114 @@ impl<'a> CheckerContext<'a> {
     pub fn module_resolves_to_non_module_entity(&self, module_specifier: &str) -> bool {
         use tsz_binder::symbol_flags;
 
-        let export_equals_is_non_module =
-            |binder: &BinderState, exports: &tsz_binder::SymbolTable| -> Option<bool> {
-                let export_equals_sym_id = exports.get("export=")?;
-                let has_named_exports = exports.iter().any(|(name, _)| name != "export=");
-                let symbol_has_namespace_shape =
-                    binder.get_symbol(export_equals_sym_id).is_some_and(|sym| {
-                        (sym.flags & symbol_flags::MODULE) != 0
-                            || sym.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
-                            || sym.members.as_ref().is_some_and(|tbl| !tbl.is_empty())
-                    });
-                Some(!has_named_exports && !symbol_has_namespace_shape)
+        let export_equals_is_non_module = |binder: &BinderState,
+                                           exports: &tsz_binder::SymbolTable|
+         -> Option<bool> {
+            let export_equals_sym_id = exports.get("export=")?;
+            let has_named_exports = exports.iter().any(|(name, _)| name != "export=");
+
+            let mut candidate_symbols = Vec::with_capacity(2);
+            if let Some(sym) = binder.get_symbol(export_equals_sym_id) {
+                candidate_symbols.push((binder, sym));
+            } else if let Some(all_binders) = self.all_binders.as_ref() {
+                for other in all_binders.iter() {
+                    if let Some(sym) = other.get_symbol(export_equals_sym_id) {
+                        candidate_symbols.push((other.as_ref(), sym));
+                        break;
+                    }
+                }
+            }
+
+            let has_namespace_shape = |sym_binder: &BinderState, sym: &tsz_binder::Symbol| {
+                let has_namespace_decl = sym.declarations.iter().any(|decl_idx| {
+                    if decl_idx.is_none() {
+                        return false;
+                    }
+                    sym_binder
+                        .declaration_arenas
+                        .get(&(sym.id, *decl_idx))
+                        .and_then(|arena| arena.get(*decl_idx))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
+                });
+
+                (sym.flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE))
+                    != 0
+                    || sym.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
+                    || sym.members.as_ref().is_some_and(|tbl| !tbl.is_empty())
+                    || has_namespace_decl
             };
+
+            let export_assignment_target_name = |sym_binder: &BinderState,
+                                                 sym: &tsz_binder::Symbol|
+             -> Option<String> {
+                let mut decls = sym.declarations.clone();
+                if !sym.value_declaration.is_none() {
+                    decls.push(sym.value_declaration);
+                }
+
+                for decl_idx in decls {
+                    if decl_idx.is_none() {
+                        continue;
+                    }
+                    let Some(arena) = sym_binder.declaration_arenas.get(&(sym.id, decl_idx)) else {
+                        continue;
+                    };
+                    let Some(node) = arena.get(decl_idx) else {
+                        continue;
+                    };
+                    if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                        continue;
+                    }
+                    let Some(assign) = arena.get_export_assignment(node) else {
+                        continue;
+                    };
+                    if !assign.is_export_equals {
+                        continue;
+                    }
+                    let Some(expr_node) = arena.get(assign.expression) else {
+                        continue;
+                    };
+                    if let Some(id) = arena.get_identifier(expr_node) {
+                        return Some(id.escaped_text.clone());
+                    }
+                }
+
+                None
+            };
+
+            let symbol_has_namespace_shape =
+                candidate_symbols.into_iter().any(|(sym_binder, sym)| {
+                    if has_namespace_shape(sym_binder, sym) {
+                        return true;
+                    }
+
+                    if sym_binder
+                        .get_symbols()
+                        .find_all_by_name(&sym.escaped_name)
+                        .into_iter()
+                        .filter_map(|candidate_id| sym_binder.get_symbol(candidate_id))
+                        .any(|candidate| has_namespace_shape(sym_binder, candidate))
+                    {
+                        return true;
+                    }
+
+                    let Some(target_name) = export_assignment_target_name(sym_binder, sym) else {
+                        return false;
+                    };
+
+                    sym_binder
+                        .get_symbols()
+                        .find_all_by_name(&target_name)
+                        .into_iter()
+                        .filter_map(|target_sym_id| sym_binder.get_symbol(target_sym_id))
+                        .any(|target_sym| has_namespace_shape(sym_binder, target_sym))
+                });
+
+            Some(!has_named_exports && !symbol_has_namespace_shape)
+        };
 
         if let Some(target_idx) = self.resolve_import_target(module_specifier)
             && let Some(target_binder) = self.get_binder_for_file(target_idx)

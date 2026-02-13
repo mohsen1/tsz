@@ -768,6 +768,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(ref module_specifier) = left_symbol.import_module
+                && !((left_symbol.flags & symbol_flags::ALIAS) != 0
+                    && self
+                        .ctx
+                        .module_resolves_to_non_module_entity(module_specifier))
                 && let Some(reexported_sym) = self.resolve_reexported_member_symbol(
                     module_specifier,
                     right_name,
@@ -853,6 +857,13 @@ impl<'a> CheckerState<'a> {
 
         // If not found in direct exports, check for re-exports
         if let Some(ref module_specifier) = left_symbol.import_module {
+            if (left_symbol.flags & symbol_flags::ALIAS) != 0
+                && self
+                    .ctx
+                    .module_resolves_to_non_module_entity(module_specifier)
+            {
+                return TypeSymbolResolution::NotFound;
+            }
             if let Some(reexported_sym) =
                 self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
             {
@@ -946,6 +957,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(ref module_specifier) = left_symbol.import_module {
+                if (left_symbol.flags & symbol_flags::ALIAS) != 0
+                    && self
+                        .ctx
+                        .module_resolves_to_non_module_entity(module_specifier)
+                {
+                    return None;
+                }
                 return self.resolve_reexported_member_symbol(
                     module_specifier,
                     right_name,
@@ -997,6 +1015,13 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // This handles cases like: export { foo } from './bar'
         if let Some(ref module_specifier) = left_symbol.import_module {
+            if (left_symbol.flags & symbol_flags::ALIAS) != 0
+                && self
+                    .ctx
+                    .module_resolves_to_non_module_entity(module_specifier)
+            {
+                return None;
+            }
             if let Some(reexported_sym) =
                 self.resolve_reexported_member_symbol(module_specifier, right_name, visited_aliases)
             {
@@ -1042,6 +1067,12 @@ impl<'a> CheckerState<'a> {
             && let Some(module_specifier) =
                 self.get_require_module_specifier(import.module_specifier)
         {
+            if self
+                .ctx
+                .module_resolves_to_non_module_entity(&module_specifier)
+            {
+                return None;
+            }
             return self.resolve_reexported_member_symbol(
                 &module_specifier,
                 member_name,
@@ -1071,6 +1102,112 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn resolve_member_from_module_exports(
+        &self,
+        binder: &tsz_binder::BinderState,
+        exports_table: &tsz_binder::SymbolTable,
+        member_name: &str,
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<SymbolId> {
+        let can_resolve_aliases = std::ptr::eq(binder, self.ctx.binder);
+
+        if let Some(sym_id) = exports_table.get(member_name) {
+            if can_resolve_aliases {
+                return Some(
+                    self.resolve_alias_symbol(sym_id, visited_aliases)
+                        .unwrap_or(sym_id),
+                );
+            }
+            return Some(sym_id);
+        }
+
+        let export_equals_sym = exports_table.get("export=")?;
+        let mut candidate_symbol_ids = vec![export_equals_sym];
+        if can_resolve_aliases {
+            let resolved_export_equals = self
+                .resolve_alias_symbol(export_equals_sym, visited_aliases)
+                .unwrap_or(export_equals_sym);
+            if resolved_export_equals != export_equals_sym {
+                candidate_symbol_ids.push(resolved_export_equals);
+            }
+        }
+
+        for candidate_symbol_id in candidate_symbol_ids {
+            let Some(target_symbol) = binder.get_symbol(candidate_symbol_id) else {
+                continue;
+            };
+
+            if let Some(exports) = target_symbol.exports.as_ref()
+                && let Some(sym_id) = exports.get(member_name)
+            {
+                if can_resolve_aliases {
+                    return Some(
+                        self.resolve_alias_symbol(sym_id, visited_aliases)
+                            .unwrap_or(sym_id),
+                    );
+                }
+                return Some(sym_id);
+            }
+
+            if let Some(members) = target_symbol.members.as_ref()
+                && let Some(sym_id) = members.get(member_name)
+            {
+                if can_resolve_aliases {
+                    return Some(
+                        self.resolve_alias_symbol(sym_id, visited_aliases)
+                            .unwrap_or(sym_id),
+                    );
+                }
+                return Some(sym_id);
+            }
+
+            // Some binder states keep the namespace merge partner as a distinct symbol.
+            // Search same-name symbols with module namespace flags for members.
+            for merged_candidate_id in binder
+                .get_symbols()
+                .find_all_by_name(&target_symbol.escaped_name)
+            {
+                let Some(merged_symbol) = binder.get_symbol(merged_candidate_id) else {
+                    continue;
+                };
+                if (merged_symbol.flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE))
+                    == 0
+                {
+                    continue;
+                }
+
+                if let Some(exports) = merged_symbol.exports.as_ref()
+                    && let Some(sym_id) = exports.get(member_name)
+                {
+                    if can_resolve_aliases {
+                        return Some(
+                            self.resolve_alias_symbol(sym_id, visited_aliases)
+                                .unwrap_or(sym_id),
+                        );
+                    }
+                    return Some(sym_id);
+                }
+
+                if let Some(members) = merged_symbol.members.as_ref()
+                    && let Some(sym_id) = members.get(member_name)
+                {
+                    if can_resolve_aliases {
+                        return Some(
+                            self.resolve_alias_symbol(sym_id, visited_aliases)
+                                .unwrap_or(sym_id),
+                        );
+                    }
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        None
+    }
+
     /// Inner implementation with cycle detection for module re-exports.
     fn resolve_reexported_member_symbol_inner(
         &self,
@@ -1088,25 +1225,22 @@ impl<'a> CheckerState<'a> {
 
         // First, check if it's a direct export from this module (ambient modules)
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
-            if let Some(sym_id) = module_exports.get(member_name) {
-                return self.resolve_alias_symbol(sym_id, visited_aliases);
+            if let Some(sym_id) = self.resolve_member_from_module_exports(
+                self.ctx.binder,
+                module_exports,
+                member_name,
+                visited_aliases,
+            ) {
+                return Some(sym_id);
             }
         }
 
-        // Cross-file resolution: resolve the module to a target file and look up exports
-        if let Some(target_file_idx) = self.ctx.resolve_import_target(module_specifier) {
-            if let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) {
-                // Check target file's module_exports
-                if let Some((_, exports_table)) = target_binder.module_exports.iter().next() {
-                    if let Some(sym_id) = exports_table.get(member_name) {
-                        return Some(sym_id);
-                    }
-                }
-                // Fall back to target file's file_locals (for exported top-level declarations)
-                if let Some(sym_id) = target_binder.file_locals.get(member_name) {
-                    return Some(sym_id);
-                }
-            }
+        // Cross-file resolution: use canonical file-key lookups via state_type_resolution.
+        if let Some(sym_id) = self.resolve_cross_file_export(module_specifier, member_name) {
+            return Some(
+                self.resolve_alias_symbol(sym_id, visited_aliases)
+                    .unwrap_or(sym_id),
+            );
         }
 
         // Check for named re-exports: `export { foo } from 'bar'`
@@ -1520,6 +1654,13 @@ impl<'a> CheckerState<'a> {
                 // For import aliases (import X = require("./module")), X represents
                 // the entire module namespace. Look up the member in module_exports.
                 if let Some(ref module_specifier) = left_symbol.import_module {
+                    if (left_symbol.flags & symbol_flags::ALIAS) != 0
+                        && self
+                            .ctx
+                            .module_resolves_to_non_module_entity(module_specifier)
+                    {
+                        return None;
+                    }
                     let mut visited_aliases = Vec::new();
                     if let Some(member_sym) = self.resolve_reexported_member_symbol(
                         module_specifier,
@@ -1915,6 +2056,17 @@ impl<'a> CheckerState<'a> {
         // Check for re-exports from other modules
         // This handles cases like: export { foo } from './bar'
         if let Some(ref module_specifier) = left_symbol.import_module {
+            if (left_symbol.flags & symbol_flags::ALIAS) != 0
+                && self
+                    .ctx
+                    .module_resolves_to_non_module_entity(module_specifier)
+            {
+                let namespace_name = self
+                    .entity_name_text(qn.left)
+                    .unwrap_or_else(|| left_symbol.escaped_name.clone());
+                self.error_namespace_no_export(&namespace_name, right_name, qn.right);
+                return true;
+            }
             let mut visited_aliases = Vec::new();
             if self
                 .resolve_reexported_member_symbol(

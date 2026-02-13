@@ -265,9 +265,61 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         lib_binders: &[Arc<tsz_binder::BinderState>],
     ) -> Option<SymbolId> {
+        let lookup_in_exports = |binder: &tsz_binder::BinderState,
+                                 module_exports: &tsz_binder::SymbolTable|
+         -> Option<SymbolId> {
+            if let Some(sym_id) = module_exports.get(member_name) {
+                return Some(sym_id);
+            }
+
+            let export_equals_sym_id = module_exports.get("export=")?;
+            let export_equals_symbol = binder.get_symbol(export_equals_sym_id)?;
+
+            if let Some(exports) = export_equals_symbol.exports.as_ref()
+                && let Some(sym_id) = exports.get(member_name)
+            {
+                return Some(sym_id);
+            }
+
+            if let Some(members) = export_equals_symbol.members.as_ref()
+                && let Some(sym_id) = members.get(member_name)
+            {
+                return Some(sym_id);
+            }
+
+            for candidate_id in binder
+                .get_symbols()
+                .find_all_by_name(&export_equals_symbol.escaped_name)
+            {
+                let Some(candidate_symbol) = binder.get_symbol(candidate_id) else {
+                    continue;
+                };
+                if (candidate_symbol.flags
+                    & (tsz_binder::symbol_flags::MODULE
+                        | tsz_binder::symbol_flags::NAMESPACE_MODULE
+                        | tsz_binder::symbol_flags::VALUE_MODULE))
+                    == 0
+                {
+                    continue;
+                }
+                if let Some(exports) = candidate_symbol.exports.as_ref()
+                    && let Some(sym_id) = exports.get(member_name)
+                {
+                    return Some(sym_id);
+                }
+                if let Some(members) = candidate_symbol.members.as_ref()
+                    && let Some(sym_id) = members.get(member_name)
+                {
+                    return Some(sym_id);
+                }
+            }
+
+            None
+        };
+
         // First, check if it's a direct export from this module
         if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
-            if let Some(sym_id) = module_exports.get(member_name) {
+            if let Some(sym_id) = lookup_in_exports(self.ctx.binder, module_exports) {
                 // Found direct export - but we need to resolve if it's itself a re-export
                 // Get the symbol and check if it's an alias
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -310,7 +362,7 @@ impl<'a> CheckerState<'a> {
         for lib_binder in lib_binders {
             // First check lib binder's module_exports
             if let Some(module_exports) = lib_binder.module_exports.get(module_specifier) {
-                if let Some(sym_id) = module_exports.get(member_name) {
+                if let Some(sym_id) = lookup_in_exports(lib_binder, module_exports) {
                     return Some(sym_id);
                 }
             }
