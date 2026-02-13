@@ -373,10 +373,19 @@ impl ParserState {
         } else {
             // Check if next token starts a statement but not an expression
             // This catches cases like `() => var x` where `{` was expected
-            if self.is_statement_start() && !self.is_expression_start() {
+            // But NOT semicolons — `() => ;` should emit TS1109 "Expression expected"
+            if self.is_statement_start()
+                && !self.is_expression_start()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+            {
                 self.error_token_expected("{");
             }
-            self.parse_assignment_expression()
+            let expr = self.parse_assignment_expression();
+            // If no expression was parsed (e.g. `() => ;`), emit TS1109
+            if expr.is_none() {
+                self.error_expression_expected();
+            }
+            expr
         };
         self.pop_label_scope();
 
