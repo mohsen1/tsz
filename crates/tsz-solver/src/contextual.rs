@@ -17,6 +17,24 @@ use crate::visitor::TypeVisitor;
 use crate::TypeInterner;
 
 // =============================================================================
+// Helper Functions
+// =============================================================================
+
+/// Helper to collect types and return None, single type, or union.
+///
+/// This pattern appears frequently in visitor implementations:
+/// - If no types collected: return None
+/// - If one type collected: return Some(that type)
+/// - If multiple types: return Some(union of types)
+fn collect_single_or_union(db: &dyn TypeDatabase, types: Vec<TypeId>) -> Option<TypeId> {
+    match types.len() {
+        0 => None,
+        1 => Some(types[0]),
+        _ => Some(db.union(types)),
+    }
+}
+
+// =============================================================================
 // Visitor Pattern Implementations
 // =============================================================================
 
@@ -59,13 +77,7 @@ impl<'a> TypeVisitor for ThisTypeExtractor<'a> {
             .filter_map(|sig| sig.this_type)
             .collect();
 
-        if this_types.is_empty() {
-            None
-        } else if this_types.len() == 1 {
-            Some(this_types[0])
-        } else {
-            Some(self.db.union(this_types))
-        }
+        collect_single_or_union(self.db, this_types)
     }
 
     fn default_output() -> Self::Output {
@@ -116,13 +128,7 @@ impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
             .map(|sig| sig.return_type)
             .collect();
 
-        if return_types.is_empty() {
-            None
-        } else if return_types.len() == 1 {
-            Some(return_types[0])
-        } else {
-            Some(self.db.union(return_types))
-        }
+        collect_single_or_union(self.db, return_types)
     }
 
     fn default_output() -> Self::Output {
@@ -668,13 +674,7 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
                 .collect();
         }
 
-        if param_types.is_empty() {
-            None
-        } else if param_types.len() == 1 {
-            Some(param_types[0])
-        } else {
-            Some(self.db.union(param_types))
-        }
+        collect_single_or_union(self.db, param_types)
     }
 
     fn default_output() -> Self::Output {
@@ -801,13 +801,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return if param_types.is_empty() {
-                None
-            } else if param_types.len() == 1 {
-                Some(param_types[0])
-            } else {
-                Some(self.interner.union(param_types))
-            };
+            return collect_single_or_union(self.interner, param_types);
         }
 
         // Handle Application explicitly - unwrap to base type
@@ -857,13 +851,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return if param_types.is_empty() {
-                None
-            } else if param_types.len() == 1 {
-                Some(param_types[0])
-            } else {
-                Some(self.interner.union(param_types))
-            };
+            return collect_single_or_union(self.interner, param_types);
         }
 
         // Handle Application explicitly - unwrap to base type
@@ -893,13 +881,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return if this_types.is_empty() {
-                None
-            } else if this_types.len() == 1 {
-                Some(this_types[0])
-            } else {
-                Some(self.interner.union(this_types))
-            };
+            return collect_single_or_union(self.interner, this_types);
         }
 
         // Handle Application explicitly - unwrap to base type
@@ -951,13 +933,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return if return_types.is_empty() {
-                None
-            } else if return_types.len() == 1 {
-                Some(return_types[0])
-            } else {
-                Some(self.interner.union(return_types))
-            };
+            return collect_single_or_union(self.interner, return_types);
         }
 
         // Handle Application explicitly - unwrap to base type
@@ -1139,13 +1115,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return if yield_types.is_empty() {
-                None
-            } else if yield_types.len() == 1 {
-                Some(yield_types[0])
-            } else {
-                Some(self.interner.union(yield_types))
-            };
+            return collect_single_or_union(self.interner, yield_types);
         }
 
         // Generator<Y, R, N> — yield type is arg 0
@@ -1170,13 +1140,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return if return_types.is_empty() {
-                None
-            } else if return_types.len() == 1 {
-                Some(return_types[0])
-            } else {
-                Some(self.interner.union(return_types))
-            };
+            return collect_single_or_union(self.interner, return_types);
         }
 
         // Generator<Y, R, N> — return type is arg 1
@@ -1202,13 +1166,7 @@ impl<'a> ContextualTypeContext<'a> {
                 })
                 .collect();
 
-            return if next_types.is_empty() {
-                None
-            } else if next_types.len() == 1 {
-                Some(next_types[0])
-            } else {
-                Some(self.interner.union(next_types))
-            };
+            return collect_single_or_union(self.interner, next_types);
         }
 
         // Generator<Y, R, N> — next type is arg 2
