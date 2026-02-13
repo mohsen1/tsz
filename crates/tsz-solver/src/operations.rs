@@ -3802,7 +3802,7 @@ pub fn solve_generic_instantiation<C: AssignabilityChecker>(
 // Iterator Information Extraction (Phase 5 - Anti-Pattern 8.1 Removal)
 // =============================================================================
 
-use crate::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::operations_property::PropertyAccessEvaluator;
 
 /// Information about an iterator type extracted from a type.
 ///
