@@ -595,37 +595,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Check if a type cannot be used as an index type (TS2538).
     fn is_invalid_index_type(&self, type_id: TypeId) -> bool {
-        use tsz_solver::{IntrinsicKind, LiteralValue, TypeKey};
-
-        if matches!(
-            type_id,
-            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
-        ) {
-            return false;
-        }
-
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Intrinsic(kind)) => matches!(
-                kind,
-                IntrinsicKind::Void
-                    | IntrinsicKind::Null
-                    | IntrinsicKind::Undefined
-                    | IntrinsicKind::Boolean
-                    | IntrinsicKind::Bigint
-                    | IntrinsicKind::Object
-                    | IntrinsicKind::Function
-            ),
-            Some(TypeKey::Literal(value)) => {
-                matches!(value, LiteralValue::Boolean(_) | LiteralValue::BigInt(_))
-            }
-            Some(TypeKey::Array(_))
-            | Some(TypeKey::Tuple(_))
-            | Some(TypeKey::Object(_))
-            | Some(TypeKey::ObjectWithIndex(_))
-            | Some(TypeKey::Function(_))
-            | Some(TypeKey::Callable(_)) => true,
-            _ => false,
-        }
+        tsz_solver::type_queries::is_invalid_index_type(self.ctx.types, type_id)
     }
 
     // =========================================================================
