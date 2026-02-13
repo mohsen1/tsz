@@ -1560,19 +1560,68 @@ impl<'a> CheckerState<'a> {
 
             // Inside a regular (non-arrow) function body, `arguments` is the implicit
             // IArguments object, overriding any outer `arguments` declaration.
+            // EXCEPT: if there's a LOCAL variable named "arguments" in the current function,
+            // that shadows the built-in IArguments (e.g., `const arguments = this.arguments;`).
             if self.is_in_regular_function_body(idx) {
-                let lib_binders = self.get_lib_binders();
-                if let Some(sym_id) = self
-                    .ctx
-                    .binder
-                    .get_global_type_with_libs("IArguments", &lib_binders)
-                {
-                    // Use type_reference_symbol_type because IArguments is an interface (type),
-                    // not a value — get_type_of_symbol returns ERROR for type-only symbols.
-                    return self.type_reference_symbol_type(sym_id);
+                // Check if there's a local "arguments" variable in the current function scope.
+                // This handles shadowing: `const arguments = ...` takes precedence over IArguments.
+                if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
+                    // Found a symbol named "arguments". Check if it's declared locally
+                    // in the current function (not in an outer scope).
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                        if !symbol.declarations.is_empty() {
+                            let decl_node = symbol.declarations[0];
+                            // Find the enclosing function for both the reference and the declaration
+                            if let Some(current_fn) = self.find_enclosing_function(idx) {
+                                if let Some(decl_fn) = self.find_enclosing_function(decl_node) {
+                                    // If the declaration is in the same function scope, it shadows IArguments
+                                    if current_fn == decl_fn {
+                                        trace!(
+                                            name = name,
+                                            idx = ?idx,
+                                            sym_id = ?sym_id,
+                                            "get_type_of_identifier: local 'arguments' variable shadows built-in IArguments"
+                                        );
+                                        // Fall through to normal resolution below - use the local variable
+                                    } else {
+                                        // Declaration is in an outer scope - use built-in IArguments
+                                        let lib_binders = self.get_lib_binders();
+                                        if let Some(iargs_sym) = self
+                                            .ctx
+                                            .binder
+                                            .get_global_type_with_libs("IArguments", &lib_binders)
+                                        {
+                                            return self.type_reference_symbol_type(iargs_sym);
+                                        }
+                                        return TypeId::ANY;
+                                    }
+                                } else {
+                                    // Declaration not in a function (global) - use built-in IArguments
+                                    let lib_binders = self.get_lib_binders();
+                                    if let Some(iargs_sym) = self
+                                        .ctx
+                                        .binder
+                                        .get_global_type_with_libs("IArguments", &lib_binders)
+                                    {
+                                        return self.type_reference_symbol_type(iargs_sym);
+                                    }
+                                    return TypeId::ANY;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // No symbol found at all - use built-in IArguments
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(sym_id) = self
+                        .ctx
+                        .binder
+                        .get_global_type_with_libs("IArguments", &lib_binders)
+                    {
+                        return self.type_reference_symbol_type(sym_id);
+                    }
+                    return TypeId::ANY;
                 }
-                // Fallback if IArguments not found (e.g., noLib mode)
-                return TypeId::ANY;
             }
         }
 
