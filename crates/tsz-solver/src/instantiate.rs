@@ -190,6 +190,28 @@ impl<'a> TypeInstantiator<'a> {
     /// Instantiate a call signature.
     fn instantiate_call_signature(&mut self, sig: &CallSignature) -> CallSignature {
         let shadowed_len = self.shadowed.len();
+
+        // Save the visiting cache before entering a shadowing scope.
+        // The cache maps TypeId→TypeId, but TypeParameter substitution depends on
+        // the current `shadowed` set. If we cache T→string when T is not shadowed,
+        // then enter a scope where T IS shadowed (method <T>), the stale cache
+        // would incorrectly return string instead of T. Conversely, if T→T is
+        // cached while shadowed, it would persist after leaving the scope.
+        // Saving/restoring ensures correctness across shadowing boundaries.
+        let saved_visiting = if !sig.type_params.is_empty() {
+            let saved = self.visiting.clone();
+            // Remove cached entries for TypeParameters being shadowed.
+            // Without this, instantiate_inner returns cached results before
+            // instantiate_key gets to check is_shadowed.
+            for tp in &sig.type_params {
+                let tp_id = self.interner.intern(TypeKey::TypeParameter(tp.clone()));
+                self.visiting.remove(&tp_id);
+            }
+            Some(saved)
+        } else {
+            None
+        };
+
         self.shadowed
             .extend(sig.type_params.iter().map(|tp| tp.name));
 
@@ -221,6 +243,12 @@ impl<'a> TypeInstantiator<'a> {
         let return_type = self.instantiate(sig.return_type);
 
         self.shadowed.truncate(shadowed_len);
+
+        // Restore the visiting cache to discard any entries produced under the
+        // shadowed scope that would be stale now.
+        if let Some(saved) = saved_visiting {
+            self.visiting = saved;
+        }
 
         CallSignature {
             type_params,
@@ -395,6 +423,21 @@ impl<'a> TypeInstantiator<'a> {
             TypeKey::Function(shape_id) => {
                 let shape = self.interner.function_shape(*shape_id);
                 let shadowed_len = self.shadowed.len();
+                let saved_visiting = if !shape.type_params.is_empty() {
+                    let saved = self.visiting.clone();
+                    // Remove cached entries for TypeParameters being shadowed.
+                    // The cache might already contain T→string from instantiating
+                    // a sibling property in the same object. Without removal,
+                    // instantiate_inner returns the cached result before
+                    // instantiate_key gets to check is_shadowed.
+                    for tp in &shape.type_params {
+                        let tp_id = self.interner.intern(TypeKey::TypeParameter(tp.clone()));
+                        self.visiting.remove(&tp_id);
+                    }
+                    Some(saved)
+                } else {
+                    None
+                };
                 self.shadowed
                     .extend(shape.type_params.iter().map(|tp| tp.name));
 
@@ -426,6 +469,9 @@ impl<'a> TypeInstantiator<'a> {
                 let instantiated_return = self.instantiate(shape.return_type);
 
                 self.shadowed.truncate(shadowed_len);
+                if let Some(saved) = saved_visiting {
+                    self.visiting = saved;
+                }
 
                 self.interner.function(FunctionShape {
                     type_params: instantiated_type_params,
@@ -566,6 +612,12 @@ impl<'a> TypeInstantiator<'a> {
             TypeKey::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(*mapped_id);
                 let shadowed_len = self.shadowed.len();
+                let saved = self.visiting.clone();
+                let tp_id = self
+                    .interner
+                    .intern(TypeKey::TypeParameter(mapped.type_param.clone()));
+                self.visiting.remove(&tp_id);
+                let saved_visiting = Some(saved);
                 self.shadowed.push(mapped.type_param.name);
 
                 let new_constraint = self.instantiate(mapped.constraint);
@@ -576,6 +628,9 @@ impl<'a> TypeInstantiator<'a> {
                 let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
 
                 self.shadowed.truncate(shadowed_len);
+                if let Some(saved) = saved_visiting {
+                    self.visiting = saved;
+                }
 
                 // If the mapped type is unchanged after substitution (e.g., because
                 // the mapped type's own type parameter shadowed the outer substitution),

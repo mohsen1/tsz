@@ -4312,6 +4312,11 @@ impl<'a> CheckerState<'a> {
                 let lit = self.ctx.arena.get_literal(node)?;
                 lit.value.map(|value| self.ctx.types.literal_number(value))
             }
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
+                let lit = self.ctx.arena.get_literal(node)?;
+                let text = lit.text.strip_suffix('n').unwrap_or(&lit.text);
+                Some(self.ctx.types.literal_bigint(text))
+            }
             k if k == SyntaxKind::TrueKeyword as u16 => Some(self.ctx.types.literal_boolean(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => {
                 Some(self.ctx.types.literal_boolean(false))
@@ -4327,6 +4332,12 @@ impl<'a> CheckerState<'a> {
                 let Some(operand_node) = self.ctx.arena.get(operand) else {
                     return None;
                 };
+                if operand_node.kind == SyntaxKind::BigIntLiteral as u16 {
+                    let lit = self.ctx.arena.get_literal(operand_node)?;
+                    let text = lit.text.strip_suffix('n').unwrap_or(&lit.text);
+                    let negative = op == SyntaxKind::MinusToken as u16;
+                    return Some(self.ctx.types.literal_bigint_with_sign(negative, text));
+                }
                 if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
                     return None;
                 }

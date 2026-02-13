@@ -1334,3 +1334,258 @@ fn test_instantiate_string_intrinsic_preserves_type_param() {
         panic!("Expected StringIntrinsic type");
     }
 }
+
+/// Regression test for type parameter shadowing in class methods.
+///
+/// When a Callable type has multiple call signatures and one signature shadows
+/// a type parameter (e.g., class `B<T>` has method `bar<T>`), the visiting cache
+/// in TypeInstantiator must not leak across signatures. Otherwise, a TypeParameter
+/// cached as "unsubstituted" (because it was shadowed in bar's scope) would
+/// incorrectly remain unsubstituted when processing foo's scope.
+///
+/// Repro: `class B<T, U> { foo(t: T, u: U) {}; bar<T>(t: T, u: U) {} }`
+/// `new B<string, number>().foo('hello', 1)` should not error.
+#[test]
+fn test_callable_shadowed_type_param_no_cache_leak() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let u_param = TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+
+    // foo(t: T, u: U) — uses class-level T and U, no own type params
+    let foo_sig = CallSignature {
+        type_params: vec![],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("t")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("u")),
+                type_id: u_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_method: true,
+    };
+
+    // bar<T>(t: T, u: U) — shadows class T with its own T
+    let bar_sig = CallSignature {
+        type_params: vec![t_param.clone()],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("t")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("u")),
+                type_id: u_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_method: true,
+    };
+
+    // Callable with both signatures. bar is listed first to trigger the bug:
+    // when bar is instantiated first, T gets cached as unsubstituted (shadowed).
+    // Then when foo is instantiated, the stale cache would return T instead of string.
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![bar_sig, foo_sig],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // Substitute T=string, U=number (as if `new B<string, number>()`)
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::STRING);
+    subst.insert(u_name, TypeId::NUMBER);
+    let result = instantiate_type(&interner, callable, &subst);
+
+    // Verify the result
+    if let Some(TypeKey::Callable(shape_id)) = interner.lookup(result) {
+        let shape = interner.callable_shape(shape_id);
+        assert_eq!(shape.call_signatures.len(), 2);
+
+        // bar's signature (index 0): T is shadowed, so params should be (T, number)
+        let bar_result = &shape.call_signatures[0];
+        assert_eq!(bar_result.type_params.len(), 1); // still has own <T>
+        assert_eq!(bar_result.params[0].type_id, t_type); // T stays as TypeParameter
+        assert_eq!(bar_result.params[1].type_id, TypeId::NUMBER); // U → number
+
+        // foo's signature (index 1): T is NOT shadowed, so params should be (string, number)
+        let foo_result = &shape.call_signatures[1];
+        assert_eq!(foo_result.type_params.len(), 0); // no own type params
+        assert_eq!(
+            foo_result.params[0].type_id,
+            TypeId::STRING,
+            "foo's T param should be substituted to string, not left as TypeParameter"
+        );
+        assert_eq!(foo_result.params[1].type_id, TypeId::NUMBER); // U → number
+    } else {
+        panic!("Expected callable type, got {:?}", interner.lookup(result));
+    }
+}
+
+/// Regression test for property-to-function cache contamination.
+///
+/// When an Object shape has a property `t: T` and a method `foo3<T>(t: T, u: U)`,
+/// instantiating the property first caches `TypeId(T) → string` in the visiting cache.
+/// When the method Function type is then instantiated, `T` should be shadowed (method's
+/// own `<T>`), but `instantiate_inner` returns the cached `string` before `instantiate_key`
+/// checks `is_shadowed`. The fix removes shadowed TypeParameter entries from the cache
+/// when entering the function's scope.
+#[test]
+fn test_object_property_does_not_contaminate_method_type_param() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let u_param = TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+
+    // Method foo3<T>(t: T, u: U): T — shadows class T
+    let method_type = interner.function(FunctionShape {
+        type_params: vec![t_param.clone()],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("t")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("u")),
+                type_id: u_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    // Object: { t: T, u: U, foo3: <T>(t: T, u: U) => T }
+    // Property `t: T` is listed BEFORE method `foo3` to trigger the bug
+    let obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("t"), t_type),
+        PropertyInfo::new(interner.intern_string("u"), u_type),
+        PropertyInfo {
+            name: interner.intern_string("foo3"),
+            type_id: method_type,
+            write_type: method_type,
+            optional: false,
+            readonly: false,
+            is_method: true,
+            visibility: Visibility::Public,
+            parent_id: None,
+        },
+    ]);
+
+    // Substitute T=string, U=number
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::STRING);
+    subst.insert(u_name, TypeId::NUMBER);
+    let result = instantiate_type(&interner, obj, &subst);
+
+    // Verify
+    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+        let shape = interner.object_shape(shape_id);
+        assert_eq!(shape.properties.len(), 3);
+
+        // Properties are sorted by name, so look up by name
+        let t_name_atom = interner.intern_string("t");
+        let u_name_atom = interner.intern_string("u");
+        let foo3_name = interner.intern_string("foo3");
+
+        let t_prop = shape
+            .properties
+            .iter()
+            .find(|p| p.name == t_name_atom)
+            .unwrap();
+        let u_prop = shape
+            .properties
+            .iter()
+            .find(|p| p.name == u_name_atom)
+            .unwrap();
+        let foo3_prop = shape
+            .properties
+            .iter()
+            .find(|p| p.name == foo3_name)
+            .unwrap();
+
+        // Property t: should be string (substituted)
+        assert_eq!(t_prop.type_id, TypeId::STRING);
+        // Property u: should be number (substituted)
+        assert_eq!(u_prop.type_id, TypeId::NUMBER);
+
+        // Method foo3: should still have its own <T> with T unsubstituted in params
+        let method_result = foo3_prop.type_id;
+        if let Some(TypeKey::Function(fn_shape_id)) = interner.lookup(method_result) {
+            let fn_shape = interner.function_shape(fn_shape_id);
+            assert_eq!(
+                fn_shape.type_params.len(),
+                1,
+                "Method should still have <T>"
+            );
+            assert_eq!(
+                fn_shape.params[0].type_id, t_type,
+                "Method param t should be TypeParameter(T), not string"
+            );
+            assert_eq!(
+                fn_shape.params[1].type_id,
+                TypeId::NUMBER,
+                "Method param u should be number (class U substituted)"
+            );
+            assert_eq!(
+                fn_shape.return_type, t_type,
+                "Method return type should be TypeParameter(T)"
+            );
+        } else {
+            panic!("Expected function type for foo3");
+        }
+    } else {
+        panic!("Expected object type");
+    }
+}
