@@ -1327,11 +1327,33 @@ impl ScannerState {
                 return;
             }
 
-            // Legacy octal: 0777 (no prefix, starts with 0 followed by octal digits)
-            if is_octal_digit(next) {
-                self.token_flags |= TokenFlags::Octal as u32;
-                // Fall through to decimal scanning - the value "0777" will be scanned normally
-                // The Octal flag signals to the checker that this is a legacy octal literal
+            // After leading 0, scan all consecutive digits and check if all are octal.
+            // This matches tsc's scanDigits(): scan 0-9, return whether all were 0-7.
+            if is_digit(next) {
+                let mut all_octal = true;
+                let digit_start = self.pos + 1; // skip the leading 0
+                let mut scan_pos = digit_start;
+                while scan_pos < self.end && is_digit(self.char_code_unchecked(scan_pos)) {
+                    if !is_octal_digit(self.char_code_unchecked(scan_pos)) {
+                        all_octal = false;
+                    }
+                    scan_pos += 1;
+                }
+                if all_octal && scan_pos > digit_start {
+                    // LegacyOctalIntegerLiteral: 0777 — scan only digits, no decimal/exponent
+                    self.pos = scan_pos;
+                    self.token_flags |= TokenFlags::Octal as u32;
+                    if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
+                        self.token_value = self.substring(start, self.pos);
+                    } else {
+                        self.token_value.clear();
+                    }
+                    self.token = SyntaxKind::NumericLiteral;
+                    return;
+                } else {
+                    // NonOctalDecimalIntegerLiteral: 09, 0789 — fall through to decimal scanning
+                    self.token_flags |= TokenFlags::ContainsLeadingZero as u32;
+                }
             }
         }
 
