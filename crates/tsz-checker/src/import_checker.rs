@@ -71,6 +71,17 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if the current checking context is within an ambient module declaration.
+    /// Returns true if we're inside a `declare module "name" { }` block.
+    ///
+    /// Note: This is a simplified check that returns false for now.
+    /// The actual check would need to track the current node during traversal.
+    /// For TS2714, we rely on the is_declaration_file check instead.
+    fn is_in_ambient_module(&self) -> bool {
+        // TODO: Implement proper ambient module detection by tracking current node during traversal
+        false
+    }
+
     /// Check whether a named import can be satisfied via `export =` target members.
     fn has_named_export_via_export_equals(
         &self,
@@ -940,6 +951,35 @@ impl<'a> CheckerState<'a> {
                     "Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.",
                     diagnostic_codes::EXPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
                 );
+            }
+        }
+
+        // TS2714: In ambient contexts (declaration files or ambient modules),
+        // export assignments must use an identifier or qualified name.
+        // This prevents expressions like `export = 2 + 2` or `export = typeof Foo`.
+        let is_ambient_context = is_declaration_file || self.is_in_ambient_module();
+        if is_ambient_context {
+            for &export_idx in &export_assignment_indices {
+                if let Some(node) = self.ctx.arena.get(export_idx) {
+                    if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
+                        // Check if the expression is an identifier or qualified name
+                        if let Some(expr_node) = self.ctx.arena.get(export_data.expression) {
+                            let is_valid_expr = expr_node.kind == SyntaxKind::Identifier as u16
+                                || expr_node.kind == syntax_kind_ext::QUALIFIED_NAME;
+
+                            if !is_valid_expr {
+                                use crate::types::diagnostics::{
+                                    diagnostic_codes, diagnostic_messages,
+                                };
+                                self.error_at_node(
+                                    export_data.expression,
+                                    diagnostic_messages::THE_EXPRESSION_OF_AN_EXPORT_ASSIGNMENT_MUST_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME_I,
+                                    diagnostic_codes::THE_EXPRESSION_OF_AN_EXPORT_ASSIGNMENT_MUST_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME_I,
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
 
