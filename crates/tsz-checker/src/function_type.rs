@@ -151,8 +151,7 @@ impl<'a> CheckerState<'a> {
         // - Lazy types (type aliases): fix TS7006 false positives for contextual parameter typing
         let mut contextual_signature_type_params = None;
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
-            use tsz_solver::TypeKey;
-            use tsz_solver::type_queries::get_type_application;
+            use tsz_solver::type_queries::{get_lazy_def_id, get_type_application};
 
             // Evaluate the contextual type to resolve type aliases and generic applications
             let evaluated_type = if get_type_application(self.ctx.types, ctx_type).is_some() {
@@ -160,7 +159,7 @@ impl<'a> CheckerState<'a> {
                 // This fixes cases like: Destructuring<TFuncs1, T> where the contextual type
                 // is a generic type alias that needs to be instantiated
                 self.evaluate_application_type(ctx_type)
-            } else if matches!(self.ctx.types.lookup(ctx_type), Some(TypeKey::Lazy(_))) {
+            } else if get_lazy_def_id(self.ctx.types, ctx_type).is_some() {
                 // Evaluate Lazy type (type alias) to get the underlying function signature
                 // This fixes cases like: type Handler = (e: string) => void
                 // where contextual typing should infer parameter types from the alias
@@ -1517,41 +1516,33 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::NodeArena;
         use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::operations_property::PropertyAccessResult;
-        use tsz_solver::type_queries::get_tuple_elements;
-        use tsz_solver::types::TypeKey;
+        use tsz_solver::type_queries::{
+            get_array_element_type, get_tuple_elements, get_type_application, unwrap_readonly,
+        };
         use tsz_solver::{TypeLowering, types::is_compiler_managed_type};
 
-        let mut base_type = object_type;
-        if let Some(TypeKey::ReadonlyType(inner)) = self.ctx.types.lookup(base_type) {
-            base_type = inner;
-        }
+        let base_type = unwrap_readonly(self.ctx.types, object_type);
 
-        let element_type = match self.ctx.types.lookup(base_type) {
-            Some(TypeKey::Array(elem)) => Some(elem),
-            Some(TypeKey::Tuple(_list_id)) => {
-                let elems = get_tuple_elements(self.ctx.types, base_type)?;
-                let mut members = Vec::new();
-                for elem in elems {
-                    let mut ty = if elem.rest {
-                        match self.ctx.types.lookup(elem.type_id) {
-                            Some(TypeKey::Array(inner)) => inner,
-                            _ => elem.type_id,
-                        }
-                    } else {
-                        elem.type_id
-                    };
-                    if elem.optional {
-                        ty = self.ctx.types.union2(ty, TypeId::UNDEFINED);
-                    }
-                    members.push(ty);
+        let element_type = if let Some(elem) = get_array_element_type(self.ctx.types, base_type) {
+            Some(elem)
+        } else if let Some(elems) = get_tuple_elements(self.ctx.types, base_type) {
+            let mut members = Vec::new();
+            for elem in elems {
+                let mut ty = if elem.rest {
+                    get_array_element_type(self.ctx.types, elem.type_id).unwrap_or(elem.type_id)
+                } else {
+                    elem.type_id
+                };
+                if elem.optional {
+                    ty = self.ctx.types.union2(ty, TypeId::UNDEFINED);
                 }
-                Some(self.ctx.types.union(members))
+                members.push(ty);
             }
-            Some(TypeKey::Application(app_id)) => {
-                let app = self.ctx.types.type_application(app_id);
-                app.args.first().copied()
-            }
-            _ => None,
+            Some(self.ctx.types.union(members))
+        } else if let Some(app) = get_type_application(self.ctx.types, base_type) {
+            app.args.first().copied()
+        } else {
+            None
         }?;
 
         let augmentation_decls = self.ctx.binder.global_augmentations.get("Array")?;
