@@ -1070,8 +1070,10 @@ impl<'a> CheckerState<'a> {
     pub fn build_type_environment(&mut self) -> tsz_solver::TypeEnvironment {
         use tsz_binder::symbol_flags;
 
-        // Collect unique symbols with a HashSet to avoid O(N^2) Vec::contains costs.
-        // We'll sort deterministically with a stable tie-breaker below.
+        // Collect unique symbols from user code only (node_symbols).
+        // Lib symbols from file_locals are NOT included here — they are resolved
+        // lazily on demand during statement checking. This avoids the O(N) upfront
+        // cost of eagerly resolving ~2000 lib symbols, saving ~30-50ms per file.
         let mut symbols: Vec<SymbolId> = Vec::with_capacity(self.ctx.binder.node_symbols.len());
         let mut seen: FxHashSet<SymbolId> = FxHashSet::default();
         for &sym_id in self.ctx.binder.node_symbols.values() {
@@ -1080,25 +1082,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // FIX: Also include lib symbols for proper property resolution
-        // This ensures Error, Math, JSON, Promise, Array, etc. can be resolved when accessed.
-        // IMPORTANT: Use file_locals which contains merged lib symbols with remapped IDs,
-        // NOT lib.binder.symbols which contains original (unremapped) IDs.
-        // After merge_lib_contexts_into_binder(), lib symbols are stored in file_locals
-        // with new IDs unique to the main binder's arena.
-        if !self.ctx.lib_contexts.is_empty() {
-            // Get lib symbols from file_locals (where they were merged with remapped IDs)
-            for (_name, &sym_id) in self.ctx.binder.file_locals.iter() {
-                if seen.insert(sym_id) {
-                    symbols.push(sym_id);
-                }
-            }
-        }
-
         // Sort symbols so type-defining symbols (functions, classes, interfaces, type aliases)
-        // are processed BEFORE variable/parameter symbols. This ensures type parameters
-        // are properly scoped when parameter types reference them.
-        // Priority: 0 = type-defining (processed first), 1 = variables/parameters (processed last)
+        // are processed BEFORE variable/parameter symbols.
         symbols.sort_by_key(|&sym_id| {
             let flags = self
                 .ctx
@@ -1119,15 +1104,8 @@ impl<'a> CheckerState<'a> {
         });
 
         // Resolve each symbol and add to the environment.
-        // IMPORTANT: Skip variable/parameter symbols to avoid premature type computation.
-        // Computing types for local variables inside class method bodies triggers property
-        // access type checks (check_property_accessibility) before check_class_declaration
-        // has set the enclosing_class context. This causes false positive TS2445 errors
-        // (protected member access denied) because the checker doesn't know we're inside
-        // a class method. Variable types are computed lazily during statement checking
-        // when the proper enclosing_class context is available.
-        // The type environment is only needed for Application type expansion (generic
-        // type instantiation) which applies to type aliases, interfaces, classes, etc.
+        // Skip variable/parameter symbols — their types are computed lazily during
+        // statement checking when proper enclosing_class context is available.
         for sym_id in symbols {
             // Skip variable and parameter symbols - their types will be computed
             // lazily during statement checking with proper class context
