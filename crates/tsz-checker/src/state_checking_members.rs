@@ -2522,10 +2522,17 @@ impl<'a> CheckerState<'a> {
 
         // If property has type annotation and initializer, check type compatibility
         if !prop.type_annotation.is_none() && !prop.initializer.is_none() {
+            // Check for undefined type names in nested types (e.g., function type parameters).
+            // This matches the variable declaration path in check_variable_declaration.
+            self.check_type_for_missing_names_skip_top_level_ref(prop.type_annotation);
             let declared_type = self.get_type_from_type_node(prop.type_annotation);
             let prev_context = self.ctx.contextual_type;
             if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) {
                 self.ctx.contextual_type = Some(declared_type);
+                // Clear cached type to force recomputation with contextual type.
+                // Function expressions may have been typed without contextual info
+                // during build_type_environment, missing parameter type inference.
+                self.clear_type_cache_recursive(prop.initializer);
             }
             let init_type = self.get_type_of_node(prop.initializer);
             self.ctx.contextual_type = prev_context;
