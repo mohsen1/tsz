@@ -1263,24 +1263,40 @@ impl BinderState {
             || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
     }
 
-    /// Walk up the AST from `idx` to find the nearest enclosing MODULE_DECLARATION.
-    /// This walks through MODULE_BLOCK nodes to reach the parent MODULE_DECLARATION.
-    fn find_enclosing_module_declaration(arena: &NodeArena, idx: NodeIndex) -> Option<&'_ Node> {
-        let ext = arena.get_extended(idx)?;
-        let parent_node = arena.get(ext.parent)?;
-        // Direct parent is MODULE_DECLARATION (e.g., dotted namespace A.B)
-        if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-            return Some(parent_node);
-        }
-        // Parent is MODULE_BLOCK — walk up one more to get MODULE_DECLARATION
-        if parent_node.kind == syntax_kind_ext::MODULE_BLOCK {
-            let parent_ext = arena.get_extended(ext.parent)?;
-            let grandparent = arena.get(parent_ext.parent)?;
-            if grandparent.kind == syntax_kind_ext::MODULE_DECLARATION {
-                return Some(grandparent);
+    /// Check if `idx` is nested inside an ambient module (one with `declare` or
+    /// a string-literal name). Walks up through MODULE_BLOCK / MODULE_DECLARATION
+    /// ancestors until it finds one that is ambient or reaches the source file.
+    fn is_inside_ambient_module(&self, arena: &NodeArena, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        // Walk up through the AST looking for an ambient ancestor
+        for _ in 0..32 {
+            // limit depth to prevent infinite loop
+            let Some(ext) = arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            let Some(parent_node) = arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                if let Some(parent_module) = arena.get_module(parent_node) {
+                    // Check if this ancestor has `declare` modifier
+                    if self.has_declare_modifier(arena, &parent_module.modifiers) {
+                        return true;
+                    }
+                    // Check if this ancestor has a string-literal name
+                    if let Some(name_node) = arena.get(parent_module.name)
+                        && (name_node.kind == SyntaxKind::StringLiteral as u16
+                            || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                    {
+                        return true;
+                    }
+                }
             }
+            // Keep walking up
+            current = parent_idx;
         }
-        None
+        false
     }
 
     pub(crate) fn bind_module_declaration(
@@ -1442,26 +1458,10 @@ impl BinderState {
                 // Nested namespaces inside ambient contexts should treat declarations
                 // as ambient-exported for symbol visibility. This covers:
                 // - `declare module "x" { namespace N { ... } }` (external modules)
-                // - `declare namespace A { namespace B { ... } }` (ambient namespaces)
-                // Walk up through MODULE_BLOCK to find enclosing MODULE_DECLARATION.
-                if !is_ambient_module {
-                    if let Some(enclosing_module) =
-                        Self::find_enclosing_module_declaration(arena, idx)
-                    {
-                        if let Some(enclosing_module_data) = arena.get_module(enclosing_module) {
-                            if let Some(enclosing_name_node) = arena.get(enclosing_module_data.name)
-                                && (enclosing_name_node.kind == SyntaxKind::StringLiteral as u16
-                                    || enclosing_name_node.kind
-                                        == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
-                            {
-                                is_ambient_module = true;
-                            } else if self
-                                .has_declare_modifier(arena, &enclosing_module_data.modifiers)
-                            {
-                                is_ambient_module = true;
-                            }
-                        }
-                    }
+                // - `declare namespace A { namespace B { namespace C { ... } } }`
+                // Walk up through all ancestors to find any ambient module.
+                if !is_ambient_module && self.is_inside_ambient_module(arena, idx) {
+                    is_ambient_module = true;
                 }
                 self.populate_module_exports(
                     arena,
