@@ -1136,7 +1136,7 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                         if let Some(import_data) = self.arena.get_import_decl(node) {
                             if let Some(spec_node) = self.arena.get(import_data.module_specifier) {
-                                if spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE {
+                                if spec_node.kind == SyntaxKind::StringLiteral as u16 {
                                     return true;
                                 }
                             }
@@ -1404,7 +1404,7 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                         if let Some(import_data) = self.arena.get_import_decl(node) {
                             if let Some(spec_node) = self.arena.get(import_data.module_specifier) {
-                                if spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE {
+                                if spec_node.kind == SyntaxKind::StringLiteral as u16 {
                                     return true;
                                 }
                             }
