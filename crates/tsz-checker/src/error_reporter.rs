@@ -2315,11 +2315,11 @@ impl<'a> CheckerState<'a> {
             let is_es2015_type = lib_loader::is_es2015_plus_type(name);
 
             let (code, message) = if is_es2015_type {
-                // TS2585: Type only refers to a type, suggest changing lib
+                // TS2585: Type only refers to a type, suggest changing target library
                 (
-                    diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DID_YOU_MEAN_TO_USE_IN,
+                    diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO,
                     format_message(
-                        diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DID_YOU_MEAN_TO_USE_IN,
+                        diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE_DO_YOU_NEED_TO_CHANGE_YO,
                         &[name],
                     ),
                 )

@@ -1508,6 +1508,11 @@ impl<'a> CheckerState<'a> {
 
         let index_type = self.get_type_of_node(access.name_or_argument);
 
+        // Propagate error from index expression to suppress cascading errors
+        if index_type == TypeId::ERROR {
+            return TypeId::ERROR;
+        }
+
         // TS2538: Type cannot be used as an index type
         if self.type_is_invalid_index_type(index_type) {
             use crate::types::diagnostics::{

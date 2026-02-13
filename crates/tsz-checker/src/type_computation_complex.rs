@@ -1835,6 +1835,22 @@ impl<'a> CheckerState<'a> {
             // handles finding the right type (SymbolConstructor, PromiseConstructor, etc.)
             let is_merged_interface_value =
                 has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0;
+            // TS2585: For ES2015+ global types (Symbol, Promise, Map, Set, etc.)
+            // used as values in an ES5/ES3 target, the VALUE binding came from
+            // a transitively loaded ES2015+ lib (via DOM's reference directives).
+            // The target doesn't natively support these as values, so emit TS2585.
+            if is_merged_interface_value {
+                use tsz_binder::lib_loader;
+                use tsz_common::common::ScriptTarget;
+                let is_es5_or_lower = matches!(
+                    self.ctx.compiler_options.target,
+                    ScriptTarget::ES3 | ScriptTarget::ES5
+                );
+                if is_es5_or_lower && lib_loader::is_es2015_plus_type(name) {
+                    self.error_type_only_value_at(name, idx);
+                    return TypeId::ERROR;
+                }
+            }
             if is_merged_interface_value {
                 trace!(
                     name = name,
