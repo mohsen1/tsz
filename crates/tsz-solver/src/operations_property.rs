@@ -2363,9 +2363,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Resolve property on the application type
             let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
 
-            // If we found the property, return it
+            // If we found the property, simplify Application types back to arrays and return it
             if !matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
-                return result;
+                return self.simplify_array_application_in_result(result, array_base);
             }
         }
 
@@ -2390,6 +2390,134 @@ impl<'a> PropertyAccessEvaluator<'a> {
         PropertyAccessResult::PropertyNotFound {
             type_id: array_type,
             property_name: prop_atom,
+        }
+    }
+
+    /// Simplifies Array<T> Application types back to T[] array types in property access results.
+    ///
+    /// This is needed because when resolving properties on arrays like `.sort()`, `.map()`, etc.,
+    /// the type system returns Application types like `Array<T>` which should be simplified to `T[]`
+    /// to avoid exposing the full array interface structure in error messages.
+    fn simplify_array_application_in_result(
+        &self,
+        result: PropertyAccessResult,
+        array_base: TypeId,
+    ) -> PropertyAccessResult {
+        match result {
+            PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                from_index_signature,
+            } => {
+                let simplified_type = self.simplify_array_application(type_id, array_base);
+                let simplified_write =
+                    write_type.map(|wt| self.simplify_array_application(wt, array_base));
+                PropertyAccessResult::Success {
+                    type_id: simplified_type,
+                    write_type: simplified_write,
+                    from_index_signature,
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Recursively simplifies Array<T> Application types to T[] array types.
+    fn simplify_array_application(&self, type_id: TypeId, array_base: TypeId) -> TypeId {
+        match self.interner().lookup(type_id) {
+            Some(TypeKey::Application(app_id)) => {
+                let app = self.interner().type_application(app_id);
+                // Check if this is Array<T>
+                if app.base == array_base && app.args.len() == 1 {
+                    // Simplify Array<T> to T[]
+                    return self.interner().intern(TypeKey::Array(app.args[0]));
+                }
+                // Not an array application, return as-is
+                type_id
+            }
+            Some(TypeKey::Callable(callable_id)) => {
+                // Simplify function return types
+                let shape = self.interner().callable_shape(callable_id);
+                let mut simplified_call_sigs = Vec::new();
+                let mut simplified_construct_sigs = Vec::new();
+                let mut changed = false;
+
+                // Simplify call signatures
+                for sig in &shape.call_signatures {
+                    let simplified_return =
+                        self.simplify_array_application(sig.return_type, array_base);
+                    if simplified_return != sig.return_type {
+                        changed = true;
+                        let mut new_sig = sig.clone();
+                        new_sig.return_type = simplified_return;
+                        simplified_call_sigs.push(new_sig);
+                    } else {
+                        simplified_call_sigs.push(sig.clone());
+                    }
+                }
+
+                // Simplify construct signatures
+                for sig in &shape.construct_signatures {
+                    let simplified_return =
+                        self.simplify_array_application(sig.return_type, array_base);
+                    if simplified_return != sig.return_type {
+                        changed = true;
+                        let mut new_sig = sig.clone();
+                        new_sig.return_type = simplified_return;
+                        simplified_construct_sigs.push(new_sig);
+                    } else {
+                        simplified_construct_sigs.push(sig.clone());
+                    }
+                }
+
+                if changed {
+                    let mut new_shape = (*shape).clone();
+                    new_shape.call_signatures = simplified_call_sigs;
+                    new_shape.construct_signatures = simplified_construct_sigs;
+                    self.interner().callable(new_shape)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeKey::Union(list_id)) => {
+                // Simplify union members
+                let members = self.interner().type_list(list_id);
+                let simplified_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| self.simplify_array_application(m, array_base))
+                    .collect();
+
+                // Check if any member changed
+                if simplified_members
+                    .iter()
+                    .zip(members.iter())
+                    .any(|(s, o)| s != o)
+                {
+                    self.interner().union(simplified_members)
+                } else {
+                    type_id
+                }
+            }
+            Some(TypeKey::Intersection(list_id)) => {
+                // Simplify intersection members
+                let members = self.interner().type_list(list_id);
+                let simplified_members: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| self.simplify_array_application(m, array_base))
+                    .collect();
+
+                // Check if any member changed
+                if simplified_members
+                    .iter()
+                    .zip(members.iter())
+                    .any(|(s, o)| s != o)
+                {
+                    self.interner().intersection(simplified_members)
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
         }
     }
 
