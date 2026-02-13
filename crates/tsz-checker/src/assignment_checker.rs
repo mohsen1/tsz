@@ -176,20 +176,20 @@ impl<'a> CheckerState<'a> {
     /// emit TS2630 when assigned to, even without explicit function declarations.
     ///
     /// This check helps catch common mistakes where users try to reassign function names.
-    pub(crate) fn check_function_assignment(&mut self, target_idx: NodeIndex) {
+    pub(crate) fn check_function_assignment(&mut self, target_idx: NodeIndex) -> bool {
         let inner = self.skip_parenthesized_expression(target_idx);
 
         // Only check identifiers - property access like obj.fn = x is allowed
         let Some(node) = self.ctx.arena.get(inner) else {
-            return;
+            return false;
         };
         if node.kind != SyntaxKind::Identifier as u16 {
-            return;
+            return false;
         }
 
         // Get the identifier name
         let Some(id_data) = self.ctx.arena.get_identifier(node) else {
-            return;
+            return false;
         };
         let name = &id_data.escaped_text;
 
@@ -214,7 +214,7 @@ impl<'a> CheckerState<'a> {
                 code: diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
                 related_information: Vec::new(),
             });
-            return;
+            return true;
         }
 
         // Look up the symbol for this identifier by resolving it through the scope chain
@@ -222,11 +222,11 @@ impl<'a> CheckerState<'a> {
         // only contains declaration nodes, not identifier references.
         let sym_id = self.ctx.binder.resolve_identifier(self.ctx.arena, inner);
         let Some(sym_id) = sym_id else {
-            return;
+            return false;
         };
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return;
+            return false;
         };
 
         // Check if this symbol is a class, enum, or function (TS2629, TS2628, TS2630)
@@ -247,21 +247,20 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
             )
         } else {
-            return;
+            return false;
         };
 
-        {
-            let message = format_message(msg_template, &[name]);
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
-                start: node.pos,
-                length: node.end.saturating_sub(node.pos),
-                message_text: message,
-                category: DiagnosticCategory::Error,
-                code,
-                related_information: Vec::new(),
-            });
-        }
+        let message = format_message(msg_template, &[name]);
+        self.ctx.diagnostics.push(Diagnostic {
+            file: self.ctx.file_name.clone(),
+            start: node.pos,
+            length: node.end.saturating_sub(node.pos),
+            message_text: message,
+            category: DiagnosticCategory::Error,
+            code,
+            related_information: Vec::new(),
+        });
+        true
     }
 
     /// Check an assignment expression (=).
@@ -509,7 +508,7 @@ impl<'a> CheckerState<'a> {
         let is_const = self.check_const_assignment(left_idx);
 
         // TS2629/TS2628/TS2630: Cannot assign to class/enum/function.
-        self.check_function_assignment(left_idx);
+        let is_function_assignment = self.check_function_assignment(left_idx);
 
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
@@ -538,7 +537,7 @@ impl<'a> CheckerState<'a> {
 
         // Track whether an operator error was emitted so we can suppress cascading TS2322.
         // TSC doesn't emit TS2322 when there's already an operator error (TS2447/TS2362/TS2363).
-        let mut emitted_operator_error = is_const || is_readonly;
+        let mut emitted_operator_error = is_const || is_readonly || is_function_assignment;
 
         // Check arithmetic operands for compound arithmetic assignments
         // Emit TS2362/TS2363 for -=, *=, /=, %=, **=
@@ -550,7 +549,7 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::PercentEqualsToken as u16
                 || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
         );
-        if is_arithmetic_compound {
+        if is_arithmetic_compound && !is_function_assignment {
             // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
             if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
                 emitted_operator_error |=
@@ -571,7 +570,7 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
                 || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
         );
-        if is_boolean_bitwise_compound {
+        if is_boolean_bitwise_compound && !is_function_assignment {
             // TS2447: For &=, |=, ^= with both boolean operands, emit special error
             let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
             let left_is_boolean = evaluator.is_boolean_like(left_type);
@@ -588,7 +587,11 @@ impl<'a> CheckerState<'a> {
                 emitted_operator_error |=
                     self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
             }
-        } else if is_shift_compound && left_type != TypeId::ERROR && right_type != TypeId::ERROR {
+        } else if is_shift_compound
+            && !is_function_assignment
+            && left_type != TypeId::ERROR
+            && right_type != TypeId::ERROR
+        {
             emitted_operator_error |=
                 self.check_arithmetic_operands(left_idx, right_idx, left_type, right_type);
         }
