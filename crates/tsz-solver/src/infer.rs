@@ -1203,8 +1203,47 @@ impl<'a> InferenceContext<'a> {
             // If target has rest param, infer all remaining source params into it
             if target_rest {
                 let target_param = target_params.next().unwrap();
-                while let Some(source_param) = source_params.next() {
-                    self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
+
+                // CRITICAL: Check if target rest param is a type parameter (like A extends any[])
+                // If so, we need to infer it as a TUPLE of all remaining source params,
+                // not as individual param types.
+                //
+                // Example: wrap<A extends any[], R>(fn: (...args: A) => R)
+                //          with add(a: number, b: number): number
+                //          should infer A = [number, number], not A = number
+                let target_is_type_param = matches!(
+                    self.interner.lookup(target_param.type_id),
+                    Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+                );
+
+                if target_is_type_param {
+                    // Collect all remaining source params into a tuple
+                    let mut tuple_elements = Vec::new();
+                    while let Some(source_param) = source_params.next() {
+                        tuple_elements.push(TupleElement {
+                            type_id: source_param.type_id,
+                            name: source_param.name,
+                            optional: source_param.optional,
+                            rest: source_param.rest,
+                        });
+                    }
+
+                    // Infer the tuple type against the type parameter
+                    // Note: Parameters are contravariant, so target comes first
+                    if !tuple_elements.is_empty() {
+                        let tuple_type = self.interner.tuple(tuple_elements);
+                        self.infer_from_types(target_param.type_id, tuple_type, priority)?;
+                    }
+                } else {
+                    // Target rest param is not a type parameter (e.g., number[] or Array<string>)
+                    // Infer each source param individually against the rest element type
+                    while let Some(source_param) = source_params.next() {
+                        self.infer_from_types(
+                            target_param.type_id,
+                            source_param.type_id,
+                            priority,
+                        )?;
+                    }
                 }
                 break;
             }
