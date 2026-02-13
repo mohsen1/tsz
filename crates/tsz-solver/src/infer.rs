@@ -1175,6 +1175,12 @@ impl<'a> InferenceContext<'a> {
         let source_sig = self.interner.function_shape(source_func);
         let target_sig = self.interner.function_shape(target_func);
 
+        tracing::trace!(
+            source_params = source_sig.params.len(),
+            target_params = target_sig.params.len(),
+            "infer_functions called"
+        );
+
         // Parameters are contravariant: swap source and target
         let mut source_params = source_sig.params.iter().peekable();
         let mut target_params = target_sig.params.iter().peekable();
@@ -1182,6 +1188,12 @@ impl<'a> InferenceContext<'a> {
         loop {
             let source_rest = source_params.peek().map(|p| p.rest).unwrap_or(false);
             let target_rest = target_params.peek().map(|p| p.rest).unwrap_or(false);
+
+            tracing::trace!(
+                source_rest,
+                target_rest,
+                "Checking rest params in loop iteration"
+            );
 
             // If both have rest params, infer the rest element types
             if source_rest && target_rest {
@@ -1216,6 +1228,12 @@ impl<'a> InferenceContext<'a> {
                     Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
                 );
 
+                tracing::trace!(
+                    target_is_type_param,
+                    target_param_type = ?target_param.type_id,
+                    "Rest parameter inference - target is type param check"
+                );
+
                 if target_is_type_param {
                     // Collect all remaining source params into a tuple
                     let mut tuple_elements = Vec::new();
@@ -1228,10 +1246,20 @@ impl<'a> InferenceContext<'a> {
                         });
                     }
 
+                    tracing::trace!(
+                        num_elements = tuple_elements.len(),
+                        "Collected source params into tuple"
+                    );
+
                     // Infer the tuple type against the type parameter
                     // Note: Parameters are contravariant, so target comes first
                     if !tuple_elements.is_empty() {
                         let tuple_type = self.interner.tuple(tuple_elements);
+                        tracing::trace!(
+                            tuple_type = ?tuple_type,
+                            target_param = ?target_param.type_id,
+                            "Inferring tuple against type parameter"
+                        );
                         self.infer_from_types(target_param.type_id, tuple_type, priority)?;
                     }
                 } else {

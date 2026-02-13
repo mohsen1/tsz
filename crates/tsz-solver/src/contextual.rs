@@ -109,14 +109,20 @@ impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
-        // TSC only provides contextual return type when there is exactly one
-        // call signature. With multiple overloaded signatures, no contextual
-        // return type is provided.
-        if shape.call_signatures.len() != 1 {
-            return None;
-        }
+        // Collect return types from all signatures
+        let return_types: Vec<TypeId> = shape
+            .call_signatures
+            .iter()
+            .map(|sig| sig.return_type)
+            .collect();
 
-        Some(shape.call_signatures[0].return_type)
+        if return_types.is_empty() {
+            None
+        } else if return_types.len() == 1 {
+            Some(return_types[0])
+        } else {
+            Some(self.db.union(return_types))
+        }
     }
 
     fn default_output() -> Self::Output {
@@ -538,15 +544,20 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
-        // TSC only contextually types function expressions when there is exactly
-        // one call signature. With multiple overloaded signatures, TSC's
-        // getContextualSignature returns undefined, so parameters fall back to
-        // `any` (or TS7006 if noImplicitAny).
-        if shape.call_signatures.len() != 1 {
-            return None;
-        }
+        // Collect parameter types from all signatures at the given index
+        let param_types: Vec<TypeId> = shape
+            .call_signatures
+            .iter()
+            .filter_map(|sig| extract_param_type_at(self.db, &sig.params, self.index))
+            .collect();
 
-        extract_param_type_at(self.db, &shape.call_signatures[0].params, self.index)
+        if param_types.is_empty() {
+            None
+        } else if param_types.len() == 1 {
+            Some(param_types[0])
+        } else {
+            Some(self.db.union(param_types))
+        }
     }
 
     fn default_output() -> Self::Output {
