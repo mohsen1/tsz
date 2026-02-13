@@ -335,26 +335,22 @@ impl<'a> CheckerState<'a> {
     /// Get the return type of calling a function type.
     /// Returns ANY if the type is not callable.
     fn get_call_return_type(&self, fn_type: TypeId) -> TypeId {
+        use tsz_solver::type_queries::{get_callable_shape, get_function_shape};
+
         if fn_type == TypeId::ANY {
             return TypeId::ANY;
         }
-        match self.ctx.types.lookup(fn_type) {
-            // Function type - single signature
-            Some(tsz_solver::types::TypeKey::Function(fn_id)) => {
-                let sig = self.ctx.types.function_shape(fn_id);
-                sig.return_type
-            }
-            // Callable type - use first call signature
-            Some(tsz_solver::types::TypeKey::Callable(callable_id)) => {
-                let callable = self.ctx.types.callable_shape(callable_id);
-                callable
-                    .call_signatures
-                    .first()
-                    .map(|sig| sig.return_type)
-                    .unwrap_or(TypeId::ANY)
-            }
-            _ => TypeId::ANY,
+        if let Some(sig) = get_function_shape(self.ctx.types, fn_type) {
+            return sig.return_type;
         }
+        if let Some(callable) = get_callable_shape(self.ctx.types, fn_type) {
+            return callable
+                .call_signatures
+                .first()
+                .map(|sig| sig.return_type)
+                .unwrap_or(TypeId::ANY);
+        }
+        TypeId::ANY
     }
 
     // =========================================================================
@@ -601,25 +597,26 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type is an array or tuple type (for ES5 destructuring).
     fn is_array_or_tuple_type(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries::{is_array_type, is_tuple_type};
+        use tsz_solver::type_queries::{get_union_members, is_array_type, is_tuple_type};
         if is_array_type(self.ctx.types, type_id) || is_tuple_type(self.ctx.types, type_id) {
             return true;
         }
         // Check unions: all members must be array/tuple
-        if let Some(tsz_solver::TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) {
-            return self
-                .ctx
-                .types
-                .type_list(list_id)
+        if let Some(members) = get_union_members(self.ctx.types, type_id) {
+            return members
                 .iter()
-                .all(|&m| self.is_array_or_tuple_type(m));
+                .all(|&member| self.is_array_or_tuple_type(member));
         }
         false
     }
 
     /// Check if a type is an array, tuple, or string type (for ES5 for-of).
     fn is_array_or_tuple_or_string(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries::{is_array_type, is_string_type, is_tuple_type};
+        use tsz_solver::type_queries::{
+            get_union_members, is_array_type, is_string_type, is_tuple_type,
+        };
+        use tsz_solver::type_queries_extended::is_string_literal;
+
         if type_id == TypeId::STRING || is_string_type(self.ctx.types, type_id) {
             return true;
         }
@@ -627,19 +624,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         // String literals count as string types
-        if let Some(tsz_solver::TypeKey::Literal(tsz_solver::LiteralValue::String(_))) =
-            self.ctx.types.lookup(type_id)
-        {
+        if is_string_literal(self.ctx.types, type_id) {
             return true;
         }
         // Check unions: all members must be array/tuple/string
-        if let Some(tsz_solver::TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) {
-            return self
-                .ctx
-                .types
-                .type_list(list_id)
+        if let Some(members) = get_union_members(self.ctx.types, type_id) {
+            return members
                 .iter()
-                .all(|&m| self.is_array_or_tuple_or_string(m));
+                .all(|&member| self.is_array_or_tuple_or_string(member));
         }
         false
     }

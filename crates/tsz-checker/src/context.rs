@@ -625,6 +625,18 @@ pub struct LibContext {
 }
 
 impl<'a> CheckerContext<'a> {
+    fn normalize_options(
+        types: &dyn QueryDatabase,
+        compiler_options: CheckerOptions,
+        configure_no_unchecked_indexed_access: bool,
+    ) -> CheckerOptions {
+        let compiler_options = compiler_options.apply_strict_defaults();
+        if configure_no_unchecked_indexed_access {
+            types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
+        }
+        compiler_options
+    }
+
     /// Create a new CheckerContext.
     pub fn new(
         arena: &'a NodeArena,
@@ -633,8 +645,7 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
-        let compiler_options = compiler_options.apply_strict_defaults();
-        types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
+        let compiler_options = Self::normalize_options(types, compiler_options, true);
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -758,8 +769,7 @@ impl<'a> CheckerContext<'a> {
         compiler_options: CheckerOptions,
         definition_store: Arc<DefinitionStore>,
     ) -> Self {
-        let compiler_options = compiler_options.apply_strict_defaults();
-        types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
+        let compiler_options = Self::normalize_options(types, compiler_options, true);
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -874,7 +884,7 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
-        let compiler_options = compiler_options.clone().apply_strict_defaults();
+        let compiler_options = Self::normalize_options(types, compiler_options.clone(), false);
         // Create flow graph from the binder's flow nodes
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 

@@ -9,6 +9,7 @@
 
 use crate::def::DefId;
 use crate::{TypeDatabase, TypeId, TypeKey};
+use rustc_hash::FxHashSet;
 
 // =============================================================================
 // Full Literal Type Classification (includes boolean)
@@ -101,6 +102,66 @@ pub fn get_boolean_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
     match classify_literal_type(db, type_id) {
         LiteralTypeKind::Boolean(value) => Some(value),
         _ => None,
+    }
+}
+
+// =============================================================================
+// Index Type Classification
+// =============================================================================
+
+/// Check if a type cannot be used as an index type (TS2538).
+///
+/// A valid index type must be string/number/symbol (or compatible literal forms).
+pub fn is_invalid_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let mut visited = FxHashSet::default();
+    is_invalid_index_type_inner(db, type_id, &mut visited)
+}
+
+fn is_invalid_index_type_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    visited: &mut FxHashSet<TypeId>,
+) -> bool {
+    if !visited.insert(type_id) {
+        return false;
+    }
+
+    if matches!(
+        type_id,
+        TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+    ) {
+        return false;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeKey::Intrinsic(kind)) => matches!(
+            kind,
+            crate::IntrinsicKind::Void
+                | crate::IntrinsicKind::Null
+                | crate::IntrinsicKind::Undefined
+                | crate::IntrinsicKind::Boolean
+                | crate::IntrinsicKind::Bigint
+                | crate::IntrinsicKind::Object
+                | crate::IntrinsicKind::Function
+        ),
+        Some(TypeKey::Literal(value)) => matches!(
+            value,
+            crate::LiteralValue::Boolean(_) | crate::LiteralValue::BigInt(_)
+        ),
+        Some(TypeKey::Array(_))
+        | Some(TypeKey::Tuple(_))
+        | Some(TypeKey::Object(_))
+        | Some(TypeKey::ObjectWithIndex(_))
+        | Some(TypeKey::Function(_))
+        | Some(TypeKey::Callable(_)) => true,
+        Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| is_invalid_index_type_inner(db, member, visited)),
+        Some(TypeKey::TypeParameter(info)) => info
+            .constraint
+            .is_some_and(|constraint| is_invalid_index_type_inner(db, constraint, visited)),
+        _ => false,
     }
 }
 
