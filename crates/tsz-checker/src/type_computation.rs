@@ -84,6 +84,27 @@ impl<'a> CheckerState<'a> {
                 }
                 type_id
             }
+            Some(TypeKey::Union(list_id)) => {
+                // Distribute evaluation over union members so Lazy/Application/etc.
+                // inside a union get resolved through the checker's type environment.
+                let members = self.ctx.types.type_list(list_id);
+                let mut changed = false;
+                let evaluated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        let ev = self.evaluate_contextual_type(m);
+                        if ev != m {
+                            changed = true;
+                        }
+                        ev
+                    })
+                    .collect();
+                if changed {
+                    self.ctx.types.union(evaluated)
+                } else {
+                    type_id
+                }
+            }
             _ => type_id,
         }
     }
@@ -2072,6 +2093,7 @@ impl<'a> CheckerState<'a> {
 
                     // Get contextual type for this property
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                        let ctx_type = self.evaluate_contextual_type(ctx_type);
                         self.ctx.types.contextual_property_type(ctx_type, &name)
                     } else {
                         None
