@@ -1351,6 +1351,12 @@ impl<'a> CheckerContext<'a> {
          -> Option<bool> {
             let export_equals_sym_id = exports.get("export=")?;
             let has_named_exports = exports.iter().any(|(name, _)| name != "export=");
+            tracing::trace!(
+                module_specifier = module_specifier,
+                export_equals_sym_id = export_equals_sym_id.0,
+                has_named_exports,
+                "module_resolves_to_non_module_entity: checking exports table"
+            );
 
             let mut candidate_symbols = Vec::with_capacity(2);
             if let Some(sym) = binder.get_symbol(export_equals_sym_id) {
@@ -1426,6 +1432,12 @@ impl<'a> CheckerContext<'a> {
 
             let symbol_has_namespace_shape =
                 candidate_symbols.into_iter().any(|(sym_binder, sym)| {
+                    tracing::trace!(
+                        module_specifier = module_specifier,
+                        symbol_name = sym.escaped_name.as_str(),
+                        symbol_flags = sym.flags,
+                        "module_resolves_to_non_module_entity: candidate symbol"
+                    );
                     if has_namespace_shape(sym_binder, sym) {
                         return true;
                     }
@@ -1443,6 +1455,11 @@ impl<'a> CheckerContext<'a> {
                     let Some(target_name) = export_assignment_target_name(sym_binder, sym) else {
                         return false;
                     };
+                    tracing::trace!(
+                        module_specifier = module_specifier,
+                        target_name = target_name.as_str(),
+                        "module_resolves_to_non_module_entity: export assignment target"
+                    );
 
                     sym_binder
                         .get_symbols()
@@ -1452,12 +1469,184 @@ impl<'a> CheckerContext<'a> {
                         .any(|target_sym| has_namespace_shape(sym_binder, target_sym))
                 });
 
+            tracing::trace!(
+                module_specifier = module_specifier,
+                symbol_has_namespace_shape,
+                "module_resolves_to_non_module_entity: namespace shape computed"
+            );
             Some(!has_named_exports && !symbol_has_namespace_shape)
         };
+        let has_namespace_shape = |binder: &BinderState, sym: &tsz_binder::Symbol| {
+            let has_namespace_decl = sym.declarations.iter().any(|decl_idx| {
+                if decl_idx.is_none() {
+                    return false;
+                }
+                binder
+                    .declaration_arenas
+                    .get(&(sym.id, *decl_idx))
+                    .and_then(|arena| arena.get(*decl_idx))
+                    .is_some_and(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
+            });
+
+            (sym.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                != 0
+                || sym.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
+                || sym.members.as_ref().is_some_and(|tbl| !tbl.is_empty())
+                || has_namespace_decl
+        };
+        fn contains_namespace_decl_named(
+            arena: &NodeArena,
+            idx: NodeIndex,
+            target_name: &str,
+            depth: usize,
+        ) -> bool {
+            if depth > 128 {
+                return false;
+            }
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                let Some(module_decl) = arena.get_module(node) else {
+                    return false;
+                };
+                if let Some(name_node) = arena.get(module_decl.name)
+                    && let Some(id) = arena.get_identifier(name_node)
+                    && id.escaped_text == target_name
+                {
+                    if module_decl.body.is_none() {
+                        return false;
+                    }
+                    if let Some(body_node) = arena.get(module_decl.body)
+                        && body_node.kind == syntax_kind_ext::MODULE_BLOCK
+                        && let Some(block) = arena.get_module_block(body_node)
+                        && let Some(stmts) = block.statements.as_ref()
+                    {
+                        return !stmts.nodes.is_empty();
+                    }
+                    return true;
+                }
+                if !module_decl.body.is_none() {
+                    return contains_namespace_decl_named(
+                        arena,
+                        module_decl.body,
+                        target_name,
+                        depth + 1,
+                    );
+                }
+                return false;
+            }
+
+            if node.kind == syntax_kind_ext::MODULE_BLOCK
+                && let Some(block) = arena.get_module_block(node)
+                && let Some(statements) = block.statements.as_ref()
+            {
+                for &stmt in &statements.nodes {
+                    if contains_namespace_decl_named(arena, stmt, target_name, depth + 1) {
+                        return true;
+                    }
+                }
+            }
+
+            false
+        }
+        fn collect_export_equals_targets(
+            arena: &NodeArena,
+            idx: NodeIndex,
+            out: &mut Vec<String>,
+            depth: usize,
+        ) {
+            if depth > 128 {
+                return;
+            }
+            let Some(node) = arena.get(idx) else {
+                return;
+            };
+
+            if node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+                if let Some(assign) = arena.get_export_assignment(node)
+                    && assign.is_export_equals
+                    && let Some(expr_node) = arena.get(assign.expression)
+                    && let Some(id) = arena.get_identifier(expr_node)
+                {
+                    out.push(id.escaped_text.clone());
+                }
+                return;
+            }
+
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                if let Some(module_decl) = arena.get_module(node)
+                    && !module_decl.body.is_none()
+                {
+                    collect_export_equals_targets(arena, module_decl.body, out, depth + 1);
+                }
+                return;
+            }
+
+            if node.kind == syntax_kind_ext::MODULE_BLOCK
+                && let Some(block) = arena.get_module_block(node)
+                && let Some(statements) = block.statements.as_ref()
+            {
+                for &stmt in &statements.nodes {
+                    collect_export_equals_targets(arena, stmt, out, depth + 1);
+                }
+            }
+        }
+        let export_assignment_targets_namespace_via_source =
+            |binder: &BinderState, arena: &NodeArena| {
+                for source_file in &arena.source_files {
+                    let mut export_targets = Vec::new();
+                    for &stmt_idx in &source_file.statements.nodes {
+                        collect_export_equals_targets(arena, stmt_idx, &mut export_targets, 0);
+                    }
+                    for target_name in export_targets {
+                        let has_matching_namespace_decl = source_file
+                            .statements
+                            .nodes
+                            .iter()
+                            .copied()
+                            .any(|top_stmt| {
+                                contains_namespace_decl_named(arena, top_stmt, &target_name, 0)
+                            });
+                        let target_is_namespace_augmentable = binder
+                            .get_symbols()
+                            .find_all_by_name(&target_name)
+                            .into_iter()
+                            .filter_map(|target_id| binder.get_symbol(target_id))
+                            .any(|target_sym| {
+                                (target_sym.flags
+                                    & (symbol_flags::CLASS
+                                        | symbol_flags::FUNCTION
+                                        | symbol_flags::REGULAR_ENUM
+                                        | symbol_flags::CONST_ENUM))
+                                    != 0
+                            });
+
+                        if has_matching_namespace_decl && target_is_namespace_augmentable {
+                            return true;
+                        }
+                        if binder
+                            .get_symbols()
+                            .find_all_by_name(&target_name)
+                            .into_iter()
+                            .filter_map(|target_id| binder.get_symbol(target_id))
+                            .any(|target_sym| has_namespace_shape(binder, target_sym))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                false
+            };
 
         if let Some(target_idx) = self.resolve_import_target(module_specifier)
             && let Some(target_binder) = self.get_binder_for_file(target_idx)
         {
+            let target_arena = self.get_arena_for_file(target_idx as u32);
             if let Some(target_file_name) = self
                 .get_arena_for_file(target_idx as u32)
                 .source_files
@@ -1466,32 +1655,106 @@ impl<'a> CheckerContext<'a> {
                 && let Some(exports) = target_binder.module_exports.get(target_file_name)
                 && let Some(non_module) = export_equals_is_non_module(target_binder, exports)
             {
+                tracing::trace!(
+                    module_specifier = module_specifier,
+                    branch = "target_file_key",
+                    non_module,
+                    "module_resolves_to_non_module_entity: branch result"
+                );
+                if non_module
+                    && export_assignment_targets_namespace_via_source(target_binder, target_arena)
+                {
+                    tracing::trace!(
+                        module_specifier = module_specifier,
+                        branch = "target_file_key",
+                        "module_resolves_to_non_module_entity: source fallback override"
+                    );
+                    return false;
+                }
                 return non_module;
             }
             if let Some(exports) = target_binder.module_exports.get(module_specifier)
                 && let Some(non_module) = export_equals_is_non_module(target_binder, exports)
             {
+                tracing::trace!(
+                    module_specifier = module_specifier,
+                    branch = "target_specifier_key",
+                    non_module,
+                    "module_resolves_to_non_module_entity: branch result"
+                );
+                if non_module
+                    && export_assignment_targets_namespace_via_source(target_binder, target_arena)
+                {
+                    tracing::trace!(
+                        module_specifier = module_specifier,
+                        branch = "target_specifier_key",
+                        "module_resolves_to_non_module_entity: source fallback override"
+                    );
+                    return false;
+                }
                 return non_module;
             }
         }
 
+        let mut saw_non_module = false;
         if let Some(exports) = self.binder.module_exports.get(module_specifier)
             && let Some(non_module) = export_equals_is_non_module(self.binder, exports)
         {
-            return non_module;
+            tracing::trace!(
+                module_specifier = module_specifier,
+                branch = "self_binder",
+                non_module,
+                "module_resolves_to_non_module_entity: branch result"
+            );
+            if non_module && export_assignment_targets_namespace_via_source(self.binder, self.arena)
+            {
+                tracing::trace!(
+                    module_specifier = module_specifier,
+                    branch = "self_binder",
+                    "module_resolves_to_non_module_entity: source fallback override"
+                );
+                return false;
+            }
+            if !non_module {
+                return false;
+            }
+            saw_non_module = true;
         }
 
         if let Some(all_binders) = self.all_binders.as_ref() {
-            for binder in all_binders.iter() {
+            for (idx, binder) in all_binders.iter().enumerate() {
                 if let Some(exports) = binder.module_exports.get(module_specifier)
                     && let Some(non_module) = export_equals_is_non_module(binder, exports)
                 {
-                    return non_module;
+                    tracing::trace!(
+                        module_specifier = module_specifier,
+                        branch = "all_binders",
+                        binder_idx = idx,
+                        non_module,
+                        "module_resolves_to_non_module_entity: branch result"
+                    );
+                    if non_module
+                        && let Some(all_arenas) = self.all_arenas.as_ref()
+                        && let Some(arena) = all_arenas.get(idx)
+                        && export_assignment_targets_namespace_via_source(binder, arena.as_ref())
+                    {
+                        tracing::trace!(
+                            module_specifier = module_specifier,
+                            branch = "all_binders",
+                            binder_idx = idx,
+                            "module_resolves_to_non_module_entity: source fallback override"
+                        );
+                        return false;
+                    }
+                    if !non_module {
+                        return false;
+                    }
+                    saw_non_module = true;
                 }
             }
         }
 
-        false
+        saw_non_module
     }
 
     /// Extract the persistent cache from this context.
