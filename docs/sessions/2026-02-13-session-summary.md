@@ -117,3 +117,66 @@ All documentation in `docs/sessions/2026-02-13-*`:
 - All changes maintain 100% unit test pass rate
 - Conformance at 80.6% is a solid foundation
 - Focus on reducing false positives for better UX
+
+---
+
+## Final Session Update
+
+### 5. Second Bug Fix: Block-Scoped Functions ✅
+
+**Issue**: Function declarations inside blocks were incorrectly hoisted to module scope in ES6+ modules.
+
+**Fix Applied**: 
+- Added `collect_hoisted_declarations_impl` with block tracking
+- Only hoist functions if NOT in block OR NOT in external module
+- Preserves ES5 hoisting behavior for script files
+
+**Files Changed**: `crates/tsz-binder/src/state.rs` (+22 lines, -6 lines)
+
+**Testing**: 
+- ✅ All unit tests pass (3924/3924)
+- ✅ ES6 modules: functions correctly block-scoped
+- ✅ ES5 scripts: functions still hoisted (backward compatible)
+- ✅ blockScopedFunctionDeclarationInStrictModule.ts now passes
+
+**Commit**: `57ddb3499`
+
+### Final Session Statistics
+
+- **Bugs Fixed**: 2
+  1. Built-in type augmentation in script files
+  2. Block-scoped function declarations in modules
+  
+- **Bugs Documented**: 2
+  1. Higher-order generic function inference (architectural)
+  2. Mapped type inference (architectural)
+
+- **Documentation**: 5 comprehensive files (~750 lines)
+
+- **Code Changes**: +98 lines (binder improvements)
+
+- **Testing**: 100% pass rate maintained (3924/3924 unit tests)
+
+- **Conformance**: Improved from 80.6% baseline
+  - Fixed TS2304 name resolution issues
+  - Both fixes target correctness (missing errors)
+
+- **Commits**: 8 total (all synced to remote)
+
+- **Session Duration**: ~5 hours
+
+### Quality Metrics
+
+✅ All pre-commit checks passed
+✅ Zero clippy warnings  
+✅ Code properly formatted
+✅ No test regressions
+✅ Backward compatibility maintained
+
+### Impact Summary
+
+Both fixes target **correctness** rather than false positives:
+1. **Built-in augmentation**: Enables valid TS patterns in script files
+2. **Block-scoped functions**: Properly enforces ES6+ scoping rules
+
+These improve TSZ's accuracy in matching TSC behavior and reduce the gap in conformance testing.
