@@ -1332,7 +1332,7 @@ impl BinderState {
         // Maps: symbol name -> new_id (for merging same-name symbols)
         let mut merged_by_name: FxHashMap<String, SymbolId> = FxHashMap::default();
 
-        for lib_ctx in lib_contexts {
+        for lib_ctx in lib_contexts.iter() {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
             // Process all symbols in this lib binder

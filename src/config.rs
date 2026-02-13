@@ -1174,6 +1174,16 @@ fn lib_dir_from_root(root: &Path) -> Option<PathBuf> {
         // Built/compiled libs from tsc build output (highest priority)
         root.join("TypeScript").join("built").join("local"),
         root.join("TypeScript").join("lib"),
+        // npm-installed TypeScript libs (self-contained, matching tsc's shipped format).
+        // Prefer these over TypeScript/src/lib which has source-format files with
+        // cross-module /// <reference lib> directives that pull in ES2015+ content
+        // even for ES5 targets (e.g., dom.generated.d.ts references es2015.symbol.d.ts).
+        root.join("node_modules").join("typescript").join("lib"),
+        root.join("scripts")
+            .join("emit")
+            .join("node_modules")
+            .join("typescript")
+            .join("lib"),
         root.join("TypeScript").join("src").join("lib"),
         root.join("TypeScript")
             .join("node_modules")
