@@ -1218,10 +1218,13 @@ impl ParserState {
             | SyntaxKind::ExclamationToken
             | SyntaxKind::PlusPlusToken
             | SyntaxKind::MinusMinusToken => true,
-            // Open parentheses/brackets/angle brackets
+            // Open parentheses/brackets/braces/angle brackets
             SyntaxKind::OpenParenToken
             | SyntaxKind::OpenBracketToken
+            | SyntaxKind::OpenBraceToken
             | SyntaxKind::LessThanToken => true,
+            // Slash tokens (regex literals)
+            SyntaxKind::SlashToken | SyntaxKind::SlashEqualsToken => true,
             // Decorators
             SyntaxKind::AtToken => true,
             _ => false,
