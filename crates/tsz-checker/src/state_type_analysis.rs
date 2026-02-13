@@ -1863,7 +1863,7 @@ impl<'a> CheckerState<'a> {
         declarations: &[NodeIndex],
     ) -> TypeId {
         use crate::query_boundaries::state_type_analysis::{
-            call_signatures_for_type, callable_shape_for_type, construct_signatures_for_type,
+            call_signatures_for_type, callable_shape_for_type,
         };
 
         // Collect call signatures from function declarations
@@ -1909,8 +1909,7 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.types.callable(tsz_solver::CallableShape {
             call_signatures,
-            construct_signatures: construct_signatures_for_type(self.ctx.types, ctor_type)
-                .unwrap_or_else(|| shape.construct_signatures.clone()),
+            construct_signatures: shape.construct_signatures.clone(),
             properties: shape.properties.clone(),
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
