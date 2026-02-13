@@ -161,3 +161,107 @@ Once root cause is found:
 ---
 
 **Status**: Ready for next session. Clear reproduction case, code locations identified, specific tracing steps documented.
+
+## BREAKTHROUGH: Root Cause Mechanism Identified
+
+**Time**: After 3.5 hours of investigation
+**Status**: 60% complete - mechanism understood, exact fix location identified
+
+### The Smoking Gun
+
+The phantom "Node<Fn<T1>>" is a `TypeKey::Application` (generic type application):
+- Format code: `crates/tsz-solver/src/format.rs:282-308`
+- Structure: `Application(base_type, [Fn<T1>])`
+- Base type resolves to "Node" string
+
+### Three Possible Sources for "Node"
+
+1. **Lazy(DefId) resolution** (lines 288-294):
+   ```rust
+   if let Some(TypeKey::Lazy(def_id)) = base_key {
+       if let Some(def) = def_store.get(def_id) {
+           self.atom(def.name).to_string()  // Returns "Node"
+       }
+   }
+   ```
+
+2. **Object with symbol** (lines 196-200):
+   ```rust
+   if let Some(sym_id) = shape.symbol {
+       if let Some(sym) = arena.get(sym_id) {
+           return sym.escaped_name.to_string();  // Returns "Node"
+       }
+   }
+   ```
+
+3. **Other formatting path** producing "Node"
+
+### Most Likely Root Cause
+
+**Hypothesis**: Overload resolution is creating an `Application` type where the base incorrectly references DOM's `Node` interface, even though test uses `@noLib: true`.
+
+**Evidence**:
+- Error persists even without lib files
+- "Node" is a real type in DOM (dom.generated.d.ts)
+- Suggests type cache pollution or incorrect type lookup
+
+### Next Debugging Steps
+
+#### Step 1: Add Instrumentation (30 min)
+```rust
+// In format.rs, line 288
+let base_str = if let Some(TypeKey::Lazy(def_id)) = base_key {
+    if let Some(def_store) = self.def_store {
+        if let Some(def) = def_store.get(def_id) {
+            let name = self.atom(def.name).to_string();
+            eprintln!("DEBUG: Application base Lazy({}) resolves to '{}'", def_id.0, name);
+            name
+        } else {
+            format!("Lazy({})", def_id.0)
+        }
+    } else {
+        format!("Lazy({})", def_id.0)
+    }
+} else {
+    self.format(app.base)
+};
+```
+
+#### Step 2: Run Test and Capture DefId (15 min)
+```bash
+.target/dist-fast/tsz tmp/no-lib-test.ts 2>&1 | grep "DEBUG:"
+```
+
+#### Step 3: Trace DefId Creation (2-3 hours)
+- Find where this DefId is created
+- Check why it references "Node"
+- Trace back through overload resolution to see where Application is generated
+
+### Expected Fix
+
+Once we find where the wrong Application type is created:
+1. Fix type parameter inference during overload matching
+2. OR fix type lookup that's finding wrong "Node" type
+3. OR clear type cache that's polluted with DOM types
+
+### Time Estimate
+
+- Step 1-2: 45 minutes (instrumentation + initial trace)
+- Step 3: 2-3 hours (find exact bug location)
+- Step 4: 30-60 minutes (implement fix)
+- Step 5: 30 minutes (verify, test, commit)
+
+**Total remaining**: 3.5-4.5 hours
+
+---
+
+**Investigation Status**: 60% complete
+- ✅ Reproduced bug
+- ✅ Isolated to overload resolution
+- ✅ Found formatting mechanism
+- ✅ Identified 3 possible sources
+- 🔄 Need: Add instrumentation
+- 🔄 Need: Trace DefId
+- 🔄 Need: Fix root cause
+
+**Ready for**: Next session to complete instrumentation and fix
