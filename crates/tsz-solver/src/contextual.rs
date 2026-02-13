@@ -1201,7 +1201,7 @@ pub fn apply_contextual_type(
     };
 
     // If expression type is any, unknown, or error, use contextual type
-    if expr_type == TypeId::ANY || expr_type == TypeId::UNKNOWN || expr_type == TypeId::ERROR {
+    if expr_type.is_any_or_unknown() || expr_type.is_error() {
         return ctx_type;
     }
 
