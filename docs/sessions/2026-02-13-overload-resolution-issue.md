@@ -96,12 +96,53 @@ Users can:
 2. Use intermediate variables with explicit types
 3. Disable `strictFunctionTypes` (not recommended)
 
+## Root Cause Found
+
+**File**: `crates/tsz-solver/src/subtype_rules/functions.rs:597-614`
+**Function**: `check_function_subtype`
+
+When comparing two generic functions with the same number of type parameters, TSZ performs alpha-renaming to normalize type parameter names for structural comparison. However, it **does not check if the type parameter constraints are compatible**.
+
+```rust
+// Lines 597-614: Generic source vs generic target (same arity)
+if !source_instantiated.type_params.is_empty()
+    && source_instantiated.type_params.len() == target_instantiated.type_params.len()
+    && !target_instantiated.type_params.is_empty()
+{
+    let mut substitution = TypeSubstitution::new();
+    for (source_tp, target_tp) in source_instantiated
+        .type_params
+        .iter()
+        .zip(target_instantiated.type_params.iter())
+    {
+        let source_type_param_type = self
+            .interner
+            .intern(TypeKey::TypeParameter(source_tp.clone()));
+        substitution.insert(target_tp.name, source_type_param_type);
+    }
+    target_instantiated =
+        self.instantiate_function_shape(&target_instantiated, &substitution);
+}
+// Missing: constraint compatibility check!
+```
+
+**The Problem**:
+- Source: `<U extends T>(u: U) => U`
+- Target: `<U extends T1>(u: U) => U` where `T1 extends T`
+- After normalization: both have type parameter `U`, but with different constraints (`T` vs `T1`)
+- TSZ doesn't verify constraint compatibility, so it fails when constraints differ
+
+**Required Fix**:
+After alpha-renaming, verify that for each type parameter pair:
+- Constraint compatibility must be checked
+- Need to determine correct variance (likely covariant based on TSC behavior)
+
 ## Next Steps
 
-1. **Add tracing** to overload resolution in `call_checker.rs`
-2. **Compare** with TSC behavior using minimal test case
-3. **Check** variance handling for generic function types
-4. **Review** strictFunctionTypes implementation for higher-order types
+1. **Verify variance** with TSC - test which direction should work
+2. **Add constraint checking** after alpha-renaming in lines 597-614
+3. **Write tests** for various constraint compatibility scenarios
+4. **Run conformance** to verify fix resolves all 6 false positives
 
 ## Testing Strategy
 
