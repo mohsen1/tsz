@@ -213,6 +213,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.literal_type_from_initializer(idx),
                 TypeId::NUMBER,
             ),
+            k if k == SyntaxKind::BigIntLiteral as u16 => self.resolve_literal(
+                self.checker.literal_type_from_initializer(idx),
+                TypeId::BIGINT,
+            ),
             k if k == SyntaxKind::StringLiteral as u16 => self.resolve_literal(
                 self.checker.literal_type_from_initializer(idx),
                 TypeId::STRING,
