@@ -805,6 +805,44 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             None
         };
 
+        // DefId resolver: converts binder SymbolIds to solver DefIds so that
+        // TypeLowering can create Lazy(DefId) for user-defined type references
+        // (e.g., type aliases like `Values`).  Without this, TypeLowering only
+        // has the SymbolId-based `type_resolver` which is used as a guard but
+        // not for actual type creation, causing user types to resolve as ERROR.
+        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
+            let ident = self.ctx.arena.get_identifier_at(node_idx)?;
+            let name = ident.escaped_text.as_str();
+            if is_compiler_managed_type(name) {
+                return None;
+            }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                if (symbol.flags
+                    & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                    != 0
+                {
+                    return Some(self.ctx.get_or_create_def_id(sym_id));
+                }
+            }
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
+                    let symbol = lib_ctx.binder.get_symbol(lib_sym_id)?;
+                    if (symbol.flags
+                        & (symbol_flags::TYPE
+                            | symbol_flags::REGULAR_ENUM
+                            | symbol_flags::CONST_ENUM))
+                        != 0
+                    {
+                        let file_sym_id =
+                            self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                        return Some(self.ctx.get_or_create_def_id(file_sym_id));
+                    }
+                }
+            }
+            None
+        };
+
         // Get type parameter bindings from the context
         let type_param_bindings: Vec<(tsz_common::interner::Atom, TypeId)> = self
             .ctx
@@ -813,10 +851,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .map(|(name, &type_id)| (self.ctx.types.intern_string(name), type_id))
             .collect();
 
-        let mut lowering = TypeLowering::with_resolvers(
+        let mut lowering = TypeLowering::with_hybrid_resolver(
             self.ctx.arena,
             self.ctx.types,
             &type_resolver,
+            &def_id_resolver,
             &value_resolver,
         );
         if !type_param_bindings.is_empty() {
