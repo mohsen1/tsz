@@ -2135,10 +2135,58 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 if s_fn.type_params.is_empty() {
                     // Non-generic source function - direct comparison
+                    // Unpack tuple rest parameters for proper matching
+                    use crate::type_queries::unpack_tuple_rest_parameter;
+                    let s_params_unpacked: Vec<ParamInfo> = s_fn
+                        .params
+                        .iter()
+                        .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+                        .collect();
+                    let t_params_unpacked: Vec<ParamInfo> = t_fn
+                        .params
+                        .iter()
+                        .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+                        .collect();
+
                     // Contravariant parameters: target_param <: source_param
-                    for (s_p, t_p) in s_fn.params.iter().zip(t_fn.params.iter()) {
+                    for (s_p, t_p) in s_params_unpacked.iter().zip(t_params_unpacked.iter()) {
                         self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
                     }
+
+                    // Special case: If target has a rest parameter with a type parameter,
+                    // and source has more parameters, we should infer the tuple type.
+                    // Example: source `(a: string, b: number) => R` vs target `(...args: A) => R`
+                    // should infer `A = [string, number]`.
+                    if let Some(t_last) = t_params_unpacked.last() {
+                        if t_last.rest && var_map.contains_key(&t_last.type_id) {
+                            let target_fixed_count = t_params_unpacked.len().saturating_sub(1);
+                            if s_params_unpacked.len() > target_fixed_count {
+                                // Create tuple from source's extra parameters
+                                let tuple_elements: Vec<TupleElement> = s_params_unpacked
+                                    [target_fixed_count..]
+                                    .iter()
+                                    .map(|p| TupleElement {
+                                        type_id: p.type_id,
+                                        name: p.name,
+                                        optional: p.optional,
+                                        rest: p.rest,
+                                    })
+                                    .collect();
+                                let source_tuple = self.interner.tuple(tuple_elements);
+
+                                // Constrain: source_tuple <: target_rest_type
+                                // This is contravariant because we're matching function parameters
+                                self.constrain_types(
+                                    ctx,
+                                    var_map,
+                                    source_tuple,
+                                    t_last.type_id,
+                                    priority,
+                                );
+                            }
+                        }
+                    }
+
                     if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {
                         self.constrain_types(ctx, var_map, t_this, s_this, priority);
                     }
@@ -2258,8 +2306,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .map(|(k, v)| (*k, *v))
                         .collect();
 
+                    // Unpack tuple rest parameters for proper generic inference.
+                    // In TypeScript, `(...args: [A, B]) => R` should match `(a: X, b: Y) => R`
+                    // and infer the tuple type. We unpack tuple rest params into fixed params.
+                    use crate::type_queries::unpack_tuple_rest_parameter;
+                    let instantiated_params_unpacked: Vec<ParamInfo> = instantiated_params
+                        .iter()
+                        .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+                        .collect();
+                    let target_params_unpacked: Vec<ParamInfo> = t_fn
+                        .params
+                        .iter()
+                        .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+                        .collect();
+
                     // Contravariant parameters: target_param <: instantiated_source_param
-                    for (s_p, t_p) in instantiated_params.iter().zip(t_fn.params.iter()) {
+                    for (s_p, t_p) in instantiated_params_unpacked
+                        .iter()
+                        .zip(target_params_unpacked.iter())
+                    {
                         self.constrain_types(
                             ctx,
                             &combined_var_map,
@@ -2268,6 +2333,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             priority,
                         );
                     }
+
+                    // Special case: If target has a rest parameter with a type parameter,
+                    // and source has more parameters, we should infer the tuple type.
+                    // Example: source `<T>(a: T) => T[]` vs target `(...args: A) => B`
+                    // should infer `A = [T]`.
+                    if let Some(t_last) = target_params_unpacked.last() {
+                        if t_last.rest && combined_var_map.contains_key(&t_last.type_id) {
+                            let target_fixed_count = target_params_unpacked.len().saturating_sub(1);
+                            if instantiated_params_unpacked.len() > target_fixed_count {
+                                // Create tuple from source's extra parameters
+                                let tuple_elements: Vec<TupleElement> =
+                                    instantiated_params_unpacked[target_fixed_count..]
+                                        .iter()
+                                        .map(|p| TupleElement {
+                                            type_id: p.type_id,
+                                            name: p.name,
+                                            optional: p.optional,
+                                            rest: p.rest,
+                                        })
+                                        .collect();
+                                let source_tuple = self.interner.tuple(tuple_elements);
+
+                                // Constrain: source_tuple <: target_rest_type
+                                // This is contravariant because we're matching function parameters
+                                self.constrain_types(
+                                    ctx,
+                                    &combined_var_map,
+                                    source_tuple,
+                                    t_last.type_id,
+                                    priority,
+                                );
+                            }
+                        }
+                    }
+
                     if let (Some(s_this), Some(t_this)) = (instantiated_this, t_fn.this_type) {
                         self.constrain_types(ctx, &combined_var_map, t_this, s_this, priority);
                     }
