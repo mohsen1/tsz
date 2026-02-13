@@ -1590,7 +1590,6 @@ main() {
         xl_files=(
             "TypeScript/tests/cases/compiler/largeControlFlowGraph.ts"
             "TypeScript/tests/cases/compiler/conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts"
-            "TypeScript/tests/cases/compiler/unionSubtypeReductionErrors.ts"
             "TypeScript/tests/cases/compiler/manyConstExports.ts"
             "TypeScript/tests/cases/compiler/binderBinaryExpressionStress.ts"
             "TypeScript/tests/cases/compiler/binderBinaryExpressionStressJs.ts"
@@ -1621,7 +1620,6 @@ main() {
             "TypeScript/tests/cases/compiler/binaryArithmeticControlFlowGraphNotTooLarge.ts"
             "TypeScript/tests/cases/compiler/privacyFunctionReturnTypeDeclFile.ts"
             "TypeScript/tests/cases/compiler/privacyAccessorDeclFile.ts"
-            "TypeScript/tests/cases/compiler/resolvingClassDeclarationWhenInBaseTypeResolution.ts"
         )
     fi
     
@@ -1666,7 +1664,6 @@ main() {
         
         local small_files=(
             "TypeScript/tests/cases/compiler/typedArrays.ts"
-            "TypeScript/tests/cases/compiler/bluebirdStaticThis.ts"
             "TypeScript/tests/cases/compiler/privacyVar.ts"
         )
         
