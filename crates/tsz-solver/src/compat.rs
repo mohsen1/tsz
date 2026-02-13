@@ -622,7 +622,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         strict_function_types: bool,
     ) -> bool {
         // Fast path checks
-        if let Some(result) = self.check_assignable_fast_path(source, target, false) {
+        if let Some(result) = self.check_assignable_fast_path(source, target) {
             return result;
         }
 
@@ -657,12 +657,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Check fast-path assignability conditions.
     /// Returns Some(result) if fast path applies, None if need to do full check.
-    fn check_assignable_fast_path(
-        &self,
-        source: TypeId,
-        target: TypeId,
-        skip_error_check: bool,
-    ) -> Option<bool> {
+    fn check_assignable_fast_path(&self, source: TypeId, target: TypeId) -> Option<bool> {
         // Same type
         if source == target {
             return Some(true);
@@ -694,10 +689,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return Some(true);
         }
 
-        // Error types are NOT assignable to other types (except themselves)
-        // This prevents "error poisoning" where unresolved types mask real errors
-        if !skip_error_check && (source == TypeId::ERROR || target == TypeId::ERROR) {
-            return Some(source == target);
+        // Error types are assignable to/from everything (like `any`).
+        // In tsc, errorType silences further errors to prevent cascading diagnostics.
+        if source == TypeId::ERROR || target == TypeId::ERROR {
+            return Some(true);
         }
 
         // unknown is not assignable to non-top types
@@ -727,9 +722,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == TypeId::NEVER {
             return true;
         }
+        // Error types are assignable to/from everything (like `any` in tsc)
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            // Error types are only assignable to themselves
-            return source == target;
+            return true;
         }
         if source == TypeId::UNKNOWN {
             return false;
@@ -775,12 +770,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             });
         }
 
-        // Error types should produce ErrorType failure reason
+        // Error types are assignable to/from everything (like `any` in tsc)
+        // No failure to explain — suppress cascading diagnostics
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return Some(SubtypeFailureReason::ErrorType {
-                source_type: source,
-                target_type: target,
-            });
+            return None;
         }
 
         // Weak type violations
@@ -1054,9 +1047,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == TypeId::ANY || source == TypeId::NEVER {
             return true;
         }
-        // ERROR types are NOT assignable to empty object (only reflexive)
+        // Error types are assignable to everything (like `any` in tsc)
         if source == TypeId::ERROR {
-            return false;
+            return true;
         }
         if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
             return true;

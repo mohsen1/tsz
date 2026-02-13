@@ -2249,11 +2249,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        // Error types are only compatible with themselves.
-        // Error suppression belongs in the compatibility layer (CompatChecker),
-        // not in the strict subtype engine.
+        // Error types are assignable to/from everything (like `any` in tsc).
+        // This prevents cascading diagnostics when type resolution fails.
         if source == TypeId::ERROR || target == TypeId::ERROR {
-            return SubtypeResult::False;
+            return SubtypeResult::True;
         }
 
         // Fast path: distinct disjoint unit types are never subtypes.
