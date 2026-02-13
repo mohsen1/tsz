@@ -3142,11 +3142,34 @@ impl ParserState {
         {
             let member = self.parse_class_member();
             if !member.is_none() {
+                // Consume trailing semicolons only after members that end with `;`
+                // (property declarations, index signatures, abstract methods/accessors).
+                // Members with bodies (ending with `}`) should NOT consume the
+                // following `;`, allowing it to become a SemicolonClassElement.
+                let has_body = self.arena.get(member).is_some_and(|n| match n.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_function(n)
+                        .is_some_and(|f| !f.body.is_none()),
+                    k if k == syntax_kind_ext::CONSTRUCTOR => self
+                        .arena
+                        .get_constructor(n)
+                        .is_some_and(|c| !c.body.is_none()),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(n)
+                            .is_some_and(|a| !a.body.is_none())
+                    }
+                    k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => true,
+                    _ => false,
+                });
+                if !has_body {
+                    self.parse_optional(SyntaxKind::SemicolonToken);
+                }
                 members.push(member);
             }
-
-            // Handle semicolons
-            self.parse_optional(SyntaxKind::SemicolonToken);
         }
 
         self.make_node_list(members)
