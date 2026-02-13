@@ -1325,6 +1325,11 @@ impl<'a> CheckerState<'a> {
 
         // Track base class constructor for inheritance
         let mut inherited_construct_signatures: Option<Vec<CallSignature>> = None;
+        // Track the base expression's type when it's a type parameter.
+        // Used to intersect with the final constructor type so that
+        // `class extends base` (where base: T) produces `T & ConstructorType`,
+        // making the result assignable to T (mixin pattern).
+        let mut base_type_param: Option<TypeId> = None;
 
         // Merge base class static properties (derived members take precedence)
         if let Some(ref heritage_clauses) = class.heritage_clauses {
@@ -1412,6 +1417,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let Some(base_class_idx) = base_class_idx else {
+                    // Check if the base expression has a type parameter type (mixin pattern).
+                    // e.g., `class extends base` where `base: T extends Constructor<{}>`.
+                    let expr_type = self.get_type_of_node(expr_idx);
+                    if tsz_solver::visitor::type_param_info(self.ctx.types, expr_type).is_some() {
+                        base_type_param = Some(expr_type);
+                    }
                     if let Some(base_constructor_type) =
                         self.base_constructor_type_from_expression(expr_idx, type_arguments)
                     {
@@ -1618,6 +1629,15 @@ impl<'a> CheckerState<'a> {
         // Track abstract classes
         if is_abstract_class {
             self.ctx.abstract_constructor_types.insert(constructor_type);
+        }
+
+        // Mixin pattern: when a class extends a type-parameter-typed base
+        // (e.g., `class extends base` where `base: T extends Constructor<{}>`),
+        // intersect the constructor type with T so that the result is assignable
+        // to T. This makes `T & ConstructorType <: T` succeed via the
+        // intersection rule in the subtype checker.
+        if let Some(base_tp) = base_type_param {
+            return self.ctx.types.intersection(vec![base_tp, constructor_type]);
         }
 
         constructor_type
