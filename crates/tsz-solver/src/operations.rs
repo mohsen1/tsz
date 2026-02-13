@@ -1056,11 +1056,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: arg_types.len(),
             };
         }
+        // Final check: verify arguments against instantiated parameters
+        tracing::debug!(
+            "Final argument check with {} instantiated params",
+            instantiated_params.len()
+        );
+        for (i, (param, &arg_type)) in instantiated_params.iter().zip(arg_types.iter()).enumerate()
+        {
+            tracing::debug!("  Param {}: {:?}", i, self.interner.lookup(param.type_id));
+            tracing::debug!("  Arg   {}: {:?}", i, self.interner.lookup(arg_type));
+        }
         if let Some(result) =
             self.check_argument_types_with(&instantiated_params, arg_types, true, func.is_method)
         {
+            tracing::debug!("Final check failed: {:?}", result);
             return result;
         }
+        tracing::debug!("Final check succeeded");
 
         let return_type = instantiate_type(self.interner, func.return_type, &final_subst);
         CallResult::Success(return_type)
@@ -1275,8 +1287,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.checker
                     .is_assignable_to_bivariant_callback(expanded_arg_type, param_type)
             } else if strict {
-                self.checker
-                    .is_assignable_to_strict(expanded_arg_type, param_type)
+                let result = self
+                    .checker
+                    .is_assignable_to_strict(expanded_arg_type, param_type);
+                if !result {
+                    tracing::debug!(
+                        "Strict assignability failed at index {}: {:?} <: {:?}",
+                        i,
+                        self.interner.lookup(expanded_arg_type),
+                        self.interner.lookup(param_type)
+                    );
+                }
+                result
             } else {
                 self.checker.is_assignable_to(expanded_arg_type, param_type)
             };
