@@ -2777,8 +2777,17 @@ impl ParserState {
                 self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
             }
 
+            // CoverInitializedName: `{ x = expr }` in destructuring patterns
+            // ECMAScript: CoverInitializedName[Yield] : IdentifierReference[?Yield] Initializer[In, ?Yield]
+            let has_equals = self.parse_optional(SyntaxKind::EqualsToken);
+            let initializer = if has_equals {
+                self.parse_assignment_expression()
+            } else {
+                NodeIndex::NONE
+            };
+
             let end_pos = self.token_end();
-            // Create SHORTHAND_PROPERTY_ASSIGNMENT node for `{ name }` syntax
+            // Create SHORTHAND_PROPERTY_ASSIGNMENT node for `{ name }` or `{ name = expr }` syntax
             self.arena.add_shorthand_property(
                 syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT,
                 start_pos,
@@ -2786,8 +2795,8 @@ impl ParserState {
                 crate::parser::node::ShorthandPropertyData {
                     modifiers: None,
                     name,
-                    equals_token: false,
-                    object_assignment_initializer: NodeIndex::NONE,
+                    equals_token: has_equals,
+                    object_assignment_initializer: initializer,
                 },
             )
         }
