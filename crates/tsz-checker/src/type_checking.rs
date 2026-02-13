@@ -3204,7 +3204,11 @@ impl<'a> CheckerState<'a> {
                     if (decl_is_namespace && other_is_variable)
                         || (decl_is_variable && other_is_namespace)
                     {
-                        let namespace_idx = if decl_is_namespace { decl_idx } else { other_idx };
+                        let namespace_idx = if decl_is_namespace {
+                            decl_idx
+                        } else {
+                            other_idx
+                        };
                         let namespace_is_instantiated =
                             self.is_namespace_declaration_instantiated(namespace_idx);
                         if namespace_is_instantiated {
