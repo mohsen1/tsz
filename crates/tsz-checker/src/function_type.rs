@@ -1321,13 +1321,6 @@ impl<'a> CheckerState<'a> {
 
                     // For possibly-nullish values in non-strict mode, don't error
                     // But for definitely-nullish values in non-strict mode, fall through to error reporting below
-                    tracing::debug!(
-                        strict_null_checks = self.ctx.compiler_options.strict_null_checks,
-                        is_type_nullish,
-                        object_type = object_type_for_access.0,
-                        cause_type = cause.0,
-                        "PossiblyNullOrUndefined check"
-                    );
                     if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
                         return self
                             .apply_flow_narrowing(idx, property_type.unwrap_or(TypeId::ERROR));

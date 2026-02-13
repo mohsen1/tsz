@@ -1627,6 +1627,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.type_contains_placeholder(this_type, var_map, visited)
                     })
                     || self.type_contains_placeholder(shape.return_type, var_map, visited)
+                    || shape.type_predicate.as_ref().is_some_and(|pred| {
+                        pred.type_id
+                            .is_some_and(|ty| self.type_contains_placeholder(ty, var_map, visited))
+                    })
             }
             TypeKey::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
@@ -1642,6 +1646,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }) || sig.this_type.is_some_and(|this_type| {
                         self.type_contains_placeholder(this_type, var_map, visited)
                     }) || self.type_contains_placeholder(sig.return_type, var_map, visited)
+                        || sig.type_predicate.as_ref().is_some_and(|pred| {
+                            pred.type_id.is_some_and(|ty| {
+                                self.type_contains_placeholder(ty, var_map, visited)
+                            })
+                        })
                 });
                 if in_call {
                     return true;
@@ -1658,6 +1667,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }) || sig.this_type.is_some_and(|this_type| {
                         self.type_contains_placeholder(this_type, var_map, visited)
                     }) || self.type_contains_placeholder(sig.return_type, var_map, visited)
+                        || sig.type_predicate.as_ref().is_some_and(|pred| {
+                            pred.type_id.is_some_and(|ty| {
+                                self.type_contains_placeholder(ty, var_map, visited)
+                            })
+                        })
                 });
                 if in_construct {
                     return true;
@@ -2112,6 +2126,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeKey::Function(s_fn_id)), Some(TypeKey::Function(t_fn_id))) => {
                 let s_fn = self.interner.function_shape(s_fn_id);
                 let t_fn = self.interner.function_shape(t_fn_id);
+
+                tracing::debug!(
+                    has_s_pred = s_fn.type_predicate.is_some(),
+                    has_t_pred = t_fn.type_predicate.is_some(),
+                    "constrain_types_impl: Function"
+                );
 
                 if s_fn.type_params.is_empty() {
                     // Non-generic source function - direct comparison

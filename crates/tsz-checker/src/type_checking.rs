@@ -3039,6 +3039,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            self.check_merged_enum_declaration_diagnostics(&declarations);
+
             let mut conflicts = FxHashSet::default();
             let mut namespace_order_errors = FxHashSet::default();
             for i in 0..declarations.len() {
@@ -3721,6 +3723,94 @@ impl<'a> CheckerState<'a> {
                 _ => {}
             }
             current = parent;
+        }
+    }
+
+    /// Check diagnostics specific to merged enum declarations.
+    ///
+    /// - TS2432: In an enum with multiple declarations, only one declaration can
+    ///   omit an initializer for its first enum element.
+    /// - TS2300: Duplicate enum member names across different enum declarations.
+    fn check_merged_enum_declaration_diagnostics(&mut self, declarations: &[(NodeIndex, u32)]) {
+        use crate::types::diagnostics::diagnostic_codes;
+        use rustc_hash::FxHashMap;
+
+        let enum_declarations: Vec<NodeIndex> = declarations
+            .iter()
+            .filter_map(|(decl_idx, flags)| {
+                if (flags & symbol_flags::ENUM) != 0 {
+                    Some(*decl_idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if enum_declarations.len() <= 1 {
+            return;
+        }
+
+        let mut first_member_without_initializer = Vec::new();
+        let mut first_decl_for_member_by_name: FxHashMap<String, NodeIndex> = FxHashMap::default();
+
+        for &enum_decl_idx in &enum_declarations {
+            let Some(enum_decl_node) = self.ctx.arena.get(enum_decl_idx) else {
+                continue;
+            };
+            let Some(enum_decl) = self.ctx.arena.get_enum(enum_decl_node) else {
+                continue;
+            };
+
+            if let Some(&first_member_idx) = enum_decl.members.nodes.first()
+                && let Some(first_member_node) = self.ctx.arena.get(first_member_idx)
+                && let Some(first_member) = self.ctx.arena.get_enum_member(first_member_node)
+                && first_member.initializer.is_none()
+            {
+                first_member_without_initializer.push(first_member_idx);
+            }
+
+            for &member_idx in &enum_decl.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+                    continue;
+                };
+                let Some(member_name_node) = self.ctx.arena.get(member.name) else {
+                    continue;
+                };
+
+                let member_name =
+                    if let Some(ident) = self.ctx.arena.get_identifier(member_name_node) {
+                        ident.escaped_text.clone()
+                    } else if let Some(literal) = self.ctx.arena.get_literal(member_name_node) {
+                        literal.text.clone()
+                    } else {
+                        continue;
+                    };
+
+                if let Some(&first_decl_idx) = first_decl_for_member_by_name.get(&member_name) {
+                    if first_decl_idx != enum_decl_idx {
+                        self.error_at_node_msg(
+                            member.name,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            &[&member_name],
+                        );
+                    }
+                } else {
+                    first_decl_for_member_by_name.insert(member_name.clone(), enum_decl_idx);
+                }
+            }
+        }
+
+        if first_member_without_initializer.len() > 1 {
+            for &member_idx in &first_member_without_initializer {
+                self.error_at_node_msg(
+                    member_idx,
+                    diagnostic_codes::IN_AN_ENUM_WITH_MULTIPLE_DECLARATIONS_ONLY_ONE_DECLARATION_CAN_OMIT_AN_INITIALIZ,
+                    &[],
+                );
+            }
         }
     }
 
