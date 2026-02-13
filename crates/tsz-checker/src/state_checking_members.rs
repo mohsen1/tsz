@@ -2515,6 +2515,11 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Check for await expressions in the initializer (TS1308)
+        if !prop.initializer.is_none() {
+            self.check_await_expression(prop.initializer);
+        }
+
         // If property has type annotation and initializer, check type compatibility
         if !prop.type_annotation.is_none() && !prop.initializer.is_none() {
             let declared_type = self.get_type_from_type_node(prop.type_annotation);
