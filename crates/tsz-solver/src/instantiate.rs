@@ -680,6 +680,15 @@ impl<'a> TypeInstantiator<'a> {
             // Task #46: Meta-type reduction for O(1) equality
             TypeKey::KeyOf(operand) => {
                 let inst_operand = self.instantiate(*operand);
+                // Don't eagerly evaluate if the operand still contains type parameters.
+                // This prevents premature evaluation of `keyof T` where T is an inference
+                // placeholder (e.g. during compute_contextual_types), which would resolve
+                // to `keyof <constraint>` instead of waiting for T to be inferred.
+                // Without this, mapped types like `{ [P in keyof T]: ... }` collapse to `{}`
+                // because `keyof object` = `never`.
+                if crate::visitor::contains_type_parameters(self.interner, inst_operand) {
+                    return self.interner.intern(TypeKey::KeyOf(inst_operand));
+                }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
                 crate::evaluate::evaluate_keyof(self.interner, inst_operand)
             }
