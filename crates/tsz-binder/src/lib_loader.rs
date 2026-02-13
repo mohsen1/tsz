@@ -300,19 +300,9 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "ErrorOptions",
     "Disposable",
     "AsyncDisposable",
-    "DataView",
-    "Int8Array",
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "Int16Array",
-    "Uint16Array",
-    "Int32Array",
-    "Uint32Array",
-    "Float32Array",
-    "Float64Array",
-    "ArrayBuffer",
-    "ArrayBufferConstructor",
-    "TypedArray",
+    // Note: DataView, Int8Array, Uint8Array, etc. are NOT here because they
+    // are defined in ES5 lib (typed arrays were introduced in ES5.1).
+    // Only their iterator methods and Uint8ClampedArray are ES2015+.
 ];
 
 /// Check if a type name is an ES2015+ feature that requires specific lib support.
