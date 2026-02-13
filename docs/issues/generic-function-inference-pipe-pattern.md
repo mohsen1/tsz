@@ -80,6 +80,31 @@ Add a check in `constrain_types` for when:
 
 In this case, treat it as a higher-order polymorphic case and preserve the generic signature.
 
+## Verification
+
+Created minimal test case in `tmp/pipe_simple.ts`:
+```typescript
+declare function pipe<A extends any[], B, C>(
+  ab: (...args: A) => B,
+  bc: (b: B) => C
+): (...args: A) => C;
+
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): { value: V };
+
+const f01 = pipe(list, box);
+```
+
+Running tsz produces:
+```
+error TS2769: No overload matches this call.
+  Argument of type '{ (x: V): { value: V } }' is not assignable to parameter of type '(b: unknown) => unknown'.
+```
+
+The `(b: unknown) => unknown` confirms that `B` is being inferred as `unknown`.
+
+Running TSC produces: **No errors** ✓
+
 ## Next Steps
 
 1. Study TypeScript's `checker.ts` implementation of `inferTypes` and `getInferenceMapper`
