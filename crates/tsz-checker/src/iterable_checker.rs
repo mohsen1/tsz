@@ -335,7 +335,7 @@ impl<'a> CheckerState<'a> {
     /// Get the return type of calling a function type.
     /// Returns ANY if the type is not callable.
     fn get_call_return_type(&self, fn_type: TypeId) -> TypeId {
-        use tsz_solver::type_queries::{get_callable_shape, get_function_shape};
+        use tsz_solver::type_queries::{get_call_signatures, get_function_shape};
 
         if fn_type == TypeId::ANY {
             return TypeId::ANY;
@@ -343,9 +343,8 @@ impl<'a> CheckerState<'a> {
         if let Some(sig) = get_function_shape(self.ctx.types, fn_type) {
             return sig.return_type;
         }
-        if let Some(callable) = get_callable_shape(self.ctx.types, fn_type) {
-            return callable
-                .call_signatures
+        if let Some(call_signatures) = get_call_signatures(self.ctx.types, fn_type) {
+            return call_signatures
                 .first()
                 .map(|sig| sig.return_type)
                 .unwrap_or(TypeId::ANY);

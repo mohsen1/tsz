@@ -11,6 +11,7 @@
 //! This module extends CheckerState with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
+use crate::query_boundaries::type_computation::{is_type_parameter_type, union_members};
 use crate::state::CheckerState;
 use crate::types::{Diagnostic, DiagnosticCategory};
 use tsz_parser::parser::NodeIndex;
@@ -36,13 +37,11 @@ impl<'a> CheckerState<'a> {
     /// member is an unevaluated Application type that the solver's `NumberLikeVisitor`
     /// can't handle.
     pub(crate) fn evaluate_type_for_binary_ops(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries::get_union_members;
-
         // First try top-level evaluation
         let evaluated = self.evaluate_type_with_resolution(type_id);
 
         // If it's a union, evaluate each member individually
-        if let Some(members) = get_union_members(self.ctx.types, evaluated) {
+        if let Some(members) = union_members(self.ctx.types, evaluated) {
             let mut changed = false;
             let new_members: Vec<TypeId> = members
                 .iter()
@@ -70,64 +69,47 @@ impl<'a> CheckerState<'a> {
     /// `NoopResolver` and can't resolve these. This method uses the Judge (which has access
     /// to the TypeEnvironment resolver) to evaluate such types into concrete object types.
     fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
-        use tsz_solver::TypeKey;
-        match self.ctx.types.lookup(type_id) {
-            Some(
-                TypeKey::Mapped(_)
-                | TypeKey::Conditional(_)
-                | TypeKey::Application(_)
-                | TypeKey::Lazy(_),
-            ) => {
-                let evaluated = self.judge_evaluate(type_id);
-                if evaluated != type_id {
-                    return evaluated;
-                }
+        use tsz_solver::type_queries::{
+            EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
+        };
+        if let EvaluationNeeded::Union(members) = classify_for_evaluation(self.ctx.types, type_id) {
+            // Distribute evaluation over union members so lazy/application/etc.
+            // inside a union get resolved through the checker's type environment.
+            let mut changed = false;
+            let evaluated: Vec<TypeId> = members
+                .iter()
+                .map(|&member| {
+                    let ev = self.evaluate_contextual_type(member);
+                    if ev != member {
+                        changed = true;
+                    }
+                    ev
+                })
+                .collect();
+            return if changed {
+                self.ctx.types.union(evaluated)
+            } else {
                 type_id
-            }
-            Some(TypeKey::Union(list_id)) => {
-                // Distribute evaluation over union members so Lazy/Application/etc.
-                // inside a union get resolved through the checker's type environment.
-                let members = self.ctx.types.type_list(list_id);
-                let mut changed = false;
-                let evaluated: Vec<TypeId> = members
-                    .iter()
-                    .map(|&m| {
-                        let ev = self.evaluate_contextual_type(m);
-                        if ev != m {
-                            changed = true;
-                        }
-                        ev
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.union(evaluated)
-                } else {
-                    type_id
-                }
-            }
-            Some(TypeKey::Intersection(list_id)) => {
-                // Distribute evaluation over intersection members so Lazy/Application/etc.
-                // inside an intersection get resolved through the checker's type environment.
-                let members = self.ctx.types.type_list(list_id);
-                let mut changed = false;
-                let evaluated: Vec<TypeId> = members
-                    .iter()
-                    .map(|&m| {
-                        let ev = self.evaluate_contextual_type(m);
-                        if ev != m {
-                            changed = true;
-                        }
-                        ev
-                    })
-                    .collect();
-                if changed {
-                    self.ctx.types.intersection(evaluated)
-                } else {
-                    type_id
-                }
-            }
-            _ => type_id,
+            };
         }
+
+        let needs_evaluation = get_lazy_def_id(self.ctx.types, type_id).is_some()
+            || matches!(
+                classify_for_evaluation(self.ctx.types, type_id),
+                EvaluationNeeded::Application { .. }
+                    | EvaluationNeeded::Mapped { .. }
+                    | EvaluationNeeded::Conditional { .. }
+            );
+
+        if !needs_evaluation {
+            return type_id;
+        }
+
+        let evaluated = self.judge_evaluate(type_id);
+        if evaluated != type_id {
+            return evaluated;
+        }
+        type_id
     }
 
     /// Get the type of a conditional expression (ternary operator).
@@ -1061,7 +1043,11 @@ impl<'a> CheckerState<'a> {
                 // TS2322: The right-hand side of an 'in' expression must be assignable to 'object'
                 // This prevents using 'in' with primitives like string | number
                 if right_type != TypeId::ANY && right_type != TypeId::ERROR {
-                    if !self.is_assignable_to(right_type, TypeId::OBJECT) {
+                    if self.should_report_assignability_mismatch(
+                        right_type,
+                        TypeId::OBJECT,
+                        right_idx,
+                    ) {
                         self.error_type_not_assignable_with_reason_at(
                             right_type,
                             TypeId::OBJECT,
@@ -1180,8 +1166,8 @@ impl<'a> CheckerState<'a> {
             if is_equality_op
                 && left_narrow != TypeId::ERROR
                 && right_narrow != TypeId::ERROR
-                && !tsz_solver::type_queries::is_type_parameter(self.ctx.types, left_narrow)
-                && !tsz_solver::type_queries::is_type_parameter(self.ctx.types, right_narrow)
+                && !is_type_parameter_type(self.ctx.types, left_narrow)
+                && !is_type_parameter_type(self.ctx.types, right_narrow)
                 && self.types_have_no_overlap(left_narrow, right_narrow)
             {
                 use crate::types::diagnostics::{
@@ -1384,10 +1370,8 @@ impl<'a> CheckerState<'a> {
                 // Skip TS2367 for type parameters — they can be instantiated
                 // to any type, so comparisons like `value != null` in generic
                 // functions are valid (e.g., `<T>(value: T) => value != null`).
-                let left_is_type_param =
-                    tsz_solver::type_queries::is_type_parameter(self.ctx.types, left_type);
-                let right_is_type_param =
-                    tsz_solver::type_queries::is_type_parameter(self.ctx.types, right_type);
+                let left_is_type_param = is_type_parameter_type(self.ctx.types, left_type);
+                let right_is_type_param = is_type_parameter_type(self.ctx.types, right_type);
                 if !left_is_type_param && !right_is_type_param {
                     // Check if the types have any overlap
                     if !self.are_types_overlapping(left_type, right_type) {

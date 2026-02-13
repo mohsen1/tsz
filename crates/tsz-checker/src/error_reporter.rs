@@ -1364,27 +1364,26 @@ impl<'a> CheckerState<'a> {
         names: &mut Vec<String>,
         depth: usize,
     ) {
-        use tsz_solver::TypeKey;
+        use crate::query_boundaries::diagnostics::{
+            PropertyTraversal, classify_property_traversal,
+        };
 
         if depth > 5 {
             return;
         }
 
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
+        match classify_property_traversal(self.ctx.types, type_id) {
+            PropertyTraversal::Object(shape) => {
                 for prop in shape.properties.iter() {
                     names.push(self.ctx.types.resolve_atom_ref(prop.name).to_string());
                 }
             }
-            Some(TypeKey::Callable(callable_id)) => {
-                let shape = self.ctx.types.callable_shape(callable_id);
+            PropertyTraversal::Callable(shape) => {
                 for prop in shape.properties.iter() {
                     names.push(self.ctx.types.resolve_atom_ref(prop.name).to_string());
                 }
             }
-            Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
+            PropertyTraversal::Members(members) => {
                 for &member in members.iter() {
                     self.collect_type_property_names_inner(member, names, depth + 1);
                 }

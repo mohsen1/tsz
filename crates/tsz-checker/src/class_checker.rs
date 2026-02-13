@@ -10,6 +10,7 @@
 //! This module extends CheckerState with class/interface-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
+use crate::query_boundaries::class::should_report_member_type_mismatch;
 use crate::state::CheckerState;
 use crate::types::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
@@ -551,18 +552,12 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
-
-                    if let Some((pos, end)) = self.get_node_span(member_name_idx) {
-                        self.error(
-                            pos,
-                            end - pos,
-                            format!(
-                                "Type '{}' is not assignable to type '{}'.",
-                                member_type_str, base_type_str
-                            ),
-                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                        );
-                    }
+                    self.report_type_not_assignable_detail(
+                        member_name_idx,
+                        &member_type_str,
+                        &base_type_str,
+                        diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                    );
                 }
             }
         }
@@ -780,9 +775,8 @@ impl<'a> CheckerState<'a> {
                             inherited_member_sources.get(&member_key)
                         {
                             if prev_base_name != &base_name {
-                                let incompatible = !self
-                                    .is_assignable_to(member_type, *prev_member_type)
-                                    || !self.is_assignable_to(*prev_member_type, member_type);
+                                let incompatible =
+                                    !self.are_mutually_assignable(member_type, *prev_member_type);
                                 if incompatible {
                                     self.error_at_node(
                                         iface_data.name,
@@ -1032,7 +1026,12 @@ impl<'a> CheckerState<'a> {
                             };
 
                             if param_count_incompatible
-                                || !self.is_assignable_to(*member_type, base_type)
+                                || should_report_member_type_mismatch(
+                                    self,
+                                    *member_type,
+                                    base_type,
+                                    *derived_member_idx,
+                                )
                             {
                                 let member_type_str = self.format_type(*member_type);
                                 let base_type_str = self.format_type(base_type);
@@ -1045,27 +1044,13 @@ impl<'a> CheckerState<'a> {
                                     ),
                                     diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                 );
-
-                                if let Some((pos, end)) = self.get_node_span(iface_data.name) {
-                                    self.error(
-                                        pos,
-                                        end - pos,
-                                        format!(
-                                            "Types of property '{}' are incompatible.",
-                                            member_name
-                                        ),
-                                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                                    );
-                                    self.error(
-                                        pos,
-                                        end - pos,
-                                        format!(
-                                            "Type '{}' is not assignable to type '{}'.",
-                                            member_type_str, base_type_str
-                                        ),
-                                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                                    );
-                                }
+                                self.report_property_type_incompatible_detail(
+                                    iface_data.name,
+                                    member_name,
+                                    &member_type_str,
+                                    &base_type_str,
+                                    diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                                );
 
                                 self.pop_type_parameters(base_type_param_updates);
                                 return;
@@ -1082,6 +1067,53 @@ impl<'a> CheckerState<'a> {
 
                 self.pop_type_parameters(base_type_param_updates);
             }
+        }
+    }
+
+    fn report_type_not_assignable_detail(
+        &mut self,
+        node_idx: NodeIndex,
+        source_type: &str,
+        target_type: &str,
+        code: u32,
+    ) {
+        if let Some((pos, end)) = self.get_node_span(node_idx) {
+            self.error(
+                pos,
+                end - pos,
+                format!(
+                    "Type '{}' is not assignable to type '{}'.",
+                    source_type, target_type
+                ),
+                code,
+            );
+        }
+    }
+
+    fn report_property_type_incompatible_detail(
+        &mut self,
+        node_idx: NodeIndex,
+        member_name: &str,
+        source_type: &str,
+        target_type: &str,
+        code: u32,
+    ) {
+        if let Some((pos, end)) = self.get_node_span(node_idx) {
+            self.error(
+                pos,
+                end - pos,
+                format!("Types of property '{}' are incompatible.", member_name),
+                code,
+            );
+            self.error(
+                pos,
+                end - pos,
+                format!(
+                    "Type '{}' is not assignable to type '{}'.",
+                    source_type, target_type
+                ),
+                code,
+            );
         }
     }
 
@@ -1481,7 +1513,12 @@ impl<'a> CheckerState<'a> {
                                 && class_member_type != TypeId::ANY
                                 && interface_member_type != TypeId::ERROR
                                 && class_member_type != TypeId::ERROR
-                                && !self.is_assignable_to(class_member_type, interface_member_type)
+                                && should_report_member_type_mismatch(
+                                    self,
+                                    class_member_type,
+                                    interface_member_type,
+                                    class_member_idx,
+                                )
                             {
                                 let expected_str = self.format_type(interface_member_type);
                                 let actual_str = self.format_type(class_member_type);

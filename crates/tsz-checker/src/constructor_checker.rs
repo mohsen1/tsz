@@ -14,6 +14,12 @@
 //! This module extends CheckerState with utilities for constructor-related
 //! type checking operations.
 
+use crate::query_boundaries::constructor_checker::{
+    AbstractConstructorKind, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
+    classify_for_abstract_constructor, classify_for_constructor_access,
+    classify_for_constructor_return_merge, classify_for_instance_type,
+    construct_signatures_for_type, has_construct_signatures,
+};
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -21,8 +27,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::get_callable_shape;
-use tsz_solver::type_queries_extended::classify_for_abstract_constructor;
 
 // =============================================================================
 // Constructor Type Checking Utilities
@@ -69,22 +73,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Construct signatures allow a type to be called with `new`.
     pub fn has_construct_sig(&self, type_id: TypeId) -> bool {
-        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
-            !shape.construct_signatures.is_empty()
-        } else {
-            false
-        }
+        has_construct_signatures(self.ctx.types, type_id)
     }
 
     /// Get the number of construct signatures for a type.
     ///
     /// Multiple construct signatures indicate constructor overloading.
     pub fn construct_signature_count(&self, type_id: TypeId) -> usize {
-        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
-            shape.construct_signatures.len()
-        } else {
-            0
-        }
+        construct_signatures_for_type(self.ctx.types, type_id).map_or(0, |sigs| sigs.len())
     }
 
     // =========================================================================
@@ -271,8 +267,6 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<TypeId> {
-        use tsz_solver::type_queries::{InstanceTypeKind, classify_for_instance_type};
-
         if ctor_type == TypeId::ERROR {
             return None;
         }
@@ -400,10 +394,6 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         base_instance_type: TypeId,
     ) -> TypeId {
-        use tsz_solver::type_queries::{
-            ConstructorReturnMergeKind, classify_for_constructor_return_merge,
-        };
-
         match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
             ConstructorReturnMergeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
@@ -464,10 +454,6 @@ impl<'a> CheckerState<'a> {
         base_props: &rustc_hash::FxHashMap<Atom, tsz_solver::PropertyInfo>,
     ) -> TypeId {
         use rustc_hash::FxHashMap;
-        use tsz_solver::type_queries::{
-            ConstructorReturnMergeKind, classify_for_constructor_return_merge,
-        };
-
         if base_props.is_empty() {
             return ctor_type;
         }
@@ -520,8 +506,6 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         _env: Option<&tsz_solver::TypeEnvironment>,
     ) -> Option<bool> {
-        use tsz_solver::type_queries::AbstractConstructorKind;
-
         // Helper to check if a TypeId is abstract
         // This handles both TypeQuery types (before resolution) and resolved Callable types
         let is_abstract_type = |type_id: TypeId| -> bool {
@@ -580,8 +564,6 @@ impl<'a> CheckerState<'a> {
         env: Option<&tsz_solver::TypeEnvironment>,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<MemberAccessLevel> {
-        use tsz_solver::type_queries::{ConstructorAccessKind, classify_for_constructor_access};
-
         if !visited.insert(type_id) {
             return None;
         }

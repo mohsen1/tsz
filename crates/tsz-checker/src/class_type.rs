@@ -20,6 +20,9 @@
 //! - Constructor accessibility tracking (private/protected)
 //! - Abstract class tracking
 
+use crate::query_boundaries::class_type::{
+    callable_shape_for_type, construct_signatures_for_type, object_shape_for_type,
+};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -32,7 +35,7 @@ use tsz_solver::types::Visibility;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
-    TypeLowering, TypeSubstitution, instantiate_type,
+    TypeLowering, TypeParamInfo, TypeSubstitution, instantiate_type,
 };
 
 // =============================================================================
@@ -717,8 +720,7 @@ impl<'a> CheckerState<'a> {
                     instantiate_type(self.ctx.types, base_instance_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
 
-                if let Some(base_shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, base_instance_type)
+                if let Some(base_shape) = object_shape_for_type(self.ctx.types, base_instance_type)
                 {
                     for base_prop in base_shape.properties.iter() {
                         properties
@@ -808,9 +810,7 @@ impl<'a> CheckerState<'a> {
                     // but get_object_shape needs the actual Object type
                     interface_type = self.resolve_lazy_type(interface_type);
 
-                    if let Some(shape) =
-                        tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
-                    {
+                    if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                         for prop in shape.properties.iter() {
                             properties.entry(prop.name).or_insert_with(|| prop.clone());
                         }
@@ -821,7 +821,7 @@ impl<'a> CheckerState<'a> {
                             Self::merge_index_signature(&mut number_index, idx.clone());
                         }
                     } else if let Some(shape) =
-                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, interface_type)
+                        callable_shape_for_type(self.ctx.types, interface_type)
                     {
                         for prop in shape.properties.iter() {
                             properties.entry(prop.name).or_insert_with(|| prop.clone());
@@ -865,9 +865,7 @@ impl<'a> CheckerState<'a> {
                 let interface_type =
                     self.merge_interface_heritage_types(&interface_decls, interface_type);
 
-                if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
-                {
+                if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                     for prop in shape.properties.iter() {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
                     }
@@ -877,8 +875,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref idx) = shape.number_index {
                         Self::merge_index_signature(&mut number_index, idx.clone());
                     }
-                } else if let Some(shape) =
-                    tsz_solver::type_queries::get_callable_shape(self.ctx.types, interface_type)
+                } else if let Some(shape) = callable_shape_for_type(self.ctx.types, interface_type)
                 {
                     for prop in shape.properties.iter() {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
@@ -1370,27 +1367,12 @@ impl<'a> CheckerState<'a> {
                                 base_constructor_type,
                                 &mut properties,
                             );
-                            // Also extract construct signatures for inheritance
-                            if let Some(base_shape) = tsz_solver::type_queries::get_callable_shape(
-                                self.ctx.types,
-                                base_constructor_type,
-                            ) {
-                                if !base_shape.construct_signatures.is_empty() {
-                                    let sigs: Vec<CallSignature> = base_shape
-                                        .construct_signatures
-                                        .iter()
-                                        .map(|sig| CallSignature {
-                                            type_params: class_type_params.clone(),
-                                            params: sig.params.clone(),
-                                            this_type: sig.this_type,
-                                            return_type: instance_type,
-                                            type_predicate: sig.type_predicate.clone(),
-                                            is_method: sig.is_method,
-                                        })
-                                        .collect();
-                                    inherited_construct_signatures = Some(sigs);
-                                }
-                            }
+                            inherited_construct_signatures = self
+                                .remap_inherited_construct_signatures(
+                                    base_constructor_type,
+                                    &class_type_params,
+                                    instance_type,
+                                );
                         }
                         break;
                     }
@@ -1445,27 +1427,11 @@ impl<'a> CheckerState<'a> {
                             base_constructor_type,
                             &mut properties,
                         );
-                        // Also extract construct signatures for inheritance
-                        if let Some(base_shape) = tsz_solver::type_queries::get_callable_shape(
-                            self.ctx.types,
+                        inherited_construct_signatures = self.remap_inherited_construct_signatures(
                             base_constructor_type,
-                        ) {
-                            if !base_shape.construct_signatures.is_empty() {
-                                let sigs: Vec<CallSignature> = base_shape
-                                    .construct_signatures
-                                    .iter()
-                                    .map(|sig| CallSignature {
-                                        type_params: class_type_params.clone(),
-                                        params: sig.params.clone(),
-                                        this_type: sig.this_type,
-                                        return_type: instance_type,
-                                        type_predicate: sig.type_predicate.clone(),
-                                        is_method: sig.is_method,
-                                    })
-                                    .collect();
-                                inherited_construct_signatures = Some(sigs);
-                            }
-                        }
+                            &class_type_params,
+                            instance_type,
+                        );
                     }
                     break;
                 };
@@ -1513,33 +1479,19 @@ impl<'a> CheckerState<'a> {
                     instantiate_type(self.ctx.types, base_constructor_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
 
-                if let Some(base_shape) = tsz_solver::type_queries::get_callable_shape(
-                    self.ctx.types,
-                    base_constructor_type,
-                ) {
+                if let Some(base_shape) =
+                    callable_shape_for_type(self.ctx.types, base_constructor_type)
+                {
                     for base_prop in base_shape.properties.iter() {
                         properties
                             .entry(base_prop.name)
                             .or_insert_with(|| base_prop.clone());
                     }
-                    // Store base class construct signatures for inheritance
-                    // The signatures are already instantiated with the derived class's type arguments
-                    if !base_shape.construct_signatures.is_empty() {
-                        // Adjust return type to be the derived class's instance type
-                        let sigs: Vec<CallSignature> = base_shape
-                            .construct_signatures
-                            .iter()
-                            .map(|sig| CallSignature {
-                                type_params: class_type_params.clone(),
-                                params: sig.params.clone(),
-                                this_type: sig.this_type,
-                                return_type: instance_type, // Use derived class's instance type
-                                type_predicate: sig.type_predicate.clone(),
-                                is_method: sig.is_method,
-                            })
-                            .collect();
-                        inherited_construct_signatures = Some(sigs);
-                    }
+                    inherited_construct_signatures = self.remap_inherited_construct_signatures(
+                        base_constructor_type,
+                        &class_type_params,
+                        instance_type,
+                    );
                 }
 
                 break;
@@ -1662,5 +1614,31 @@ impl<'a> CheckerState<'a> {
         }
 
         constructor_type
+    }
+
+    fn remap_inherited_construct_signatures(
+        &self,
+        constructor_type: TypeId,
+        class_type_params: &[TypeParamInfo],
+        instance_type: TypeId,
+    ) -> Option<Vec<CallSignature>> {
+        let signatures = construct_signatures_for_type(self.ctx.types, constructor_type)?;
+        if signatures.is_empty() {
+            return None;
+        }
+
+        Some(
+            signatures
+                .iter()
+                .map(|sig| CallSignature {
+                    type_params: class_type_params.to_vec(),
+                    params: sig.params.clone(),
+                    this_type: sig.this_type,
+                    return_type: instance_type,
+                    type_predicate: sig.type_predicate.clone(),
+                    is_method: sig.is_method,
+                })
+                .collect(),
+        )
     }
 }

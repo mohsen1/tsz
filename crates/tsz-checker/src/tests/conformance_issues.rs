@@ -765,6 +765,62 @@ class Child extends Parent {
     );
 }
 
+/// Seam test: TS2430 should be reported for incompatible interface member types.
+///
+/// Guards class_checker interface-extension compatibility after relation-helper refactors.
+#[test]
+fn test_interface_extension_incompatible_property_reports_ts2430() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+interface Base {
+  value: string;
+}
+
+interface Derived extends Base {
+  value: number;
+}
+        "#,
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant_diagnostics, 2430),
+        "Should emit TS2430 for incompatible interface extension member.\nActual errors: {:#?}",
+        relevant_diagnostics
+    );
+}
+
+/// Seam test: TS2367 should be reported when compared types have no overlap.
+///
+/// Guards overlap-check relation/query refactors used by equality comparisons.
+#[test]
+fn test_no_overlap_comparison_reports_ts2367() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+let x: "a" | "b" = "a";
+if (x === 42) {
+}
+        "#,
+    );
+
+    let relevant_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        has_error(&relevant_diagnostics, 2367),
+        "Should emit TS2367 for comparison of non-overlapping types.\nActual errors: {:#?}",
+        relevant_diagnostics
+    );
+}
+
 /// Issue: Computed property destructuring produces false TS2349
 ///
 /// From: computed-property-destructuring.md

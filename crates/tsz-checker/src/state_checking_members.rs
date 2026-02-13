@@ -2539,7 +2539,11 @@ impl<'a> CheckerState<'a> {
 
             if declared_type != TypeId::ANY
                 && !self.type_contains_error(declared_type)
-                && !self.is_assignable_to(init_type, declared_type)
+                && self.should_report_assignability_mismatch(
+                    init_type,
+                    declared_type,
+                    prop.initializer,
+                )
             {
                 self.error_type_not_assignable_with_reason_at(
                     init_type,
@@ -4579,9 +4583,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check if the types are comparable (assignable in either direction)
         // tsc uses: isTypeComparableTo(caseType, switchType) which checks both directions
-        if !self.is_assignable_to(effective_case_type, switch_type)
-            && !self.is_assignable_to(switch_type, effective_case_type)
-        {
+        if !self.are_mutually_assignable(effective_case_type, switch_type) {
             // TS2678: Type 'X' is not comparable to type 'Y'
             if let Some(loc) = self.get_source_location(case_expr) {
                 let case_str = self.format_type(effective_case_type);
