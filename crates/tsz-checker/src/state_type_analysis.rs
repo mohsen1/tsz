@@ -2486,17 +2486,10 @@ impl<'a> CheckerState<'a> {
                     if let Some(module_specifier) =
                         self.get_require_module_specifier(import.module_specifier)
                     {
-                        // Try to resolve the module from ambient module_exports first
-                        let exports_table = self
-                            .ctx
-                            .binder
-                            .module_exports
-                            .get(&module_specifier)
-                            .cloned()
-                            .or_else(|| {
-                                // Fallback: cross-file resolution for real multi-file projects
-                                self.resolve_cross_file_namespace_exports(&module_specifier)
-                            });
+                        // Resolve the canonical export surface (module-specifier variants,
+                        // cross-file tables, and export= member merging).
+                        let exports_table =
+                            self.resolve_effective_module_exports(&module_specifier);
 
                         if let Some(exports_table) = exports_table {
                             // Create an object type with all the module's exports
@@ -2628,15 +2621,7 @@ impl<'a> CheckerState<'a> {
                     // This is a namespace import: import * as ns from 'module'
                     // Create an object type containing all module exports
 
-                    // First, try local binder's module_exports
-                    let exports_table = self
-                        .ctx
-                        .binder
-                        .module_exports
-                        .get(module_name)
-                        .cloned()
-                        // Fall back to cross-file resolution if local lookup fails
-                        .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
+                    let exports_table = self.resolve_effective_module_exports(module_name);
 
                     if let Some(exports_table) = exports_table {
                         // Record cross-file symbol targets for all symbols in the table
@@ -2805,9 +2790,7 @@ impl<'a> CheckerState<'a> {
                 // If the module resolved externally but isn't part of the program,
                 // skip export member validation (treat as `any`).
                 let has_exports_table = self.ctx.binder.module_exports.contains_key(module_name)
-                    || self
-                        .resolve_cross_file_namespace_exports(module_name)
-                        .is_some();
+                    || self.resolve_effective_module_exports(module_name).is_some();
                 if module_exists
                     && !has_exports_table
                     && self.ctx.resolve_import_target(module_name).is_none()
@@ -2871,13 +2854,7 @@ impl<'a> CheckerState<'a> {
                         // If allowSyntheticDefaultImports is enabled, return namespace type
                         if self.ctx.allow_synthetic_default_imports() {
                             // Create a namespace type from all module exports
-                            let exports_table = self
-                                .ctx
-                                .binder
-                                .module_exports
-                                .get(module_name)
-                                .cloned()
-                                .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
+                            let exports_table = self.resolve_effective_module_exports(module_name);
 
                             if let Some(exports_table) = exports_table {
                                 use tsz_solver::PropertyInfo;

@@ -10,8 +10,8 @@
 use crate::lib_loader;
 use crate::module_resolution_debug::ModuleResolutionDebugger;
 use crate::{
-    ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, SymbolArena, SymbolId,
-    SymbolTable, flow_flags, symbol_flags,
+    ContainerKind, FlowNodeArena, FlowNodeId, Scope, ScopeContext, ScopeId, Symbol, SymbolArena,
+    SymbolId, SymbolTable, flow_flags, symbol_flags,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
@@ -287,6 +287,9 @@ pub struct BinderState {
     /// Modules that use `export =` syntax (CommonJS-style exports)
     /// Used by the import checker to validate require-style imports
     pub modules_with_export_equals: FxHashSet<String>,
+    /// Classification for modules with `export =`:
+    /// true when the module resolves to a non-module entity.
+    pub module_export_equals_non_module: FxHashMap<String, bool>,
 
     /// Flag indicating lib symbols have been merged into this binder's symbol arena.
     /// When true, get_symbol() should prefer local symbols over lib_binders lookups,
@@ -337,7 +340,7 @@ impl BinderState {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
-        BinderState {
+        let mut binder = BinderState {
             options,
             symbols: SymbolArena::new(),
             current_scope: SymbolTable::new(),
@@ -376,10 +379,13 @@ impl BinderState {
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
             modules_with_export_equals: FxHashSet::default(),
+            module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
             file_features: FileFeatures::NONE,
-        }
+        };
+        binder.recompute_module_export_equals_non_module();
+        binder
     }
 
     pub fn reset(&mut self) {
@@ -419,6 +425,8 @@ impl BinderState {
         self.resolved_export_cache.write().unwrap().clear();
         self.resolved_identifier_cache.write().unwrap().clear();
         self.shorthand_ambient_modules.clear();
+        self.modules_with_export_equals.clear();
+        self.module_export_equals_non_module.clear();
         self.lib_symbols_merged = false;
         self.break_targets.clear();
     }
@@ -493,7 +501,7 @@ impl BinderState {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
-        BinderState {
+        let mut binder = BinderState {
             options,
             symbols,
             current_scope: SymbolTable::new(),
@@ -532,10 +540,13 @@ impl BinderState {
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules: FxHashSet::default(),
             modules_with_export_equals: FxHashSet::default(),
+            module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
             file_features: FileFeatures::NONE,
-        }
+        };
+        binder.recompute_module_export_equals_non_module();
+        binder
     }
 
     /// Create a BinderState from existing bound state, preserving scopes.
@@ -601,7 +612,7 @@ impl BinderState {
             FlowNodeId::NONE
         });
 
-        BinderState {
+        let mut binder = BinderState {
             options,
             symbols,
             current_scope: SymbolTable::new(),
@@ -640,10 +651,13 @@ impl BinderState {
             resolved_identifier_cache: std::sync::RwLock::new(FxHashMap::default()),
             shorthand_ambient_modules,
             modules_with_export_equals,
+            module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
             break_targets: Vec::new(),
             file_features: FileFeatures::NONE,
-        }
+        };
+        binder.recompute_module_export_equals_non_module();
+        binder
     }
 
     /// Resolve an identifier to a symbol by walking up the persistent scope tree.
@@ -1600,6 +1614,7 @@ impl BinderState {
             // This enables type-only import elision and proper import validation
             let file_name = sf.file_name.clone();
             self.populate_module_exports_from_file_symbols(arena, &file_name);
+            self.recompute_module_export_equals_non_module();
         }
 
         self.sync_current_scope_to_persistent();
@@ -1717,6 +1732,155 @@ impl BinderState {
         if !file_exports.is_empty() {
             self.module_exports
                 .insert(file_name.to_string(), file_exports);
+        }
+    }
+
+    fn symbol_has_namespace_shape(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.symbols.get(sym_id) else {
+            return false;
+        };
+
+        if (symbol.flags
+            & (symbol_flags::MODULE | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+            != 0
+        {
+            return true;
+        }
+
+        if symbol.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
+            || symbol.members.as_ref().is_some_and(|tbl| !tbl.is_empty())
+        {
+            return true;
+        }
+
+        let mut declarations = symbol.declarations.clone();
+        if !symbol.value_declaration.is_none() && !declarations.contains(&symbol.value_declaration)
+        {
+            declarations.push(symbol.value_declaration);
+        }
+
+        declarations.into_iter().any(|decl_idx| {
+            if decl_idx.is_none() {
+                return false;
+            }
+            let Some(arena) = self.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                return false;
+            };
+            let Some(node) = arena.get(decl_idx) else {
+                return false;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                return false;
+            }
+            let Some(module_decl) = arena.get_module(node) else {
+                return false;
+            };
+            if module_decl.body.is_none() {
+                return false;
+            }
+            let Some(body_node) = arena.get(module_decl.body) else {
+                return false;
+            };
+            if body_node.kind == syntax_kind_ext::MODULE_BLOCK
+                && let Some(block) = arena.get_module_block(body_node)
+                && let Some(statements) = block.statements.as_ref()
+            {
+                return !statements.nodes.is_empty();
+            }
+            true
+        })
+    }
+
+    fn compute_module_export_equals_non_module(&self, exports: &SymbolTable) -> Option<bool> {
+        let export_assignment_targets = |sym: &Symbol| -> Vec<String> {
+            let mut targets = Vec::new();
+            let mut declarations = sym.declarations.clone();
+            if !sym.value_declaration.is_none() && !declarations.contains(&sym.value_declaration) {
+                declarations.push(sym.value_declaration);
+            }
+
+            for decl_idx in declarations {
+                if decl_idx.is_none() {
+                    continue;
+                }
+                let Some(arena) = self.declaration_arenas.get(&(sym.id, decl_idx)) else {
+                    continue;
+                };
+                let Some(node) = arena.get(decl_idx) else {
+                    continue;
+                };
+                if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                    continue;
+                }
+                let Some(assign) = arena.get_export_assignment(node) else {
+                    continue;
+                };
+                if !assign.is_export_equals {
+                    continue;
+                }
+                let Some(expr_node) = arena.get(assign.expression) else {
+                    continue;
+                };
+                let Some(id) = arena.get_identifier(expr_node) else {
+                    continue;
+                };
+                if !targets.contains(&id.escaped_text) {
+                    targets.push(id.escaped_text.clone());
+                }
+            }
+
+            targets
+        };
+
+        let export_equals_sym_id = exports.get("export=")?;
+
+        let Some(export_equals_symbol) = self.symbols.get(export_equals_sym_id) else {
+            return None;
+        };
+
+        let mut target_names = Vec::new();
+        if !export_equals_symbol.escaped_name.is_empty() {
+            target_names.push(export_equals_symbol.escaped_name.clone());
+        }
+        for target_name in export_assignment_targets(export_equals_symbol) {
+            if !target_names.contains(&target_name) {
+                target_names.push(target_name);
+            }
+        }
+
+        let has_distinct_named_exports = exports.iter().any(|(name, _)| {
+            name != "export=" && !target_names.iter().any(|target| target == name)
+        });
+
+        let mut candidate_ids = Vec::new();
+        let mut push_candidate = |candidate_id: SymbolId| {
+            if !candidate_ids.contains(&candidate_id) {
+                candidate_ids.push(candidate_id);
+            }
+        };
+
+        push_candidate(export_equals_sym_id);
+        for target_name in &target_names {
+            for candidate_id in self.symbols.find_all_by_name(&target_name) {
+                push_candidate(candidate_id);
+            }
+        }
+
+        let has_namespace_shape = candidate_ids
+            .into_iter()
+            .any(|candidate_id| self.symbol_has_namespace_shape(candidate_id));
+
+        Some(!has_namespace_shape && !has_distinct_named_exports)
+    }
+
+    /// Recompute `export =` non-module classification for all known module exports.
+    pub fn recompute_module_export_equals_non_module(&mut self) {
+        self.module_export_equals_non_module.clear();
+        for (module_name, exports) in self.module_exports.clone() {
+            if let Some(non_module) = self.compute_module_export_equals_non_module(&exports) {
+                self.module_export_equals_non_module
+                    .insert(module_name, non_module);
+            }
         }
     }
 
