@@ -1934,10 +1934,25 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.strict
     }
 
-    /// Check if noImplicitAny is enabled.
-    /// JavaScript files are checked if they reach this point (driver enforces checkJs).
+    /// Check if noImplicitAny is enabled for the current file.
+    /// For JavaScript files, noImplicitAny only applies when checkJs is also enabled.
+    /// This allows TS7006 to fire in .js files with --checkJs --strict.
     pub fn no_implicit_any(&self) -> bool {
-        self.compiler_options.no_implicit_any
+        if !self.compiler_options.no_implicit_any {
+            return false;
+        }
+
+        let is_js_file = self.file_name.ends_with(".js")
+            || self.file_name.ends_with(".jsx")
+            || self.file_name.ends_with(".mjs")
+            || self.file_name.ends_with(".cjs");
+
+        // JS files get noImplicitAny errors only when checkJs is enabled
+        if is_js_file {
+            self.compiler_options.check_js
+        } else {
+            true
+        }
     }
 
     /// Check if noImplicitReturns is enabled.

@@ -686,6 +686,7 @@ pub fn resolve_compiler_options(
 
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
+        resolved.checker.check_js = check_js;
     }
 
     Ok(resolved)
