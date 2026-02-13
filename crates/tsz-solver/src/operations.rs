@@ -1334,13 +1334,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let rest_arg_count = arg_count.saturating_sub(rest_start);
 
         let rest_param_type = self.unwrap_readonly(rest_param.type_id);
+        trace!(
+            rest_param_type_id = %rest_param_type.0,
+            rest_param_type_key = ?self.interner.lookup(rest_param_type),
+            "Extracting element type from rest parameter"
+        );
         match self.interner.lookup(rest_param_type) {
-            Some(TypeKey::Array(elem)) => Some(elem),
+            Some(TypeKey::Array(elem)) => {
+                trace!(
+                    elem_type_id = %elem.0,
+                    elem_type_key = ?self.interner.lookup(elem),
+                    "Extracted array element type"
+                );
+                Some(elem)
+            }
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 self.tuple_rest_element_type(&elements, offset, rest_arg_count)
             }
-            _ => Some(rest_param_type),
+            other => {
+                trace!(?other, "Rest param is not Array or Tuple, returning as-is");
+                Some(rest_param_type)
+            }
         }
     }
 

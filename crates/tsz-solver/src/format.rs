@@ -10,6 +10,7 @@ use crate::diagnostics::{
 use crate::types::*;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
+use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
@@ -283,24 +284,48 @@ impl<'a> TypeFormatter<'a> {
                 let app = self.interner.type_application(*app);
                 let base_key = self.interner.lookup(app.base);
 
+                trace!(
+                    base_type_id = %app.base.0,
+                    ?base_key,
+                    args_count = app.args.len(),
+                    "Formatting Application"
+                );
+
                 // Phase 4.2.1: Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
                 let base_str = if let Some(TypeKey::Lazy(def_id)) = base_key {
                     if let Some(def_store) = self.def_store {
                         if let Some(def) = def_store.get(def_id) {
-                            self.atom(def.name).to_string()
+                            let name = self.atom(def.name).to_string();
+                            trace!(
+                                def_id = %def_id.0,
+                                name = %name,
+                                kind = ?def.kind,
+                                type_params_count = def.type_params.len(),
+                                "Application base resolved from DefId"
+                            );
+                            name
                         } else {
+                            trace!(def_id = %def_id.0, "DefId not found in store");
                             format!("Lazy({})", def_id.0)
                         }
                     } else {
+                        trace!(def_id = %def_id.0, "No def_store available");
                         format!("Lazy({})", def_id.0)
                     }
                 } else {
-                    self.format(app.base)
+                    let formatted = self.format(app.base);
+                    trace!(
+                        base_formatted = %formatted,
+                        "Application base formatted (not Lazy)"
+                    );
+                    formatted
                 };
 
                 let args: Vec<String> = app.args.iter().map(|&arg| self.format(arg)).collect();
-                format!("{}<{}>", base_str, args.join(", "))
+                let result = format!("{}<{}>", base_str, args.join(", "));
+                trace!(result = %result, "Application formatted");
+                result
             }
             TypeKey::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(*cond_id);
