@@ -13,10 +13,3 @@ pub(crate) fn call_signatures_for_type(
 ) -> Option<Vec<tsz_solver::CallSignature>> {
     tsz_solver::type_queries::get_call_signatures(db, type_id)
 }
-
-pub(crate) fn construct_signatures_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<Vec<tsz_solver::CallSignature>> {
-    tsz_solver::type_queries::get_construct_signatures(db, type_id)
-}
