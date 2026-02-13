@@ -1525,6 +1525,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // Template Literal Type Spans: recurse into the type expression
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN => {
+                if let Some(span) = self.ctx.arena.get_template_span(node) {
+                    self.collect_infer_type_parameters_inner(span.expression, params);
+                }
+            }
             // Parenthesized Types: unwrap and check inner type
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
                 if let Some(wrapped) = self.ctx.arena.get_parenthesized(node) {
