@@ -383,10 +383,22 @@ pub fn look_ahead_is_import_equals(
 
     // Skip identifier, check for '='
     let next2 = scanner.scan();
-    let is_equals = next2 == SyntaxKind::EqualsToken;
+    if next2 == SyntaxKind::EqualsToken {
+        scanner.restore_state(snapshot);
+        return true;
+    }
+
+    // Also handle `import type X =` where `type` is modifier and X is the name
+    if next1 == SyntaxKind::TypeKeyword && is_identifier_or_keyword(next2) {
+        let next3 = scanner.scan();
+        if next3 == SyntaxKind::EqualsToken {
+            scanner.restore_state(snapshot);
+            return true;
+        }
+    }
 
     scanner.restore_state(snapshot);
-    is_equals
+    false
 }
 
 /// Look ahead to check if we have "import (" (dynamic import).
