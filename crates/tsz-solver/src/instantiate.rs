@@ -672,6 +672,17 @@ impl<'a> TypeInstantiator<'a> {
             TypeKey::IndexAccess(obj, idx) => {
                 let inst_obj = self.instantiate(*obj);
                 let inst_idx = self.instantiate(*idx);
+                // Don't eagerly evaluate if either part still contains type parameters.
+                // This prevents premature evaluation of `T[K]` or `T[keyof T]` where T
+                // is an inference placeholder, which would resolve through the constraint
+                // instead of waiting for the actual inferred type.
+                if crate::visitor::contains_type_parameters(self.interner, inst_obj)
+                    || crate::visitor::contains_type_parameters(self.interner, inst_idx)
+                {
+                    return self
+                        .interner
+                        .intern(TypeKey::IndexAccess(inst_obj, inst_idx));
+                }
                 // Evaluate immediately to achieve O(1) equality
                 crate::evaluate::evaluate_index_access(self.interner, inst_obj, inst_idx)
             }
