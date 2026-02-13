@@ -525,6 +525,25 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Check assignability and emit the standard TS2322/TS2345-style diagnostic when needed.
+    ///
+    /// Returns true when no diagnostic was emitted (assignable or intentionally skipped),
+    /// false when an assignability diagnostic was emitted.
+    pub(crate) fn check_assignable_or_report(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> bool {
+        if self.is_assignable_to(source, target)
+            || self.should_skip_weak_union_error(source, target, source_idx)
+        {
+            return true;
+        }
+        self.error_type_not_assignable_with_reason_at(source, target, source_idx);
+        false
+    }
+
     /// Check if source object literal has properties that don't exist in target.
     ///
     /// Uses TypeId-based freshness tracking (fresh object literals only).
