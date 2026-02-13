@@ -134,29 +134,66 @@ pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> Type
     }
 }
 
-/// Extension trait for iterators of TypeId to filter out NEVER types.
+/// Extension trait for TypeId with chainable methods for common operations.
 ///
-/// This eliminates the common pattern:
-/// ```ignore
-/// .filter_map(|&id| {
-///     let result = some_operation(id);
-///     if result != TypeId::NEVER {
-///         Some(result)
-///     } else {
-///         None
-///     }
-/// })
-/// ```
+/// This trait provides idiomatic Rust methods to reduce boilerplate when
+/// working with TypeId values. Methods are designed to be chainable and
+/// composable with iterator combinators.
 ///
-/// With this trait, you can write:
+/// # Examples
+///
 /// ```ignore
+/// // Filter out NEVER types in a map operation
 /// .filter_map(|&id| some_operation(id).non_never())
+///
+/// // Filter out UNKNOWN types
+/// .filter_map(|&id| some_operation(id).non_unknown())
+///
+/// // Chain predicates
+/// if type_id.is_never() || type_id.is_unknown() { ... }
+///
+/// // Map with NEVER as default for None
+/// let result = maybe_type.map_or_never(|t| transform(t));
 /// ```
+#[allow(dead_code)]
 pub trait TypeIdExt {
     /// Returns Some(self) if self is not NEVER, otherwise None.
     ///
     /// This is useful for filter_map chains where you want to skip NEVER results.
     fn non_never(self) -> Option<Self>
+    where
+        Self: Sized;
+
+    /// Returns Some(self) if self is not UNKNOWN, otherwise None.
+    ///
+    /// Useful for filtering out unknown types during type inference.
+    fn non_unknown(self) -> Option<Self>
+    where
+        Self: Sized;
+
+    /// Returns Some(self) if self is not ANY, otherwise None.
+    ///
+    /// Useful for filtering out any types in strict type checking contexts.
+    fn non_any(self) -> Option<Self>
+    where
+        Self: Sized;
+
+    /// Returns true if this is the NEVER type.
+    fn is_never(&self) -> bool;
+
+    /// Returns true if this is the UNKNOWN type.
+    fn is_unknown(&self) -> bool;
+
+    /// Returns true if this is the ANY type.
+    fn is_any(&self) -> bool;
+
+    /// Returns true if this is the VOID type.
+    fn is_void(&self) -> bool;
+
+    /// Maps an Option<TypeId> to TypeId, using NEVER as the default.
+    ///
+    /// This is equivalent to `option.unwrap_or(TypeId::NEVER)` but more expressive.
+    fn unwrap_or_never(option: Option<Self>) -> Self
     where
         Self: Sized;
 }
@@ -169,6 +206,49 @@ impl TypeIdExt for TypeId {
         } else {
             None
         }
+    }
+
+    #[inline]
+    fn non_unknown(self) -> Option<Self> {
+        if self != TypeId::UNKNOWN {
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn non_any(self) -> Option<Self> {
+        if self != TypeId::ANY {
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    fn is_never(&self) -> bool {
+        *self == TypeId::NEVER
+    }
+
+    #[inline]
+    fn is_unknown(&self) -> bool {
+        *self == TypeId::UNKNOWN
+    }
+
+    #[inline]
+    fn is_any(&self) -> bool {
+        *self == TypeId::ANY
+    }
+
+    #[inline]
+    fn is_void(&self) -> bool {
+        *self == TypeId::VOID
+    }
+
+    #[inline]
+    fn unwrap_or_never(option: Option<Self>) -> Self {
+        option.unwrap_or(TypeId::NEVER)
     }
 }
 
@@ -194,5 +274,48 @@ mod tests {
         assert!(!is_numeric_literal_name("foo"));
         assert!(!is_numeric_literal_name(""));
         assert!(!is_numeric_literal_name("abc123"));
+    }
+
+    #[test]
+    fn test_type_id_ext_non_methods() {
+        // Test non_never
+        assert_eq!(TypeId::UNKNOWN.non_never(), Some(TypeId::UNKNOWN));
+        assert_eq!(TypeId::NEVER.non_never(), None);
+
+        // Test non_unknown
+        assert_eq!(TypeId::NEVER.non_unknown(), Some(TypeId::NEVER));
+        assert_eq!(TypeId::UNKNOWN.non_unknown(), None);
+
+        // Test non_any
+        assert_eq!(TypeId::NEVER.non_any(), Some(TypeId::NEVER));
+        assert_eq!(TypeId::ANY.non_any(), None);
+    }
+
+    #[test]
+    fn test_type_id_ext_predicates() {
+        // Test is_never
+        assert!(TypeId::NEVER.is_never());
+        assert!(!TypeId::UNKNOWN.is_never());
+
+        // Test is_unknown
+        assert!(TypeId::UNKNOWN.is_unknown());
+        assert!(!TypeId::NEVER.is_unknown());
+
+        // Test is_any
+        assert!(TypeId::ANY.is_any());
+        assert!(!TypeId::NEVER.is_any());
+
+        // Test is_void
+        assert!(TypeId::VOID.is_void());
+        assert!(!TypeId::NEVER.is_void());
+    }
+
+    #[test]
+    fn test_type_id_ext_unwrap_or_never() {
+        assert_eq!(
+            TypeId::unwrap_or_never(Some(TypeId::UNKNOWN)),
+            TypeId::UNKNOWN
+        );
+        assert_eq!(TypeId::unwrap_or_never(None), TypeId::NEVER);
     }
 }
