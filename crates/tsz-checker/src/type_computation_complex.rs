@@ -2021,29 +2021,48 @@ impl<'a> CheckerState<'a> {
             // Use check_flow_usage to integrate both DAA and type narrowing
             // This handles TS2454 errors and applies flow-based narrowing
             let flow_type = self.check_flow_usage(idx, declared_type, sym_id);
+            trace!(
+                ?flow_type,
+                ?declared_type,
+                "After check_flow_usage in get_type_of_identifier"
+            );
 
             // FIX: Preserve readonly and other type modifiers from declared_type.
             // When declared_type has modifiers like ReadonlyType, we must preserve them
             // even if flow analysis infers a different type from the initializer.
             // IMPORTANT: Only apply this fix when there's NO contextual type to avoid interfering
             // with variance checking and assignability analysis.
+            //
+            // CRITICAL: Array element narrowing produces a genuinely different type that we must use.
+            // Check if flow_type is a meaningful narrowing (not ANY/ERROR and different from declared_type).
+            // If so, use it. Otherwise, preserve declared_type if it has special modifiers.
             let result_type = if self.ctx.contextual_type.is_none()
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
             {
-                // Check if declared_type has ReadonlyType modifier or index signatures - if so, preserve it
-                let has_index_sig = {
-                    use tsz_solver::{IndexKind, IndexSignatureResolver};
-                    let resolver = IndexSignatureResolver::new(self.ctx.types);
-                    resolver.has_index_signature(declared_type, IndexKind::String)
-                        || resolver.has_index_signature(declared_type, IndexKind::Number)
-                };
-                if tsz_solver::type_queries::is_readonly_type(self.ctx.types, declared_type)
-                    || has_index_sig
-                {
-                    declared_type
-                } else {
+                // Check if we have genuine narrowing (different type that's not ANY/ERROR)
+                let has_narrowing = flow_type != declared_type
+                    && flow_type != TypeId::ANY
+                    && flow_type != TypeId::ERROR;
+
+                if has_narrowing {
+                    // Genuine narrowing (e.g., array element narrowing) - use narrowed type
                     flow_type
+                } else {
+                    // No narrowing or error - check if we should preserve declared_type
+                    let has_index_sig = {
+                        use tsz_solver::{IndexKind, IndexSignatureResolver};
+                        let resolver = IndexSignatureResolver::new(self.ctx.types);
+                        resolver.has_index_signature(declared_type, IndexKind::String)
+                            || resolver.has_index_signature(declared_type, IndexKind::Number)
+                    };
+                    if tsz_solver::type_queries::is_readonly_type(self.ctx.types, declared_type)
+                        || has_index_sig
+                    {
+                        declared_type
+                    } else {
+                        flow_type
+                    }
                 }
             } else {
                 flow_type

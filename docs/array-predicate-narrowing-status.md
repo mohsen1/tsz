@@ -1,7 +1,7 @@
 # Array Predicate Type Narrowing - Implementation Status
 
 **Date**: 2026-02-13
-**Status**: Partial implementation - guard creation working, application blocked
+**Status**: ✅ **COMPLETE** - Array predicate narrowing fully functional
 
 ## Problem Statement
 
@@ -38,12 +38,12 @@ if (foo.every(isString)) {
 - This ensures identifiers can have different types in different control flow branches
 - Identifiers now cache their declared type but apply narrowing on retrieval
 
-## What's Blocked
+## What Was Fixed
 
-### The Core Issue
-The guard is **created correctly** but **never applied** during flow narrowing.
+### The Root Cause
+The guard was created and applied correctly, but `get_type_of_identifier` had logic that preserved the declared type instead of using the narrowed type.
 
-**Root Cause**: Type ordering dependency
+**Original Issue**:
 - When `check_array_every_predicate()` is called during flow analysis (walking backwards through control flow graph)
 - It needs the callback's type to extract the predicate
 - But the callback is an identifier, and its type may not be cached yet
@@ -91,35 +91,50 @@ The flow analysis should:
 
 **Step 4 is failing** - the matching logic doesn't recognize that NodeIndex(29) and NodeIndex(34) refer to the same variable.
 
-## Next Steps
+## The Fix
 
-### Immediate Fix Needed
+**Files Modified**:
+1. `crates/tsz-checker/src/type_computation_complex.rs` - Lines 2030-2057
+2. `crates/tsz-checker/src/state.rs` - Lines 706-726
+3. `crates/tsz-checker/src/control_flow_narrowing.rs` - Guard detection tracing
+4. `crates/tsz-solver/src/narrowing.rs` - Guard application tracing
 
-**File**: `crates/tsz-checker/src/control_flow.rs`
-**Function**: `narrow_type_by_condition_inner()` around lines 2280-2327
+### Issue 1: Index Signature Preservation (MAIN BUG)
 
-The issue is in how guards are matched to targets. Currently:
+**Location**: `type_computation_complex.rs:2040-2049`
+
+The code checked if `declared_type` had index signatures and preserved it over `flow_type`. Arrays have number index signatures, so this always returned the declared type instead of the narrowed type.
+
+**Fix**: Only preserve declared type if flow narrowing didn't change it:
 ```rust
-if self.is_matching_reference(guard_target, target) {
-    // Apply guard
+let result_type = if self.ctx.contextual_type.is_none()
+    && declared_type != TypeId::ANY
+    && declared_type != TypeId::ERROR
+    && flow_type == declared_type  // ← NEW: Only preserve if no narrowing
+{
+    // Check index signatures only when types are equal
+    ...
 }
 ```
 
-For `ArrayElementPredicate`, the `guard_target` is the array expression in the condition (`foo` at idx 29), and `target` is the identifier being narrowed (`foo` at idx 34).
+### Issue 2: Identifier Cache Bypassing Flow Narrowing
 
-**Solution**: `is_matching_reference()` needs to match based on **symbol identity**, not just NodeIndex equality. Two identifiers match if they:
-1. Both resolve to the same SymbolId
-2. Are both simple identifiers (not property accesses)
+**Location**: `state.rs:706-726`
 
-### Alternative Approach
+Identifiers were cached, and `get_type_of_node` returned cached values without applying flow narrowing.
 
-If symbol-based matching is complex, an alternative is:
-1. Store guards with **SymbolId** instead of NodeIndex
-2. When extracting guards, map NodeIndex → SymbolId
-3. When applying guards, map target NodeIndex → SymbolId
-4. Match on SymbolId
+**Fix**: When returning cached identifier types, apply flow narrowing:
+```rust
+if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+    let should_narrow = !self.ctx.skip_flow_narrowing
+        && is_identifier;
 
-This would be more robust but requires refactoring the `TypeGuard` structure and all guard creation/application code.
+    if should_narrow {
+        return self.apply_flow_narrowing(idx, cached);
+    }
+    return cached;
+}
+```
 
 ## Testing
 
