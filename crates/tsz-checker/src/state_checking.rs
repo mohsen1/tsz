@@ -2908,12 +2908,26 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if member_has_abstract {
-                        // Report on the 'abstract' keyword
-                        self.error_at_node(
-                            member_idx,
-                            "Abstract properties can only appear within an abstract class.",
-                            diagnostic_codes::ABSTRACT_PROPERTIES_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
+                        // TS1244 for methods/accessors, TS1253 for properties
+                        let is_method = matches!(
+                            member_node.kind,
+                            syntax_kind_ext::METHOD_DECLARATION
+                                | syntax_kind_ext::GET_ACCESSOR
+                                | syntax_kind_ext::SET_ACCESSOR
                         );
+                        if is_method {
+                            self.error_at_node(
+                                member_idx,
+                                "Abstract methods can only appear within an abstract class.",
+                                diagnostic_codes::ABSTRACT_METHODS_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
+                            );
+                        } else {
+                            self.error_at_node(
+                                member_idx,
+                                "Abstract properties can only appear within an abstract class.",
+                                diagnostic_codes::ABSTRACT_PROPERTIES_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
+                            );
+                        }
                     }
                 }
             }
