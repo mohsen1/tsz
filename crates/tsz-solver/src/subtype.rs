@@ -15,6 +15,7 @@ use crate::TypeDatabase;
 use crate::db::QueryDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
+use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::*;
 use crate::utils;
 use crate::visitor::{
@@ -3576,6 +3577,53 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
             return None;
+        }
+
+        // Object source vs array target: resolve Array<T> to its interface properties
+        // and find missing members. TSC emits TS2740 here (missing properties from array).
+        if let Some(t_elem) = array_element_type(self.interner, resolved_target) {
+            let s_shape_id = object_shape_id(self.interner, resolved_source)
+                .or_else(|| object_with_index_shape_id(self.interner, resolved_source));
+            if let Some(s_sid) = s_shape_id {
+                if let Some(array_base) = self.resolver.get_array_base_type() {
+                    let params = self.resolver.get_array_base_type_params();
+                    let instantiated = if params.is_empty() {
+                        array_base
+                    } else {
+                        let subst = TypeSubstitution::from_args(self.interner, params, &[t_elem]);
+                        instantiate_type(self.interner, array_base, &subst)
+                    };
+                    let resolved_inst = self.resolve_ref_type(instantiated);
+                    // The Array interface may resolve to an object shape or a callable shape
+                    // (with properties like length, push, concat, etc.)
+                    let s_shape = self.interner.object_shape(s_sid);
+                    if let Some(t_obj_sid) = object_shape_id(self.interner, resolved_inst)
+                        .or_else(|| object_with_index_shape_id(self.interner, resolved_inst))
+                    {
+                        let t_shape = self.interner.object_shape(t_obj_sid);
+                        return self.explain_object_failure(
+                            source,
+                            target,
+                            &s_shape.properties,
+                            Some(s_sid),
+                            &t_shape.properties,
+                        );
+                    }
+                    // Array interface resolved to a callable shape — use its properties
+                    if let Some(callable_sid) = callable_shape_id(self.interner, resolved_inst) {
+                        let callable = self.interner.callable_shape(callable_sid);
+                        if !callable.properties.is_empty() {
+                            return self.explain_object_failure(
+                                source,
+                                target,
+                                &s_shape.properties,
+                                Some(s_sid),
+                                &callable.properties,
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         if let (Some(s_fn_id), Some(t_fn_id)) = (
