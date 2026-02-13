@@ -108,3 +108,7 @@ tests/debug/
 # Benchmark and conformance temp files
 scripts/conformance/dist
 .target-bench/
+
+
+session.sh
+
