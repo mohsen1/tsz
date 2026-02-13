@@ -2438,24 +2438,32 @@ impl<'a> CheckerState<'a> {
 
                 // Try to lower as interface first (handles declaration merging)
                 if !symbol.declarations.is_empty() {
-                    // Use lower_merged_interface_declarations for proper multi-arena support
-                    let (ty, params) =
-                        lowering.lower_merged_interface_declarations(&decls_with_arenas);
+                    // Check if any declaration is a type alias — if so, skip interface
+                    // lowering. Type aliases like Record<K,T>, Partial<T>, Pick<T,K>
+                    // would incorrectly succeed interface lowering with 0 type params,
+                    // preventing the proper type alias path from running.
+                    let is_type_alias = (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0;
 
-                    // If lowering succeeded (not ERROR), use the result
-                    if ty != TypeId::ERROR {
-                        // Record type parameters for generic interfaces
-                        if !params.is_empty() {
-                            // Cache type params for Application expansion
-                            let file_sym_id =
-                                self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                            let def_id = self.ctx.get_or_create_def_id(file_sym_id);
-                            self.ctx.insert_def_type_params(def_id, params.clone());
+                    if !is_type_alias {
+                        // Use lower_merged_interface_declarations for proper multi-arena support
+                        let (ty, params) =
+                            lowering.lower_merged_interface_declarations(&decls_with_arenas);
+
+                        // If lowering succeeded (not ERROR), use the result
+                        if ty != TypeId::ERROR {
+                            // Record type parameters for generic interfaces
+                            if !params.is_empty() {
+                                // Cache type params for Application expansion
+                                let file_sym_id =
+                                    self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
+                                let def_id = self.ctx.get_or_create_def_id(file_sym_id);
+                                self.ctx.insert_def_type_params(def_id, params.clone());
+                            }
+                            lib_types.push(ty);
                         }
-                        lib_types.push(ty);
                     }
 
-                    // Interface lowering returned ERROR - try as type alias
+                    // Interface lowering skipped or returned ERROR - try as type alias
                     // Type aliases like Partial<T>, Pick<T,K>, Record<K,T> have their
                     // declaration in symbol.declarations but are not interface nodes
                     if lib_types.is_empty() {

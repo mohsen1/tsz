@@ -393,7 +393,16 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
     }
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
-        self.visit_object(shape_id)
+        // First try named properties
+        if let Some(ty) = self.visit_object(shape_id) {
+            return Some(ty);
+        }
+        // Fall back to string index signature value type
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        if let Some(ref idx) = shape.string_index {
+            return Some(idx.value_type);
+        }
+        None
     }
 
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
