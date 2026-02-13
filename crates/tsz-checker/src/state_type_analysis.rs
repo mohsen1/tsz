@@ -2335,6 +2335,28 @@ impl<'a> CheckerState<'a> {
                 let alias_type = self.get_type_from_type_node(type_alias.type_node);
                 self.pop_type_parameters(updates);
 
+                // Check for invalid circular reference (TS2456)
+                // A type alias circularly references itself if it resolves to itself
+                // without structural wrapping (e.g., `type A = B; type B = A;`)
+                if self.is_direct_circular_reference(sym_id, alias_type, type_alias.type_node) {
+                    use crate::types::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+
+                    let name = escaped_name;
+                    let message = format_message(
+                        diagnostic_messages::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        decl_idx,
+                        &message,
+                        diagnostic_codes::TYPE_ALIAS_CIRCULARLY_REFERENCES_ITSELF,
+                    );
+                    // Return ERROR to prevent downstream issues
+                    return (TypeId::ERROR, params);
+                }
+
                 // CRITICAL FIX: Always create DefId for type aliases, not just when they have type parameters
                 // This enables Lazy type resolution via TypeResolver during narrowing operations
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -3058,6 +3080,65 @@ impl<'a> CheckerState<'a> {
             }
             ContextualLiteralAllowKind::NotAllowed => false,
         }
+    }
+
+    /// Check if a type node is a simple type reference without structural wrapping.
+    ///
+    /// Returns true for bare type references like `type A = B`, false for wrapped
+    /// references like `type A = { x: B }` or `type A = B | null`.
+    fn is_simple_type_reference(&self, type_node: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+
+        // Type reference or identifier without structural wrapping
+        matches!(
+            node.kind,
+            k if k == syntax_kind_ext::TYPE_REFERENCE || k == SyntaxKind::Identifier as u16
+        )
+    }
+
+    /// Check if a type alias directly circularly references itself.
+    ///
+    /// Returns true when a type alias resolves to itself without structural wrapping,
+    /// which is invalid: `type A = B; type B = A;`
+    ///
+    /// Returns false for valid recursive types that use structural wrapping:
+    /// `type List = { value: number; next: List | null };`
+    fn is_direct_circular_reference(
+        &self,
+        sym_id: SymbolId,
+        resolved_type: TypeId,
+        type_node: NodeIndex,
+    ) -> bool {
+        // Check if resolved_type is Lazy(DefId) pointing back to sym_id
+        if let Some(def_id) =
+            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
+        {
+            // Map DefId back to SymbolId
+            if let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id) {
+                if target_sym_id == sym_id {
+                    // It's a self-reference - check if it's direct (no structural wrapping)
+                    return self.is_simple_type_reference(type_node);
+                }
+            }
+        }
+
+        // Also check union/intersection members for circular references
+        match self.ctx.types.lookup(resolved_type) {
+            Some(tsz_solver::TypeKey::Union(members))
+            | Some(tsz_solver::TypeKey::Intersection(members)) => {
+                let list = self.ctx.types.type_list(members);
+                for &member in list.iter() {
+                    if self.is_direct_circular_reference(sym_id, member, type_node) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        false
     }
 
     /// Resolve a typeof type reference to its structural type.
