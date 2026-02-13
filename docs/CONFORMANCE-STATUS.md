@@ -1,19 +1,20 @@
 # Conformance Test Status - Tests 100-199
 
 ## Current Status
-**90/100 tests passing (90.0%)**
-- Failing: 10 tests
+**92/100 tests passing (92.0%)**
+- Failing: 8 tests
 - Last updated: 2026-02-13
 
 ## Recent Progress
-- **Session 2026-02-13**: Fixed 2 tests (arguments variable shadowing)
+- **Session 2026-02-13**: Fixed 3 tests (arguments variable shadowing)
 - **Tests Fixed**:
   - `argumentsReferenceInConstructor4_Js.ts`
   - `argumentsBindsToFunctionScopeArgumentList.ts`
+  - `argumentsReferenceInConstructor3_Js.ts`
 
-## Failing Tests (10)
+## Failing Tests (8)
 
-### Complex Architectural Issues (9 tests)
+### Complex Architectural Issues (8 tests)
 1. `ambiguousGenericAssertion1.ts` - Parser ambiguity (TS1434 vs TS2304)
 2. `amdDeclarationEmitNoExtraDeclare.ts` - Declaration emit + AMD (TS2322, TS2345)
 3. `amdLikeInputDeclarationEmit.ts` - AMD declaration (TS2339)
@@ -21,8 +22,7 @@
 5. `anonClassDeclarationEmitIsAnon.ts` - Declaration emit (TS2345)
 6. `argumentsObjectIterator02_ES5.ts` - Lib file bug (TS2488)
 7. `argumentsObjectIterator02_ES6.ts` - Lib file bug (TS2488)
-8. `argumentsReferenceInConstructor3_Js.ts` - JS leniency (TS2339)
-9. `argumentsReferenceInFunction1_Js.ts` - Missing implementations (TS2345, TS7006)
+8. `argumentsReferenceInFunction1_Js.ts` - Missing implementations (TS2345, TS7006)
 
 ### Issue Categories
 - **Module Resolution**: 1 test (imported enums resolve to wrong types)
