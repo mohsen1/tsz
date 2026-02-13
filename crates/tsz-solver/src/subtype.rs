@@ -1217,7 +1217,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     fn visit_template_literal(&mut self, template_id: u32) -> Self::Output {
         use crate::types::IntrinsicKind;
         use crate::types::TemplateLiteralId;
-        use crate::types::TemplateSpan;
+        
         use crate::visitor::{intrinsic_kind, template_literal_id};
 
         // Template literal <: string is always true
@@ -1226,44 +1226,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         }
 
         // Template literal <: Template literal
-        // Compare spans: Text must match exactly, Type must satisfy subtype
+        // Use generalized pattern matching that handles different span structures
         if let Some(t_template_id) = template_literal_id(self.checker.interner, self.target) {
             let s_id = TemplateLiteralId(template_id);
-
-            // Fast path: same template literal
-            if s_id == t_template_id {
-                return SubtypeResult::True;
-            }
-
-            let s_list = self.checker.interner.template_list(s_id);
-            let t_list = self.checker.interner.template_list(t_template_id);
-
-            // Different number of spans - not compatible
-            if s_list.len() != t_list.len() {
-                return SubtypeResult::False;
-            }
-
-            // Compare each span
-            for (s_span, t_span) in s_list.iter().zip(t_list.iter()) {
-                match (s_span, t_span) {
-                    (TemplateSpan::Text(s_text), TemplateSpan::Text(t_text)) => {
-                        if s_text != t_text {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    (TemplateSpan::Type(s_type), TemplateSpan::Type(t_type)) => {
-                        if !self.checker.check_subtype(*s_type, *t_type).is_true() {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    _ => {
-                        // Mismatched span types (Text vs Type)
-                        return SubtypeResult::False;
-                    }
-                }
-            }
-
-            return SubtypeResult::True;
+            return self
+                .checker
+                .check_template_assignable_to_template(s_id, t_template_id);
         }
 
         // Trace: Template literal doesn't match target
@@ -3098,59 +3066,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             template_literal_id(self.interner, source),
             template_literal_id(self.interner, target),
         ) {
-            if s_spans == t_spans {
-                return SubtypeResult::True;
-            }
-            let s_list = self.interner.template_list(s_spans);
-            let t_list = self.interner.template_list(t_spans);
-            if s_list.len() != t_list.len() {
-                // Trace: Template literal length mismatch
-                if let Some(tracer) = &mut self.tracer {
-                    if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    }) {
-                        return SubtypeResult::False;
-                    }
-                }
-                return SubtypeResult::False;
-            }
-            for (s_span, t_span) in s_list.iter().zip(t_list.iter()) {
-                match (s_span, t_span) {
-                    (TemplateSpan::Text(s_text), TemplateSpan::Text(t_text)) => {
-                        if s_text != t_text {
-                            // Trace: Template literal text part mismatch
-                            if let Some(tracer) = &mut self.tracer {
-                                if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                                    source_type: source,
-                                    target_type: target,
-                                }) {
-                                    return SubtypeResult::False;
-                                }
-                            }
-                            return SubtypeResult::False;
-                        }
-                    }
-                    (TemplateSpan::Type(s_type), TemplateSpan::Type(t_type)) => {
-                        if !self.check_subtype(*s_type, *t_type).is_true() {
-                            return SubtypeResult::False;
-                        }
-                    }
-                    _ => {
-                        // Trace: Template literal span kind mismatch
-                        if let Some(tracer) = &mut self.tracer {
-                            if !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                                source_type: source,
-                                target_type: target,
-                            }) {
-                                return SubtypeResult::False;
-                            }
-                        }
-                        return SubtypeResult::False;
-                    }
-                }
-            }
-            return SubtypeResult::True;
+            return self.check_template_assignable_to_template(s_spans, t_spans);
         }
 
         if template_literal_id(self.interner, source).is_some()

@@ -6,12 +6,22 @@
 //! - Boolean literals (true, false)
 //! - BigInt literals (42n)
 //! - Template literal type matching (using backtracking)
+//! - Template-to-template literal subtype matching (generalized pattern matching)
 
 use crate::types::*;
-use crate::visitor::{intrinsic_kind, literal_value, union_list_id};
+use crate::visitor::{intrinsic_kind, literal_value, template_literal_id, union_list_id};
 use tsz_common::interner::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+
+/// Pre-resolved template span for template-to-template matching.
+/// Text atoms are resolved into owned Strings so we don't hold borrows on the interner
+/// during mutable subtype checks.
+#[derive(Clone)]
+enum ResolvedSpan {
+    Text(String),
+    Type(TypeId),
+}
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a literal value is compatible with an intrinsic type kind.
@@ -454,6 +464,447 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
         false
+    }
+
+    // =========================================================================
+    // Template-to-template literal subtype matching
+    // =========================================================================
+
+    /// Check if a source template literal is a subtype of a target template literal.
+    ///
+    /// This handles template literals with different span structures by using
+    /// generalized pattern matching with backtracking. For example:
+    /// - `` `1.1.${number}` `` is assignable to `` `${number}.${number}.${number}` ``
+    /// - `` `${string} abc` `` is assignable to `` `${string} ${string}` ``
+    ///
+    /// The algorithm flattens the source into text segments and type wildcards,
+    /// then matches against the target pattern using backtracking.
+    pub(crate) fn check_template_assignable_to_template(
+        &mut self,
+        source_id: TemplateLiteralId,
+        target_id: TemplateLiteralId,
+    ) -> SubtypeResult {
+        if source_id == target_id {
+            return SubtypeResult::True;
+        }
+
+        // Pre-resolve spans into owned data to avoid borrow conflicts
+        let source = self.resolve_template_spans(source_id);
+        let target = self.resolve_template_spans(target_id);
+
+        if self.match_tt_recursive(&source, 0, 0, &target, 0) {
+            SubtypeResult::True
+        } else {
+            SubtypeResult::False
+        }
+    }
+
+    /// Resolve template spans into owned ResolvedSpan values.
+    fn resolve_template_spans(&self, id: TemplateLiteralId) -> Vec<ResolvedSpan> {
+        let spans = self.interner.template_list(id);
+        spans
+            .iter()
+            .map(|span| match span {
+                TemplateSpan::Text(atom) => {
+                    ResolvedSpan::Text(self.interner.resolve_atom(*atom).to_string())
+                }
+                TemplateSpan::Type(type_id) => ResolvedSpan::Type(*type_id),
+            })
+            .collect()
+    }
+
+    /// Recursive template-to-template pattern matcher.
+    ///
+    /// Walks source spans (text + type) matching against the target pattern.
+    /// - `si` = source span index
+    /// - `s_off` = byte offset within current source Text span
+    /// - `ti` = target span index
+    fn match_tt_recursive(
+        &mut self,
+        source: &[ResolvedSpan],
+        si: usize,
+        s_off: usize,
+        target: &[ResolvedSpan],
+        ti: usize,
+    ) -> bool {
+        // Skip past exhausted source text spans
+        if si < source.len() {
+            if let ResolvedSpan::Text(ref text) = source[si] {
+                if s_off >= text.len() {
+                    return self.match_tt_recursive(source, si + 1, 0, target, ti);
+                }
+            }
+        }
+
+        let src_done = si >= source.len();
+        let tgt_done = ti >= target.len();
+
+        if src_done && tgt_done {
+            return true;
+        }
+
+        if src_done {
+            return self.tt_remaining_target_accepts_empty(target, ti);
+        }
+
+        if tgt_done {
+            return false;
+        }
+
+        match &source[si] {
+            ResolvedSpan::Text(s_text) => {
+                let remaining = &s_text[s_off..];
+                match &target[ti] {
+                    ResolvedSpan::Text(t_text) => {
+                        // Source text must start with target text
+                        if remaining.starts_with(t_text.as_str()) {
+                            self.match_tt_recursive(
+                                source,
+                                si,
+                                s_off + t_text.len(),
+                                target,
+                                ti + 1,
+                            )
+                        } else {
+                            false
+                        }
+                    }
+                    ResolvedSpan::Type(t_type) => {
+                        // Target type hole consuming source text characters
+                        self.match_tt_target_type_consumes_text(
+                            *t_type, remaining, source, si, s_off, target, ti,
+                        )
+                    }
+                }
+            }
+            ResolvedSpan::Type(s_type) => {
+                let s_type = *s_type;
+                match &target[ti] {
+                    ResolvedSpan::Type(t_type) => {
+                        let t_type = *t_type;
+                        // Both are type holes — check compatibility
+                        if self.is_template_type_assignable(s_type, t_type) {
+                            // Option 1: match this pair and advance both
+                            if self.match_tt_recursive(source, si + 1, 0, target, ti + 1) {
+                                return true;
+                            }
+                        }
+                        // Option 2: if target is string, it can absorb this source type
+                        // AND continue consuming more source spans
+                        if intrinsic_kind(self.interner, t_type) == Some(IntrinsicKind::String) {
+                            if self.match_tt_string_consume_more(source, si + 1, 0, target, ti) {
+                                return true;
+                            }
+                        }
+                        false
+                    }
+                    ResolvedSpan::Text(_) => {
+                        // Source type against target text — source type could produce
+                        // strings not matching the target text, so this generally fails.
+                        // Exception: source type is a literal that produces a known string.
+                        if let Some(lit) = literal_value(self.interner, s_type) {
+                            let lit_str = self.literal_to_template_string(&lit);
+                            // Treat the literal as virtual text and match against target
+                            self.match_tt_virtual_text(&lit_str, source, si + 1, target, ti)
+                        } else {
+                            false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if a source type is assignable to a target type in template literal context.
+    ///
+    /// In template literals, all type holes produce strings, so:
+    /// - `${number}` <: `${string}` (every number string is a string)
+    /// - `${boolean}` <: `${string}` (every boolean string is a string)
+    fn is_template_type_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
+        // Regular subtype check first
+        if self.check_subtype(source, target).is_true() {
+            return true;
+        }
+
+        // In template literal context, string on target accepts all stringifiable types
+        if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::String) {
+            if let Some(kind) = intrinsic_kind(self.interner, source) {
+                return matches!(
+                    kind,
+                    IntrinsicKind::String
+                        | IntrinsicKind::Number
+                        | IntrinsicKind::Boolean
+                        | IntrinsicKind::Bigint
+                        | IntrinsicKind::Null
+                        | IntrinsicKind::Undefined
+                );
+            }
+            // Template literal types are always subtypes of string
+            if template_literal_id(self.interner, source).is_some() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Target type hole consuming source text characters.
+    fn match_tt_target_type_consumes_text(
+        &mut self,
+        t_type: TypeId,
+        remaining: &str,
+        source: &[ResolvedSpan],
+        si: usize,
+        s_off: usize,
+        target: &[ResolvedSpan],
+        ti: usize,
+    ) -> bool {
+        if let Some(kind) = intrinsic_kind(self.interner, t_type) {
+            match kind {
+                IntrinsicKind::String => {
+                    let is_last_target = ti == target.len() - 1;
+                    if is_last_target {
+                        // Last string hole can consume everything remaining
+                        return true;
+                    }
+                    // String wildcard: try consuming 0..=remaining.len() characters,
+                    // then continue matching with target[ti+1].
+                    // Also try consuming past the current source text span.
+                    for len in 0..=remaining.len() {
+                        if self.match_tt_recursive(source, si, s_off + len, target, ti + 1) {
+                            return true;
+                        }
+                    }
+                    // Also try consuming all text and continuing to absorb more source spans
+                    self.match_tt_string_consume_more(source, si + 1, 0, target, ti)
+                }
+                IntrinsicKind::Number => {
+                    let num_len = find_number_length(remaining);
+                    for len in (1..=num_len).rev() {
+                        if is_valid_number(&remaining[..len]) {
+                            if self.match_tt_recursive(source, si, s_off + len, target, ti + 1) {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                }
+                IntrinsicKind::Boolean => {
+                    if remaining.starts_with("true") {
+                        if self.match_tt_recursive(source, si, s_off + 4, target, ti + 1) {
+                            return true;
+                        }
+                    }
+                    if remaining.starts_with("false") {
+                        if self.match_tt_recursive(source, si, s_off + 5, target, ti + 1) {
+                            return true;
+                        }
+                    }
+                    false
+                }
+                IntrinsicKind::Bigint => {
+                    let int_len = find_integer_length(remaining);
+                    for len in (1..=int_len).rev() {
+                        if self.match_tt_recursive(source, si, s_off + len, target, ti + 1) {
+                            return true;
+                        }
+                    }
+                    false
+                }
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Continue consuming source spans for a target string wildcard.
+    ///
+    /// When a target Type(string) hole is consuming content, it can span
+    /// across multiple source spans (both text and type) since all template
+    /// literal components produce strings.
+    fn match_tt_string_consume_more(
+        &mut self,
+        source: &[ResolvedSpan],
+        si: usize,
+        s_off: usize,
+        target: &[ResolvedSpan],
+        ti: usize,
+    ) -> bool {
+        // Try stopping here (advance target past the string)
+        if self.match_tt_recursive(source, si, s_off, target, ti + 1) {
+            return true;
+        }
+
+        if si >= source.len() {
+            return false;
+        }
+
+        match &source[si] {
+            ResolvedSpan::Text(s_text) => {
+                let remaining = &s_text[s_off..];
+                if remaining.is_empty() {
+                    return self.match_tt_string_consume_more(source, si + 1, 0, target, ti);
+                }
+                // Try consuming characters one position at a time
+                for len in 1..=remaining.len() {
+                    if self.match_tt_recursive(source, si, s_off + len, target, ti + 1) {
+                        return true;
+                    }
+                }
+                // Also try consuming all text and continuing with next span
+                self.match_tt_string_consume_more(source, si + 1, 0, target, ti)
+            }
+            ResolvedSpan::Type(_) => {
+                // The string absorbs this type span (all types produce strings)
+                // Try stopping after this span
+                if self.match_tt_recursive(source, si + 1, 0, target, ti + 1) {
+                    return true;
+                }
+                // Or continue consuming more
+                self.match_tt_string_consume_more(source, si + 1, 0, target, ti)
+            }
+        }
+    }
+
+    /// Match virtual text (from a literal type value) against the target pattern.
+    fn match_tt_virtual_text(
+        &mut self,
+        text: &str,
+        source: &[ResolvedSpan],
+        next_si: usize,
+        target: &[ResolvedSpan],
+        ti: usize,
+    ) -> bool {
+        if text.is_empty() {
+            return self.match_tt_recursive(source, next_si, 0, target, ti);
+        }
+
+        if ti >= target.len() {
+            return false;
+        }
+
+        match &target[ti] {
+            ResolvedSpan::Text(t_text) => {
+                if text.starts_with(t_text.as_str()) {
+                    self.match_tt_virtual_text(
+                        &text[t_text.len()..],
+                        source,
+                        next_si,
+                        target,
+                        ti + 1,
+                    )
+                } else {
+                    false
+                }
+            }
+            ResolvedSpan::Type(t_type) => {
+                let t_type = *t_type;
+                if let Some(kind) = intrinsic_kind(self.interner, t_type) {
+                    match kind {
+                        IntrinsicKind::String => {
+                            let is_last_target = ti == target.len() - 1;
+                            if is_last_target {
+                                return self.match_tt_recursive(source, next_si, 0, target, ti + 1);
+                            }
+                            for len in 0..=text.len() {
+                                if self.match_tt_virtual_text(
+                                    &text[len..],
+                                    source,
+                                    next_si,
+                                    target,
+                                    ti + 1,
+                                ) {
+                                    return true;
+                                }
+                            }
+                            false
+                        }
+                        IntrinsicKind::Number => {
+                            let num_len = find_number_length(text);
+                            for len in (1..=num_len).rev() {
+                                if is_valid_number(&text[..len]) {
+                                    if self.match_tt_virtual_text(
+                                        &text[len..],
+                                        source,
+                                        next_si,
+                                        target,
+                                        ti + 1,
+                                    ) {
+                                        return true;
+                                    }
+                                }
+                            }
+                            false
+                        }
+                        IntrinsicKind::Boolean => {
+                            if text.starts_with("true") {
+                                if self.match_tt_virtual_text(
+                                    &text[4..],
+                                    source,
+                                    next_si,
+                                    target,
+                                    ti + 1,
+                                ) {
+                                    return true;
+                                }
+                            }
+                            if text.starts_with("false") {
+                                if self.match_tt_virtual_text(
+                                    &text[5..],
+                                    source,
+                                    next_si,
+                                    target,
+                                    ti + 1,
+                                ) {
+                                    return true;
+                                }
+                            }
+                            false
+                        }
+                        _ => false,
+                    }
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Check if remaining target spans can match empty input.
+    fn tt_remaining_target_accepts_empty(&self, target: &[ResolvedSpan], ti: usize) -> bool {
+        for i in ti..target.len() {
+            match &target[i] {
+                ResolvedSpan::Text(text) => {
+                    if !text.is_empty() {
+                        return false;
+                    }
+                }
+                ResolvedSpan::Type(type_id) => {
+                    // Only string type can match empty string
+                    if intrinsic_kind(self.interner, *type_id) != Some(IntrinsicKind::String) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Convert a literal value to its string representation for template matching.
+    fn literal_to_template_string(&self, lit: &LiteralValue) -> String {
+        match lit {
+            LiteralValue::String(atom) => self.interner.resolve_atom(*atom).to_string(),
+            LiteralValue::Number(n) => format_number_for_template(n.0),
+            LiteralValue::Boolean(b) => {
+                if *b {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
+            }
+            LiteralValue::BigInt(atom) => self.interner.resolve_atom(*atom).to_string(),
+        }
     }
 }
 
