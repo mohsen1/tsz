@@ -77,9 +77,7 @@ struct TsServerRequest {
 struct TsServerResponse {
     #[serde(rename = "type")]
     msg_type: String,
-    command: Option<String>,
     request_seq: Option<u32>,
-    success: Option<bool>,
     body: Option<serde_json::Value>,
 }
 

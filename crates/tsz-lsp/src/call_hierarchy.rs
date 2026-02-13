@@ -708,38 +708,6 @@ mod call_hierarchy_tests {
     use tsz_binder::BinderState;
     use tsz_common::position::LineMap;
     use tsz_parser::ParserState;
-    use tsz_parser::parser::node::NodeArena;
-
-    /// Helper: parse, bind, and create a provider.
-    fn setup(source: &str) -> (NodeIndex, CallHierarchyProvider<'static>) {
-        // We leak the parser/binder to get 'static references for test convenience.
-        let source_owned = source.to_string();
-        let mut parser = ParserState::new("test.ts".to_string(), source_owned.clone());
-        let root = parser.parse_source_file();
-
-        // Leak the parser to extend the arena lifetime
-        let parser_box = Box::new(parser);
-        let parser_ref: &'static mut ParserState = Box::leak(parser_box);
-        let arena: &'static NodeArena = parser_ref.get_arena();
-
-        let mut binder = BinderState::new();
-        binder.bind_source_file(arena, root);
-        let binder_ref: &'static BinderState = Box::leak(Box::new(binder));
-
-        let source_leaked: &'static str = Box::leak(source_owned.into_boxed_str());
-        let line_map = LineMap::build(source_leaked);
-        let line_map_ref: &'static LineMap = Box::leak(Box::new(line_map));
-
-        let provider = CallHierarchyProvider::new(
-            arena,
-            binder_ref,
-            line_map_ref,
-            "test.ts".to_string(),
-            source_leaked,
-        );
-
-        (root, provider)
-    }
 
     #[test]
     fn test_prepare_on_function_declaration() {

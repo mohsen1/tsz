@@ -21,9 +21,7 @@ const DEBOUNCE_TICK: Duration = Duration::from_millis(50);
 
 /// Polling intervals for different strategies (matching tsc)
 const FIXED_POLLING_INTERVAL: Duration = Duration::from_millis(250);
-const PRIORITY_POLLING_INTERVAL_HIGH: Duration = Duration::from_millis(250);
 const PRIORITY_POLLING_INTERVAL_MEDIUM: Duration = Duration::from_millis(500);
-const PRIORITY_POLLING_INTERVAL_LOW: Duration = Duration::from_millis(2000);
 const DYNAMIC_PRIORITY_POLLING_DEFAULT: Duration = Duration::from_millis(500);
 const FIXED_CHUNK_SIZE_POLLING: Duration = Duration::from_millis(2000);
 

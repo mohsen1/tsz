@@ -298,7 +298,6 @@ pub struct TraceSpan<'a> {
     tracer: &'a mut Tracer,
     name: String,
     category: String,
-    start: Instant,
 }
 
 impl<'a> TraceSpan<'a> {
@@ -309,7 +308,6 @@ impl<'a> TraceSpan<'a> {
             tracer,
             name: name.to_string(),
             category: category.to_string(),
-            start: Instant::now(),
         }
     }
 }

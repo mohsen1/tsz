@@ -93,6 +93,7 @@ impl TsCompilerOptions {
             no_unused_parameters: false,
             always_strict: strict,
             resolve_json_module: false,
+            check_js: self.check_js.unwrap_or(false),
         }
     }
 }

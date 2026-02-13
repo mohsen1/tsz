@@ -269,6 +269,7 @@ enum Protocol {
 pub(crate) struct TsServerRequest {
     pub(crate) seq: u64,
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     pub(crate) msg_type: String,
     pub(crate) command: String,
     #[serde(default)]
@@ -288,17 +289,6 @@ pub(crate) struct TsServerResponse {
     pub(crate) message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) body: Option<serde_json::Value>,
-}
-
-/// tsserver protocol event (outgoing, unsolicited)
-#[derive(Debug, Serialize)]
-struct TsServerEvent {
-    seq: u64,
-    #[serde(rename = "type")]
-    msg_type: String,
-    event: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    body: Option<serde_json::Value>,
 }
 
 // =============================================================================
@@ -328,6 +318,7 @@ enum LegacyRequest {
 /// Full compiler options for a check request (expanded for tsc compatibility)
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct CheckOptions {
     // === Strict Type Checking ===
     #[serde(default)]
