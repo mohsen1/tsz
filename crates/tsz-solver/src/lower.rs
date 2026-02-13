@@ -2606,27 +2606,12 @@ impl<'a> TypeLowering<'a> {
             {
                 let name = ident.escaped_text.as_str();
 
-                // Handle string manipulation intrinsic types
-                if self.lookup_type_param(name).is_none()
-                    && self.resolve_type_symbol(data.type_name).is_none()
-                {
+                // Handle string manipulation intrinsic types.
+                // String intrinsics (Uppercase, Lowercase, Capitalize, Uncapitalize)
+                // are always compiler intrinsics regardless of symbol resolution,
+                // so check them first (but after type param lookup).
+                if self.lookup_type_param(name).is_none() {
                     match name {
-                        "Array" | "ReadonlyArray" => {
-                            // Use Unknown instead of Any for stricter type checking
-                            // Array/ReadonlyArray without type arguments defaults to unknown[]
-                            // instead of any[] to prevent implicit any
-                            let elem_type = data
-                                .type_arguments
-                                .as_ref()
-                                .and_then(|args| args.nodes.first().copied())
-                                .map(|idx| self.lower_type(idx))
-                                .unwrap_or(TypeId::UNKNOWN);
-                            let array_type = self.interner.array(elem_type);
-                            if name == "ReadonlyArray" {
-                                return self.interner.intern(TypeKey::ReadonlyType(array_type));
-                            }
-                            return array_type;
-                        }
                         "Uppercase" => {
                             if let Some(args) = &data.type_arguments
                                 && let Some(&first_arg) = args.nodes.first()
@@ -2683,6 +2668,30 @@ impl<'a> TypeLowering<'a> {
                                 return self.interner.intern(TypeKey::NoInfer(inner));
                             }
                             return TypeId::ERROR;
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Handle built-in generic types that need special lowering
+                // Only when the name doesn't shadow a local type parameter and
+                // doesn't resolve to a user-defined type symbol.
+                if self.lookup_type_param(name).is_none()
+                    && self.resolve_type_symbol(data.type_name).is_none()
+                {
+                    match name {
+                        "Array" | "ReadonlyArray" => {
+                            let elem_type = data
+                                .type_arguments
+                                .as_ref()
+                                .and_then(|args| args.nodes.first().copied())
+                                .map(|idx| self.lower_type(idx))
+                                .unwrap_or(TypeId::UNKNOWN);
+                            let array_type = self.interner.array(elem_type);
+                            if name == "ReadonlyArray" {
+                                return self.interner.intern(TypeKey::ReadonlyType(array_type));
+                            }
+                            return array_type;
                         }
                         _ => {}
                     }
