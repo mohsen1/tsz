@@ -87,8 +87,27 @@ impl<'a> CheckerState<'a> {
             if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
                 self.resolve_qualified_name(qn.left)
             } else if left_node.kind == SyntaxKind::Identifier as u16 {
-                // Resolve identifier as a type reference
-                self.get_type_from_type_reference_by_name(qn.left)
+                let left_name = self
+                    .ctx
+                    .arena
+                    .get_identifier(left_node)
+                    .map(|id| id.escaped_text.clone())
+                    .unwrap_or_default();
+
+                match self.resolve_identifier_symbol_in_type_position(qn.left) {
+                    TypeSymbolResolution::Type(sym_id) => self.type_reference_symbol_type(sym_id),
+                    TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => {
+                        if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
+                            use crate::types::diagnostics::diagnostic_codes;
+                            self.error_at_node_msg(
+                                qn.left,
+                                diagnostic_codes::CANNOT_FIND_NAMESPACE,
+                                &[left_name.as_str()],
+                            );
+                        }
+                        TypeId::ERROR
+                    }
+                }
             } else {
                 TypeId::ERROR // Unknown node kind - propagate error
             }
@@ -228,6 +247,18 @@ impl<'a> CheckerState<'a> {
         // Emit an appropriate error for the unresolved qualified name
         // We don't emit TS2304 here because the left side might have already emitted an error
         // Returning ERROR prevents cascading errors while still indicating failure
+        if let Some(left_node) = self.ctx.arena.get(qn.left)
+            && left_node.kind == SyntaxKind::Identifier as u16
+            && !self.is_unresolved_import_symbol(qn.left)
+            && let Some(ident) = self.ctx.arena.get_identifier(left_node)
+        {
+            use crate::types::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                qn.left,
+                diagnostic_codes::CANNOT_FIND_NAMESPACE,
+                &[ident.escaped_text.as_str()],
+            );
+        }
         TypeId::ERROR
     }
 
@@ -279,6 +310,13 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // The member might be re-exported from another module
         if let Some(ref module_specifier) = symbol.import_module {
+            if (symbol.flags & symbol_flags::ALIAS) != 0
+                && self
+                    .ctx
+                    .module_resolves_to_non_module_entity(module_specifier)
+            {
+                return None;
+            }
             if let Some(reexported_sym_id) =
                 self.resolve_reexported_member(module_specifier, member_name, lib_binders)
             {
@@ -471,6 +509,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Helper to resolve an identifier as a type reference (for qualified name left sides).
+    #[allow(dead_code)]
     pub(crate) fn get_type_from_type_reference_by_name(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -2419,17 +2458,20 @@ impl<'a> CheckerState<'a> {
                             });
 
                         if let Some(exports_table) = exports_table {
-                            // For `export = X`, the binder stores a synthetic `export=` entry
-                            // that points to the assigned symbol. Prefer that symbol type over
-                            // flattening exports into an object shape.
-                            if let Some(export_equals_sym) = exports_table.get("export=") {
-                                return (self.get_type_of_symbol(export_equals_sym), Vec::new());
-                            }
-
                             // Create an object type with all the module's exports
                             use tsz_solver::PropertyInfo;
+                            let module_is_non_module_entity = self
+                                .ctx
+                                .module_resolves_to_non_module_entity(&module_specifier);
+                            let export_equals_type =
+                                exports_table.get("export=").map(|export_equals_sym| {
+                                    self.get_type_of_symbol(export_equals_sym)
+                                });
                             let mut props: Vec<PropertyInfo> = Vec::new();
                             for (name, &sym_id) in exports_table.iter() {
+                                if name == "export=" {
+                                    continue;
+                                }
                                 let prop_type = self.get_type_of_symbol(sym_id);
                                 let name_atom = self.ctx.types.intern_string(name);
                                 props.push(PropertyInfo {
@@ -2443,8 +2485,43 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                 });
                             }
-                            let module_type = self.ctx.types.object(props);
-                            return (module_type, Vec::new());
+
+                            if !module_is_non_module_entity
+                                && let Some(augmentations) =
+                                    self.ctx.binder.module_augmentations.get(&module_specifier)
+                            {
+                                for aug in augmentations {
+                                    let name_atom = self.ctx.types.intern_string(&aug.name);
+                                    if props.iter().any(|p| p.name == name_atom) {
+                                        continue;
+                                    }
+                                    props.push(PropertyInfo {
+                                        name: name_atom,
+                                        type_id: TypeId::ANY,
+                                        write_type: TypeId::ANY,
+                                        optional: false,
+                                        readonly: false,
+                                        is_method: false,
+                                        visibility: Visibility::Public,
+                                        parent_id: None,
+                                    });
+                                }
+                            }
+
+                            let namespace_type = self.ctx.types.object(props);
+                            if let Some(export_equals_type) = export_equals_type {
+                                if module_is_non_module_entity {
+                                    return (export_equals_type, Vec::new());
+                                }
+                                return (
+                                    self.ctx
+                                        .types
+                                        .intersection2(export_equals_type, namespace_type),
+                                    Vec::new(),
+                                );
+                            }
+
+                            return (namespace_type, Vec::new());
                         }
                         // Module not found - emit TS2307 error and return ANY
                         // TypeScript treats unresolved imports as `any` to avoid cascading errors
@@ -2521,18 +2598,17 @@ impl<'a> CheckerState<'a> {
                             self.record_cross_file_symbol_if_needed(sym_id, name, module_name);
                         }
 
-                        // For `export = X`, the binder stores a synthetic `export=` entry
-                        // that points to the assigned symbol. For `import A = require('M')`
-                        // where M has `export = C`, A should be typed as C (not an object
-                        // with all module exports). This is the same logic used in the
-                        // IMPORT_EQUALS_DECLARATION path above (line 2174).
-                        if let Some(export_equals_sym) = exports_table.get("export=") {
-                            return (self.get_type_of_symbol(export_equals_sym), Vec::new());
-                        }
-
                         use tsz_solver::PropertyInfo;
+                        let module_is_non_module_entity =
+                            self.ctx.module_resolves_to_non_module_entity(module_name);
+                        let export_equals_type = exports_table
+                            .get("export=")
+                            .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
                         let mut props: Vec<PropertyInfo> = Vec::new();
                         for (name, &export_sym_id) in exports_table.iter() {
+                            if name == "export=" {
+                                continue;
+                            }
                             let mut prop_type = self.get_type_of_symbol(export_sym_id);
 
                             // Rule #44: Apply module augmentations to each exported type
@@ -2555,7 +2631,7 @@ impl<'a> CheckerState<'a> {
                         // Add augmentation declarations that introduce entirely new names.
                         // If the target resolves to a non-module export= value, these names
                         // are invalid and should not be surfaced on the namespace.
-                        if !self.ctx.module_resolves_to_non_module_entity(module_name)
+                        if !module_is_non_module_entity
                             && let Some(augmentations) =
                                 self.ctx.binder.module_augmentations.get(module_name)
                         {
@@ -2579,8 +2655,20 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        let module_type = self.ctx.types.object(props);
-                        return (module_type, Vec::new());
+                        let namespace_type = self.ctx.types.object(props);
+                        if let Some(export_equals_type) = export_equals_type {
+                            if module_is_non_module_entity {
+                                return (export_equals_type, Vec::new());
+                            }
+                            return (
+                                self.ctx
+                                    .types
+                                    .intersection2(export_equals_type, namespace_type),
+                                Vec::new(),
+                            );
+                        }
+
+                        return (namespace_type, Vec::new());
                     }
                     // Module not found - emit TS2307 error and return ANY
                     // TypeScript treats unresolved imports as `any` to avoid cascading errors
@@ -2607,7 +2695,15 @@ impl<'a> CheckerState<'a> {
                     .get(module_name)
                     .and_then(|exports_table| exports_table.get(export_name))
                     // Fall back to cross-file resolution if local lookup fails
-                    .or_else(|| self.resolve_cross_file_export(module_name, export_name));
+                    .or_else(|| self.resolve_cross_file_export(module_name, export_name))
+                    .or_else(|| {
+                        let mut visited_aliases = Vec::new();
+                        self.resolve_reexported_member_symbol(
+                            module_name,
+                            export_name,
+                            &mut visited_aliases,
+                        )
+                    });
 
                 if let Some(export_sym_id) = export_sym_id {
                     // Detect cross-file SymbolIds: the driver copies target file's

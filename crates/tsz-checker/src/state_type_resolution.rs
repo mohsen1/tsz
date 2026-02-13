@@ -1302,13 +1302,17 @@ impl<'a> CheckerState<'a> {
         // Look up the export in the target binder's module_exports.
         // Prefer canonical file key, then module specifier fallback.
         if let Some(exports_table) = target_binder.module_exports.get(&target_file_name) {
-            if let Some(sym_id) = exports_table.get(export_name) {
+            if let Some(sym_id) =
+                self.resolve_export_from_table(target_binder, exports_table, export_name)
+            {
                 return record_and_return(sym_id);
             }
         }
 
         if let Some(exports_table) = target_binder.module_exports.get(module_specifier) {
-            if let Some(sym_id) = exports_table.get(export_name) {
+            if let Some(sym_id) =
+                self.resolve_export_from_table(target_binder, exports_table, export_name)
+            {
                 return record_and_return(sym_id);
             }
         }
@@ -1330,6 +1334,63 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    fn resolve_export_from_table(
+        &self,
+        binder: &tsz_binder::BinderState,
+        exports_table: &tsz_binder::SymbolTable,
+        export_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        if let Some(sym_id) = exports_table.get(export_name) {
+            return Some(sym_id);
+        }
+
+        let export_equals_sym_id = exports_table.get("export=")?;
+        let export_equals_symbol = binder.get_symbol(export_equals_sym_id)?;
+
+        if let Some(exports) = export_equals_symbol.exports.as_ref()
+            && let Some(sym_id) = exports.get(export_name)
+        {
+            return Some(sym_id);
+        }
+
+        if let Some(members) = export_equals_symbol.members.as_ref()
+            && let Some(sym_id) = members.get(export_name)
+        {
+            return Some(sym_id);
+        }
+
+        // Some binder paths keep the namespace merge partner as a distinct symbol.
+        // Probe symbols with the same name and a module namespace shape.
+        for candidate_id in binder
+            .get_symbols()
+            .find_all_by_name(&export_equals_symbol.escaped_name)
+        {
+            let Some(candidate_symbol) = binder.get_symbol(candidate_id) else {
+                continue;
+            };
+            if (candidate_symbol.flags
+                & (symbol_flags::MODULE
+                    | symbol_flags::NAMESPACE_MODULE
+                    | symbol_flags::VALUE_MODULE))
+                == 0
+            {
+                continue;
+            }
+            if let Some(exports) = candidate_symbol.exports.as_ref()
+                && let Some(sym_id) = exports.get(export_name)
+            {
+                return Some(sym_id);
+            }
+            if let Some(members) = candidate_symbol.members.as_ref()
+                && let Some(sym_id) = members.get(export_name)
+            {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
     fn resolve_ambient_module_export(
         &self,
         module_specifier: &str,
@@ -1338,7 +1399,9 @@ impl<'a> CheckerState<'a> {
         let binders = self.ctx.all_binders.as_ref()?;
         for binder in binders.iter() {
             if let Some(exports_table) = binder.module_exports.get(module_specifier) {
-                if let Some(sym_id) = exports_table.get(export_name) {
+                if let Some(sym_id) =
+                    self.resolve_export_from_table(binder, exports_table, export_name)
+                {
                     return Some(sym_id);
                 }
             }
@@ -1365,7 +1428,9 @@ impl<'a> CheckerState<'a> {
 
         // Check direct exports
         if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
-            if let Some(sym_id) = exports.get(export_name) {
+            if let Some(sym_id) =
+                self.resolve_export_from_table(target_binder, exports, export_name)
+            {
                 return Some(sym_id);
             }
         }
@@ -1438,6 +1503,7 @@ impl<'a> CheckerState<'a> {
         // Prefer canonical file key first.
         if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
             let mut combined = exports.clone();
+            self.merge_export_equals_members(target_binder, exports, &mut combined);
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
             record_symbols(&combined);
@@ -1447,6 +1513,7 @@ impl<'a> CheckerState<'a> {
         // Fallback to module specifier key.
         if let Some(exports) = target_binder.module_exports.get(module_specifier) {
             let mut combined = exports.clone();
+            self.merge_export_equals_members(target_binder, exports, &mut combined);
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
             record_symbols(&combined);
@@ -1456,6 +1523,7 @@ impl<'a> CheckerState<'a> {
         // Last resort: preserve existing behavior for unusual binder states.
         if let Some((_, exports_table)) = target_binder.module_exports.iter().next() {
             let mut combined = exports_table.clone();
+            self.merge_export_equals_members(target_binder, exports_table, &mut combined);
             // Also collect exports from re-export chains
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
@@ -1473,10 +1541,42 @@ impl<'a> CheckerState<'a> {
         let binders = self.ctx.all_binders.as_ref()?;
         for binder in binders.iter() {
             if let Some(exports) = binder.module_exports.get(module_specifier) {
-                return Some(exports.clone());
+                let mut combined = exports.clone();
+                self.merge_export_equals_members(binder, exports, &mut combined);
+                return Some(combined);
             }
         }
         None
+    }
+
+    fn merge_export_equals_members(
+        &self,
+        binder: &tsz_binder::BinderState,
+        exports: &tsz_binder::SymbolTable,
+        combined: &mut tsz_binder::SymbolTable,
+    ) {
+        let Some(export_equals_sym_id) = exports.get("export=") else {
+            return;
+        };
+        let Some(export_equals_symbol) = binder.get_symbol(export_equals_sym_id) else {
+            return;
+        };
+
+        if let Some(symbol_exports) = export_equals_symbol.exports.as_ref() {
+            for (name, sym_id) in symbol_exports.iter() {
+                if !combined.has(name) {
+                    combined.set(name.to_string(), *sym_id);
+                }
+            }
+        }
+
+        if let Some(symbol_members) = export_equals_symbol.members.as_ref() {
+            for (name, sym_id) in symbol_members.iter() {
+                if !combined.has(name) {
+                    combined.set(name.to_string(), *sym_id);
+                }
+            }
+        }
     }
 
     /// Collect all symbols reachable through re-export chains into the given SymbolTable.
