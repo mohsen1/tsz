@@ -60,9 +60,12 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     cache: FxHashMap<TypeId, TypeId>,
     /// Unified recursion guard for TypeId cycle detection, depth, and iteration limits.
     guard: crate::recursion::RecursionGuard<TypeId>,
-    /// Unified recursion guard for DefId-level cycle detection.
-    /// Prevents infinite expansion of recursive type aliases like `type T<X> = T<Box<X>>`
-    def_guard: crate::recursion::RecursionGuard<DefId>,
+    /// Per-DefId recursion depth counter.
+    /// Allows recursive type aliases (like TrimRight) to expand up to MAX_DEF_DEPTH
+    /// times before stopping, matching tsc's TS2589 "Type instantiation is excessively
+    /// deep and possibly infinite" behavior. Unlike a set-based cycle detector, this
+    /// permits legitimate bounded recursion where each expansion converges.
+    def_depth: FxHashMap<DefId, u32>,
 }
 
 /// Array methods that return any (used for apparent type computation).
@@ -120,14 +123,16 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
-            def_guard: crate::recursion::RecursionGuard::with_profile(
-                crate::recursion::RecursionProfile::TypeEvaluation,
-            ),
+            def_depth: FxHashMap::default(),
         }
     }
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// Maximum recursive expansion depth for a single DefId.
+    /// Matches TypeScript's instantiation depth limit that triggers TS2589.
+    const MAX_DEF_DEPTH: u32 = 50;
+
     /// Create a new evaluator with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         TypeEvaluator {
@@ -139,9 +144,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
-            def_guard: crate::recursion::RecursionGuard::with_profile(
-                crate::recursion::RecursionProfile::TypeEvaluation,
-            ),
+            def_depth: FxHashMap::default(),
         }
     }
 
@@ -163,7 +166,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub fn reset(&mut self) {
         self.cache.clear();
         self.guard.reset();
-        self.def_guard.reset();
+        self.def_depth.clear();
     }
 
     // =========================================================================
@@ -301,37 +304,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // If the base is a DefId (Lazy, Ref, or TypeQuery), try to resolve and instantiate
         if let Some(def_id) = def_id {
             // =======================================================================
-            // DEFD-LEVEL CYCLE DETECTION (before resolution!)
+            // PER-DEFID DEPTH LIMITING
             // =======================================================================
             // This catches expansive recursion in type aliases like `type T<X> = T<Box<X>>`
             // that produce new TypeIds on each evaluation, bypassing the `visiting` set.
             //
-            // We check if we're already visiting this DefId. If so, we return ERROR
-            // to prevent infinite expansion. This matches TypeScript behavior for
-            // "Type instantiation is excessively deep and possibly infinite".
+            // Unlike a set-based cycle detector (which blocks ANY re-entry), we use a
+            // per-DefId counter that allows up to MAX_DEF_DEPTH recursive expansions.
+            // This correctly handles legitimate recursive types like:
+            //   type TrimRight<S> = S extends `${infer R} ` ? TrimRight<R> : S;
+            // which need multiple re-entries of the same DefId to converge.
             // =======================================================================
-            if self.def_guard.is_visiting(&def_id) {
-                // CRITICAL: Do NOT return the application.
-                // Return ERROR to stop the solver from trying to expand it forever.
-                // This prevents infinite loops where:
-                // 1. evaluate returns App (unevaluated)
-                // 2. check_subtype sees no change, calls check_subtype_inner
-                // 3. check_subtype_inner tries to evaluate again -> infinite loop
+            let depth = self.def_depth.entry(def_id).or_insert(0);
+            if *depth >= Self::MAX_DEF_DEPTH {
                 self.guard.mark_exceeded();
                 return TypeId::ERROR;
             }
-
-            // Mark this DefId as being visited
-            use crate::recursion::RecursionResult;
-            match self.def_guard.enter(def_id) {
-                RecursionResult::Entered => {}
-                RecursionResult::Cycle
-                | RecursionResult::DepthExceeded
-                | RecursionResult::IterationExceeded => {
-                    self.guard.mark_exceeded();
-                    return TypeId::ERROR;
-                }
-            }
+            *depth += 1;
 
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
@@ -381,8 +370,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.interner.application(app.base, app.args.clone())
             };
 
-            // Remove from def_guard after evaluation
-            self.def_guard.leave(def_id);
+            // Decrement per-DefId depth after evaluation
+            if let Some(d) = self.def_depth.get_mut(&def_id) {
+                *d = d.saturating_sub(1);
+            }
 
             result
         } else {
