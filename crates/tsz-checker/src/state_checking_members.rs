@@ -4583,9 +4583,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check if the types are comparable (assignable in either direction)
         // tsc uses: isTypeComparableTo(caseType, switchType) which checks both directions
-        if !self.is_assignable_to(effective_case_type, switch_type)
-            && !self.is_assignable_to(switch_type, effective_case_type)
-        {
+        if !self.are_mutually_assignable(effective_case_type, switch_type) {
             // TS2678: Type 'X' is not comparable to type 'Y'
             if let Some(loc) = self.get_source_location(case_expr) {
                 let case_str = self.format_type(effective_case_type);
