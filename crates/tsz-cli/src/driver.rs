@@ -234,7 +234,6 @@ impl CompilationCache {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn export_hash(&self, path: &Path) -> Option<u64> {
         self.export_hashes.get(path).copied()
     }
@@ -2125,14 +2124,30 @@ fn collect_diagnostics(
                         // Convert ResolutionFailure to Diagnostic to get the error code and message
                         let mut diagnostic = failure_to_use.to_diagnostic();
 
-                        // TypeScript uses TS2792 (instead of TS2307) for ALL unresolved specifiers
-                        // under Classic module resolution mode — no bare-specifier restriction.
-                        let is_classic_resolution = matches!(
-                            options.effective_module_resolution(),
-                            crate::config::ModuleResolutionKind::Classic
+                        // TypeScript emits TS2792 (instead of TS2307) for certain module kinds.
+                        // These are "classic-like" module systems (AMD, System, UMD) and ES modules.
+                        use tsz_common::common::ModuleKind;
+                        let module_kind_prefers_2792 = matches!(
+                            options.checker.module,
+                            ModuleKind::System
+                                | ModuleKind::AMD
+                                | ModuleKind::UMD
+                                | ModuleKind::ES2015
+                                | ModuleKind::ES2020
+                                | ModuleKind::ES2022
+                                | ModuleKind::ESNext
+                                | ModuleKind::Preserve
                         );
+
+                        // Convert TS2307 to TS2792 for bare specifiers in these module kinds
+                        let is_bare_specifier = !specifier.starts_with("./")
+                            && !specifier.starts_with("../")
+                            && !specifier.starts_with('/')
+                            && !specifier.contains(':');
+
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
-                            && is_classic_resolution
+                            && is_bare_specifier
+                            && module_kind_prefers_2792
                         {
                             diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
                             diagnostic.message = format!(
@@ -2169,25 +2184,17 @@ fn collect_diagnostics(
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = tsz::solver::QueryCache::new(&program.type_interner);
 
-    // Create a shared DefinitionStore to prevent DefId collisions across files/libs.
-    // All CheckerContexts must share this store to ensure unique DefIds.
-    // Use Arc instead of Rc for thread-safety in parallel checking.
-    // CRITICAL: This must be created BEFORE any CheckerContext is instantiated,
-    // including the priming checker below.
-    let shared_def_store = std::sync::Arc::new(tsz_solver::def::DefinitionStore::new());
-
     // Prime Array<T> base type with global augmentations before any file checks.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
-        let mut checker = CheckerState::with_options_and_shared_def_store(
+        let mut checker = CheckerState::with_options(
             &file.arena,
             &binder,
             &query_cache,
             file.file_name.clone(),
             &options.checker,
-            std::sync::Arc::clone(&shared_def_store),
         );
         checker.ctx.set_lib_contexts(lib_contexts.to_vec());
         checker.ctx.set_actual_lib_file_count(lib_contexts.len());
@@ -2295,7 +2302,6 @@ fn collect_diagnostics(
         let work_items: Vec<usize> = work_queue.into_iter().collect();
         let no_check = options.no_check;
         let check_js = options.check_js;
-        let allow_js = options.allow_js;
         let compiler_options = options.checker.clone();
         let lib_ctx_for_parallel = lib_contexts.to_vec();
 
@@ -2321,10 +2327,8 @@ fn collect_diagnostics(
                         &resolved_module_specifiers,
                         &resolved_module_errors,
                         &is_external_module_by_file,
-                        &shared_def_store,
                         no_check,
                         check_js,
-                        allow_js,
                     )
                 })
                 .collect()
@@ -2348,10 +2352,8 @@ fn collect_diagnostics(
                     &resolved_module_specifiers,
                     &resolved_module_errors,
                     &is_external_module_by_file,
-                    &shared_def_store,
                     no_check,
                     check_js,
-                    allow_js,
                 )
             })
             .collect();
@@ -2431,13 +2433,12 @@ fn collect_diagnostics(
                     compiler_options,
                 )
             } else {
-                CheckerState::new_with_shared_def_store(
+                CheckerState::new(
                     &file.arena,
                     &binder,
                     &query_cache,
                     file.file_name.clone(),
                     compiler_options,
-                    std::sync::Arc::clone(&shared_def_store),
                 )
             };
             checker.ctx.report_unresolved_imports = true;
@@ -2488,25 +2489,30 @@ fn collect_diagnostics(
                     parse_diagnostic,
                 ));
             }
-            // Skip type-checking for JS files when neither allowJs nor checkJs is enabled.
-            // TypeScript reports semantic diagnostics for JS files with either allowJs or checkJs.
-            // allowJs: basic syntax errors (TS1xxx) like TS1210
-            // checkJs: full type checking (TS2xxx errors too)
-            let is_js = is_js_file(Path::new(&file.file_name));
-            let skip_check = is_js && !options.allow_js && !options.check_js;
-            if !options.no_check && !skip_check {
+            // Note: We always run checking for all files (JS and TS).
+            // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
+            // even for JS files without checkJs. Only type-level errors are gated by checkJs.
+            if !options.no_check {
                 let _check_span =
                     tracing::info_span!("check_file", file = %file.file_name).entered();
                 checker.check_source_file(file.source_file);
-                let mut checker_diags = std::mem::take(&mut checker.ctx.diagnostics);
-                // When allowJs is enabled but checkJs is not, JS files only get
-                // syntactic/grammar errors (TS1xxx) and JS-only grammar errors
-                // (TS8xxx like "type aliases can only be used in TypeScript files").
-                // Semantic errors (TS2xxx-TS7xxx) are suppressed, matching TSC behavior.
-                if is_js && !options.check_js {
-                    checker_diags.retain(|d| d.code < 2000 || d.code >= 8000);
+
+                // Filter diagnostics for JS files without checkJs
+                let is_js = is_js_file(Path::new(&file.file_name));
+                let should_filter_type_errors = is_js && !options.check_js;
+                let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+
+                if should_filter_type_errors {
+                    // Keep only syntax/semantic errors, not type errors
+                    // Syntax/semantic errors include: TS1xxx errors (syntax errors)
+                    // Type errors include: TS2xxx errors (most type errors)
+                    checker_diagnostics.retain(|diag| {
+                        // Keep TS1xxx errors (syntax/semantic)
+                        diag.code < 2000
+                    });
                 }
-                file_diagnostics.extend(checker_diags);
+
+                file_diagnostics.extend(checker_diagnostics);
             }
 
             // Update the cache and check for export hash changes
@@ -2675,10 +2681,8 @@ fn check_file_for_parallel(
         FxHashMap<(usize, String), tsz::checker::context::ResolutionError>,
     >,
     is_external_module_by_file: &Arc<FxHashMap<String, bool>>,
-    shared_def_store: &Arc<tsz_solver::def::DefinitionStore>,
     no_check: bool,
     check_js: bool,
-    allow_js: bool,
 ) -> Vec<Diagnostic> {
     let file = &program.files[file_idx];
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
@@ -2693,13 +2697,12 @@ fn check_file_for_parallel(
         .map(|(specifier, _, _)| specifier.clone())
         .collect();
 
-    let mut checker = CheckerState::with_options_and_shared_def_store(
+    let mut checker = CheckerState::with_options(
         &file.arena,
         &binder,
         query_cache,
         file.file_name.clone(),
         compiler_options,
-        Arc::clone(shared_def_store),
     );
     checker.ctx.report_unresolved_imports = true;
 
@@ -2728,23 +2731,28 @@ fn check_file_for_parallel(
         .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
         .collect();
 
-    // Skip type-checking for JS files when neither allowJs nor checkJs is enabled.
-    // TypeScript reports semantic diagnostics for JS files with either allowJs or checkJs.
-    // allowJs: basic syntax errors (TS1xxx) like TS1210
-    // checkJs: full type checking (TS2xxx errors too)
-    let is_js = is_js_file(Path::new(&file.file_name));
-    let skip_check = is_js && !allow_js && !check_js;
-    if !no_check && !skip_check {
+    // Note: We always run checking for all files (JS and TS).
+    // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
+    // even for JS files without checkJs. Only type-level errors are gated by checkJs.
+    if !no_check {
         checker.check_source_file(file.source_file);
-        let mut checker_diags = std::mem::take(&mut checker.ctx.diagnostics);
-        // When allowJs is enabled but checkJs is not, JS files only get
-        // syntactic/grammar errors (TS1xxx) and JS-only grammar errors
-        // (TS8xxx like "type aliases can only be used in TypeScript files").
-        // Semantic errors (TS2xxx-TS7xxx) are suppressed, matching TSC behavior.
-        if is_js && !check_js {
-            checker_diags.retain(|d| d.code < 2000 || d.code >= 8000);
+
+        // Filter diagnostics for JS files without checkJs
+        let is_js = is_js_file(Path::new(&file.file_name));
+        let should_filter_type_errors = is_js && !check_js;
+        let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+
+        if should_filter_type_errors {
+            // Keep only syntax/semantic errors, not type errors
+            // Syntax/semantic errors include: TS1xxx errors (syntax errors)
+            // Type errors include: TS2xxx errors (most type errors)
+            checker_diagnostics.retain(|diag| {
+                // Keep TS1xxx errors (syntax/semantic)
+                diag.code < 2000
+            });
         }
-        file_diagnostics.extend(checker_diags);
+
+        file_diagnostics.extend(checker_diagnostics);
     }
 
     file_diagnostics
@@ -3251,13 +3259,7 @@ fn create_binder_from_bound_file(
             merged_module_augmentations
                 .entry(spec.clone())
                 .or_default()
-                .extend(augs.iter().map(|aug| {
-                    tsz::binder::ModuleAugmentation::with_arena(
-                        aug.name.clone(),
-                        aug.node,
-                        Arc::clone(&other_file.arena),
-                    )
-                }));
+                .extend(augs.clone());
         }
     }
 
@@ -3373,14 +3375,6 @@ fn create_cross_file_lookup_binder(
             .insert(file.file_name.clone(), reexports.clone());
     }
     binder.is_external_module = file.is_external_module;
-    // Copy symbol-to-arena and declaration-to-arena mappings for cross-file
-    // type checking. Without these, delegate_cross_arena_symbol_resolution
-    // can't detect when a symbol belongs to a different file's arena, causing
-    // the checker to look up nodes in the wrong arena (e.g., TS2351 false
-    // positives for `export = C` where C is a class in another file).
-    binder.symbol_arenas = program.symbol_arenas.clone();
-    binder.declaration_arenas = program.declaration_arenas.clone();
-    binder.recompute_module_export_equals_non_module();
     binder
 }
 
@@ -3511,10 +3505,6 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.allow_js {
         options.allow_js = true;
-    }
-    if args.check_js {
-        options.check_js = true;
-        options.checker.check_js = true;
     }
     if let Some(version) = args.types_versions_compiler_version.as_ref() {
         options.types_versions_compiler_version = Some(version.clone());
