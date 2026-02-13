@@ -2260,6 +2260,104 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a function declaration has the declare modifier (is ambient).
+    pub(crate) fn is_ambient_function_declaration(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return false;
+        }
+        let Some(function) = self.ctx.arena.get_function(node) else {
+            return false;
+        };
+        if self.has_declare_modifier(&function.modifiers) {
+            return true;
+        }
+
+        let mut current = decl_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    if let Some(module) = self.ctx.arena.get_module(parent_node) {
+                        if self.has_declare_modifier(&module.modifiers) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            current = parent;
+        }
+        false
+    }
+
+    /// Check whether a namespace declaration is instantiated (has runtime value declarations).
+    pub(crate) fn is_namespace_declaration_instantiated(&self, namespace_idx: NodeIndex) -> bool {
+        let Some(namespace_node) = self.ctx.arena.get(namespace_idx) else {
+            return false;
+        };
+        if namespace_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            return false;
+        }
+        let Some(module_decl) = self.ctx.arena.get_module(namespace_node) else {
+            return false;
+        };
+        self.module_body_has_runtime_members(module_decl.body)
+    }
+
+    fn module_body_has_runtime_members(&self, body_idx: NodeIndex) -> bool {
+        if body_idx.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            return self.is_namespace_declaration_instantiated(body_idx);
+        }
+
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return false;
+        }
+
+        let Some(module_block) = self.ctx.arena.get_module_block(body_node) else {
+            return false;
+        };
+        let Some(statements) = &module_block.statements else {
+            return false;
+        };
+
+        for &statement_idx in &statements.nodes {
+            let Some(statement_node) = self.ctx.arena.get(statement_idx) else {
+                continue;
+            };
+            match statement_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::ENUM_DECLARATION
+                    || k == syntax_kind_ext::EXPRESSION_STATEMENT
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+                {
+                    return true;
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    if self.is_namespace_declaration_instantiated(statement_idx) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
     /// Check if a method declaration has a body (is an implementation, not just a signature).
     ///
     /// ## Parameters
@@ -2942,6 +3040,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let mut conflicts = FxHashSet::default();
+            let mut namespace_order_errors = FxHashSet::default();
             for i in 0..declarations.len() {
                 for j in (i + 1)..declarations.len() {
                     let (decl_idx, decl_flags) = declarations[i];
@@ -3018,21 +3117,75 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Namespace + Function merging is allowed
+                    // Namespace + Function merging is allowed only when the namespace
+                    // is non-instantiated OR declared after the function.
                     let decl_is_function = (decl_flags & symbol_flags::FUNCTION) != 0;
                     let other_is_function = (other_flags & symbol_flags::FUNCTION) != 0;
                     if (decl_is_namespace && other_is_function)
                         || (decl_is_function && other_is_namespace)
                     {
+                        let (namespace_idx, function_idx) = if decl_is_namespace {
+                            (decl_idx, other_idx)
+                        } else {
+                            (other_idx, decl_idx)
+                        };
+
+                        let namespace_is_instantiated =
+                            self.is_namespace_declaration_instantiated(namespace_idx);
+                        if !namespace_is_instantiated {
+                            continue;
+                        }
+
+                        if self.is_ambient_function_declaration(function_idx) {
+                            continue;
+                        }
+
+                        let namespace_precedes_function = self
+                            .ctx
+                            .arena
+                            .get(namespace_idx)
+                            .zip(self.ctx.arena.get(function_idx))
+                            .is_some_and(|(ns_node, fn_node)| ns_node.pos < fn_node.pos);
+
+                        if namespace_precedes_function {
+                            namespace_order_errors.insert(namespace_idx);
+                        }
                         continue;
                     }
 
-                    // Namespace + Class merging is allowed
+                    // Namespace + Class merging is allowed only when the namespace
+                    // is non-instantiated OR declared after the class.
                     let decl_is_class = (decl_flags & symbol_flags::CLASS) != 0;
                     let other_is_class = (other_flags & symbol_flags::CLASS) != 0;
                     if (decl_is_namespace && other_is_class)
                         || (decl_is_class && other_is_namespace)
                     {
+                        let (namespace_idx, class_idx) = if decl_is_namespace {
+                            (decl_idx, other_idx)
+                        } else {
+                            (other_idx, decl_idx)
+                        };
+
+                        let namespace_is_instantiated =
+                            self.is_namespace_declaration_instantiated(namespace_idx);
+                        if !namespace_is_instantiated {
+                            continue;
+                        }
+
+                        if self.is_ambient_class_declaration(class_idx) {
+                            continue;
+                        }
+
+                        let namespace_precedes_class = self
+                            .ctx
+                            .arena
+                            .get(namespace_idx)
+                            .zip(self.ctx.arena.get(class_idx))
+                            .is_some_and(|(ns_node, class_node)| ns_node.pos < class_node.pos);
+
+                        if namespace_precedes_class {
+                            namespace_order_errors.insert(namespace_idx);
+                        }
                         continue;
                     }
 
@@ -3044,14 +3197,20 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Namespace + Variable merging is allowed
-                    // TypeScript's NamespaceModuleExcludes = 0 (can merge with anything)
-                    // e.g., `namespace m2 { ... } var m2: { ... };`
+                    // Namespace + Variable merging is allowed only for non-instantiated
+                    // namespaces. Instantiated namespaces conflict with variables.
                     let decl_is_variable = (decl_flags & symbol_flags::VARIABLE) != 0;
                     let other_is_variable = (other_flags & symbol_flags::VARIABLE) != 0;
                     if (decl_is_namespace && other_is_variable)
                         || (decl_is_variable && other_is_namespace)
                     {
+                        let namespace_idx = if decl_is_namespace { decl_idx } else { other_idx };
+                        let namespace_is_instantiated =
+                            self.is_namespace_declaration_instantiated(namespace_idx);
+                        if namespace_is_instantiated {
+                            conflicts.insert(decl_idx);
+                            conflicts.insert(other_idx);
+                        }
                         continue;
                     }
 
@@ -3117,6 +3276,17 @@ impl<'a> CheckerState<'a> {
                         conflicts.insert(other_idx);
                     }
                 }
+            }
+
+            for &namespace_idx in &namespace_order_errors {
+                let error_node = self
+                    .get_declaration_name_node(namespace_idx)
+                    .unwrap_or(namespace_idx);
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
+                    diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
+                );
             }
 
             if conflicts.is_empty() {
