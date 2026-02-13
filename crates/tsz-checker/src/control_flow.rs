@@ -2779,7 +2779,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if is_strict {
-            if let Some((property_path, literal_type, is_optional, _base)) =
+            if let Some((property_path, literal_type, is_optional, base)) =
                 self.discriminant_comparison(bin.left, bin.right, target)
             {
                 // CRITICAL FIX: Don't apply discriminant guards to property/element access results
@@ -2788,14 +2788,23 @@ impl<'a> FlowAnalyzer<'a> {
                 let is_property_access = self.is_property_or_element_access(target);
 
                 // CRITICAL FIX: Don't apply discriminant narrowing to let-bound variables
-                // Only const-bound variables can be narrowed via aliased discriminants.
-                // Let-bound variables might be reassigned, so narrowing is unsafe.
-                // Example:
+                // in ALIASED discriminant scenarios.
+                // For aliased discriminants (narrowing `data` based on `success.flag`),
+                // only const-bound variables can be safely narrowed.
+                // But for DIRECT discriminants (narrowing `x` based on `x.kind`),
+                // we should narrow even let-bound variables because the check is on the same object.
+                //
+                // Example of unsafe aliased discriminant:
                 //   let { data, success } = getResult();
-                //   if (success) { data.method(); }  // ERROR - data is let-bound
+                //   if (success) { data.method(); }  // ERROR - data is let-bound, success could change
+                //
+                // Example of safe direct discriminant:
+                //   let x: { kind: "a" } | { kind: "b" };
+                //   if (x.kind === "a") { x; }  // OK - checking x's own property
+                let is_aliased_discriminant = !self.is_matching_reference(base, target);
                 let is_mutable = self.is_mutable_variable(target);
 
-                if !is_property_access && !is_mutable {
+                if !(is_property_access || is_aliased_discriminant && is_mutable) {
                     let mut base_type = type_id;
                     if is_optional && effective_truth {
                         let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
@@ -2809,7 +2818,7 @@ impl<'a> FlowAnalyzer<'a> {
                         narrowing,
                     );
                 }
-                // For property access targets or let-bound variables, skip discriminant narrowing
+                // For property access targets or aliased let-bound variables, skip discriminant narrowing
                 // The property type will be computed from the already-narrowed base object
             }
 
