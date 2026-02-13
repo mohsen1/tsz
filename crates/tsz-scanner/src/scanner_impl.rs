@@ -45,6 +45,19 @@ pub enum TokenFlags {
 // Scanner State
 // =============================================================================
 
+/// A general scanner diagnostic (e.g., conflict markers).
+#[derive(Clone, Debug)]
+pub struct ScannerDiagnostic {
+    /// Position of the error
+    pub pos: usize,
+    /// Length of the error span
+    pub length: usize,
+    /// Diagnostic message
+    pub message: &'static str,
+    /// Diagnostic code
+    pub code: u32,
+}
+
 /// A regex flag error detected during scanning.
 #[derive(Clone, Debug)]
 pub struct RegexFlagError {
@@ -112,6 +125,8 @@ pub struct ScannerState {
     token_invalid_separator_is_consecutive: bool,
     /// Regex flag errors detected during scanning
     regex_flag_errors: Vec<RegexFlagError>,
+    /// General scanner diagnostics (e.g., conflict markers)
+    scanner_diagnostics: Vec<ScannerDiagnostic>,
     /// Whether to skip trivia (whitespace, comments)
     skip_trivia: bool,
     /// String interner for identifier deduplication
@@ -143,6 +158,7 @@ impl ScannerState {
             token_invalid_separator_pos: None,
             token_invalid_separator_is_consecutive: false,
             regex_flag_errors: Vec::new(),
+            scanner_diagnostics: Vec::new(),
             skip_trivia,
             interner,
             token_atom: Atom::NONE,
@@ -533,6 +549,15 @@ impl ScannerState {
 
                 // Equals
                 CharacterCodes::EQUALS => {
+                    if self.is_conflict_marker_trivia() {
+                        self.scan_conflict_marker_trivia();
+                        if self.skip_trivia {
+                            continue;
+                        } else {
+                            self.token = SyntaxKind::ConflictMarkerTrivia;
+                            return self.token;
+                        }
+                    }
                     if self.char_code_at(self.pos + 1) == Some(CharacterCodes::EQUALS) {
                         if self.char_code_at(self.pos + 2) == Some(CharacterCodes::EQUALS) {
                             self.pos += 3;
@@ -645,6 +670,15 @@ impl ScannerState {
 
                 // Bar (pipe)
                 CharacterCodes::BAR => {
+                    if self.is_conflict_marker_trivia() {
+                        self.scan_conflict_marker_trivia();
+                        if self.skip_trivia {
+                            continue;
+                        } else {
+                            self.token = SyntaxKind::ConflictMarkerTrivia;
+                            return self.token;
+                        }
+                    }
                     if self.char_code_at(self.pos + 1) == Some(CharacterCodes::BAR) {
                         if self.char_code_at(self.pos + 2) == Some(CharacterCodes::EQUALS) {
                             self.pos += 3;
@@ -705,6 +739,15 @@ impl ScannerState {
                 // Note: `</` (LessThanSlashToken) is only used in JSX mode.
                 // In regular mode, `<` and `/` are separate tokens.
                 CharacterCodes::LESS_THAN => {
+                    if self.is_conflict_marker_trivia() {
+                        self.scan_conflict_marker_trivia();
+                        if self.skip_trivia {
+                            continue;
+                        } else {
+                            self.token = SyntaxKind::ConflictMarkerTrivia;
+                            return self.token;
+                        }
+                    }
                     if self.char_code_at(self.pos + 1) == Some(CharacterCodes::LESS_THAN) {
                         if self.char_code_at(self.pos + 2) == Some(CharacterCodes::EQUALS) {
                             self.pos += 3;
@@ -729,6 +772,15 @@ impl ScannerState {
                 // Greater than - only return GreaterThanToken
                 // The parser calls reScanGreaterToken() to get >=, >>, >>>, >>=, >>>=
                 CharacterCodes::GREATER_THAN => {
+                    if self.is_conflict_marker_trivia() {
+                        self.scan_conflict_marker_trivia();
+                        if self.skip_trivia {
+                            continue;
+                        } else {
+                            self.token = SyntaxKind::ConflictMarkerTrivia;
+                            return self.token;
+                        }
+                    }
                     self.pos += 1;
                     self.token = SyntaxKind::GreaterThanToken;
                     return self.token;
@@ -2631,6 +2683,77 @@ impl ScannerState {
     /// Get the regex flag errors detected during scanning.
     pub fn get_regex_flag_errors(&self) -> &[RegexFlagError] {
         &self.regex_flag_errors
+    }
+
+    /// Get general scanner diagnostics (e.g., conflict marker errors).
+    pub fn get_scanner_diagnostics(&self) -> &[ScannerDiagnostic] {
+        &self.scanner_diagnostics
+    }
+
+    /// Merge conflict marker length (7 characters: `<<<<<<<`, `=======`, etc.)
+    const MERGE_CONFLICT_MARKER_LENGTH: usize = 7;
+
+    /// Check if the current position is a merge conflict marker.
+    /// A conflict marker must be at the start of a line, consist of 7 identical
+    /// characters (`<`, `=`, `>`, or `|`), and for non-`=` markers, be followed
+    /// by a space.
+    fn is_conflict_marker_trivia(&self) -> bool {
+        let pos = self.pos;
+        // Must be at start of line (pos == 0 or preceded by line break)
+        if pos > 0 && !is_line_break(self.char_code_unchecked(pos - 1) as u32) {
+            return false;
+        }
+        // Must have room for 7 characters
+        if pos + Self::MERGE_CONFLICT_MARKER_LENGTH >= self.end {
+            return false;
+        }
+        let ch = self.char_code_unchecked(pos);
+        // All 7 characters must be the same
+        for i in 1..Self::MERGE_CONFLICT_MARKER_LENGTH {
+            if self.char_code_unchecked(pos + i) != ch {
+                return false;
+            }
+        }
+        // For `=======`: no additional check needed
+        // For `<<<<<<<`, `>>>>>>>`, `|||||||`: must be followed by a space
+        ch as u32 == CharacterCodes::EQUALS
+            || (pos + Self::MERGE_CONFLICT_MARKER_LENGTH < self.end
+                && self.char_code_unchecked(pos + Self::MERGE_CONFLICT_MARKER_LENGTH) as u32
+                    == CharacterCodes::SPACE)
+    }
+
+    /// Scan past a conflict marker, emitting a TS1185 diagnostic.
+    /// For `<` and `>` markers: skip to end of line.
+    /// For `|` and `=` markers: skip until the next `=======` or `>>>>>>>` marker.
+    fn scan_conflict_marker_trivia(&mut self) {
+        // Emit TS1185: "Merge conflict marker encountered."
+        self.scanner_diagnostics.push(ScannerDiagnostic {
+            pos: self.pos,
+            length: Self::MERGE_CONFLICT_MARKER_LENGTH,
+            message: "Merge conflict marker encountered.",
+            code: 1185,
+        });
+
+        let ch = self.char_code_unchecked(self.pos);
+        if ch as u32 == CharacterCodes::LESS_THAN || ch as u32 == CharacterCodes::GREATER_THAN {
+            // `<<<<<<<` or `>>>>>>>`: skip to end of line
+            while self.pos < self.end && !is_line_break(self.char_code_unchecked(self.pos) as u32) {
+                self.pos += 1;
+            }
+        } else {
+            // `|||||||` or `=======`: skip until next `=======` or `>>>>>>>` marker
+            while self.pos < self.end {
+                let current_char = self.char_code_unchecked(self.pos) as u32;
+                if (current_char == CharacterCodes::EQUALS
+                    || current_char == CharacterCodes::GREATER_THAN)
+                    && current_char != ch as u32
+                    && self.is_conflict_marker_trivia()
+                {
+                    break;
+                }
+                self.pos += 1;
+            }
+        }
     }
 
     /// Resolve an atom back to its string value.
