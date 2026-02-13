@@ -186,7 +186,8 @@ fn test_contextual_callable_overload_union() {
         ..Default::default()
     });
 
-    let ctx = ContextualTypeContext::with_expected(&interner, callable);
+    // Use no_implicit_any: true to get union behavior for multiple signatures
+    let ctx = ContextualTypeContext::with_expected_and_options(&interner, callable, true);
 
     let expected_param0 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let expected_return = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
@@ -973,4 +974,53 @@ fn test_contextual_generic_function_parameter() {
         t_type,
         "Generic function parameter should be contextually typed as T"
     );
+}
+
+#[test]
+fn test_contextual_callable_overload_no_implicit_any_false() {
+    // When noImplicitAny is false and signatures have different parameter types,
+    // contextual typing returns None (which becomes `any` in the checker)
+    let interner = TypeInterner::new();
+
+    let call_sig_a = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let call_sig_b = CallSignature {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_method: false,
+    };
+
+    let callable = interner.callable(CallableShape {
+        symbol: None,
+        call_signatures: vec![call_sig_a, call_sig_b],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // Use no_implicit_any: false - should return None for parameter type
+    let ctx = ContextualTypeContext::with_expected_and_options(&interner, callable, false);
+
+    // With noImplicitAny: false, different parameter types result in None (falls back to `any`)
+    assert_eq!(ctx.get_parameter_type(0), None);
 }

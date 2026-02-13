@@ -2629,7 +2629,11 @@ impl<'a> CheckerState<'a> {
         // This enables shorthand method parameter type inference
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
         if let Some(ctx_type) = self.ctx.contextual_type {
-            let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, ctx_type);
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                ctx_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
 
             for (i, &param_idx) in method.parameters.nodes.iter().enumerate() {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)

@@ -184,9 +184,10 @@ impl<'a> CheckerState<'a> {
         };
 
         let ctx_helper = match resolved_contextual_type {
-            Some(resolved) => Some(ContextualTypeContext::with_expected(
+            Some(resolved) => Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 resolved,
+                self.ctx.compiler_options.no_implicit_any,
             )),
             None => None,
         };
@@ -1940,7 +1941,11 @@ impl<'a> CheckerState<'a> {
         // We need to extract this BEFORE the for loop so it's available for the pop at the end
         let marker_this_type: Option<TypeId> = if let Some(ctx_type) = self.ctx.contextual_type {
             use tsz_solver::ContextualTypeContext;
-            let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, ctx_type);
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                ctx_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
             ctx_helper.get_this_type_from_marker()
         } else {
             None
