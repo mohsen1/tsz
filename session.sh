@@ -1,114 +1,117 @@
 #!/bin/bash
-# Session script: control-flow narrowing tsc-equivalence mission
+# Session script: type relation/inference engine parity mission
 
 cat >&2 <<'EOF'
 IMPORTANT: Read docs/HOW_TO_CODE.md before writing any code. It covers architecture
 rules, coding patterns, recursion safety, testing, and debugging conventions.
 
 ═══════════════════════════════════════════════════════════
-MISSION: Fix control-flow narrowing to match tsc behavior
+MISSION: Type Relation / Inference Engine Parity with TSC
 ═══════════════════════════════════════════════════════════
 
-Control-flow narrowing is not tsc-equivalent. Several categories diverge:
-  - Aliased discriminant narrowing
-  - Assertion-function narrowing
-  - Destructuring-aware flow analysis
-  - CFA (Control Flow Analysis) edge cases
-
-Key failing test files:
-  TypeScript/tests/cases/compiler/controlFlowAliasedDiscriminants.ts
-  TypeScript/tests/cases/compiler/assertionFunctionsCanNarrowByDiscriminant.ts
-  TypeScript/tests/cases/compiler/destructuringTypeGuardFlow.ts
-  TypeScript/tests/cases/conformance/controlFlow/assertionTypePredicates1.ts
+Your goal is to close the gap between tsz and tsc in the core type system:
+  - Generics (inference, constraints, defaults)
+  - Contextual typing (callback params, function expressions, return types)
+  - Mapped types (homomorphic, key remapping, array preservation)
+  - Conditional types (evaluation, distribution, infer patterns)
+  - Recursive types (depth limits, coinductive semantics)
 
 ═══════════════════════════════════════════════════════════
-INVESTIGATION WORKFLOW
+EXAMPLE FAILING TESTS (representative of each category)
 ═══════════════════════════════════════════════════════════
 
-1. Run the key failing tests through conformance to see exact differences:
-     cargo build --profile dist-fast -p tsz-cli
-     ./scripts/conformance.sh run --filter controlFlow
-     ./scripts/conformance.sh run --filter assertionFunction
-     ./scripts/conformance.sh run --filter discriminant
+Generics:
+  TypeScript/tests/cases/compiler/genericFunctionInference1.ts
 
-2. For each failing test, create a minimal reproduction in tmp/:
-     cp TypeScript/tests/cases/compiler/controlFlowAliasedDiscriminants.ts tmp/
-     .target/dist-fast/tsz tmp/controlFlowAliasedDiscriminants.ts --pretty false 2>&1
+Mapped types + recursion:
+  TypeScript/tests/cases/compiler/mappedTypeRecursiveInference.ts
 
-3. Compare with tsc expected output (in conformance cache):
-     node -e "const c=require('./crates/conformance/tsc-cache-full.json'); console.log(JSON.stringify(c['controlFlowAliasedDiscriminants.ts'],null,2))"
+Contextual typing:
+  TypeScript/tests/cases/compiler/contextualTypingOfLambdaWithMultipleSignatures2.ts
 
-4. Use tracing to debug narrowing behavior:
-     TSZ_LOG="wasm::solver::narrowing=trace" TSZ_LOG_FORMAT=tree \
-       cargo run -p tsz-cli --bin tsz -- tmp/test.ts 2>&1 | head -200
+Conditional types:
+  TypeScript/tests/cases/compiler/conditionalTypeDoesntSpinForever.ts
 
-5. Fix the narrowing/CFA code
-6. Run cargo nextest run to ensure no regressions
-7. Re-run conformance to verify improvement
-8. Commit with clear message
-9. MANDATORY — sync after EVERY commit:
-     git pull --rebase origin main && git push origin main
+Run any single test:
+  cargo build --profile dist-fast -p tsz-cli && \
+  .target/dist-fast/tsz TypeScript/tests/cases/compiler/TEST_NAME.ts 2>&1
+
+Compare with TSC baseline (cached):
+  cat TypeScript/tests/baselines/reference/TEST_NAME.errors.txt
 
 ═══════════════════════════════════════════════════════════
-NARROWING CATEGORIES TO FIX
+RUNNING CONFORMANCE TESTS
 ═══════════════════════════════════════════════════════════
 
-1. ALIASED DISCRIMINANTS
-   When a discriminant property is assigned to a local variable,
-   narrowing the alias should narrow the original object:
-     const kind = obj.kind;
-     if (kind === "a") { obj.value /* should be narrowed */ }
-   tsc tracks the alias relationship through CFA.
+Build the binary:
+  cargo build --profile dist-fast -p tsz-cli
 
-2. ASSERTION FUNCTIONS
-   Functions declared with `asserts x is T` or `asserts x` should
-   narrow the type of x in subsequent code:
-     function assertIsString(x: unknown): asserts x is string { ... }
-     assertIsString(val);
-     val // should be string here
-   Also: assertion functions narrowing by discriminant property.
+Run full conformance suite:
+  ./scripts/conformance.sh run
 
-3. DESTRUCTURING-AWARE FLOW
-   When destructuring, narrowing should flow through:
-     const { kind, value } = obj;
-     if (kind === "a") { value /* should be narrowed */ }
-   The destructured bindings should be linked to the original object's CFA.
+Run a specific slice:
+  ./scripts/conformance.sh run --max=100 --offset=0
 
-4. CFA EDGE CASES
-   Various edge cases in control flow analysis:
-   - Narrowing after throw/return in if branches
-   - Narrowing in switch/case with fallthrough
-   - Narrowing across function boundaries (closures)
-   - Truthiness narrowing for optional properties
+Analyze failures:
+  ./scripts/conformance.sh analyze
+  ./scripts/conformance.sh analyze --category false-positive
+  ./scripts/conformance.sh analyze --category all-missing
+  ./scripts/conformance.sh analyze --category wrong-code
+  ./scripts/conformance.sh analyze --category close
+
+Filter by error code:
+  ./scripts/conformance.sh run --error-code 2322
 
 ═══════════════════════════════════════════════════════════
-KEY CODE LOCATIONS
+WORKFLOW
 ═══════════════════════════════════════════════════════════
 
-  Narrowing:        crates/tsz-checker/src/narrowing.rs (or solver/narrowing.rs)
-  Control flow:     crates/tsz-checker/src/control_flow.rs
-  Type guards:      crates/tsz-checker/src/ (search for type_guard, type_predicate)
-  Assertion funcs:  search for "asserts" in checker/solver
-  Solver:           crates/tsz-checker/src/solver/
-  Subtype checks:   crates/tsz-checker/src/solver/subtype.rs
-  Type computation: crates/tsz-checker/src/type_computation_complex.rs
-  Checker state:    crates/tsz-checker/src/state.rs
-  Binder CFA:       crates/tsz-binder/src/ (search for control_flow, flow_node)
-  Diagnostics:      crates/tsz-common/src/diagnostics.rs
-  CLI driver:       crates/tsz-cli/src/driver.rs
+1. Pick a failing test from the example list or from conformance analysis
+2. Compare tsz output with TSC baseline to understand the gap
+3. Identify the root cause (missing feature, wrong inference, etc.)
+4. Write a minimal reproduction in tmp/
+5. Run with tracing: TSZ_LOG=debug TSZ_LOG_FORMAT=tree .target/dist-fast/tsz tmp/test.ts 2>&1
+6. Fix the solver/checker code
+7. Verify: run the original test + cargo nextest run
+8. Run conformance to check for regressions
+9. Commit with clear message
+10. MANDATORY — sync after EVERY commit:
+      git pull --rebase origin main && git push origin main
 
 ═══════════════════════════════════════════════════════════
 STRATEGY
 ═══════════════════════════════════════════════════════════
 
-Start by understanding the CURRENT narrowing architecture:
-  1. Read the narrowing code to understand what's implemented
-  2. Run the 4 key test files to see exact error differences
-  3. Categorize failures: missing narrowing vs wrong narrowing vs crash
-  4. Fix in order of impact (most tests affected first)
+Focus on CORE TYPE SYSTEM fixes that affect many tests:
+  - Conditional type evaluation (blocks ~200 tests)
+  - Contextual typing for function expressions (TS7006 false positives)
+  - Generic inference edge cases (multi-signature, higher-order)
+  - Mapped type completeness (array/tuple preservation)
 
-Focus on fixes that are GENERAL (help many CFA tests) rather than narrow one-offs.
+Prioritize by impact:
+  1. Fixes that unblock the most conformance tests
+  2. Fixes that improve inference accuracy broadly
+  3. Edge cases in specific type system features
+
 Do NOT break existing passing tests. Always verify with cargo nextest run.
+
+═══════════════════════════════════════════════════════════
+KEY CODE LOCATIONS
+═══════════════════════════════════════════════════════════
+
+  Type inference:       crates/tsz-solver/src/infer.rs
+  Contextual typing:    crates/tsz-solver/src/contextual.rs
+  Conditional types:    crates/tsz-solver/src/evaluate_rules/conditional.rs
+  Mapped types:         crates/tsz-solver/src/evaluate_rules/mapped.rs
+  Infer patterns:       crates/tsz-solver/src/evaluate_rules/infer_pattern.rs
+  Recursive types:      crates/tsz-solver/src/recursion.rs
+  Type instantiation:   crates/tsz-solver/src/instantiate.rs
+  Type application:     crates/tsz-solver/src/application.rs
+  Subtype checks:       crates/tsz-solver/src/subtype.rs
+  Call checking:        crates/tsz-checker/src/call_checker.rs
+  Type computation:     crates/tsz-checker/src/type_computation_complex.rs
+  State/checker:        crates/tsz-checker/src/state.rs
+  Diagnostics:          crates/tsz-common/src/diagnostics.rs
 EOF
 
 exit 2
