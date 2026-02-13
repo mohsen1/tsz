@@ -65,6 +65,7 @@ pub mod parameter_checker;
 pub mod private_checker;
 pub mod promise_checker;
 pub mod property_checker;
+mod query_boundaries;
 pub mod reachability_analyzer;
 pub mod reachability_checker;
 pub mod scope_finder;
