@@ -2894,14 +2894,8 @@ impl<'a> CheckerState<'a> {
 
         // Check for parameter properties in constructor overload signatures (error 2369)
         // Parameter properties are only allowed in constructor implementations (with body).
-        // Exception: In declare classes (ambient context), constructor declarations without
-        // bodies can still have parameter properties (readonly, public, private, protected).
-        let is_declared_class = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .is_some_and(|c| c.is_declared);
-        if ctor.body.is_none() && !is_declared_class {
+        // This applies to both regular constructors and ambient (declare class) constructors.
+        if ctor.body.is_none() {
             self.check_parameter_properties(&ctor.parameters.nodes);
         }
 
