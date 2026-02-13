@@ -255,6 +255,40 @@ impl AnyPropagationRules {
 
 **Key Principle:** `any` should NOT silence structural mismatches. While `any` is TypeScript's escape hatch, the Lawyer layer ensures real errors are still caught.
 
+### 3.4 Dependency Direction Rules
+
+The architectural direction is strict and one-way. This is the canonical dependency policy.
+
+#### Allowed High-Level Flow
+
+`scanner -> parser -> binder -> checker -> solver -> emitter`
+
+LSP is a consumer/orchestrator around project state and checker results; it does not define type algorithms.
+
+#### Layer Rules
+
+1. Parser/Scanner do not depend on Checker/Solver internals.
+2. Binder owns symbol/scope/control-flow facts (`WHO`), not type computation (`WHAT`).
+3. Checker orchestrates AST traversal and diagnostics (`WHERE`), delegating type algorithms.
+4. Solver owns type relations, inference, narrowing, evaluation, and type queries (`WHAT`).
+5. Emitter consumes checked/transformed representations and does not perform semantic type validation.
+
+#### Forbidden Cross-Layer Shortcuts
+
+1. Checker implementing ad-hoc type algorithms that duplicate Solver logic.
+2. Checker pattern-matching directly on low-level type internals when Solver query helpers exist.
+3. Binder importing Solver logic for semantic type decisions.
+4. Emitter importing Checker internals for on-the-fly semantic checks.
+5. Any layer bypassing canonical query APIs and reaching into another layer's private representation.
+
+#### Review Heuristic
+
+For every new change, ask:
+
+1. Is this computing `WHAT` (type algorithm) or only deciding `WHERE` to report it?
+2. If `WHAT`, move it to Solver or a Solver query helper.
+3. If `WHERE`, keep it in Checker and call the Solver/queries.
+
 | TypeScript Quirk | Judge Behavior | Lawyer Override |
 |------------------|----------------|-----------------|
 | `any` assignability | Strict sets | Both top & bottom type |
