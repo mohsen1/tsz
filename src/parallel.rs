@@ -204,6 +204,8 @@ pub struct BindResult {
     pub lib_binders: Vec<Arc<BinderState>>,
     /// Symbol IDs that originated from lib files (pre-merge local IDs)
     pub lib_symbol_ids: FxHashSet<SymbolId>,
+    /// Reverse mapping from user-local lib symbol IDs to (lib_binder_ptr, original_local_id)
+    pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
     /// Flow nodes for control flow analysis
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
@@ -260,6 +262,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                     wildcard_reexports: binder.wildcard_reexports,
                     lib_binders: Vec::new(),
                     lib_symbol_ids: binder.lib_symbol_ids,
+                    lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
                     flow_nodes: binder.flow_nodes,
                     node_flow: binder.node_flow,
                     switch_clause_to_switch: binder.switch_clause_to_switch,
@@ -299,6 +302,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 wildcard_reexports: binder.wildcard_reexports,
                 lib_binders: Vec::new(), // No libs in this path
                 lib_symbol_ids: binder.lib_symbol_ids,
+                lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
                 flow_nodes: binder.flow_nodes,
                 node_flow: binder.node_flow,
                 switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
@@ -340,6 +344,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         wildcard_reexports: binder.wildcard_reexports,
         lib_binders: Vec::new(), // No libs in this path
         lib_symbol_ids: binder.lib_symbol_ids,
+        lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
         flow_nodes: binder.flow_nodes,
         node_flow: binder.node_flow,
         switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
@@ -559,6 +564,7 @@ pub fn parse_and_bind_parallel_with_libs(
                     wildcard_reexports: binder.wildcard_reexports,
                     lib_binders,
                     lib_symbol_ids: binder.lib_symbol_ids,
+                    lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
                     flow_nodes: binder.flow_nodes,
                     node_flow: binder.node_flow,
                     switch_clause_to_switch: binder.switch_clause_to_switch,
@@ -608,6 +614,7 @@ pub fn parse_and_bind_parallel_with_libs(
                 wildcard_reexports: binder.wildcard_reexports,
                 lib_binders,
                 lib_symbol_ids: binder.lib_symbol_ids,
+                lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
                 flow_nodes: binder.flow_nodes,
                 node_flow: binder.node_flow,
                 switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
@@ -811,20 +818,17 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         for i in 0..lib_binder.symbols.len() {
             let local_id = SymbolId(i as u32);
             if let Some(lib_sym) = lib_binder.symbols.get(local_id) {
-                // Check if this symbol is from a nested scope
-                // Lib symbols typically don't have nested scopes, but we check for completeness
-                let is_nested_symbol = lib_sym
-                    .declarations
-                    .first()
-                    .and_then(|first_decl| lib_binder.node_scope_ids.get(&first_decl.0))
-                    .and_then(|scope_id| lib_binder.scopes.get(scope_id.0 as usize))
-                    .map(|scope| scope.parent != ScopeId::NONE)
-                    .unwrap_or(false);
+                // Determine if this is a top-level symbol by checking file_locals.
+                // In lib files, declarations like `declare namespace Reflect` may appear
+                // in a child scope (e.g., ScopeId(1)) even though they're conceptually
+                // top-level. Using file_locals is more reliable than the scope check
+                // for determining which lib symbols should be globally merged.
+                let is_top_level = lib_binder.file_locals.iter().any(|(_, &id)| id == local_id);
 
                 // Check if a symbol with this name already exists (cross-lib merging)
-                // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
-                // Nested scope symbols should NEVER be merged across scopes
-                let global_id = if !is_nested_symbol {
+                // IMPORTANT: Only merge top-level symbols (those in file_locals)
+                // Nested symbols (namespace members, etc.) should NEVER be merged across scopes
+                let global_id = if is_top_level {
                     if let Some(&existing_id) = merged_symbols.get(&lib_sym.escaped_name) {
                         // Symbol already exists - check if we can merge
                         if let Some(existing_sym) = global_symbols.get(existing_id) {
@@ -887,6 +891,76 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
     }
 
+    // ==========================================================================
+    // PHASE 1.5: Remap internal references (parent, exports, members)
+    // ==========================================================================
+    // After all lib symbols have been allocated in the global arena, we need a
+    // second pass to fix up internal SymbolId references. The `alloc_from()` call
+    // copies the symbol data including members/exports/parent, but those fields
+    // still contain LOCAL SymbolIds from the original lib binder. We must remap
+    // them to the corresponding global IDs using lib_symbol_remap.
+    // (This mirrors Phase 2 in state.rs merge_lib_contexts_into_binder.)
+    for lib_binder in &lib_binders {
+        let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
+
+        for i in 0..lib_binder.symbols.len() {
+            let local_id = SymbolId(i as u32);
+            let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, local_id)) else {
+                continue;
+            };
+            let Some(lib_sym) = lib_binder.symbols.get(local_id) else {
+                continue;
+            };
+
+            // Remap parent
+            if !lib_sym.parent.is_none() {
+                if let Some(&new_parent) = lib_symbol_remap.get(&(lib_binder_ptr, lib_sym.parent)) {
+                    if let Some(sym) = global_symbols.get_mut(global_id) {
+                        sym.parent = new_parent;
+                    }
+                }
+            }
+
+            // Remap exports: replace local IDs with global IDs
+            if let Some(exports) = &lib_sym.exports {
+                if let Some(sym) = global_symbols.get_mut(global_id) {
+                    if sym.exports.is_none() {
+                        sym.exports = Some(Box::new(SymbolTable::new()));
+                    }
+                    if let Some(existing) = sym.exports.as_mut() {
+                        for (name, &export_id) in exports.iter() {
+                            if let Some(&new_export_id) =
+                                lib_symbol_remap.get(&(lib_binder_ptr, export_id))
+                            {
+                                // Always overwrite — Phase 1 alloc_from copied local IDs
+                                // that need to be replaced with global IDs
+                                existing.set(name.clone(), new_export_id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Remap members: replace local IDs with global IDs
+            if let Some(members) = &lib_sym.members {
+                if let Some(sym) = global_symbols.get_mut(global_id) {
+                    if sym.members.is_none() {
+                        sym.members = Some(Box::new(SymbolTable::new()));
+                    }
+                    if let Some(existing) = sym.members.as_mut() {
+                        for (name, &member_id) in members.iter() {
+                            if let Some(&new_member_id) =
+                                lib_symbol_remap.get(&(lib_binder_ptr, member_id))
+                            {
+                                existing.set(name.clone(), new_member_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Also remap lib file_locals entries that reference symbols by name
     // (for exported lib symbols like Array, Object, console)
     let mut lib_name_to_global: FxHashMap<String, SymbolId> = FxHashMap::default();
@@ -930,6 +1004,41 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         for i in 0..result.symbols.len() {
             let old_id = SymbolId(i as u32);
             if let Some(sym) = result.symbols.get(old_id) {
+                // For lib-originated symbols, reuse the Phase 1 global IDs rather than
+                // allocating new ones. This prevents duplicate lib symbols and ensures
+                // the Phase 1.5 remapped exports/members are preserved.
+                if result.lib_symbol_ids.contains(&old_id) {
+                    // For lib-originated symbols, use the reverse remap to find the
+                    // original (lib_binder_ptr, local_id), then look up the Phase 1
+                    // global ID via lib_symbol_remap. This ensures all lib symbols
+                    // (both top-level and nested) map to their Phase 1 global IDs,
+                    // preserving the Phase 1.5 export/member remapping.
+                    if let Some(&(binder_ptr, original_local_id)) =
+                        result.lib_symbol_reverse_remap.get(&old_id)
+                    {
+                        if let Some(&global_id) =
+                            lib_symbol_remap.get(&(binder_ptr, original_local_id))
+                        {
+                            id_remap.insert(old_id, global_id);
+                            continue;
+                        }
+                    }
+                    // Fallback: look up by name in merged_symbols or lib_name_to_global
+                    if let Some(&global_id) = merged_symbols.get(&sym.escaped_name) {
+                        id_remap.insert(old_id, global_id);
+                        continue;
+                    }
+                    if let Some(&global_id) = lib_name_to_global.get(&sym.escaped_name) {
+                        id_remap.insert(old_id, global_id);
+                        continue;
+                    }
+                    // Last resort: allocate a new ID (shouldn't happen normally)
+                    let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
+                    symbol_arenas.insert(new_id, Arc::clone(&result.arena));
+                    id_remap.insert(old_id, new_id);
+                    continue;
+                }
+
                 // Check if this symbol is from a nested scope by looking up its declaration's scope
                 let is_nested_symbol = sym
                     .declarations
@@ -1136,6 +1245,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         for (old_id, &new_id) in id_remap.iter() {
+            // Skip lib-originated symbols - they were already set up by Phase 1 + 1.5
+            if result.lib_symbol_ids.contains(old_id) {
+                continue;
+            }
             let Some(old_sym) = result.symbols.get(*old_id) else {
                 continue;
             };

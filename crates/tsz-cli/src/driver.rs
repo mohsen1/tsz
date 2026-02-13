@@ -1262,6 +1262,7 @@ fn build_program_with_cache(
                     wildcard_reexports: Default::default(),
                     lib_binders: Vec::new(),
                     lib_symbol_ids: Default::default(),
+                    lib_symbol_reverse_remap: Default::default(),
                     flow_nodes: Default::default(),
                     node_flow: Default::default(),
                     switch_clause_to_switch: Default::default(),
