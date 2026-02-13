@@ -30,6 +30,19 @@ impl ParserState {
         // Use scanner's source text (no duplicate allocation)
         let comments = tsz_common::comments::get_comment_ranges(self.scanner.source_text());
 
+        // Collect scanner-level diagnostics (e.g., conflict markers TS1185) into
+        // parse diagnostics so they appear in the final diagnostic output.
+        for diag in self.scanner.get_scanner_diagnostics() {
+            self.parse_diagnostics.push(super::state::ParseDiagnostic {
+                start: diag.pos as u32,
+                length: diag.length as u32,
+                message: diag.message.to_string(),
+                code: diag.code,
+            });
+        }
+        // Sort diagnostics by position to maintain correct order after merging
+        self.parse_diagnostics.sort_by_key(|d| d.start);
+
         // Create source file node
         let end_pos = self.token_end();
         let eof_token = self
