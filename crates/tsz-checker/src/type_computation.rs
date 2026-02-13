@@ -70,22 +70,27 @@ impl<'a> CheckerState<'a> {
     /// `NoopResolver` and can't resolve these. This method uses the Judge (which has access
     /// to the TypeEnvironment resolver) to evaluate such types into concrete object types.
     fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
-        use tsz_solver::TypeKey;
-        match self.ctx.types.lookup(type_id) {
-            Some(
-                TypeKey::Mapped(_)
-                | TypeKey::Conditional(_)
-                | TypeKey::Application(_)
-                | TypeKey::Lazy(_),
-            ) => {
-                let evaluated = self.judge_evaluate(type_id);
-                if evaluated != type_id {
-                    return evaluated;
-                }
-                type_id
-            }
-            _ => type_id,
+        use tsz_solver::type_queries::{
+            EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
+        };
+
+        let needs_evaluation = get_lazy_def_id(self.ctx.types, type_id).is_some()
+            || matches!(
+                classify_for_evaluation(self.ctx.types, type_id),
+                EvaluationNeeded::Application { .. }
+                    | EvaluationNeeded::Mapped { .. }
+                    | EvaluationNeeded::Conditional { .. }
+            );
+
+        if !needs_evaluation {
+            return type_id;
         }
+
+        let evaluated = self.judge_evaluate(type_id);
+        if evaluated != type_id {
+            return evaluated;
+        }
+        type_id
     }
 
     /// Get the type of a conditional expression (ternary operator).
