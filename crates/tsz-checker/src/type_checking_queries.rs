@@ -3,6 +3,10 @@
 //! This module contains modifier, member access, and query methods for CheckerState.
 //! Split from type_checking.rs for maintainability.
 
+use crate::query_boundaries::type_checking::{
+    first_construct_signature_return_type, is_direct_class_lazy_reference,
+    should_report_accessor_mismatch,
+};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -41,32 +45,17 @@ impl<'a> CheckerState<'a> {
         let type_id = self.get_type_of_node(type_node);
 
         // Check if this is a direct Lazy reference to a class symbol
-        let is_class_lazy = if let Some(def_id) =
-            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
-        {
-            if let Some(sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id).copied() {
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    symbol.flags & symbol_flags::CLASS != 0
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+        let is_class_lazy = is_direct_class_lazy_reference(self, type_id);
 
         if is_class_lazy {
             // This is a direct class reference - get the instance type
             let resolved = self.resolve_lazy_type(type_id);
 
             // Extract instance type from constructor type
-            if let Some(construct_signatures) =
-                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, resolved)
-                && let Some(first_sig) = construct_signatures.first()
+            if let Some(instance_type) =
+                first_construct_signature_return_type(self.ctx.types, resolved)
             {
-                return first_sig.return_type;
+                return instance_type;
             }
 
             return resolved;
@@ -2161,7 +2150,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check if getter return type is assignable to setter param type
-                if self.should_report_assignability_mismatch(getter_type, setter_type, error_pos) {
+                if should_report_accessor_mismatch(self, getter_type, setter_type, error_pos) {
                     // Get type strings for error message
                     let getter_type_str = self.format_type(getter_type);
                     let setter_type_str = self.format_type(setter_type);
