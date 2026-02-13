@@ -3615,10 +3615,17 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        // Class bodies reset the async context — field initializers and static blocks
+        // don't inherit async from the enclosing function. Methods define their own context.
+        let saved_async_depth = self.ctx.async_depth;
+        self.ctx.async_depth = 0;
+
         // Check each class member
         for &member_idx in &class.members.nodes {
             self.check_class_member(member_idx);
         }
+
+        self.ctx.async_depth = saved_async_depth;
 
         // Check for duplicate member names (TS2300, TS2393)
         self.check_duplicate_class_members(&class.members.nodes);
@@ -3714,9 +3721,16 @@ impl<'a> CheckerState<'a> {
             type_param_names: class_type_param_names,
         });
 
+        // Class bodies reset the async context — field initializers don't
+        // inherit async from the enclosing function.
+        let saved_async_depth = self.ctx.async_depth;
+        self.ctx.async_depth = 0;
+
         for &member_idx in &class.members.nodes {
             self.check_class_member(member_idx);
         }
+
+        self.ctx.async_depth = saved_async_depth;
 
         // Check strict property initialization (TS2564) for class expressions
         // Class expressions should have the same property initialization checks as class declarations
