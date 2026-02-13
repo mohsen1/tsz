@@ -116,7 +116,34 @@ impl<'a> CheckerState<'a> {
 
                 // TSZ-4: Use type_reference_symbol_type to preserve nominal identity
                 // This ensures enum members return TypeKey::Enum instead of primitives
-                return self.type_reference_symbol_type(sym_id);
+                let mut result = self.type_reference_symbol_type(sym_id);
+
+                // For `import * as x from "m"; type T = x.A`, apply module augmentations
+                // to the referenced member type (A) using the module specifier from `x`.
+                if let Some(qn) = self.ctx.arena.get(type_name_idx).and_then(|n| self.ctx.arena.get_qualified_name(n))
+                    && let Some(right_node) = self.ctx.arena.get(qn.right)
+                    && let Some(right_ident) = self.ctx.arena.get_identifier(right_node)
+                    && let Some(left_node) = self.ctx.arena.get(qn.left)
+                    && left_node.kind == SyntaxKind::Identifier as u16
+                    && let TypeSymbolResolution::Type(left_sym_id) =
+                        self.resolve_identifier_symbol_in_type_position(qn.left)
+                {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(left_symbol) = self
+                        .ctx
+                        .binder
+                        .get_symbol_with_libs(left_sym_id, &lib_binders)
+                        && let Some(module_specifier) = left_symbol.import_module.as_ref()
+                    {
+                        result = self.apply_module_augmentations(
+                            module_specifier,
+                            &right_ident.escaped_text,
+                            result,
+                        );
+                    }
+                }
+
+                return result;
             }
             return self.resolve_qualified_name(type_name_idx);
         }
