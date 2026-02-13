@@ -295,7 +295,10 @@ impl ParserState {
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
             SyntaxKind::AbstractKeyword => {
                 // abstract class declaration
-                if self.look_ahead_is_abstract_class() {
+                // Check for ASI: if next token is on a new line, treat as expression
+                if self.next_token_is_on_new_line() {
+                    self.parse_expression_statement()
+                } else if self.look_ahead_is_abstract_class() {
                     self.parse_abstract_class_declaration()
                 } else if self.look_ahead_is_abstract_declaration() {
                     use tsz_common::diagnostics::diagnostic_codes;
@@ -344,7 +347,10 @@ impl ParserState {
             | SyntaxKind::PrivateKeyword
             | SyntaxKind::OverrideKeyword
             | SyntaxKind::ReadonlyKeyword => {
-                if self.look_ahead_is_modifier_before_declaration() {
+                // ASI: if next token is on a new line, treat keyword as identifier expression
+                if self.next_token_is_on_new_line() {
+                    self.parse_expression_statement()
+                } else if self.look_ahead_is_modifier_before_declaration() {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Modifier cannot be used here.",
@@ -452,6 +458,19 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_decl
+    }
+
+    /// Check if the next token is on a new line (ASI applies).
+    /// Used to detect cases like:
+    ///   abstract
+    ///   class C {}
+    /// where ASI should terminate `abstract` as an expression statement.
+    fn next_token_is_on_new_line(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        self.scanner.scan();
+        let has_line_break = self.scanner.has_preceding_line_break();
+        self.scanner.restore_state(snapshot);
+        has_line_break
     }
 
     /// Look ahead to see if we have "async function"
@@ -2890,8 +2909,14 @@ impl ParserState {
         let current = self.current_token;
         self.next_token();
         let next = self.current_token;
+        let has_line_break = self.scanner.has_preceding_line_break();
         self.scanner.restore_state(snapshot);
         self.current_token = current;
+
+        // ASI: if the next token is on a new line, treat the keyword as a property name
+        if has_line_break {
+            return true;
+        }
 
         matches!(
             next,
