@@ -882,6 +882,7 @@ fn test_property_access_optional_property() {
     match result {
         PropertyAccessResult::Success {
             type_id,
+            write_type: _,
             from_index_signature,
         } => {
             let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
@@ -1338,6 +1339,7 @@ fn test_property_access_index_signature_no_unchecked() {
     match result {
         PropertyAccessResult::Success {
             type_id,
+            write_type: _,
             from_index_signature,
         } => {
             assert_eq!(type_id, TypeId::NUMBER);
@@ -1352,6 +1354,7 @@ fn test_property_access_index_signature_no_unchecked() {
     match result {
         PropertyAccessResult::Success {
             type_id,
+            write_type: _,
             from_index_signature,
         } => {
             let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
@@ -1386,6 +1389,7 @@ fn test_property_access_object_with_index_optional_property() {
     match result {
         PropertyAccessResult::Success {
             type_id,
+            write_type: _,
             from_index_signature,
         } => {
             let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
