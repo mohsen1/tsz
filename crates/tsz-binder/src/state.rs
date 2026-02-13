@@ -2104,6 +2104,16 @@ impl BinderState {
         arena: &NodeArena,
         statements: &NodeList,
     ) {
+        self.collect_hoisted_declarations_impl(arena, statements, false);
+    }
+
+    /// Internal implementation with block tracking.
+    fn collect_hoisted_declarations_impl(
+        &mut self,
+        arena: &NodeArena,
+        statements: &NodeList,
+        in_block: bool,
+    ) {
         for &stmt_idx in &statements.nodes {
             if let Some(node) = arena.get(stmt_idx) {
                 match node.kind {
@@ -2116,13 +2126,19 @@ impl BinderState {
                         }
                     }
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                        self.hoisted_functions.push(stmt_idx);
+                        // In ES6+ modules (external modules), function declarations inside
+                        // blocks are block-scoped, not hoisted to module scope.
+                        // Only hoist if we're NOT in a block OR NOT in an external module.
+                        if !in_block || !self.is_external_module {
+                            self.hoisted_functions.push(stmt_idx);
+                        }
                     }
                     k if k == syntax_kind_ext::BLOCK => {
                         // Always recurse into blocks for var hoisting (var is always
                         // function-scoped regardless of target).
+                        // Pass in_block=true to prevent function hoisting from blocks.
                         if let Some(block) = arena.get_block(node) {
-                            self.collect_hoisted_declarations(arena, &block.statements);
+                            self.collect_hoisted_declarations_impl(arena, &block.statements, true);
                         }
                     }
                     k if k == syntax_kind_ext::IF_STATEMENT => {
@@ -2247,15 +2263,15 @@ impl BinderState {
         if let Some(node) = arena.get(idx) {
             if node.kind == syntax_kind_ext::BLOCK {
                 // Always recurse into blocks for var hoisting (var is always
-                // function-scoped regardless of target). Function declarations
-                // in blocks are only hoisted in ES5 mode; the ES5 check for
-                // that lives in collect_hoisted_declarations.
+                // function-scoped regardless of target).
+                // Function declarations in blocks are block-scoped in ES6+ modules.
                 if let Some(block) = arena.get_block(node) {
-                    self.collect_hoisted_declarations(arena, &block.statements);
+                    self.collect_hoisted_declarations_impl(arena, &block.statements, true);
                 }
             } else {
                 // Handle single statement (not wrapped in a block)
                 // e.g., `if (x) var y = 1;` or `while (x) var i = 0;`
+                // These are at the same scope level, not in a block.
                 let mut stmts = tsz_parser::NodeList::new();
                 stmts.nodes.push(idx);
                 self.collect_hoisted_declarations(arena, &stmts);
