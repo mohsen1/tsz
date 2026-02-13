@@ -2087,12 +2087,13 @@ impl<'a> Printer<'a> {
             })
             .unwrap_or(false);
 
-        // When alwaysStrict is set, only suppress "use strict" for actual ES module files
-        // (files with import/export statements). Script files should still get "use strict"
-        // even when module kind is ES2015/ESNext, because they're not implicitly strict.
+        // TypeScript only emits "use strict" when:
+        // 1. CommonJS/AMD/UMD AND the file is actually an ES module (has import/export)
+        //    Script files (with only namespaces/internal imports) don't get "use strict"
+        // 2. alwaysStrict is on AND the file is not already an ES module output
         let is_file_module = self.file_is_module(&source.statements);
         let should_emit_use_strict = !source_has_use_strict
-            && (is_commonjs_or_amd
+            && ((is_commonjs_or_amd && is_file_module)
                 || (self.ctx.options.always_strict && !(is_es_module_output && is_file_module)));
 
         if should_emit_use_strict {
