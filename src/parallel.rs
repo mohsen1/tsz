@@ -722,19 +722,48 @@ fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bool {
         return true;
     }
 
+    // Interface can merge with variable (e.g., `interface Promise<T>` + `declare var Promise: PromiseConstructor`)
+    // This is fundamental to how TypeScript lib declarations work: types have both an interface
+    // (type side) and a variable declaration (value side).
+    if ((existing_flags & symbol_flags::INTERFACE) != 0
+        && (new_flags & symbol_flags::VARIABLE) != 0)
+        || ((existing_flags & symbol_flags::VARIABLE) != 0
+            && (new_flags & symbol_flags::INTERFACE) != 0)
+    {
+        return true;
+    }
+
+    // Interface can merge with function (e.g., `interface Array<T>` + `declare function Array(...)`)
+    if ((existing_flags & symbol_flags::INTERFACE) != 0
+        && (new_flags & symbol_flags::FUNCTION) != 0)
+        || ((existing_flags & symbol_flags::FUNCTION) != 0
+            && (new_flags & symbol_flags::INTERFACE) != 0)
+    {
+        return true;
+    }
+
     // Namespace/module can merge with namespace/module
     if (existing_flags & symbol_flags::MODULE) != 0 && (new_flags & symbol_flags::MODULE) != 0 {
         return true;
     }
 
-    // Namespace can merge with class, function, or enum
+    // Namespace can merge with class, function, enum, or variable
     if (existing_flags & symbol_flags::MODULE) != 0
-        && (new_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM)) != 0
+        && (new_flags
+            & (symbol_flags::CLASS
+                | symbol_flags::FUNCTION
+                | symbol_flags::ENUM
+                | symbol_flags::VARIABLE))
+            != 0
     {
         return true;
     }
     if (new_flags & symbol_flags::MODULE) != 0
-        && (existing_flags & (symbol_flags::CLASS | symbol_flags::FUNCTION | symbol_flags::ENUM))
+        && (existing_flags
+            & (symbol_flags::CLASS
+                | symbol_flags::FUNCTION
+                | symbol_flags::ENUM
+                | symbol_flags::VARIABLE))
             != 0
     {
         return true;
