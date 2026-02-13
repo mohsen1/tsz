@@ -477,18 +477,64 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     self.checker.is_assignable_to(asserted_type, expr_type);
 
                                 if !source_to_target && !target_to_source {
-                                    // Before emitting TS2352, check if types share common properties.
-                                    // This approximates TSC's isTypeComparableTo check.
-                                    let evaluated_expr =
-                                        self.checker.evaluate_type_for_assignability(expr_type);
-                                    let evaluated_asserted =
-                                        self.checker.evaluate_type_for_assignability(asserted_type);
-                                    let have_overlap =
-                                        tsz_solver::type_queries::types_are_comparable(
-                                            self.checker.ctx.types,
-                                            evaluated_expr,
-                                            evaluated_asserted,
-                                        );
+                                    // TSC uses isTypeComparableTo which decomposes unions
+                                    // and checks per-member overlap. For `X as A | B`, it
+                                    // suffices if X overlaps with ANY member (A or B).
+                                    let mut have_overlap = false;
+
+                                    // Decompose target union: any member assignable in either direction?
+                                    if let Some(tsz_solver::types::TypeKey::Union(list_id)) =
+                                        self.checker.ctx.types.lookup(asserted_type)
+                                    {
+                                        let members =
+                                            self.checker.ctx.types.type_list(list_id).clone();
+                                        for &member in members.iter() {
+                                            if self.checker.is_assignable_to(member, expr_type)
+                                                || self.checker.is_assignable_to(expr_type, member)
+                                            {
+                                                have_overlap = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    // Decompose source union: any member assignable in either direction?
+                                    if !have_overlap {
+                                        if let Some(tsz_solver::types::TypeKey::Union(list_id)) =
+                                            self.checker.ctx.types.lookup(expr_type)
+                                        {
+                                            let members =
+                                                self.checker.ctx.types.type_list(list_id).clone();
+                                            for &member in members.iter() {
+                                                if self
+                                                    .checker
+                                                    .is_assignable_to(member, asserted_type)
+                                                    || self
+                                                        .checker
+                                                        .is_assignable_to(asserted_type, member)
+                                                {
+                                                    have_overlap = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Final fallback: check structural property overlap
+                                    if !have_overlap {
+                                        let evaluated_expr =
+                                            self.checker.evaluate_type_for_assignability(expr_type);
+                                        let evaluated_asserted = self
+                                            .checker
+                                            .evaluate_type_for_assignability(asserted_type);
+                                        have_overlap =
+                                            tsz_solver::type_queries::types_are_comparable(
+                                                self.checker.ctx.types,
+                                                evaluated_expr,
+                                                evaluated_asserted,
+                                            );
+                                    }
+
                                     if !have_overlap {
                                         self.checker.error_type_assertion_no_overlap(
                                             expr_type,
