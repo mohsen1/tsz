@@ -20,6 +20,9 @@
 //! - Constructor accessibility tracking (private/protected)
 //! - Abstract class tracking
 
+use crate::query_boundaries::class_type::{
+    callable_shape_for_type, construct_signatures_for_type, object_shape_for_type,
+};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -717,8 +720,7 @@ impl<'a> CheckerState<'a> {
                     instantiate_type(self.ctx.types, base_instance_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
 
-                if let Some(base_shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, base_instance_type)
+                if let Some(base_shape) = object_shape_for_type(self.ctx.types, base_instance_type)
                 {
                     for base_prop in base_shape.properties.iter() {
                         properties
@@ -808,9 +810,7 @@ impl<'a> CheckerState<'a> {
                     // but get_object_shape needs the actual Object type
                     interface_type = self.resolve_lazy_type(interface_type);
 
-                    if let Some(shape) =
-                        tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
-                    {
+                    if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                         for prop in shape.properties.iter() {
                             properties.entry(prop.name).or_insert_with(|| prop.clone());
                         }
@@ -821,7 +821,7 @@ impl<'a> CheckerState<'a> {
                             Self::merge_index_signature(&mut number_index, idx.clone());
                         }
                     } else if let Some(shape) =
-                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, interface_type)
+                        callable_shape_for_type(self.ctx.types, interface_type)
                     {
                         for prop in shape.properties.iter() {
                             properties.entry(prop.name).or_insert_with(|| prop.clone());
@@ -865,9 +865,7 @@ impl<'a> CheckerState<'a> {
                 let interface_type =
                     self.merge_interface_heritage_types(&interface_decls, interface_type);
 
-                if let Some(shape) =
-                    tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
-                {
+                if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                     for prop in shape.properties.iter() {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
                     }
@@ -877,8 +875,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(ref idx) = shape.number_index {
                         Self::merge_index_signature(&mut number_index, idx.clone());
                     }
-                } else if let Some(shape) =
-                    tsz_solver::type_queries::get_callable_shape(self.ctx.types, interface_type)
+                } else if let Some(shape) = callable_shape_for_type(self.ctx.types, interface_type)
                 {
                     for prop in shape.properties.iter() {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
@@ -1482,10 +1479,9 @@ impl<'a> CheckerState<'a> {
                     instantiate_type(self.ctx.types, base_constructor_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
 
-                if let Some(base_shape) = tsz_solver::type_queries::get_callable_shape(
-                    self.ctx.types,
-                    base_constructor_type,
-                ) {
+                if let Some(base_shape) =
+                    callable_shape_for_type(self.ctx.types, base_constructor_type)
+                {
                     for base_prop in base_shape.properties.iter() {
                         properties
                             .entry(base_prop.name)
@@ -1626,8 +1622,7 @@ impl<'a> CheckerState<'a> {
         class_type_params: &[TypeParamInfo],
         instance_type: TypeId,
     ) -> Option<Vec<CallSignature>> {
-        let signatures =
-            tsz_solver::type_queries::get_construct_signatures(self.ctx.types, constructor_type)?;
+        let signatures = construct_signatures_for_type(self.ctx.types, constructor_type)?;
         if signatures.is_empty() {
             return None;
         }
