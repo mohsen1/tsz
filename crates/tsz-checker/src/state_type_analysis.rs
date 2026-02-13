@@ -2501,7 +2501,12 @@ impl<'a> CheckerState<'a> {
                                 if name == "export=" {
                                     continue;
                                 }
-                                let prop_type = self.get_type_of_symbol(sym_id);
+                                let mut prop_type = self.get_type_of_symbol(sym_id);
+                                prop_type = self.apply_module_augmentations(
+                                    &module_specifier,
+                                    name,
+                                    prop_type,
+                                );
                                 let name_atom = self.ctx.types.intern_string(name);
                                 props.push(PropertyInfo {
                                     name: name_atom,
