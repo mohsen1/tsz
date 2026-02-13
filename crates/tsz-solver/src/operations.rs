@@ -1010,6 +1010,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 TypeId::UNKNOWN
             };
 
+            // Generic source contextual instantiation can produce temporary placeholders
+            // (e.g. `__infer_src_*`) while collecting constraints for callback arguments.
+            // Those placeholders must never leak into final instantiated signatures.
+            let infer_subst = infer_ctx.get_current_substitution();
+            let ty = self.normalize_inferred_placeholder_type(ty, &infer_subst);
+
             final_subst.insert(tp.name, ty);
 
             if let Some(constraint) = tp.constraint {
@@ -1076,6 +1082,50 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let return_type = instantiate_type(self.interner, func.return_type, &final_subst);
         CallResult::Success(return_type)
+    }
+
+    /// Collapse transient inference placeholders (like `__infer_src_*`) to stable types.
+    ///
+    /// The generic call pipeline uses temporary type parameter placeholders for
+    /// contextually-instantiated callback arguments. If one of those placeholders
+    /// survives as an inferred result, we normalize it through the current
+    /// substitution map and fall back to `unknown` if it remains unresolved.
+    fn normalize_inferred_placeholder_type(
+        &self,
+        ty: TypeId,
+        infer_subst: &TypeSubstitution,
+    ) -> TypeId {
+        let mut current = ty;
+        let mut visited = FxHashSet::default();
+
+        for _ in 0..32 {
+            if !visited.insert(current) {
+                break;
+            }
+
+            let Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) =
+                self.interner.lookup(current)
+            else {
+                break;
+            };
+
+            if let Some(next) = infer_subst.get(info.name) {
+                if next == current {
+                    break;
+                }
+                current = next;
+                continue;
+            }
+
+            let name = self.interner.resolve_atom(info.name);
+            if name.starts_with("__infer_") || name.starts_with("__infer_src_") {
+                return TypeId::UNKNOWN;
+            }
+
+            break;
+        }
+
+        current
     }
 
     /// Computes contextual types for function parameters after Round 1 inference.

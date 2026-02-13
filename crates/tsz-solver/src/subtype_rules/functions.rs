@@ -251,6 +251,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    fn is_uninformative_contextual_inference_input(&self, ty: TypeId) -> bool {
+        matches!(ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+    }
+
     fn infer_source_type_param_substitution(
         &mut self,
         source: &FunctionShape,
@@ -313,14 +317,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 t_param.type_id
             };
 
-            let _ = infer_ctx.infer_from_types(
-                t_effective,
-                s_effective,
-                InferencePriority::NakedTypeVariable,
-            );
+            if !self.is_uninformative_contextual_inference_input(t_effective) {
+                let _ = infer_ctx.infer_from_types(
+                    t_effective,
+                    s_effective,
+                    InferencePriority::NakedTypeVariable,
+                );
+            }
         }
 
-        if target_has_rest && let Some(rest_elem_type) = rest_elem_type {
+        if target_has_rest
+            && let Some(rest_elem_type) = rest_elem_type
+            && !self.is_uninformative_contextual_inference_input(rest_elem_type)
+        {
             for s_param in source_params_unpacked
                 .iter()
                 .take(source_fixed_count)
@@ -350,31 +359,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .take(target_fixed_count)
                 .skip(source_fixed_count)
             {
-                let _ = infer_ctx.infer_from_types(
-                    t_param.type_id,
-                    rest_elem_type,
-                    InferencePriority::NakedTypeVariable,
-                );
+                if !self.is_uninformative_contextual_inference_input(t_param.type_id) {
+                    let _ = infer_ctx.infer_from_types(
+                        t_param.type_id,
+                        rest_elem_type,
+                        InferencePriority::NakedTypeVariable,
+                    );
+                }
             }
         }
 
-        let _ = infer_ctx.infer_from_types(
-            target.return_type,
-            source.return_type,
-            InferencePriority::ReturnType,
-        );
-        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type) {
+        if !self.is_uninformative_contextual_inference_input(target.return_type) {
             let _ = infer_ctx.infer_from_types(
-                target_this,
-                source_this,
-                InferencePriority::NakedTypeVariable,
+                target.return_type,
+                source.return_type,
+                InferencePriority::ReturnType,
             );
+        }
+        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type) {
+            if !self.is_uninformative_contextual_inference_input(target_this) {
+                let _ = infer_ctx.infer_from_types(
+                    target_this,
+                    source_this,
+                    InferencePriority::NakedTypeVariable,
+                );
+            }
         }
         if let (Some(source_pred), Some(target_pred)) =
             (&source.type_predicate, &target.type_predicate)
             && let (Some(source_ty), Some(target_ty)) = (source_pred.type_id, target_pred.type_id)
         {
-            let _ = infer_ctx.infer_from_types(target_ty, source_ty, InferencePriority::ReturnType);
+            if !self.is_uninformative_contextual_inference_input(target_ty) {
+                let _ =
+                    infer_ctx.infer_from_types(target_ty, source_ty, InferencePriority::ReturnType);
+            }
         }
 
         let inferred = infer_ctx.resolve_all_with_constraints().unwrap_or_default();
@@ -393,6 +411,159 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         substitution
     }
 
+    fn infer_target_type_param_substitution(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> TypeSubstitution {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let mut infer_ctx = InferenceContext::new(self.interner);
+        for tp in &target.type_params {
+            let var = infer_ctx.fresh_type_param(tp.name, tp.is_const);
+            if let Some(constraint) = tp.constraint {
+                infer_ctx.add_upper_bound(var, constraint);
+            }
+        }
+
+        let source_params_unpacked: Vec<ParamInfo> = source
+            .params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+        let target_params_unpacked: Vec<ParamInfo> = target
+            .params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+
+        let target_has_rest = target_params_unpacked.last().is_some_and(|p| p.rest);
+        let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
+        let rest_elem_type = if target_has_rest {
+            target_params_unpacked
+                .last()
+                .map(|param| self.get_array_element_type(param.type_id))
+        } else {
+            None
+        };
+        let target_fixed_count = if target_has_rest {
+            target_params_unpacked.len().saturating_sub(1)
+        } else {
+            target_params_unpacked.len()
+        };
+        let source_fixed_count = if source_has_rest {
+            source_params_unpacked.len().saturating_sub(1)
+        } else {
+            source_params_unpacked.len()
+        };
+
+        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
+        for i in 0..fixed_compare_count {
+            let s_param = &source_params_unpacked[i];
+            let t_param = &target_params_unpacked[i];
+
+            let s_effective = if s_param.optional {
+                self.interner.union2(s_param.type_id, TypeId::UNDEFINED)
+            } else {
+                s_param.type_id
+            };
+            let t_effective = if t_param.optional {
+                self.interner.union2(t_param.type_id, TypeId::UNDEFINED)
+            } else {
+                t_param.type_id
+            };
+
+            if !self.is_uninformative_contextual_inference_input(s_effective) {
+                let _ = infer_ctx.infer_from_types(
+                    s_effective,
+                    t_effective,
+                    InferencePriority::NakedTypeVariable,
+                );
+            }
+        }
+
+        if target_has_rest
+            && let Some(rest_elem_type) = rest_elem_type
+            && !self.is_uninformative_contextual_inference_input(rest_elem_type)
+        {
+            for s_param in source_params_unpacked
+                .iter()
+                .take(source_fixed_count)
+                .skip(target_fixed_count)
+            {
+                if !self.is_uninformative_contextual_inference_input(s_param.type_id) {
+                    let _ = infer_ctx.infer_from_types(
+                        s_param.type_id,
+                        rest_elem_type,
+                        InferencePriority::NakedTypeVariable,
+                    );
+                }
+            }
+
+            if source_has_rest && let Some(s_rest_param) = source_params_unpacked.last() {
+                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                if !self.is_uninformative_contextual_inference_input(s_rest_elem) {
+                    let _ = infer_ctx.infer_from_types(
+                        s_rest_elem,
+                        rest_elem_type,
+                        InferencePriority::NakedTypeVariable,
+                    );
+                }
+            }
+        }
+
+        if source_has_rest && let Some(rest_param) = source_params_unpacked.last() {
+            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
+            if !self.is_uninformative_contextual_inference_input(rest_elem_type) {
+                for t_param in target_params_unpacked
+                    .iter()
+                    .take(target_fixed_count)
+                    .skip(source_fixed_count)
+                {
+                    let _ = infer_ctx.infer_from_types(
+                        rest_elem_type,
+                        t_param.type_id,
+                        InferencePriority::NakedTypeVariable,
+                    );
+                }
+            }
+        }
+
+        if !self.is_uninformative_contextual_inference_input(source.return_type) {
+            let _ = infer_ctx.infer_from_types(
+                source.return_type,
+                target.return_type,
+                InferencePriority::ReturnType,
+            );
+        }
+        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type) {
+            if !self.is_uninformative_contextual_inference_input(source_this) {
+                let _ = infer_ctx.infer_from_types(
+                    source_this,
+                    target_this,
+                    InferencePriority::NakedTypeVariable,
+                );
+            }
+        }
+        if let (Some(source_pred), Some(target_pred)) =
+            (&source.type_predicate, &target.type_predicate)
+            && let (Some(source_ty), Some(target_ty)) = (source_pred.type_id, target_pred.type_id)
+            && !self.is_uninformative_contextual_inference_input(source_ty)
+        {
+            let _ = infer_ctx.infer_from_types(source_ty, target_ty, InferencePriority::ReturnType);
+        }
+
+        let inferred = infer_ctx.resolve_all_with_constraints().unwrap_or_default();
+        let mut substitution = TypeSubstitution::new();
+        for tp in &target.type_params {
+            let inferred_ty = inferred
+                .iter()
+                .find_map(|(name, ty)| if *name == tp.name { Some(*ty) } else { None });
+            substitution.insert(tp.name, inferred_ty.unwrap_or(TypeId::ANY));
+        }
+        substitution
+    }
+
     /// Check if a function type is a subtype of another function type.
     ///
     /// Validates function compatibility by checking:
@@ -404,9 +575,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - Rest parameter handling
     /// - Optional parameter compatibility
     ///
-    /// Generic instantiation: When the target is generic but the source is not,
-    /// we instantiate the target's type parameters to `any` before checking compatibility.
-    /// This allows non-generic implementations to be compatible with generic overloads.
+    /// Generic instantiation:
+    /// - Generic source -> non-generic target: infer source type parameters from target shape.
+    /// - Generic target -> non-generic source: infer target type parameters from source shape,
+    ///   falling back to `any` for unconstrained/inconclusive positions.
     pub(crate) fn check_function_subtype(
         &mut self,
         source: &FunctionShape,
@@ -455,10 +627,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Generic target vs non-generic source: instantiate target type params to `any`.
         if !target_instantiated.type_params.is_empty() && source_instantiated.type_params.is_empty()
         {
-            let mut substitution = TypeSubstitution::new();
-            for param in &target_instantiated.type_params {
-                substitution.insert(param.name, TypeId::ANY);
-            }
+            let substitution = self
+                .infer_target_type_param_substitution(&source_instantiated, &target_instantiated);
             target_instantiated =
                 self.instantiate_function_shape(&target_instantiated, &substitution);
         }
@@ -816,129 +986,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallSignature,
         target: &FunctionShape,
     ) -> SubtypeResult {
-        // Return type is covariant
-        if !self
-            .check_return_compat(source.return_type, target.return_type)
-            .is_true()
-        {
-            return SubtypeResult::False;
-        }
-
-        if !self.are_this_parameters_compatible(source.this_type, target.this_type) {
-            return SubtypeResult::False;
-        }
-
-        // Check rest parameter handling
-        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
-        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
-        let rest_elem_type = if target_has_rest {
-            target
-                .params
-                .last()
-                .map(|param| self.get_array_element_type(param.type_id))
-        } else {
-            None
+        let source_fn = FunctionShape {
+            type_params: source.type_params.clone(),
+            params: source.params.clone(),
+            this_type: source.this_type,
+            return_type: source.return_type,
+            type_predicate: source.type_predicate.clone(),
+            is_constructor: target.is_constructor,
+            is_method: source.is_method,
         };
-        let rest_is_top = self.allow_bivariant_rest
-            && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
-
-        // Count non-rest parameters
-        let target_fixed_count = if target_has_rest {
-            target.params.len().saturating_sub(1)
-        } else {
-            target.params.len()
-        };
-        let source_fixed_count = if source_has_rest {
-            source.params.len().saturating_sub(1)
-        } else {
-            source.params.len()
-        };
-
-        // Check parameter arity: source's required params must not exceed
-        // the target's total non-rest params (including optional ones).
-        // When target has a rest parameter, skip the arity check entirely —
-        // the rest parameter can accept any number of arguments, and type
-        // compatibility of extra params is checked later against the rest element type.
-        let source_required = self.required_param_count(&source.params);
-        if !self.allow_bivariant_param_count
-            && !target_has_rest
-            && source_required > target_fixed_count
-        {
-            return SubtypeResult::False;
-        }
-
-        // Compare fixed parameters
-        // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
-        let is_method = source.is_method || target.is_method;
-        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
-        for i in 0..fixed_compare_count {
-            let s_param = &source.params[i];
-            let t_param = &target.params[i];
-            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
-                return SubtypeResult::False;
-            }
-        }
-
-        // If target has rest, check source's extra params
-        if target_has_rest {
-            let Some(rest_elem_type) = rest_elem_type else {
-                return SubtypeResult::False;
-            };
-            if rest_is_top {
-                return SubtypeResult::True;
-            }
-
-            for i in target_fixed_count..source_fixed_count {
-                let s_param = &source.params[i];
-                if !self.are_parameters_compatible_impl(s_param.type_id, rest_elem_type, is_method)
-                {
-                    return SubtypeResult::False;
-                }
-            }
-
-            if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    return SubtypeResult::False;
-                };
-                // Check if source rest type is assignable to target rest type.
-                // For tuple rest params like [...args: [T1, T2]], check the whole tuple
-                // against the target array type, not just the first element.
-                let target_rest_type = target.params.last().unwrap().type_id;
-                if !self.are_parameters_compatible_impl(
-                    s_rest_param.type_id,
-                    target_rest_type,
-                    is_method,
-                ) {
-                    return SubtypeResult::False;
-                }
-            }
-        }
-
-        if source_has_rest {
-            let rest_param = if let Some(rest_param) = source.params.last() {
-                rest_param
-            } else {
-                return SubtypeResult::False;
-            };
-            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
-            let rest_is_top = self.allow_bivariant_rest
-                && (rest_elem_type == TypeId::ANY || rest_elem_type == TypeId::UNKNOWN);
-
-            if !rest_is_top {
-                for i in source_fixed_count..target_fixed_count {
-                    let t_param = &target.params[i];
-                    if !self.are_parameters_compatible_impl(
-                        rest_elem_type,
-                        t_param.type_id,
-                        is_method,
-                    ) {
-                        return SubtypeResult::False;
-                    }
-                }
-            }
-        }
-
-        SubtypeResult::True
+        self.check_function_subtype(&source_fn, target)
     }
 
     /// Check function shape subtype to call signature.
@@ -947,129 +1004,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &CallSignature,
     ) -> SubtypeResult {
-        // Return type is covariant
-        if !self
-            .check_return_compat(source.return_type, target.return_type)
-            .is_true()
-        {
-            return SubtypeResult::False;
-        }
-
-        if !self.are_this_parameters_compatible(source.this_type, target.this_type) {
-            return SubtypeResult::False;
-        }
-
-        // Check rest parameter handling
-        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
-        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
-        let rest_elem_type = if target_has_rest {
-            target
-                .params
-                .last()
-                .map(|param| self.get_array_element_type(param.type_id))
-        } else {
-            None
+        let target_fn = FunctionShape {
+            type_params: target.type_params.clone(),
+            params: target.params.clone(),
+            this_type: target.this_type,
+            return_type: target.return_type,
+            type_predicate: target.type_predicate.clone(),
+            is_constructor: source.is_constructor,
+            is_method: target.is_method,
         };
-        let rest_is_top = self.allow_bivariant_rest
-            && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
-
-        // Count non-rest parameters
-        let target_fixed_count = if target_has_rest {
-            target.params.len().saturating_sub(1)
-        } else {
-            target.params.len()
-        };
-        let source_fixed_count = if source_has_rest {
-            source.params.len().saturating_sub(1)
-        } else {
-            source.params.len()
-        };
-
-        // Check parameter arity: source's required params must not exceed
-        // the target's total non-rest params (including optional ones).
-        // When target has a rest parameter, skip the arity check entirely —
-        // the rest parameter can accept any number of arguments, and type
-        // compatibility of extra params is checked later against the rest element type.
-        let source_required = self.required_param_count(&source.params);
-        if !self.allow_bivariant_param_count
-            && !target_has_rest
-            && source_required > target_fixed_count
-        {
-            return SubtypeResult::False;
-        }
-
-        // Compare fixed parameters
-        // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
-        let is_method = source.is_method || target.is_method;
-        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
-        for i in 0..fixed_compare_count {
-            let s_param = &source.params[i];
-            let t_param = &target.params[i];
-            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
-                return SubtypeResult::False;
-            }
-        }
-
-        // If target has rest, check source's extra params
-        if target_has_rest {
-            let Some(rest_elem_type) = rest_elem_type else {
-                return SubtypeResult::False;
-            };
-            if rest_is_top {
-                return SubtypeResult::True;
-            }
-
-            for i in target_fixed_count..source_fixed_count {
-                let s_param = &source.params[i];
-                if !self.are_parameters_compatible_impl(s_param.type_id, rest_elem_type, is_method)
-                {
-                    return SubtypeResult::False;
-                }
-            }
-
-            if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    return SubtypeResult::False;
-                };
-                // Check if source rest type is assignable to target rest type.
-                // For tuple rest params like [...args: [T1, T2]], check the whole tuple
-                // against the target array type, not just the first element.
-                let target_rest_type = target.params.last().unwrap().type_id;
-                if !self.are_parameters_compatible_impl(
-                    s_rest_param.type_id,
-                    target_rest_type,
-                    is_method,
-                ) {
-                    return SubtypeResult::False;
-                }
-            }
-        }
-
-        if source_has_rest {
-            let rest_param = if let Some(rest_param) = source.params.last() {
-                rest_param
-            } else {
-                return SubtypeResult::False;
-            };
-            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
-            let rest_is_top = self.allow_bivariant_rest
-                && (rest_elem_type == TypeId::ANY || rest_elem_type == TypeId::UNKNOWN);
-
-            if !rest_is_top {
-                for i in source_fixed_count..target_fixed_count {
-                    let t_param = &target.params[i];
-                    if !self.are_parameters_compatible_impl(
-                        rest_elem_type,
-                        t_param.type_id,
-                        is_method,
-                    ) {
-                        return SubtypeResult::False;
-                    }
-                }
-            }
-        }
-
-        SubtypeResult::True
+        self.check_function_subtype(source, &target_fn)
     }
 
     /// Evaluate a meta-type (conditional, index access, mapped, keyof, etc.) to its
