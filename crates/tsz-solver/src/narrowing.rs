@@ -32,7 +32,7 @@ use crate::subtype::{SubtypeChecker, TypeResolver, is_subtype_of};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::Visibility;
 use crate::types::*;
-use crate::utils::{intersection_or_single, union_or_single};
+use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
 use crate::visitor::{
     TypeVisitor, index_access_parts, intersection_list_id, is_function_type_db, is_literal_type_db,
     is_object_like_type_db, lazy_def_id, literal_value, object_shape_id,
@@ -895,12 +895,8 @@ impl<'a> NarrowingContext<'a> {
                 let instance_types: Vec<TypeId> = members
                     .iter()
                     .filter_map(|&member| {
-                        let result = self.narrow_by_instanceof(source_type, member, sense);
-                        if result != TypeId::NEVER {
-                            Some(result)
-                        } else {
-                            None
-                        }
+                        self.narrow_by_instanceof(source_type, member, sense)
+                            .non_never()
                     })
                     .collect();
 
@@ -1544,18 +1540,13 @@ impl<'a> NarrowingContext<'a> {
                 .iter()
                 .filter_map(|&member| {
                     if intersection_list_id(self.db, member).is_some() {
-                        let narrowed = self.narrow_excluding_type(member, excluded_type);
-                        if narrowed == TypeId::NEVER {
-                            return None;
-                        }
-                        return Some(narrowed);
+                        return self
+                            .narrow_excluding_type(member, excluded_type)
+                            .non_never();
                     }
                     if let Some(narrowed) = self.narrow_type_param_excluding(member, excluded_type)
                     {
-                        if narrowed == TypeId::NEVER {
-                            return None;
-                        }
-                        return Some(narrowed);
+                        return narrowed.non_never();
                     }
                     if self.is_assignable_to(member, excluded_type) {
                         None
@@ -1686,21 +1677,16 @@ impl<'a> NarrowingContext<'a> {
 
                     // Handle intersection members
                     if intersection_list_id(self.db, member).is_some() {
-                        let narrowed = self.narrow_excluding_types(member, excluded_types);
-                        if narrowed == TypeId::NEVER {
-                            return None;
-                        }
-                        return Some(narrowed);
+                        return self
+                            .narrow_excluding_types(member, excluded_types)
+                            .non_never();
                     }
 
                     // Handle type parameters
                     if let Some(narrowed) =
                         self.narrow_type_param_excluding_set(member, &excluded_set)
                     {
-                        if narrowed == TypeId::NEVER {
-                            return None;
-                        }
-                        return Some(narrowed);
+                        return narrowed.non_never();
                     }
 
                     // Slow path: check assignability for complex cases
@@ -1774,10 +1760,7 @@ impl<'a> NarrowingContext<'a> {
                 .iter()
                 .filter_map(|&member| {
                     if let Some(narrowed) = self.narrow_type_param_to_function(member) {
-                        if narrowed == TypeId::NEVER {
-                            return None;
-                        }
-                        return Some(narrowed);
+                        return narrowed.non_never();
                     }
                     if self.is_function_type(member) {
                         Some(member)
@@ -1787,13 +1770,7 @@ impl<'a> NarrowingContext<'a> {
                 })
                 .collect();
 
-            if functions.is_empty() {
-                return TypeId::NEVER;
-            } else if functions.len() == 1 {
-                return functions[0];
-            } else {
-                return self.db.union(functions);
-            }
+            return union_or_single(self.db, functions);
         }
 
         if let Some(narrowed) = self.narrow_type_param_to_function(source_type) {
@@ -1851,10 +1828,7 @@ impl<'a> NarrowingContext<'a> {
                 .iter()
                 .filter_map(|&member| {
                     if let Some(narrowed) = self.narrow_type_param_excluding_function(member) {
-                        if narrowed == TypeId::NEVER {
-                            return None;
-                        }
-                        return Some(narrowed);
+                        return narrowed.non_never();
                     }
                     if self.is_function_type(member) {
                         None
@@ -1864,13 +1838,7 @@ impl<'a> NarrowingContext<'a> {
                 })
                 .collect();
 
-            if remaining.is_empty() {
-                return TypeId::NEVER;
-            } else if remaining.len() == 1 {
-                return remaining[0];
-            } else {
-                return self.db.union(remaining);
-            }
+            return union_or_single(self.db, remaining);
         }
 
         if let Some(narrowed) = self.narrow_type_param_excluding_function(source_type) {
