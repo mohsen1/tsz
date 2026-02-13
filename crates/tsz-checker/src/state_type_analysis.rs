@@ -1575,6 +1575,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Merge child's def_type_params to parent.
+            // Generic type aliases (e.g., `type Constructor<T = {}> = new (...args: any[]) => T`)
+            // register their type parameters in def_type_params. When the parent later tries to
+            // expand Application(Lazy(DefId), Args) via CompatChecker, it needs these type params.
+            {
+                let child_params = checker.ctx.def_type_params.borrow();
+                let mut parent_params = self.ctx.def_type_params.borrow_mut();
+                for (def_id, params) in child_params.iter() {
+                    parent_params
+                        .entry(*def_id)
+                        .or_insert_with(|| params.clone());
+                }
+            }
+
+            // Merge child's type_env def entries (type alias bodies and params) to parent.
+            // The child registers type alias bodies via type_env.insert_def_with_params.
+            // The parent's CompatChecker needs these to expand Application types like
+            // Constructor<{}> → new (...args: any[]) => {}.
+            {
+                let child_env = checker.ctx.type_env.borrow();
+                let mut parent_env = self.ctx.type_env.borrow_mut();
+                child_env.merge_defs_into(&mut parent_env);
+            }
+
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();
             return Some((result, Vec::new()));
