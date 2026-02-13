@@ -2060,6 +2060,8 @@ impl ParserState {
             if self.is_token(SyntaxKind::VarKeyword)
                 || self.is_token(SyntaxKind::LetKeyword)
                 || self.is_token(SyntaxKind::ConstKeyword)
+                || self.is_token(SyntaxKind::UsingKeyword)
+                || (self.is_token(SyntaxKind::AwaitKeyword) && self.look_ahead_is_await_using())
             {
                 self.parse_for_variable_declaration()
             } else {
@@ -2167,9 +2169,18 @@ impl ParserState {
         let flags: u16 = match decl_keyword {
             SyntaxKind::LetKeyword => node_flags::LET as u16,
             SyntaxKind::ConstKeyword => node_flags::CONST as u16,
+            SyntaxKind::UsingKeyword => node_flags::USING as u16,
+            SyntaxKind::AwaitKeyword => {
+                // await using declaration in for loops
+                self.next_token(); // consume 'await'
+                self.parse_expected(SyntaxKind::UsingKeyword); // consume 'using'
+                node_flags::AWAIT_USING as u16
+            }
             _ => 0,
         };
-        self.next_token(); // consume var/let/const
+        if decl_keyword != SyntaxKind::AwaitKeyword {
+            self.next_token(); // consume var/let/const/using
+        }
 
         // Check for empty declaration list: for (var in X) or for (let of X)
         // TSC emits TS1123 "Variable declaration list cannot be empty"
