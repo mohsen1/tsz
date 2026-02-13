@@ -136,6 +136,7 @@ impl<'a> CheckerState<'a> {
         // First, try to resolve the left side as a symbol and check its exports.
         // This handles merged class+namespace, function+namespace, and enum+namespace symbols.
         let mut left_sym_for_missing = None;
+        let mut left_module_specifier: Option<String> = None;
         let member_sym_id_from_symbol = if let Some(left_node) = self.ctx.arena.get(qn.left)
             && left_node.kind == SyntaxKind::Identifier as u16
         {
@@ -144,6 +145,7 @@ impl<'a> CheckerState<'a> {
             {
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
                     left_sym_for_missing = Some(sym_id);
+                    left_module_specifier = symbol.import_module.clone();
                     self.resolve_symbol_export(symbol, &right_name, &lib_binders)
                 } else {
                     None
@@ -172,7 +174,12 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             }
-            return self.type_reference_symbol_type(member_sym_id);
+            let mut member_type = self.type_reference_symbol_type(member_sym_id);
+            if let Some(module_specifier) = left_module_specifier.as_deref() {
+                member_type =
+                    self.apply_module_augmentations(module_specifier, &right_name, member_type);
+            }
+            return member_type;
         }
 
         if let Some(left_sym_id) = left_sym_for_missing
@@ -228,7 +235,12 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
-                return self.type_reference_symbol_type(member_sym_id);
+                let mut member_type = self.type_reference_symbol_type(member_sym_id);
+                if let Some(module_specifier) = left_module_specifier.as_deref() {
+                    member_type =
+                        self.apply_module_augmentations(module_specifier, &right_name, member_type);
+                }
+                return member_type;
             }
 
             // Not found - report TS2694 unless this is a namespace/module symbol
