@@ -1399,6 +1399,21 @@ impl<'a> CheckerState<'a> {
                     break;
                 };
 
+                // Check for self-referential class BEFORE processing
+                if let Some(sym_id) = current_sym {
+                    if base_sym_id == sym_id {
+                        break;
+                    }
+                }
+                // Check resolution set to prevent infinite recursion through circular extends
+                if self
+                    .ctx
+                    .class_constructor_resolution_set
+                    .contains(&base_sym_id)
+                {
+                    break;
+                }
+
                 let mut base_class_idx = None;
                 for &decl_idx in &base_symbol.declarations {
                     if let Some(node) = self.ctx.arena.get(decl_idx)
@@ -1460,6 +1475,12 @@ impl<'a> CheckerState<'a> {
                 let Some(base_class) = self.ctx.arena.get_class(base_node) else {
                     break;
                 };
+
+                // Prevent infinite recursion when base class node index collides
+                // with the current class node index (cross-arena NodeIndex collision)
+                if base_class_idx == class_idx {
+                    break;
+                }
 
                 let mut type_args = Vec::new();
                 if let Some(args) = type_arguments {

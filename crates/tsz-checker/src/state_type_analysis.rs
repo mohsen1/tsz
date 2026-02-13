@@ -1586,6 +1586,10 @@ impl<'a> CheckerState<'a> {
             for &id in &self.ctx.class_instance_resolution_set {
                 checker.ctx.class_instance_resolution_set.insert(id);
             }
+            // Copy class_constructor_resolution_set to detect circular constructor resolution
+            for &id in &self.ctx.class_constructor_resolution_set {
+                checker.ctx.class_constructor_resolution_set.insert(id);
+            }
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
 
@@ -1691,6 +1695,9 @@ impl<'a> CheckerState<'a> {
             if id != sym_id {
                 checker.ctx.symbol_resolution_set.insert(id);
             }
+        }
+        for &id in &self.ctx.class_constructor_resolution_set {
+            checker.ctx.class_constructor_resolution_set.insert(id);
         }
 
         let result = checker.class_instance_type_from_symbol(sym_id);
