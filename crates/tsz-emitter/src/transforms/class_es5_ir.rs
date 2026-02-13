@@ -1247,6 +1247,8 @@ impl<'a> ES5ClassTransformer<'a> {
                         emitted_accessors.insert(accessor_name);
                     }
                 }
+            } else if member_node.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT {
+                body.push(IRNode::EmptyStatement);
             }
         }
     }
