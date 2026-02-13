@@ -1862,8 +1862,8 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         declarations: &[NodeIndex],
     ) -> TypeId {
-        use tsz_solver::type_queries::{
-            get_call_signatures, get_callable_shape, get_construct_signatures,
+        use crate::query_boundaries::state_type_analysis::{
+            call_signatures_for_type, callable_shape_for_type, construct_signatures_for_type,
         };
 
         // Collect call signatures from function declarations
@@ -1890,7 +1890,7 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.arena.get_function(node).is_some() {
                     // Has a function implementation - get its type and extract call sig
                     let func_type = self.get_type_of_function(decl_idx);
-                    if let Some(signatures) = get_call_signatures(self.ctx.types, func_type) {
+                    if let Some(signatures) = call_signatures_for_type(self.ctx.types, func_type) {
                         call_signatures = signatures;
                     }
                     break;
@@ -1903,13 +1903,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Merge call signatures into the constructor type's callable shape
-        let Some(shape) = get_callable_shape(self.ctx.types, ctor_type) else {
+        let Some(shape) = callable_shape_for_type(self.ctx.types, ctor_type) else {
             return ctor_type;
         };
 
         self.ctx.types.callable(tsz_solver::CallableShape {
             call_signatures,
-            construct_signatures: get_construct_signatures(self.ctx.types, ctor_type)
+            construct_signatures: construct_signatures_for_type(self.ctx.types, ctor_type)
                 .unwrap_or_else(|| shape.construct_signatures.clone()),
             properties: shape.properties.clone(),
             string_index: shape.string_index.clone(),
@@ -3332,7 +3332,10 @@ impl<'a> CheckerState<'a> {
                     // This fixes cases where property_access_type fails due to atom comparison issues
                     // The property IS in the type (as shown by error messages), but the lookup fails
                     if let Some(shape) =
-                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, resolved_type)
+                        crate::query_boundaries::state_type_analysis::callable_shape_for_type(
+                            self.ctx.types,
+                            resolved_type,
+                        )
                     {
                         let prop_atom = self.ctx.types.intern_string(&property_name);
                         for prop in &shape.properties {
@@ -3473,7 +3476,10 @@ impl<'a> CheckerState<'a> {
                 // The solver might not find it due to type encoding issues.
                 // FALLBACK: Try to manually find the property in the callable type
                 if let Some(shape) =
-                    tsz_solver::type_queries::get_callable_shape(self.ctx.types, declaring_type)
+                    crate::query_boundaries::state_type_analysis::callable_shape_for_type(
+                        self.ctx.types,
+                        declaring_type,
+                    )
                 {
                     let prop_atom = self.ctx.types.intern_string(&property_name);
                     for prop in &shape.properties {
