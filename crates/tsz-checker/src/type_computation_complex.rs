@@ -2171,6 +2171,12 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         name: &str,
     ) -> bool {
+        // Skip TDZ checks in cross-arena delegation context.
+        // TDZ compares node positions, which are meaningless when the usage node
+        // and declaration node come from different files' arenas.
+        if Self::is_in_cross_arena_delegation() {
+            return false;
+        }
         let is_tdz = self.is_variable_used_before_declaration_in_static_block(sym_id, idx)
             || self.is_variable_used_before_declaration_in_computed_property(sym_id, idx)
             || self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx)

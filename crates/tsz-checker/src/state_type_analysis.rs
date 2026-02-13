@@ -1471,6 +1471,61 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Delegate class instance type resolution to a child checker with the correct arena.
+    ///
+    /// When a class symbol's declaration is not in the current file's arena (cross-file case),
+    /// this creates a child checker using the symbol's home arena and computes the instance
+    /// type there, where the class declaration node is accessible.
+    pub(crate) fn delegate_cross_arena_class_instance_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        // Find the symbol's home arena
+        let delegate_arena: Option<&tsz_parser::NodeArena> = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref());
+
+        let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
+
+        // Guard against deep cross-arena recursion
+        if !Self::enter_cross_arena_delegation() {
+            return None;
+        }
+
+        if !self.ctx.enter_recursion() {
+            Self::leave_cross_arena_delegation();
+            return None;
+        }
+
+        let mut checker = Box::new(CheckerState::with_parent_cache(
+            symbol_arena,
+            self.ctx.binder,
+            self.ctx.types,
+            self.ctx.file_name.clone(),
+            self.ctx.compiler_options.clone(),
+            self,
+        ));
+        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+        for &id in &self.ctx.class_instance_resolution_set {
+            checker.ctx.class_instance_resolution_set.insert(id);
+        }
+        for &id in &self.ctx.symbol_resolution_set {
+            if id != sym_id {
+                checker.ctx.symbol_resolution_set.insert(id);
+            }
+        }
+
+        let result = checker.class_instance_type_from_symbol(sym_id);
+
+        self.ctx.leave_recursion();
+        Self::leave_cross_arena_delegation();
+
+        result.map(|instance_type| (instance_type, Vec::new()))
+    }
+
     /// Compute the type of a class symbol.
     ///
     /// Returns the class constructor type, merging with namespace exports

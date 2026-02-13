@@ -715,24 +715,22 @@ impl<'a> CheckerState<'a> {
         if decl_idx.is_none() {
             return None;
         }
-        let class = self.ctx.arena.get_class_at(decl_idx)?;
+        if let Some(class) = self.ctx.arena.get_class_at(decl_idx) {
+            // Check if we're already resolving this class - return fallback to break cycle.
+            if self.ctx.class_instance_resolution_set.contains(&sym_id) {
+                let fallback = self.ctx.create_lazy_type_ref(sym_id);
+                return Some((fallback, Vec::new()));
+            }
 
-        // Check if we're already resolving this class - return fallback to break cycle.
-        // NOTE: We don't insert here because get_class_instance_type_inner will handle it.
-        // The check here is just to catch cycles from callers who go through this function.
-        if self.ctx.class_instance_resolution_set.contains(&sym_id) {
-            // Already resolving this class - return a Lazy(DefId) fallback to break cycle.
-            // Like Ref(SymbolRef), this resolves to ERROR during mid-resolution since the
-            // class body isn't registered in TypeEnvironment yet. Once resolution completes
-            // and register_resolved_type is called, the DefId becomes resolvable.
-            let fallback = self.ctx.create_lazy_type_ref(sym_id);
-            return Some((fallback, Vec::new()));
+            let (params, updates) = self.push_type_parameters(&class.type_parameters);
+            let instance_type = self.get_class_instance_type(decl_idx, class);
+            self.pop_type_parameters(updates);
+            return Some((instance_type, params));
         }
 
-        let (params, updates) = self.push_type_parameters(&class.type_parameters);
-        let instance_type = self.get_class_instance_type(decl_idx, class);
-        self.pop_type_parameters(updates);
-        Some((instance_type, params))
+        // Cross-file fallback: class declaration is not in the current arena.
+        // Delegate to a child checker with the symbol's arena.
+        self.delegate_cross_arena_class_instance_type(sym_id)
     }
 
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
