@@ -648,7 +648,11 @@ impl<'a> CheckerState<'a> {
         if !element_data.initializer.is_none() && element_type != TypeId::ANY {
             let default_value_type = self.get_type_of_node(element_data.initializer);
 
-            if !self.is_assignable_to(default_value_type, element_type) {
+            if self.should_report_assignability_mismatch(
+                default_value_type,
+                element_type,
+                element_data.initializer,
+            ) {
                 self.error_type_not_assignable_with_reason_at(
                     default_value_type,
                     element_type,

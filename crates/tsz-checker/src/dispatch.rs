@@ -432,8 +432,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             self.checker
                                 .ensure_application_symbols_resolved(asserted_type);
                             if !self.checker.type_contains_error(asserted_type)
-                                && !self.checker.is_assignable_to(expr_type, asserted_type)
-                                && !self.checker.should_skip_weak_union_error(
+                                && self.checker.should_report_assignability_mismatch(
                                     expr_type,
                                     asserted_type,
                                     assertion.expression,

@@ -1594,13 +1594,11 @@ impl<'a> CheckerState<'a> {
                                 target_level,
                                 var_decl.initializer,
                             );
-                        } else if !checker.is_assignable_to(init_type, declared_type)
-                            && !checker.should_skip_weak_union_error(
-                                init_type,
-                                declared_type,
-                                var_decl.initializer,
-                            )
-                        {
+                        } else if checker.should_report_assignability_mismatch(
+                            init_type,
+                            declared_type,
+                            var_decl.initializer,
+                        ) {
                             // For destructuring patterns, emit a generic TS2322 error
                             // instead of detailed property mismatch errors (TS2326)
                             if is_destructuring {
