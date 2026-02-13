@@ -109,9 +109,9 @@ fn test_template_to_template_subtype_with_literal_types() {
 }
 
 #[test]
-fn test_template_not_subtype_different_structure() {
-    // `foo_${string}` should NOT be subtype of `${string}`
-    // because they have different numbers of spans
+fn test_template_subtype_different_structure_string_absorbs() {
+    // `foo_${string}` IS a subtype of `${string}` because `${string}` matches any string
+    // and all strings matching `foo_${string}` are also strings.
     let interner = TypeInterner::new();
 
     // Source: `foo_${string}` (2 spans)
@@ -120,8 +120,25 @@ fn test_template_not_subtype_different_structure() {
         TemplateSpan::Type(TypeId::STRING),
     ]);
 
-    // Target: `${string}` (1 span)
+    // Target: `${string}` (1 span) — equivalent to `string`
     let target = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_template_not_subtype_number_rejects_text() {
+    // `foo_${string}` is NOT a subtype of `${number}` because
+    // source produces strings like "foo_abc" which are not valid numbers.
+    let interner = TypeInterner::new();
+
+    let source = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("foo_")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let target = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
 
     let mut checker = SubtypeChecker::new(&interner);
     assert!(!checker.is_subtype_of(source, target));
@@ -250,4 +267,95 @@ fn test_template_literal_disjointness_different_suffix() {
 
     let checker = SubtypeChecker::new(&interner);
     assert!(!checker.are_types_overlapping(template1, template2));
+}
+
+// =========================================================================
+// Template-to-template subtype matching with different span structures
+// =========================================================================
+
+#[test]
+fn test_template_to_template_text_matches_type_holes() {
+    // `1.1.${number}` should be a subtype of `${number}.${number}.${number}`
+    // because source text "1.1." can be parsed by target's number.dot.number.dot pattern
+    let interner = TypeInterner::new();
+
+    let source = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("1.1.")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+
+    let target = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string(".")),
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string(".")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_template_to_template_type_then_text_matches() {
+    // `${number}.1.1` should be a subtype of `${number}.${number}.${number}`
+    let interner = TypeInterner::new();
+
+    let source = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string(".1.1")),
+    ]);
+
+    let target = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string(".")),
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string(".")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_template_to_template_string_absorbs_spans() {
+    // `${number}.${number}` should be a subtype of `${string}`
+    // because `${string}` matches any string
+    let interner = TypeInterner::new();
+
+    let source = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(interner.intern_string(".")),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+
+    let target = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_template_to_template_number_to_string_in_context() {
+    // `${number}` should be a subtype of `${string}` in template context
+    let interner = TypeInterner::new();
+
+    let source = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let target = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_template_to_template_string_not_subtype_of_number() {
+    // `${string}` should NOT be a subtype of `${number}`
+    let interner = TypeInterner::new();
+
+    let source = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    let target = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(!checker.is_subtype_of(source, target));
 }
