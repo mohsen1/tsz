@@ -21,7 +21,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{get_callable_shape, has_construct_signatures};
+use tsz_solver::type_queries::{get_construct_signatures, has_construct_signatures};
 use tsz_solver::type_queries_extended::classify_for_abstract_constructor;
 
 // =============================================================================
@@ -76,11 +76,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Multiple construct signatures indicate constructor overloading.
     pub fn construct_signature_count(&self, type_id: TypeId) -> usize {
-        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
-            shape.construct_signatures.len()
-        } else {
-            0
-        }
+        get_construct_signatures(self.ctx.types, type_id).map_or(0, |sigs| sigs.len())
     }
 
     // =========================================================================

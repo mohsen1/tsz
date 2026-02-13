@@ -15,7 +15,7 @@
 
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{get_callable_shape, has_call_signatures};
+use tsz_solver::type_queries::{get_call_signatures, get_callable_shape, has_call_signatures};
 
 // =============================================================================
 // Callable Type Utilities
@@ -37,11 +37,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Multiple call signatures indicate function overloading.
     pub fn call_signature_count(&self, type_id: TypeId) -> usize {
-        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
-            shape.call_signatures.len()
-        } else {
-            0
-        }
+        get_call_signatures(self.ctx.types, type_id).map_or(0, |sigs| sigs.len())
     }
 
     /// Check if a callable type is overloaded.
