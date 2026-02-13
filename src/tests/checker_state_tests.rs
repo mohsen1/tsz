@@ -23823,7 +23823,6 @@ function f() {
 }
 
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_class_extends_intersection_type_ts2339() {
     use crate::parser::ParserState;
 
