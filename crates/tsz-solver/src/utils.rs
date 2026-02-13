@@ -134,6 +134,44 @@ pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> Type
     }
 }
 
+/// Extension trait for iterators of TypeId to filter out NEVER types.
+///
+/// This eliminates the common pattern:
+/// ```ignore
+/// .filter_map(|&id| {
+///     let result = some_operation(id);
+///     if result != TypeId::NEVER {
+///         Some(result)
+///     } else {
+///         None
+///     }
+/// })
+/// ```
+///
+/// With this trait, you can write:
+/// ```ignore
+/// .filter_map(|&id| some_operation(id).non_never())
+/// ```
+pub trait TypeIdExt {
+    /// Returns Some(self) if self is not NEVER, otherwise None.
+    ///
+    /// This is useful for filter_map chains where you want to skip NEVER results.
+    fn non_never(self) -> Option<Self>
+    where
+        Self: Sized;
+}
+
+impl TypeIdExt for TypeId {
+    #[inline]
+    fn non_never(self) -> Option<Self> {
+        if self != TypeId::NEVER {
+            Some(self)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
