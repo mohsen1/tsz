@@ -9,5 +9,6 @@ pub(crate) mod iterable_checker;
 pub(crate) mod object_type;
 pub(crate) mod state;
 pub(crate) mod state_type_analysis;
+pub(crate) mod state_type_resolution;
 pub(crate) mod type_checking;
 pub(crate) mod type_computation;
