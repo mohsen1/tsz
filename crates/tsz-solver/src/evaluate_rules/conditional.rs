@@ -228,6 +228,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             return self.evaluate(cond.false_type);
                         }
+                        // Constraint satisfies the condition → true branch.
+                        // When T's constraint is assignable to extends_type, every
+                        // possible value of T satisfies the condition, so the conditional
+                        // always takes the true branch. For example:
+                        // type Foo<T extends string> = T extends string ? string : number
+                        // Foo<T> resolves to string because string <: string.
+                        //
+                        // For distributive conditionals, only resolve if the constraint
+                        // is not a union — a union constraint means T could be different
+                        // union members and we need to distribute individually.
+                        let constraint_is_union = matches!(
+                            self.interner().lookup(evaluated_constraint),
+                            Some(TypeKey::Union(_))
+                        );
+                        if !constraint_is_union || !cond.is_distributive {
+                            // For tail-recursion on the true branch
+                            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
+                                if let Some(TypeKey::Conditional(next_cond_id)) =
+                                    self.interner().lookup(cond.true_type)
+                                {
+                                    let next_cond = self.interner().conditional_type(next_cond_id);
+                                    current_cond = (*next_cond).clone();
+                                    tail_recursion_count += 1;
+                                    continue;
+                                }
+                            }
+                            return self.evaluate(cond.true_type);
+                        }
                     }
                 }
 
