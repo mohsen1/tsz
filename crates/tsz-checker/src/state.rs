@@ -413,6 +413,30 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Create a new CheckerState with explicit compiler options and a shared DefinitionStore.
+    ///
+    /// This is used in parallel checking to ensure all files share the same DefId namespace.
+    pub fn with_options_and_shared_def_store(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: &CheckerOptions,
+        definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
+    ) -> Self {
+        let compiler_options = compiler_options.clone().apply_strict_defaults();
+        CheckerState {
+            ctx: CheckerContext::new_with_shared_def_store(
+                arena,
+                binder,
+                types,
+                file_name,
+                compiler_options,
+                definition_store,
+            ),
+        }
+    }
+
     /// Create a new CheckerState with explicit compiler options and a persistent cache.
     pub fn with_cache_and_options(
         arena: &'a NodeArena,
