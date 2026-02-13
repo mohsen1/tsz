@@ -2267,6 +2267,13 @@ impl ParserState {
             NodeIndex::NONE
         };
 
+        // Parse type parameters
+        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+            Some(self.parse_type_parameters())
+        } else {
+            None
+        };
+
         // Parse heritage clauses (extends, implements)
         let heritage_clauses = self.parse_heritage_clauses();
 
@@ -2286,7 +2293,7 @@ impl ParserState {
             ClassData {
                 modifiers: decorators,
                 name,
-                type_parameters: None,
+                type_parameters,
                 heritage_clauses,
                 members,
             },
@@ -2319,6 +2326,13 @@ impl ParserState {
             NodeIndex::NONE
         };
 
+        // Parse type parameters
+        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+            Some(self.parse_type_parameters())
+        } else {
+            None
+        };
+
         // Parse heritage clauses (extends, implements)
         let heritage_clauses = self.parse_heritage_clauses();
 
@@ -2346,7 +2360,7 @@ impl ParserState {
             ClassData {
                 modifiers,
                 name,
-                type_parameters: None,
+                type_parameters,
                 heritage_clauses,
                 members,
             },
