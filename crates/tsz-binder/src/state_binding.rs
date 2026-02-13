@@ -489,6 +489,20 @@ impl BinderState {
                     .push(crate::state::GlobalAugmentation::new(idx));
             }
 
+            // In script files (non-module files), top-level interface declarations that match
+            // built-in global type names should also be treated as augmentations.
+            // TypeScript allows `interface Array<T> { ... }` in scripts without `declare global`.
+            if !self.in_global_augmentation
+                && self.is_global_scope()
+                && !self.is_external_module
+                && self.is_built_in_global_type(name)
+            {
+                self.global_augmentations
+                    .entry(name.to_string())
+                    .or_default()
+                    .push(crate::state::GlobalAugmentation::new(idx));
+            }
+
             // Rule #44: Track module augmentation interfaces
             // These will be merged with the target module's interface at type resolution time
             if self.in_module_augmentation {
@@ -3002,6 +3016,68 @@ impl BinderState {
             self.lib_binders.len(),
             stats.scope_hits + stats.file_local_hits + stats.lib_binder_hits,
             Self::EXPECTED_GLOBAL_SYMBOLS.len()
+        )
+    }
+
+    /// Check if the current scope is the global (file-level) scope.
+    fn is_global_scope(&self) -> bool {
+        // Global scope is ScopeId(0) in script files
+        self.current_scope_id == crate::ScopeId(0)
+    }
+
+    /// Check if a type name is a built-in global type that can be augmented.
+    ///
+    /// These are types from lib.d.ts that TypeScript allows augmenting through
+    /// top-level interface declarations in script files (without `declare global`).
+    fn is_built_in_global_type(&self, name: &str) -> bool {
+        matches!(
+            name,
+            "Array"
+                | "ReadonlyArray"
+                | "Promise"
+                | "PromiseLike"
+                | "Map"
+                | "ReadonlyMap"
+                | "WeakMap"
+                | "Set"
+                | "ReadonlySet"
+                | "WeakSet"
+                | "ArrayConstructor"
+                | "MapConstructor"
+                | "SetConstructor"
+                | "WeakMapConstructor"
+                | "WeakSetConstructor"
+                | "PromiseConstructor"
+                | "ProxyHandler"
+                | "ProxyConstructor"
+                | "Reflect"
+                | "Generator"
+                | "GeneratorFunction"
+                | "AsyncGenerator"
+                | "AsyncGeneratorFunction"
+                | "AsyncIterable"
+                | "AsyncIterableIterator"
+                | "AsyncIterator"
+                | "Iterable"
+                | "Iterator"
+                | "IterableIterator"
+                | "Symbol"
+                | "SymbolConstructor"
+                | "Uint8Array"
+                | "Uint8ClampedArray"
+                | "Uint16Array"
+                | "Uint32Array"
+                | "Int8Array"
+                | "Int16Array"
+                | "Int32Array"
+                | "Float32Array"
+                | "Float64Array"
+                | "ArrayBuffer"
+                | "SharedArrayBuffer"
+                | "DataView"
+                | "RegExp"
+                | "Date"
+                | "Error"
         )
     }
 }
