@@ -1935,18 +1935,9 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Check if noImplicitAny is enabled.
-    /// Always returns false for JS/JSX files — TypeScript never emits
-    /// implicit any errors in JavaScript files (no type annotation syntax).
+    /// JavaScript files are checked if they reach this point (driver enforces checkJs).
     pub fn no_implicit_any(&self) -> bool {
-        if self.compiler_options.no_implicit_any {
-            // JS files never get noImplicitAny errors
-            !(self.file_name.ends_with(".js")
-                || self.file_name.ends_with(".jsx")
-                || self.file_name.ends_with(".mjs")
-                || self.file_name.ends_with(".cjs"))
-        } else {
-            false
-        }
+        self.compiler_options.no_implicit_any
     }
 
     /// Check if noImplicitReturns is enabled.
