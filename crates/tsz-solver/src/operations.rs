@@ -1303,13 +1303,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Pass 2: For unresolved type params with constraints, try using the
-        // constraint instantiated with already-resolved params as a contextual type.
-        // This enables contextual typing for patterns like:
-        //   test<TContext, TFn extends (ctx: TContext) => void>(context: TContext, fn: TFn)
-        // where TContext is inferred in Round 1 but TFn needs its constraint as fallback.
+        // Pass 2: For unresolved type params, try using the default or constraint
+        // instantiated with already-resolved params as a contextual type.
+        // Priority: default > constraint (the default is what the type IS when no
+        // argument is provided; the constraint is just an upper bound).
         for i in unresolved_indices {
             let tp = &func.type_params[i];
+            // Try default first — this determines the contextual type when no inference
+            // happened (e.g. `<T = TypegenDisabled>` should use TypegenDisabled, not the
+            // constraint `TypegenEnabled | TypegenDisabled`).
+            if let Some(default) = tp.default {
+                let inst_default = instantiate_type(self.interner, default, &result_subst);
+                if !crate::visitor::contains_type_parameters(
+                    self.interner.as_type_database(),
+                    inst_default,
+                ) {
+                    result_subst.insert(tp.name, inst_default);
+                    continue;
+                }
+            }
+            // Fall back to constraint if default didn't resolve.
+            // This enables contextual typing for patterns like:
+            //   test<TContext, TFn extends (ctx: TContext) => void>(context: TContext, fn: TFn)
+            // where TContext is inferred in Round 1 but TFn needs its constraint.
             if let Some(constraint) = tp.constraint {
                 let inst_constraint = instantiate_type(self.interner, constraint, &result_subst);
                 if !crate::visitor::contains_type_parameters(
