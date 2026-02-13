@@ -780,9 +780,8 @@ impl<'a> CheckerState<'a> {
                             inherited_member_sources.get(&member_key)
                         {
                             if prev_base_name != &base_name {
-                                let incompatible = !self
-                                    .is_assignable_to(member_type, *prev_member_type)
-                                    || !self.is_assignable_to(*prev_member_type, member_type);
+                                let incompatible =
+                                    !self.are_mutually_assignable(member_type, *prev_member_type);
                                 if incompatible {
                                     self.error_at_node(
                                         iface_data.name,

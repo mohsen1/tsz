@@ -1019,7 +1019,11 @@ impl<'a> CheckerState<'a> {
                 // TS2322: The right-hand side of an 'in' expression must be assignable to 'object'
                 // This prevents using 'in' with primitives like string | number
                 if right_type != TypeId::ANY && right_type != TypeId::ERROR {
-                    if !self.is_assignable_to(right_type, TypeId::OBJECT) {
+                    if self.should_report_assignability_mismatch(
+                        right_type,
+                        TypeId::OBJECT,
+                        right_idx,
+                    ) {
                         self.error_type_not_assignable_with_reason_at(
                             right_type,
                             TypeId::OBJECT,
