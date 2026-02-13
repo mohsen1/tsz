@@ -291,77 +291,7 @@ impl<'a> CheckerState<'a> {
 
         // Resolve exports table (shared between default and named import checking)
         let normalized = module_name.trim_matches('"').trim_matches('\'');
-        let quoted = format!("\"{}\"", normalized);
-        let single_quoted = format!("'{}'", normalized);
-
-        let mut exports_table = if let Some(table) = self.ctx.binder.module_exports.get(module_name)
-        {
-            Some(table.clone())
-        } else if let Some(table) = self.ctx.binder.module_exports.get(normalized) {
-            Some(table.clone())
-        } else if let Some(table) = self.ctx.binder.module_exports.get(&quoted) {
-            Some(table.clone())
-        } else if let Some(table) = self.ctx.binder.module_exports.get(&single_quoted) {
-            Some(table.clone())
-        } else {
-            None
-        };
-
-        if exports_table.is_none()
-            && let Some(target_idx) = self.ctx.resolve_import_target(module_name)
-        {
-            // Look up by file name in the TARGET file's binder, not the current one
-            if let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) {
-                let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                if let Some(source_file) = arena.source_files.first() {
-                    exports_table = target_binder
-                        .module_exports
-                        .get(&source_file.file_name)
-                        .cloned();
-                }
-            }
-        }
-
-        if exports_table.is_none()
-            && let Some(all_binders) = &self.ctx.all_binders
-        {
-            // Try looking up by module specifier in all binders
-            for binder in all_binders.iter() {
-                if let Some(table) = binder.module_exports.get(module_name) {
-                    exports_table = Some(table.clone());
-                    break;
-                }
-                if let Some(table) = binder.module_exports.get(normalized) {
-                    exports_table = Some(table.clone());
-                    break;
-                }
-                if let Some(table) = binder.module_exports.get(&quoted) {
-                    exports_table = Some(table.clone());
-                    break;
-                }
-                if let Some(table) = binder.module_exports.get(&single_quoted) {
-                    exports_table = Some(table.clone());
-                    break;
-                }
-            }
-        }
-
-        // Also try resolving by file name across all binders
-        if exports_table.is_none()
-            && let Some(target_idx) = self.ctx.resolve_import_target(module_name)
-        {
-            let arena = self.ctx.get_arena_for_file(target_idx as u32);
-            if let Some(source_file) = arena.source_files.first()
-                && let Some(all_binders) = &self.ctx.all_binders
-            {
-                for binder in all_binders.iter() {
-                    if let Some(table) = binder.module_exports.get(&source_file.file_name) {
-                        exports_table = Some(table.clone());
-                        break;
-                    }
-                }
-            }
-        }
+        let exports_table = self.resolve_effective_module_exports(module_name);
 
         // Check default import: import X from "module"
         // If the module has no "default" export and allowSyntheticDefaultImports is off,

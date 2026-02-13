@@ -1505,6 +1505,38 @@ impl<'a> CheckerContext<'a> {
     /// Returns true if an augmentation target resolves to an `export =` value without
     /// namespace/module shape (TS2671/TS2649 cases).
     pub fn module_resolves_to_non_module_entity(&self, module_specifier: &str) -> bool {
+        let candidates = Self::module_specifier_candidates(module_specifier);
+
+        let lookup_cached = |binder: &BinderState, key: &str| {
+            binder.module_export_equals_non_module.get(key).copied()
+        };
+
+        if let Some(target_idx) = self.resolve_import_target(module_specifier)
+            && let Some(target_binder) = self.get_binder_for_file(target_idx)
+        {
+            for candidate in &candidates {
+                if let Some(non_module) = lookup_cached(target_binder, candidate) {
+                    return non_module;
+                }
+            }
+        }
+
+        for candidate in &candidates {
+            if let Some(non_module) = lookup_cached(self.binder, candidate) {
+                return non_module;
+            }
+        }
+
+        if let Some(all_binders) = self.all_binders.as_ref() {
+            for binder in all_binders.iter() {
+                for candidate in &candidates {
+                    if let Some(non_module) = lookup_cached(binder, candidate) {
+                        return non_module;
+                    }
+                }
+            }
+        }
+
         let export_equals_is_non_module = |binder: &BinderState,
                                            exports: &tsz_binder::SymbolTable|
          -> Option<bool> {
@@ -1828,6 +1860,35 @@ impl<'a> CheckerContext<'a> {
             && let Some(target_binder) = self.get_binder_for_file(target_idx)
         {
             let target_arena = self.get_arena_for_file(target_idx as u32);
+            for candidate in &candidates {
+                if let Some(exports) = target_binder.module_exports.get(candidate)
+                    && let Some(non_module) = export_equals_is_non_module(target_binder, exports)
+                {
+                    tracing::trace!(
+                        module_specifier = module_specifier,
+                        candidate = candidate.as_str(),
+                        branch = "target_specifier_key",
+                        non_module,
+                        "module_resolves_to_non_module_entity: branch result"
+                    );
+                    if non_module
+                        && export_assignment_targets_namespace_via_source(
+                            target_binder,
+                            target_arena,
+                        )
+                    {
+                        tracing::trace!(
+                            module_specifier = module_specifier,
+                            candidate = candidate.as_str(),
+                            branch = "target_specifier_key",
+                            "module_resolves_to_non_module_entity: source fallback override"
+                        );
+                        return false;
+                    }
+                    return non_module;
+                }
+            }
+
             if let Some(target_file_name) = self
                 .get_arena_for_file(target_idx as u32)
                 .source_files
@@ -1848,27 +1909,6 @@ impl<'a> CheckerContext<'a> {
                     tracing::trace!(
                         module_specifier = module_specifier,
                         branch = "target_file_key",
-                        "module_resolves_to_non_module_entity: source fallback override"
-                    );
-                    return false;
-                }
-                return non_module;
-            }
-            if let Some(exports) = target_binder.module_exports.get(module_specifier)
-                && let Some(non_module) = export_equals_is_non_module(target_binder, exports)
-            {
-                tracing::trace!(
-                    module_specifier = module_specifier,
-                    branch = "target_specifier_key",
-                    non_module,
-                    "module_resolves_to_non_module_entity: branch result"
-                );
-                if non_module
-                    && export_assignment_targets_namespace_via_source(target_binder, target_arena)
-                {
-                    tracing::trace!(
-                        module_specifier = module_specifier,
-                        branch = "target_specifier_key",
                         "module_resolves_to_non_module_entity: source fallback override"
                     );
                     return false;

@@ -3380,6 +3380,7 @@ fn create_cross_file_lookup_binder(
     // positives for `export = C` where C is a class in another file).
     binder.symbol_arenas = program.symbol_arenas.clone();
     binder.declaration_arenas = program.declaration_arenas.clone();
+    binder.recompute_module_export_equals_non_module();
     binder
 }
 

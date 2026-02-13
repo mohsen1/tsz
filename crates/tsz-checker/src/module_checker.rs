@@ -297,14 +297,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Get the module's exports (try local binder first, then cross-file)
-        let module_exports = self
-            .ctx
-            .binder
-            .module_exports
-            .get(module_name)
-            .cloned()
-            .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
+        // Get the module's canonical export surface.
+        let module_exports = self.resolve_effective_module_exports(module_name);
 
         let Some(module_exports) = module_exports else {
             return; // Module exports not found - TS2307 already emitted
@@ -413,14 +407,8 @@ impl<'a> CheckerState<'a> {
             return self.create_promise_any();
         }
 
-        // Try to get module exports for the namespace type
-        let exports_table = self
-            .ctx
-            .binder
-            .module_exports
-            .get(module_name)
-            .cloned()
-            .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
+        // Try to get module exports for the namespace type.
+        let exports_table = self.resolve_effective_module_exports(module_name);
 
         if let Some(exports_table) = exports_table {
             // Create an object type with all module exports
