@@ -2551,6 +2551,34 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                             });
                         }
+
+                        // Add augmentation declarations that introduce entirely new names.
+                        // If the target resolves to a non-module export= value, these names
+                        // are invalid and should not be surfaced on the namespace.
+                        if !self.ctx.module_resolves_to_non_module_entity(module_name)
+                            && let Some(augmentations) =
+                                self.ctx.binder.module_augmentations.get(module_name)
+                        {
+                            for aug in augmentations {
+                                let name_atom = self.ctx.types.intern_string(&aug.name);
+                                if props.iter().any(|p| p.name == name_atom) {
+                                    continue;
+                                }
+                                props.push(PropertyInfo {
+                                    name: name_atom,
+                                    // Cross-file augmentation declarations may live in a different
+                                    // arena; use `any` here to preserve namespace member visibility.
+                                    type_id: TypeId::ANY,
+                                    write_type: TypeId::ANY,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
+                                });
+                            }
+                        }
+
                         let module_type = self.ctx.types.object(props);
                         return (module_type, Vec::new());
                     }

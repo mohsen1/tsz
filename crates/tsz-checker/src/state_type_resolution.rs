@@ -2027,6 +2027,10 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the module can be found via resolved_modules or through
     /// the context's cross-file resolution mechanism.
     pub(crate) fn module_exists_cross_file(&self, module_name: &str) -> bool {
+        if self.ctx.resolve_import_target(module_name).is_some() {
+            return true;
+        }
+
         // Check if it's in resolved_modules (set by the driver for multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules {
             if resolved.contains(module_name) {

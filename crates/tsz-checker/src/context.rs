@@ -1296,11 +1296,7 @@ impl<'a> CheckerContext<'a> {
     /// Uses the resolved_module_paths map populated by the driver.
     /// Returns None if the import cannot be resolved (e.g., external module).
     pub fn resolve_import_target(&self, specifier: &str) -> Option<usize> {
-        self.resolved_module_paths.as_ref().and_then(|paths| {
-            paths
-                .get(&(self.current_file_idx, specifier.to_string()))
-                .copied()
-        })
+        self.resolve_import_target_from_file(self.current_file_idx, specifier)
     }
 
     /// Resolve an import specifier from a specific file to its target file index.
@@ -1310,11 +1306,95 @@ impl<'a> CheckerContext<'a> {
         source_file_idx: usize,
         specifier: &str,
     ) -> Option<usize> {
-        self.resolved_module_paths.as_ref().and_then(|paths| {
-            paths
-                .get(&(source_file_idx, specifier.to_string()))
-                .copied()
-        })
+        let paths = self.resolved_module_paths.as_ref()?;
+        for candidate in Self::module_specifier_candidates(specifier) {
+            if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
+                return Some(*target_idx);
+            }
+        }
+        None
+    }
+
+    fn module_specifier_candidates(specifier: &str) -> Vec<String> {
+        let mut candidates = Vec::with_capacity(5);
+        let mut push_unique = |value: String| {
+            if !candidates.contains(&value) {
+                candidates.push(value);
+            }
+        };
+
+        push_unique(specifier.to_string());
+
+        let trimmed = specifier.trim().trim_matches('"').trim_matches('\'');
+        if trimmed != specifier {
+            push_unique(trimmed.to_string());
+        }
+        if !trimmed.is_empty() {
+            push_unique(format!("\"{trimmed}\""));
+            push_unique(format!("'{trimmed}'"));
+            if trimmed.contains('\\') {
+                push_unique(trimmed.replace('\\', "/"));
+            }
+        }
+
+        candidates
+    }
+
+    /// Returns true if an augmentation target resolves to an `export =` value without
+    /// namespace/module shape (TS2671/TS2649 cases).
+    pub fn module_resolves_to_non_module_entity(&self, module_specifier: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let export_equals_is_non_module =
+            |binder: &BinderState, exports: &tsz_binder::SymbolTable| -> Option<bool> {
+                let export_equals_sym_id = exports.get("export=")?;
+                let has_named_exports = exports.iter().any(|(name, _)| name != "export=");
+                let symbol_has_namespace_shape =
+                    binder.get_symbol(export_equals_sym_id).is_some_and(|sym| {
+                        (sym.flags & symbol_flags::MODULE) != 0
+                            || sym.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
+                            || sym.members.as_ref().is_some_and(|tbl| !tbl.is_empty())
+                    });
+                Some(!has_named_exports && !symbol_has_namespace_shape)
+            };
+
+        if let Some(target_idx) = self.resolve_import_target(module_specifier)
+            && let Some(target_binder) = self.get_binder_for_file(target_idx)
+        {
+            if let Some(target_file_name) = self
+                .get_arena_for_file(target_idx as u32)
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str())
+                && let Some(exports) = target_binder.module_exports.get(target_file_name)
+                && let Some(non_module) = export_equals_is_non_module(target_binder, exports)
+            {
+                return non_module;
+            }
+            if let Some(exports) = target_binder.module_exports.get(module_specifier)
+                && let Some(non_module) = export_equals_is_non_module(target_binder, exports)
+            {
+                return non_module;
+            }
+        }
+
+        if let Some(exports) = self.binder.module_exports.get(module_specifier)
+            && let Some(non_module) = export_equals_is_non_module(self.binder, exports)
+        {
+            return non_module;
+        }
+
+        if let Some(all_binders) = self.all_binders.as_ref() {
+            for binder in all_binders.iter() {
+                if let Some(exports) = binder.module_exports.get(module_specifier)
+                    && let Some(non_module) = export_equals_is_non_module(binder, exports)
+                {
+                    return non_module;
+                }
+            }
+        }
+
+        false
     }
 
     /// Extract the persistent cache from this context.
