@@ -309,6 +309,13 @@ impl<'a> CheckerState<'a> {
         CROSS_ARENA_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
     }
 
+    /// Check if we are currently inside a cross-arena delegation.
+    /// Used to skip position-based checks (like TDZ) that compare node positions
+    /// from different arenas.
+    pub(crate) fn is_in_cross_arena_delegation() -> bool {
+        CROSS_ARENA_DEPTH.with(|c| c.get() > 0)
+    }
+
     /// Check if the source file has any parse errors.
     ///
     /// This flag is set by the driver before type checking based on parse diagnostics.

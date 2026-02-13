@@ -587,8 +587,8 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let Some(base_class_idx) = base_class_idx else {
-                    // CRITICAL: Check if base class is currently being resolved to prevent infinite recursion
-                    // This happens when we have forward references in circular inheritance
+                    // Base class node not found in current arena (cross-file case).
+                    // Try to resolve the base class type through the symbol system.
                     let base_sym_id = match self.resolve_heritage_symbol(expr_idx) {
                         Some(sym_id) => sym_id,
                         None => {
@@ -613,7 +613,7 @@ impl<'a> CheckerState<'a> {
                         .class_instance_resolution_set
                         .contains(&base_sym_id)
                     {
-                        break; // Base class type resolution in progress - skip to avoid cycle
+                        break;
                     }
 
                     if let Some(base_instance_type) =

@@ -484,6 +484,16 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    // Cross-file fallback: if the base class/interface declaration node
+                    // is not in the current file's arena, resolve its type through the
+                    // symbol's type (which uses cross-arena delegation).
+                    if base_type.is_none() {
+                        let resolved = self.get_type_of_symbol(base_sym_id);
+                        if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
+                            base_type = Some(resolved);
+                        }
+                    }
+
                     let Some(mut base_type) = base_type else {
                         continue;
                     };
