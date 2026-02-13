@@ -1043,11 +1043,15 @@ impl NodeArena {
         }
     }
 
-    /// Get template span data.
+    /// Get template span data. Accepts both `TEMPLATE_SPAN` (expression-level)
+    /// and `TEMPLATE_LITERAL_TYPE_SPAN` (type-level) since both store data in
+    /// the same `template_spans` array.
     #[inline]
     pub fn get_template_span(&self, node: &Node) -> Option<&TemplateSpanData> {
-        use super::syntax_kind_ext::TEMPLATE_SPAN;
-        if node.has_data() && node.kind == TEMPLATE_SPAN {
+        use super::syntax_kind_ext::{TEMPLATE_LITERAL_TYPE_SPAN, TEMPLATE_SPAN};
+        if node.has_data()
+            && (node.kind == TEMPLATE_SPAN || node.kind == TEMPLATE_LITERAL_TYPE_SPAN)
+        {
             self.template_spans.get(node.data_index as usize)
         } else {
             None
