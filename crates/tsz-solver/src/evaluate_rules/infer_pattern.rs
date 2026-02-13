@@ -2484,7 +2484,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     });
                     let end = if let Some(next_text) = next_text {
                         let next_value = self.interner().resolve_atom_ref(next_text);
-                        match source[pos..].find(next_value.as_ref()) {
+                        // When there are no more Type (infer) spans after the next text
+                        // separator, the text must match at the END of the remaining string.
+                        // Use rfind (last occurrence) so the infer captures greedily.
+                        // Example: `${infer R} ` matching "hello  " → R = "hello " (rfind)
+                        //
+                        // When more Type spans follow, use find (first occurrence) so each
+                        // infer captures minimally, leaving content for later infers.
+                        // Example: `${infer A}.${infer B}` matching "a.b.c" → A = "a" (find)
+                        let has_more_types_after_separator = pattern[index + 1..]
+                            .iter()
+                            .skip_while(|s| !matches!(s, TemplateSpan::Text(_)))
+                            .skip(1) // skip the text separator itself
+                            .any(|s| matches!(s, TemplateSpan::Type(_)));
+                        let search_fn = if has_more_types_after_separator {
+                            str::find
+                        } else {
+                            str::rfind
+                        };
+                        match search_fn(&source[pos..], next_value.as_ref()) {
                             Some(offset) => pos + offset,
                             None => return false,
                         }
