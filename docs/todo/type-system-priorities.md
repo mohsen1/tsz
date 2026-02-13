@@ -35,12 +35,30 @@ const f01 = pipe(list, box);  // ERROR: No overload matches (should work)
 - The 2-argument overload isn't being tried or is failing silently
 - Affects many higher-order function inference scenarios
 
-**Investigation Needed**:
-- Check if overload enumeration is correct
-- Verify argument count matching logic
-- Trace through resolve_generic_call for this specific case
+**Root Cause Found** ✓:
+Through detailed tracing, discovered that:
+1. The 2-argument overload IS being tried correctly
+2. The first argument PASSES the check (Callable → Function works)
+3. The second argument FAILS with: `Callable(10331) <: Function(3943)` rejected
 
-**Impact**: Likely affects 50+ conformance tests involving generic higher-order functions
+Created minimal reproduction showing the actual bug:
+```typescript
+declare function box<V>(x: V): { value: V };
+const f: (x: number) => { value: number } = box;  // ERROR in tsz, OK in TSC
+```
+
+**The Real Bug**: **Generic Callables cannot be assigned to concrete Function types**
+
+In TypeScript, a generic function like `<V>(x: V) => {value: V}` SHOULD be assignable to a concrete function type like `(x: number) => {value: number}` because the generic can be instantiated. Currently tsz rejects this assignment.
+
+**Location**: `crates/tsz-solver/src/subtype_rules/functions.rs:680` - `check_callable_to_function_subtype`
+
+**Fix Strategy**: When checking `Callable <: Function`:
+1. If Callable has type parameters and Function doesn't
+2. Try to instantiate the Callable's call signatures to match the Function's parameter types
+3. Check if the instantiated signature is compatible
+
+**Impact**: Affects all generic higher-order functions (50+ conformance tests)
 
 ---
 

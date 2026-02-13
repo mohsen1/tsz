@@ -341,7 +341,8 @@ impl<'a> CheckerState<'a> {
         self.ctx.node_types = std::mem::take(&mut original_node_types);
 
         // First pass: try each signature with union-contextual argument types.
-        for (_sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
+        for (idx, (_sig, &func_type)) in signatures.iter().zip(signature_types.iter()).enumerate() {
+            tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
             self.ensure_application_symbols_resolved(func_type);
             for &arg_type in &arg_types {
                 self.ensure_application_symbols_resolved(arg_type);
@@ -376,6 +377,20 @@ impl<'a> CheckerState<'a> {
                 evaluator.resolve_call(resolved_func_type, &arg_types)
             };
 
+            match &result {
+                CallResult::ArgumentTypeMismatch {
+                    index,
+                    expected,
+                    actual,
+                } => {
+                    tracing::debug!("Overload {} failed: arg {} type mismatch", idx, index);
+                    tracing::debug!("  Expected: {:?}", self.ctx.types.lookup(*expected));
+                    tracing::debug!("  Actual: {:?}", self.ctx.types.lookup(*actual));
+                }
+                _ => {
+                    tracing::debug!("Overload {} result: {:?}", idx, result);
+                }
+            }
             if let CallResult::Success(return_type) = result {
                 // Phase 6 Task 4: Merge the node types inferred during argument collection
                 self.ctx.node_types.extend(temp_node_types);
