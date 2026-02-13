@@ -619,6 +619,20 @@ impl ParserState {
         )
     }
 
+    /// Look ahead to check if the current identifier is directly followed by `=`.
+    /// Used to disambiguate `import type X =` (where `type` is import name)
+    /// from `import type X = require(...)` (where `type` is modifier).
+    fn look_ahead_is_equals_after_identifier(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        // Skip current token (the identifier)
+        self.next_token();
+        let result = self.is_token(SyntaxKind::EqualsToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
     /// Look ahead to see if we have "import (" (dynamic import call)
     pub(crate) fn look_ahead_is_import_call(&mut self) -> bool {
         look_ahead_is_import_call(&mut self.scanner, self.current_token)
@@ -722,6 +736,17 @@ impl ParserState {
     pub(crate) fn parse_import_equals_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ImportKeyword);
+
+        // Check for type modifier: `import type X = require(...)`
+        let is_type_only = if self.is_token(SyntaxKind::TypeKeyword)
+            && !self.look_ahead_is_equals_after_identifier()
+        {
+            self.next_token();
+            true
+        } else {
+            false
+        };
+        let _ = is_type_only; // stored for future use in type checking
 
         // Parse the name - allows keywords like 'require' and 'exports' as valid names
         let name = self.parse_identifier_name();

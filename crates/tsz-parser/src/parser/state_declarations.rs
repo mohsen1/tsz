@@ -1282,20 +1282,49 @@ impl ParserState {
         let mut is_type_only = false;
         let mut is_deferred = false;
 
-        // Check for "type" keyword (import type { ... })
+        // Check for "type" keyword modifier (import type { ... } / import type X from ...)
+        // Disambiguation: `import type` can mean either:
+        //   - `type` is a modifier: `import type X from '...'`, `import type { X } from '...'`
+        //   - `type` is the default import name: `import type from '...'`
+        //   - `type` is modifier with keyword as name: `import type from from '...'`
         if self.is_token(SyntaxKind::TypeKeyword) {
-            // Look ahead to see if this is "type" followed by identifier or "{"
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
+            let saved_arena_len = self.arena.nodes.len();
+            let saved_diagnostics_len = self.parse_diagnostics.len();
             self.next_token();
-            if self.is_token(SyntaxKind::Identifier)
-                || self.is_token(SyntaxKind::OpenBraceToken)
-                || self.is_token(SyntaxKind::AsteriskToken)
+
+            if self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::AsteriskToken)
             {
+                // `import type { ... }` or `import type * as ...` — type is modifier
                 is_type_only = true;
-            } else {
+            } else if self.is_identifier_or_keyword() {
+                // Could be `import type X from` (modifier + import name)
+                // or `import type from '...'` (type is import name).
+                // Look one more token ahead to disambiguate.
+                self.next_token();
+                if self.is_token(SyntaxKind::FromKeyword)
+                    || self.is_token(SyntaxKind::CommaToken)
+                    || self.is_token(SyntaxKind::EqualsToken)
+                {
+                    // `import type X from/,/=` — type is modifier
+                    is_type_only = true;
+                }
+                // Restore either way (we'll re-parse the import name below)
                 self.scanner.restore_state(snapshot);
                 self.current_token = current;
+                self.arena.nodes.truncate(saved_arena_len);
+                self.parse_diagnostics.truncate(saved_diagnostics_len);
+                if is_type_only {
+                    // Re-consume `type` token since it's the modifier
+                    self.next_token();
+                }
+            } else {
+                // Not an identifier/keyword after `type` — type is import name
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                self.arena.nodes.truncate(saved_arena_len);
+                self.parse_diagnostics.truncate(saved_diagnostics_len);
             }
         }
 
