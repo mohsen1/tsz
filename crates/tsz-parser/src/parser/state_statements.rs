@@ -2233,7 +2233,12 @@ impl ParserState {
         self.next_token(); // consume @
 
         // Parse the decorator expression (identifier, member access, or call)
+        // Set CONTEXT_FLAG_IN_DECORATOR so that '[' is NOT treated as element access
+        // (it starts a computed property name on the decorated member instead)
+        let saved_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_DECORATOR;
         let expression = self.parse_left_hand_side_expression();
+        self.context_flags = saved_flags;
 
         let end_pos = self.token_end();
         Some(self.arena.add_decorator(

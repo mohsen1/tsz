@@ -1071,6 +1071,10 @@ impl ParserState {
                     );
                 }
                 SyntaxKind::OpenBracketToken => {
+                    // In decorator context, `[` starts a computed property name, not element access
+                    if (self.context_flags & crate::parser::state::CONTEXT_FLAG_IN_DECORATOR) != 0 {
+                        break;
+                    }
                     self.next_token();
                     let argument = self.parse_expression();
                     if argument.is_none() {
