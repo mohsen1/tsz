@@ -105,6 +105,27 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
             }
+            Some(TypeKey::Intersection(list_id)) => {
+                // Distribute evaluation over intersection members so Lazy/Application/etc.
+                // inside an intersection get resolved through the checker's type environment.
+                let members = self.ctx.types.type_list(list_id);
+                let mut changed = false;
+                let evaluated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&m| {
+                        let ev = self.evaluate_contextual_type(m);
+                        if ev != m {
+                            changed = true;
+                        }
+                        ev
+                    })
+                    .collect();
+                if changed {
+                    self.ctx.types.intersection(evaluated)
+                } else {
+                    type_id
+                }
+            }
             _ => type_id,
         }
     }
