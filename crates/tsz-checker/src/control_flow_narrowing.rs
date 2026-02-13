@@ -1460,29 +1460,39 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Check if two references point to the same symbol or property access chain.
     pub(crate) fn is_matching_reference(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        use tracing::trace;
+
         let a = self.skip_parenthesized(a);
         let b = self.skip_parenthesized(b);
+
+        trace!(?a, ?b, "is_matching_reference called");
 
         if let (Some(node_a), Some(node_b)) = (self.arena.get(a), self.arena.get(b)) {
             if node_a.kind == SyntaxKind::ThisKeyword as u16
                 && node_b.kind == SyntaxKind::ThisKeyword as u16
             {
+                trace!("Matched: both are 'this'");
                 return true;
             }
             if node_a.kind == SyntaxKind::SuperKeyword as u16
                 && node_b.kind == SyntaxKind::SuperKeyword as u16
             {
+                trace!("Matched: both are 'super'");
                 return true;
             }
         }
 
         let sym_a = self.reference_symbol(a);
         let sym_b = self.reference_symbol(b);
+        trace!(?sym_a, ?sym_b, "Symbol comparison");
         if sym_a.is_some() && sym_a == sym_b {
+            trace!("Matched: same symbol");
             return true;
         }
 
-        self.is_matching_property_reference(a, b)
+        let property_match = self.is_matching_property_reference(a, b);
+        trace!(?property_match, "Property reference match result");
+        property_match
     }
 
     pub(crate) fn is_matching_property_reference(&self, a: NodeIndex, b: NodeIndex) -> bool {

@@ -2409,8 +2409,17 @@ impl<'a> FlowAnalyzer<'a> {
 
                     // Check if the guard applies to our target reference
                     if self.is_matching_reference(guard_target, target) {
+                        use tracing::trace;
+                        trace!(
+                            ?guard,
+                            ?type_id,
+                            ?is_true_branch,
+                            "Applying guard from call expression"
+                        );
                         // Delegate to Solver for the calculation (Solver responsibility: RESULT)
-                        return narrowing.narrow_type(type_id, &guard, is_true_branch);
+                        let result = narrowing.narrow_type(type_id, &guard, is_true_branch);
+                        trace!(?result, "Guard application result");
+                        return result;
                     }
                 }
 
