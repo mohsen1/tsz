@@ -892,6 +892,50 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     target_type,
                     crate::types::InferencePriority::ReturnType,
                 );
+
+                // Special case: If target_type is a function with rest param type parameter,
+                // and arg_type is a function, infer the tuple type from function parameters.
+                // Example: test<A>((x: string) => {}) where A extends any[]
+                // Should infer A = [string]
+                if let Some(TypeKey::Function(target_fn_id)) = self.interner.lookup(target_type) {
+                    let target_fn = self.interner.function_shape(target_fn_id);
+                    if let Some(t_last) = target_fn.params.last() {
+                        if t_last.rest && var_map.contains_key(&t_last.type_id) {
+                            if let Some(TypeKey::Function(source_fn_id)) =
+                                self.interner.lookup(arg_type)
+                            {
+                                let source_fn = self.interner.function_shape(source_fn_id);
+                                // Create tuple from source function's parameters
+                                use crate::type_queries::unpack_tuple_rest_parameter;
+                                let params_unpacked: Vec<ParamInfo> = source_fn
+                                    .params
+                                    .iter()
+                                    .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+                                    .collect();
+
+                                let tuple_elements: Vec<TupleElement> = params_unpacked
+                                    .iter()
+                                    .map(|p| TupleElement {
+                                        type_id: p.type_id,
+                                        name: p.name,
+                                        optional: p.optional,
+                                        rest: p.rest,
+                                    })
+                                    .collect();
+                                let param_tuple = self.interner.tuple(tuple_elements);
+
+                                // Infer: A = [string, number]
+                                if let Some(&var) = var_map.get(&t_last.type_id) {
+                                    infer_ctx.add_candidate(
+                                        var,
+                                        param_tuple,
+                                        crate::types::InferencePriority::NakedTypeVariable,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -2174,15 +2218,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     .collect();
                                 let source_tuple = self.interner.tuple(tuple_elements);
 
-                                // Constrain: source_tuple <: target_rest_type
-                                // This is contravariant because we're matching function parameters
-                                self.constrain_types(
-                                    ctx,
-                                    var_map,
-                                    source_tuple,
-                                    t_last.type_id,
-                                    priority,
-                                );
+                                // Infer: A = [string, number]
+                                // When matching (x: string, y: number) => R against (...args: A) => R
+                                // We want to infer A = [string, number] (the tuple of parameter types)
+                                if let Some(&var) = var_map.get(&t_last.type_id) {
+                                    // Add as a high-priority candidate since this is structural information
+                                    ctx.add_candidate(
+                                        var,
+                                        source_tuple,
+                                        crate::types::InferencePriority::NakedTypeVariable,
+                                    );
+                                }
                             }
                         }
                     }
@@ -2355,15 +2401,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                         .collect();
                                 let source_tuple = self.interner.tuple(tuple_elements);
 
-                                // Constrain: source_tuple <: target_rest_type
-                                // This is contravariant because we're matching function parameters
-                                self.constrain_types(
-                                    ctx,
-                                    &combined_var_map,
-                                    source_tuple,
-                                    t_last.type_id,
-                                    priority,
-                                );
+                                // Infer: A = [T, U, ...]
+                                // When matching generic function parameters, infer the tuple type
+                                if let Some(&var) = combined_var_map.get(&t_last.type_id) {
+                                    ctx.add_candidate(
+                                        var,
+                                        source_tuple,
+                                        crate::types::InferencePriority::NakedTypeVariable,
+                                    );
+                                }
                             }
                         }
                     }
