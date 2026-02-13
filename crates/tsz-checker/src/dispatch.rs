@@ -4,6 +4,7 @@
 //! of type computation requests to appropriate specialized methods based on
 //! the syntax node kind.
 
+use crate::query_boundaries::dispatch as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -479,12 +480,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     let mut have_overlap = false;
 
                                     // Decompose target union: any member assignable in either direction?
-                                    if let Some(tsz_solver::types::TypeKey::Union(list_id)) =
-                                        self.checker.ctx.types.lookup(asserted_type)
+                                    if let Some(members) =
+                                        query::union_members(self.checker.ctx.types, asserted_type)
                                     {
-                                        let members =
-                                            self.checker.ctx.types.type_list(list_id).clone();
-                                        for &member in members.iter() {
+                                        for member in members {
                                             if self.checker.is_assignable_to(member, expr_type)
                                                 || self.checker.is_assignable_to(expr_type, member)
                                             {
@@ -496,12 +495,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
                                     // Decompose source union: any member assignable in either direction?
                                     if !have_overlap {
-                                        if let Some(tsz_solver::types::TypeKey::Union(list_id)) =
-                                            self.checker.ctx.types.lookup(expr_type)
+                                        if let Some(members) =
+                                            query::union_members(self.checker.ctx.types, expr_type)
                                         {
-                                            let members =
-                                                self.checker.ctx.types.type_list(list_id).clone();
-                                            for &member in members.iter() {
+                                            for member in members {
                                                 if self
                                                     .checker
                                                     .is_assignable_to(member, asserted_type)
@@ -523,12 +520,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         let evaluated_asserted = self
                                             .checker
                                             .evaluate_type_for_assignability(asserted_type);
-                                        have_overlap =
-                                            tsz_solver::type_queries::types_are_comparable(
-                                                self.checker.ctx.types,
-                                                evaluated_expr,
-                                                evaluated_asserted,
-                                            );
+                                        have_overlap = query::types_are_comparable(
+                                            self.checker.ctx.types,
+                                            evaluated_expr,
+                                            evaluated_asserted,
+                                        );
                                     }
 
                                     if !have_overlap {

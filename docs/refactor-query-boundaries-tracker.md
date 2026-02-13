@@ -12,7 +12,7 @@ Notes: Significant migration done in `type_checking`, `type_computation`, `state
 
 2. Remove direct `TypeKey` matching in checker hot paths
 Status: In progress
-Notes: Still heavy in `dispatch` and selected large flow/type-computation paths.
+Notes: Still present in selected large flow/type-computation paths and a few remaining checker utility seams.
 
 3. Unify callable/function/constructor resolution behind one query surface
 Status: In progress
@@ -32,7 +32,7 @@ Notes: Some evaluator paths improved; broad dedup still pending in flow/control/
 
 7. Introduce consistent query-boundary modules per checker subsystem
 Status: In progress (advanced)
-Notes: Boundaries now cover most high-traffic checker subsystems; remaining work is concentrated in environment/dispatch and smaller edge modules.
+Notes: Boundaries now cover most high-traffic checker subsystems; remaining work is concentrated in callable/union utilities and smaller edge modules.
 
 8. Reduce option/plumbing duplication beyond `context.rs`
 Status: In progress
@@ -58,6 +58,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/iterable_checker.rs`
 - `query_boundaries/object_type.rs`
 - `query_boundaries/flow_analysis.rs`
+- `query_boundaries/dispatch.rs`
 - `query_boundaries/state_type_resolution.rs`
 - `query_boundaries/state_type_environment.rs`
 - plus existing: `class.rs`, `diagnostics.rs`, `state.rs`
@@ -77,7 +78,7 @@ No additional failures should be introduced by refactor-only changes.
 
 ## Next Queue (high impact)
 
-1. `dispatch.rs` cleanup for remaining direct low-level type handling.
-2. `callable_type.rs` and `union_type.rs` final direct-query cleanup.
-3. Add seam-focused tests for `state_type_resolution` and `state_type_environment` boundary behavior to lock parity.
-4. Continue de-duplicating relation/diagnostic plumbing across checker entry points.
+1. `callable_type.rs` and `union_type.rs` final direct-query cleanup.
+2. Add seam-focused tests for `state_type_resolution` and `state_type_environment` boundary behavior to lock parity.
+3. Continue de-duplicating relation/diagnostic plumbing across checker entry points.
+4. Sweep remaining checker hotspots for local TypeKey branching that now has query wrappers.
