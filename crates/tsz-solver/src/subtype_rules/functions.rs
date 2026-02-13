@@ -10,7 +10,8 @@
 //! - Type predicate compatibility
 //! - `this` parameter handling
 
-use crate::instantiate::TypeSubstitution;
+use crate::infer::InferenceContext;
+use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::*;
 use crate::visitor::contains_this_type;
 
@@ -211,6 +212,187 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_subtype(source_return, target_return)
     }
 
+    fn instantiate_function_shape(
+        &self,
+        shape: &FunctionShape,
+        substitution: &TypeSubstitution,
+    ) -> FunctionShape {
+        let params = shape
+            .params
+            .iter()
+            .map(|p| ParamInfo {
+                name: p.name,
+                type_id: instantiate_type(self.interner, p.type_id, substitution),
+                optional: p.optional,
+                rest: p.rest,
+            })
+            .collect();
+        let this_type = shape
+            .this_type
+            .map(|this_id| instantiate_type(self.interner, this_id, substitution));
+        let return_type = instantiate_type(self.interner, shape.return_type, substitution);
+        let type_predicate = shape.type_predicate.as_ref().map(|pred| TypePredicate {
+            asserts: pred.asserts,
+            target: pred.target.clone(),
+            type_id: pred
+                .type_id
+                .map(|ty| instantiate_type(self.interner, ty, substitution)),
+            parameter_index: pred.parameter_index,
+        });
+
+        FunctionShape {
+            type_params: Vec::new(),
+            params,
+            this_type,
+            return_type,
+            type_predicate,
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        }
+    }
+
+    fn infer_source_type_param_substitution(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> TypeSubstitution {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        let mut infer_ctx = InferenceContext::new(self.interner);
+        for tp in &source.type_params {
+            let var = infer_ctx.fresh_type_param(tp.name, tp.is_const);
+            if let Some(constraint) = tp.constraint {
+                infer_ctx.add_upper_bound(var, constraint);
+            }
+        }
+
+        let source_params_unpacked: Vec<ParamInfo> = source
+            .params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+        let target_params_unpacked: Vec<ParamInfo> = target
+            .params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+
+        let target_has_rest = target_params_unpacked.last().is_some_and(|p| p.rest);
+        let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
+        let rest_elem_type = if target_has_rest {
+            target_params_unpacked
+                .last()
+                .map(|param| self.get_array_element_type(param.type_id))
+        } else {
+            None
+        };
+        let target_fixed_count = if target_has_rest {
+            target_params_unpacked.len().saturating_sub(1)
+        } else {
+            target_params_unpacked.len()
+        };
+        let source_fixed_count = if source_has_rest {
+            source_params_unpacked.len().saturating_sub(1)
+        } else {
+            source_params_unpacked.len()
+        };
+
+        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
+        for i in 0..fixed_compare_count {
+            let s_param = &source_params_unpacked[i];
+            let t_param = &target_params_unpacked[i];
+
+            let s_effective = if s_param.optional {
+                self.interner.union2(s_param.type_id, TypeId::UNDEFINED)
+            } else {
+                s_param.type_id
+            };
+            let t_effective = if t_param.optional {
+                self.interner.union2(t_param.type_id, TypeId::UNDEFINED)
+            } else {
+                t_param.type_id
+            };
+
+            let _ = infer_ctx.infer_from_types(
+                t_effective,
+                s_effective,
+                InferencePriority::NakedTypeVariable,
+            );
+        }
+
+        if target_has_rest && let Some(rest_elem_type) = rest_elem_type {
+            for s_param in source_params_unpacked
+                .iter()
+                .take(source_fixed_count)
+                .skip(target_fixed_count)
+            {
+                let _ = infer_ctx.infer_from_types(
+                    rest_elem_type,
+                    s_param.type_id,
+                    InferencePriority::NakedTypeVariable,
+                );
+            }
+
+            if source_has_rest && let Some(s_rest_param) = source_params_unpacked.last() {
+                let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                let _ = infer_ctx.infer_from_types(
+                    rest_elem_type,
+                    s_rest_elem,
+                    InferencePriority::NakedTypeVariable,
+                );
+            }
+        }
+
+        if source_has_rest && let Some(rest_param) = source_params_unpacked.last() {
+            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
+            for t_param in target_params_unpacked
+                .iter()
+                .take(target_fixed_count)
+                .skip(source_fixed_count)
+            {
+                let _ = infer_ctx.infer_from_types(
+                    t_param.type_id,
+                    rest_elem_type,
+                    InferencePriority::NakedTypeVariable,
+                );
+            }
+        }
+
+        let _ = infer_ctx.infer_from_types(
+            target.return_type,
+            source.return_type,
+            InferencePriority::ReturnType,
+        );
+        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type) {
+            let _ = infer_ctx.infer_from_types(
+                target_this,
+                source_this,
+                InferencePriority::NakedTypeVariable,
+            );
+        }
+        if let (Some(source_pred), Some(target_pred)) =
+            (&source.type_predicate, &target.type_predicate)
+            && let (Some(source_ty), Some(target_ty)) = (source_pred.type_id, target_pred.type_id)
+        {
+            let _ = infer_ctx.infer_from_types(target_ty, source_ty, InferencePriority::ReturnType);
+        }
+
+        let inferred = infer_ctx.resolve_all_with_constraints().unwrap_or_default();
+        let mut substitution = TypeSubstitution::new();
+        for tp in &source.type_params {
+            let inferred_ty = inferred
+                .iter()
+                .find_map(|(name, ty)| if *name == tp.name { Some(*ty) } else { None });
+            let fallback = if self.strict_function_types {
+                TypeId::UNKNOWN
+            } else {
+                TypeId::ANY
+            };
+            substitution.insert(tp.name, inferred_ty.unwrap_or(fallback));
+        }
+        substitution
+    }
+
     /// Check if a function type is a subtype of another function type.
     ///
     /// Validates function compatibility by checking:
@@ -235,75 +417,89 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Handle generic target vs non-generic source
-        // When checking if a non-generic implementation is compatible with a generic overload,
-        // we need to instantiate the target's type parameters to `any` (or their constraints).
-        // This implements universal quantification: the implementation must work for ALL possible T.
-        let (target_return, target_this, target_params) =
-            if !target.type_params.is_empty() && source.type_params.is_empty() {
-                // Create a substitution mapping each type parameter to ANY
-                let mut substitution = TypeSubstitution::new();
-                for param in &target.type_params {
-                    substitution.insert(param.name, TypeId::ANY);
-                }
+        let mut source_instantiated = source.clone();
+        let mut target_instantiated = target.clone();
 
-                // Instantiate target's return type, this_type, and parameters
-                use crate::instantiate::instantiate_type;
-                let instantiated_return =
-                    instantiate_type(self.interner, target.return_type, &substitution);
-                let instantiated_this = match target.this_type {
-                    Some(this_id) => Some(instantiate_type(self.interner, this_id, &substitution)),
-                    None => None,
-                };
+        // Generic source vs generic target (same arity): normalize target type parameter
+        // identities to source identities so alpha-equivalent signatures compare structurally.
+        if !source_instantiated.type_params.is_empty()
+            && source_instantiated.type_params.len() == target_instantiated.type_params.len()
+            && !target_instantiated.type_params.is_empty()
+        {
+            let mut substitution = TypeSubstitution::new();
+            for (source_tp, target_tp) in source_instantiated
+                .type_params
+                .iter()
+                .zip(target_instantiated.type_params.iter())
+            {
+                let source_type_param_type = self
+                    .interner
+                    .intern(TypeKey::TypeParameter(source_tp.clone()));
+                substitution.insert(target_tp.name, source_type_param_type);
+            }
+            target_instantiated =
+                self.instantiate_function_shape(&target_instantiated, &substitution);
+        }
 
-                // Instantiate parameters
-                let instantiated_params: Vec<_> = target
-                    .params
-                    .iter()
-                    .map(|p| ParamInfo {
-                        name: p.name,
-                        type_id: instantiate_type(self.interner, p.type_id, &substitution),
-                        optional: p.optional,
-                        rest: p.rest,
-                    })
-                    .collect();
+        // Contextual signature instantiation for generic source -> non-generic target.
+        // This is key for non-strict assignability cases where a generic function expression
+        // is contextually typed by a concrete callback/function type.
+        if !source_instantiated.type_params.is_empty() && target_instantiated.type_params.is_empty()
+        {
+            let substitution = self
+                .infer_source_type_param_substitution(&source_instantiated, &target_instantiated);
+            source_instantiated =
+                self.instantiate_function_shape(&source_instantiated, &substitution);
+        }
 
-                (instantiated_return, instantiated_this, instantiated_params)
-            } else {
-                // Use the original target types
-                (target.return_type, target.this_type, target.params.to_vec())
-            };
+        // Generic target vs non-generic source: instantiate target type params to `any`.
+        if !target_instantiated.type_params.is_empty() && source_instantiated.type_params.is_empty()
+        {
+            let mut substitution = TypeSubstitution::new();
+            for param in &target_instantiated.type_params {
+                substitution.insert(param.name, TypeId::ANY);
+            }
+            target_instantiated =
+                self.instantiate_function_shape(&target_instantiated, &substitution);
+        }
 
         // Return type is covariant
         if !self
-            .check_return_compat(source.return_type, target_return)
+            .check_return_compat(
+                source_instantiated.return_type,
+                target_instantiated.return_type,
+            )
             .is_true()
         {
             return SubtypeResult::False;
         }
 
-        if !self.are_this_parameters_compatible(source.this_type, target_this) {
+        if !self.are_this_parameters_compatible(
+            source_instantiated.this_type,
+            target_instantiated.this_type,
+        ) {
             return SubtypeResult::False;
         }
 
         // Type predicates check
-        if !self.are_type_predicates_compatible(source, target) {
+        if !self.are_type_predicates_compatible(&source_instantiated, &target_instantiated) {
             return SubtypeResult::False;
         }
 
         // Method bivariance
-        let is_method = source.is_method || target.is_method;
+        let is_method = source_instantiated.is_method || target_instantiated.is_method;
 
         // Unpack tuple rest parameters before comparison.
         // In TypeScript, `(...args: [A, B]) => R` is equivalent to `(a: A, b: B) => R`.
         // We unpack tuple rest parameters into individual fixed parameters for proper matching.
         use crate::type_queries::unpack_tuple_rest_parameter;
-        let source_params_unpacked: Vec<ParamInfo> = source
+        let source_params_unpacked: Vec<ParamInfo> = source_instantiated
             .params
             .iter()
             .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
             .collect();
-        let target_params_unpacked: Vec<ParamInfo> = target_params
+        let target_params_unpacked: Vec<ParamInfo> = target_instantiated
+            .params
             .iter()
             .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
             .collect();
@@ -593,125 +789,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallSignature,
         target: &CallSignature,
     ) -> SubtypeResult {
-        // Return type is covariant
-        if !self
-            .check_return_compat(source.return_type, target.return_type)
-            .is_true()
-        {
-            return SubtypeResult::False;
-        }
-
-        // Check rest parameter handling
-        let target_has_rest = target.params.last().is_some_and(|p| p.rest);
-        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
-        let rest_elem_type = if target_has_rest {
-            target
-                .params
-                .last()
-                .map(|param| self.get_array_element_type(param.type_id))
-        } else {
-            None
+        let source_fn = FunctionShape {
+            type_params: source.type_params.clone(),
+            params: source.params.clone(),
+            this_type: source.this_type,
+            return_type: source.return_type,
+            type_predicate: source.type_predicate.clone(),
+            is_constructor: false,
+            is_method: source.is_method,
         };
-        let rest_is_top = self.allow_bivariant_rest
-            && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
-
-        // Count non-rest parameters
-        let target_fixed_count = if target_has_rest {
-            target.params.len().saturating_sub(1)
-        } else {
-            target.params.len()
+        let target_fn = FunctionShape {
+            type_params: target.type_params.clone(),
+            params: target.params.clone(),
+            this_type: target.this_type,
+            return_type: target.return_type,
+            type_predicate: target.type_predicate.clone(),
+            is_constructor: false,
+            is_method: target.is_method,
         };
-        let source_fixed_count = if source_has_rest {
-            source.params.len().saturating_sub(1)
-        } else {
-            source.params.len()
-        };
-
-        // Check parameter arity: source's required params must not exceed
-        // the target's total non-rest params (including optional ones).
-        // When target has a rest parameter, skip the arity check entirely —
-        // the rest parameter can accept any number of arguments, and type
-        // compatibility of extra params is checked later against the rest element type.
-        let source_required = self.required_param_count(&source.params);
-        if !self.allow_bivariant_param_count
-            && !target_has_rest
-            && source_required > target_fixed_count
-        {
-            return SubtypeResult::False;
-        }
-
-        // Compare fixed parameters
-        // Methods use bivariant parameter checking (Rule #2: Function Bivariance)
-        let is_method = source.is_method || target.is_method;
-        let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
-        for i in 0..fixed_compare_count {
-            let s_param = &source.params[i];
-            let t_param = &target.params[i];
-            if !self.are_parameters_compatible_impl(s_param.type_id, t_param.type_id, is_method) {
-                return SubtypeResult::False;
-            }
-        }
-
-        // If target has rest, check source's extra params
-        if target_has_rest {
-            let Some(rest_elem_type) = rest_elem_type else {
-                return SubtypeResult::False;
-            };
-            if rest_is_top {
-                return SubtypeResult::True;
-            }
-
-            for i in target_fixed_count..source_fixed_count {
-                let s_param = &source.params[i];
-                if !self.are_parameters_compatible_impl(s_param.type_id, rest_elem_type, is_method)
-                {
-                    return SubtypeResult::False;
-                }
-            }
-
-            if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    return SubtypeResult::False;
-                };
-                // Check if source rest type is assignable to target rest type.
-                // For tuple rest params like [...args: [T1, T2]], check the whole tuple
-                // against the target array type, not just the first element.
-                let target_rest_type = target.params.last().unwrap().type_id;
-                if !self.are_parameters_compatible_impl(
-                    s_rest_param.type_id,
-                    target_rest_type,
-                    is_method,
-                ) {
-                    return SubtypeResult::False;
-                }
-            }
-        }
-
-        if source_has_rest {
-            let rest_param = if let Some(rest_param) = source.params.last() {
-                rest_param
-            } else {
-                return SubtypeResult::False;
-            };
-            let rest_elem_type = self.get_array_element_type(rest_param.type_id);
-            let rest_is_top = self.allow_bivariant_rest
-                && (rest_elem_type == TypeId::ANY || rest_elem_type == TypeId::UNKNOWN);
-
-            if !rest_is_top {
-                for i in source_fixed_count..target_fixed_count {
-                    let t_param = &target.params[i];
-                    if !self.are_parameters_compatible_impl(
-                        rest_elem_type,
-                        t_param.type_id,
-                        is_method,
-                    ) {
-                        return SubtypeResult::False;
-                    }
-                }
-            }
-        }
-
-        SubtypeResult::True
+        self.check_function_subtype(&source_fn, &target_fn)
     }
 
     /// Check call signature subtype to function shape.
