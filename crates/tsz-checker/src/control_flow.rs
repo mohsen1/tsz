@@ -1001,11 +1001,47 @@ impl<'a> FlowAnalyzer<'a> {
         else {
             return pre_type;
         };
-        if !self.is_matching_reference(predicate_target, reference) {
-            return pre_type;
+
+        // For generic assertion functions like `assertEqual<T>(value: any, type: T): asserts value is T`,
+        // the predicate's type_id is the unresolved type parameter T. Resolve it by matching against
+        // the call's actual argument types.
+        let resolved_predicate = self.resolve_generic_predicate(
+            &signature.predicate,
+            &signature.params,
+            call,
+            callee_type,
+            node_types,
+        );
+
+        if self.is_matching_reference(predicate_target, reference) {
+            return self.apply_type_predicate_narrowing(pre_type, &resolved_predicate, true);
         }
 
-        self.apply_type_predicate_narrowing(pre_type, &signature.predicate, true)
+        // Discriminant narrowing: if the predicate target is a property access on the
+        // reference (e.g., assertEqual(animal.type, 'cat') narrows animal from Cat|Dog to Cat),
+        // extract the property path and narrow the parent object by discriminant.
+        if let Some(predicate_type) = resolved_predicate.type_id {
+            if let Some((property_path, _is_optional, base)) =
+                self.discriminant_property_info(predicate_target, reference)
+            {
+                if self.is_matching_reference(base, reference) {
+                    let env_borrow;
+                    let narrowing = if let Some(env) = &self.type_environment {
+                        env_borrow = env.borrow();
+                        NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+                    } else {
+                        NarrowingContext::new(self.interner)
+                    };
+                    return narrowing.narrow_by_discriminant(
+                        pre_type,
+                        &property_path,
+                        predicate_type,
+                    );
+                }
+            }
+        }
+
+        pre_type
     }
 
     /// Iterative flow graph traversal for definite assignment checks.

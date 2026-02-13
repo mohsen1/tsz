@@ -4,6 +4,7 @@
 //! containing narrowing methods for assignments, predicates, instanceof,
 //! in-operator, typeof, discriminants, literals, and reference matching.
 
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
@@ -387,6 +388,69 @@ impl<'a> FlowAnalyzer<'a> {
                 None
             }
         }
+    }
+
+    /// Resolve a generic assertion predicate's type from the call's actual argument types.
+    ///
+    /// For `assertEqual<T>(value: any, type: T): asserts value is T` called as
+    /// `assertEqual(animal.type, 'cat' as const)`, the predicate's type_id is the
+    /// unresolved type parameter T. This method finds which parameter shares that type
+    /// and resolves it to the corresponding argument's concrete type (e.g., literal 'cat').
+    pub(crate) fn resolve_generic_predicate(
+        &self,
+        predicate: &TypePredicate,
+        params: &[ParamInfo],
+        call: &CallExprData,
+        callee_type: TypeId,
+        node_types: &FxHashMap<u32, TypeId>,
+    ) -> TypePredicate {
+        let Some(pred_type) = predicate.type_id else {
+            return predicate.clone();
+        };
+
+        // Check if the callee is a generic function/callable with type params
+        let has_type_params = match classify_for_predicate_signature(self.interner, callee_type) {
+            PredicateSignatureKind::Function(shape_id) => !self
+                .interner
+                .function_shape(shape_id)
+                .type_params
+                .is_empty(),
+            PredicateSignatureKind::Callable(shape_id) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .any(|sig| !sig.type_params.is_empty())
+            }
+            _ => false,
+        };
+
+        if !has_type_params {
+            return predicate.clone();
+        }
+
+        // Find which parameter has the same type as the predicate type
+        let args = match call.arguments.as_ref() {
+            Some(args) => args.nodes.as_slice(),
+            None => return predicate.clone(),
+        };
+
+        for (i, param) in params.iter().enumerate() {
+            if param.type_id == pred_type {
+                // This parameter's declared type matches the predicate type (both are T)
+                // Get the corresponding argument's concrete type
+                if let Some(&arg_idx) = args.get(i) {
+                    if let Some(&arg_type) = node_types.get(&arg_idx.0) {
+                        return TypePredicate {
+                            type_id: Some(arg_type),
+                            ..predicate.clone()
+                        };
+                    }
+                }
+            }
+        }
+
+        predicate.clone()
     }
 
     pub(crate) fn apply_type_predicate_narrowing(
