@@ -254,6 +254,11 @@ pub struct BinderState {
     /// avoiding collision with local symbols at the same index.
     pub lib_symbol_ids: FxHashSet<SymbolId>,
 
+    /// Reverse mapping from user-local lib symbol IDs to (lib_binder_ptr, original_local_id).
+    /// This allows Phase 2 of merge_bind_results to find the Phase 1 global ID for each
+    /// user-local lib symbol. Built during merge_lib_contexts_into_binder.
+    pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
+
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
     pub module_exports: FxHashMap<String, SymbolTable>,
@@ -372,6 +377,7 @@ impl BinderState {
             current_augmented_module: None,
             lib_binders: Vec::new(),
             lib_symbol_ids: FxHashSet::default(),
+            lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
@@ -533,6 +539,7 @@ impl BinderState {
             current_augmented_module: None,
             lib_binders: Vec::new(),
             lib_symbol_ids: FxHashSet::default(),
+            lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
             wildcard_reexports: FxHashMap::default(),
@@ -644,6 +651,7 @@ impl BinderState {
             current_augmented_module: None,
             lib_binders: Vec::new(),
             lib_symbol_ids: FxHashSet::default(),
+            lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports,
             reexports,
             wildcard_reexports,
@@ -1418,6 +1426,10 @@ impl BinderState {
 
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), new_id);
+
+                // Store reverse mapping for Phase 2 of merge_bind_results
+                self.lib_symbol_reverse_remap
+                    .insert(new_id, (lib_binder_ptr, local_id));
 
                 // Track which arena contains this symbol's declarations (legacy - stores last arena)
                 self.symbol_arenas
