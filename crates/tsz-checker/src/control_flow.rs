@@ -626,15 +626,48 @@ impl<'a> FlowAnalyzer<'a> {
                     } else {
                         current_type
                     }
-                } else if let Some(&ant) = flow.antecedent.first() {
-                    // Continue to antecedent
-                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
-                        worklist.push_back((ant, current_type));
-                        in_worklist.insert(ant);
-                    }
-                    *results.get(&ant).unwrap_or(&current_type)
                 } else {
-                    current_type
+                    // This assignment doesn't affect our reference — pass through to antecedent.
+                    // CRITICAL: If antecedent is a CONDITION node that hasn't been processed yet,
+                    // we must defer to avoid losing narrowing. Without this, the worklist may
+                    // process this ASSIGNMENT before the CONDITION, using the un-narrowed type.
+                    if let Some(&ant) = flow.antecedent.first() {
+                        if let Some(&ant_type) = results.get(&ant) {
+                            // Antecedent already computed — use its result
+                            ant_type
+                        } else if !visited.contains(&ant) {
+                            // Check if the antecedent is a CONDITION node (narrowing).
+                            // Only defer for CONDITION antecedents — other node types
+                            // (ASSIGNMENT, START, etc.) are fine with the fallback.
+                            let ant_is_condition = self
+                                .binder
+                                .flow_nodes
+                                .get(ant)
+                                .is_some_and(|f| f.has_any_flags(flow_flags::CONDITION));
+                            if ant_is_condition {
+                                // Defer: process antecedent first, then re-process self
+                                if !in_worklist.contains(&ant) {
+                                    worklist.push_front((ant, current_type));
+                                    in_worklist.insert(ant);
+                                }
+                                if !in_worklist.contains(&current_flow) {
+                                    worklist.push_back((current_flow, current_type));
+                                    in_worklist.insert(current_flow);
+                                }
+                                continue;
+                            }
+                            // Non-condition antecedent: schedule it but use current_type
+                            if !in_worklist.contains(&ant) {
+                                worklist.push_back((ant, current_type));
+                                in_worklist.insert(ant);
+                            }
+                            *results.get(&ant).unwrap_or(&current_type)
+                        } else {
+                            current_type
+                        }
+                    } else {
+                        current_type
+                    }
                 }
             } else if flow.has_any_flags(flow_flags::ARRAY_MUTATION) {
                 // Array mutation
