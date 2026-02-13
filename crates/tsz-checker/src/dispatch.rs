@@ -598,6 +598,29 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.get_jsx_element_type()
             }
 
+            // Non-null assertion: x!
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                // TS8013: Non-null assertions can only be used in TypeScript files
+                if self.checker.is_js_file() {
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::NON_NULL_ASSERTIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        diagnostic_codes::NON_NULL_ASSERTIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    );
+                }
+                // Get the operand type (strip the ! assertion — removes null/undefined)
+                if let Some(unary) = self.checker.ctx.arena.get_unary_expr_ex(node) {
+                    let operand_type = self.checker.get_type_of_node(unary.expression);
+                    tsz_solver::remove_nullish(
+                        self.checker.ctx.types.as_type_database(),
+                        operand_type,
+                    )
+                } else {
+                    TypeId::ERROR
+                }
+            }
+
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
