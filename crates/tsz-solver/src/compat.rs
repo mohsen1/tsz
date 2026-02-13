@@ -399,7 +399,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Without strictNullChecks, null and undefined are assignable to and from any type.
         // This check is at the top-level only (not in subtype member iteration) to avoid
         // incorrectly accepting types within union member comparisons.
-        if !self.strict_null_checks && (target == TypeId::NULL || target == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && target.is_nullish() {
             return true;
         }
 
@@ -675,7 +675,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Null/undefined in non-strict null check mode
-        if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && source.is_nullish() {
             return Some(true);
         }
 
@@ -708,12 +708,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == target {
             return true;
         }
-        if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && source.is_nullish() {
             return true;
         }
         // Without strictNullChecks, null and undefined are assignable to and from any type.
         // This check is at the top-level only (not in subtype member iteration).
-        if !self.strict_null_checks && (target == TypeId::NULL || target == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && target.is_nullish() {
             return true;
         }
         if target == TypeId::UNKNOWN {
@@ -753,7 +753,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if target == TypeId::UNKNOWN {
             return None;
         }
-        if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && source.is_nullish() {
             return None;
         }
         // Without strictNullChecks, null and undefined are assignable to and from any type.
@@ -1051,7 +1051,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == TypeId::ERROR {
             return true;
         }
-        if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && source.is_nullish() {
             return true;
         }
         if source == TypeId::UNKNOWN

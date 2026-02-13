@@ -249,7 +249,7 @@ fn are_disjoint(interner: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
     if a == b {
         return false;
     }
-    if a == TypeId::ANY || b == TypeId::ANY || a == TypeId::UNKNOWN || b == TypeId::UNKNOWN {
+    if a.is_any_or_unknown() || b.is_any_or_unknown() {
         return false;
     }
 
