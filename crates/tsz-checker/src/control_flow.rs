@@ -2686,7 +2686,16 @@ impl<'a> FlowAnalyzer<'a> {
                 // Discriminant guards (like `obj.kind === "a"`) should only narrow the base object (`obj`),
                 // not property access results (like `obj.value`).
                 let is_property_access = self.is_property_or_element_access(target);
-                if !is_property_access {
+
+                // CRITICAL FIX: Don't apply discriminant narrowing to let-bound variables
+                // Only const-bound variables can be narrowed via aliased discriminants.
+                // Let-bound variables might be reassigned, so narrowing is unsafe.
+                // Example:
+                //   let { data, success } = getResult();
+                //   if (success) { data.method(); }  // ERROR - data is let-bound
+                let is_mutable = self.is_mutable_variable(target);
+
+                if !is_property_access && !is_mutable {
                     let mut base_type = type_id;
                     if is_optional && effective_truth {
                         let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
@@ -2700,7 +2709,7 @@ impl<'a> FlowAnalyzer<'a> {
                         narrowing,
                     );
                 }
-                // For property access targets, skip discriminant narrowing
+                // For property access targets or let-bound variables, skip discriminant narrowing
                 // The property type will be computed from the already-narrowed base object
             }
 
