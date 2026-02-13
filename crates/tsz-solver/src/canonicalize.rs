@@ -239,6 +239,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                             asserts: pred.asserts,
                             target: pred.target.clone(),
                             type_id: pred.type_id.map(|t| self.canonicalize(t)),
+                            parameter_index: pred.parameter_index,
                         });
 
                 // Pop scope
@@ -542,6 +543,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     asserts: pred.asserts,
                     target: pred.target.clone(),
                     type_id: pred.type_id.map(|t| self.canonicalize(t)),
+                    parameter_index: pred.parameter_index,
                 });
 
         // Pop scope

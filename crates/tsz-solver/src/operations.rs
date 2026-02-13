@@ -308,6 +308,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             asserts: pred.asserts,
                             target: pred.target.clone(),
                             type_id: pred.type_id.map(|t| instantiate_type(self.db, t, &subst)),
+                            parameter_index: pred.parameter_index,
                         });
 
                 // 5. Return the concrete FunctionShape
@@ -2227,6 +2228,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             type_id: pred
                                 .type_id
                                 .map(|t| instantiate_type(self.interner, t, &source_subst)),
+                            parameter_index: pred.parameter_index,
                         });
 
                     // Create combined var_map for constraint collection

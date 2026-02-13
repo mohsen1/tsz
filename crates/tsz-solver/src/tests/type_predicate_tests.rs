@@ -17,6 +17,7 @@ fn type_predicate(interner: &TypeInterner, param_name: &str, type_id: TypeId) ->
         asserts: false,
         target: TypePredicateTarget::Identifier(interner.intern_string(param_name)),
         type_id: Some(type_id),
+        parameter_index: None,
     }
 }
 
@@ -26,6 +27,7 @@ fn asserts_predicate(interner: &TypeInterner, param_name: &str, type_id: TypeId)
         asserts: true,
         target: TypePredicateTarget::Identifier(interner.intern_string(param_name)),
         type_id: Some(type_id),
+        parameter_index: None,
     }
 }
 
@@ -35,6 +37,7 @@ fn bare_asserts(interner: &TypeInterner, param_name: &str) -> TypePredicate {
         asserts: true,
         target: TypePredicateTarget::Identifier(interner.intern_string(param_name)),
         type_id: None,
+        parameter_index: None,
     }
 }
 
@@ -78,6 +81,7 @@ fn test_type_guard_more_specific_than_no_predicate() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(string_param),
             type_id: Some(TypeId::STRING),
@@ -132,6 +136,7 @@ fn test_no_predicate_not_compatible_with_type_guard() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(string_param),
             type_id: Some(TypeId::STRING),
@@ -175,6 +180,7 @@ fn test_no_predicate_compatible_with_type_guard_matching_return() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(TypeId::STRING),
@@ -210,6 +216,7 @@ fn test_type_guard_narrowing_is_compatible() {
         this_type: None,
         return_type: dog,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(dog),
@@ -225,6 +232,7 @@ fn test_type_guard_narrowing_is_compatible() {
         this_type: None,
         return_type: animal,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(animal),
@@ -259,6 +267,7 @@ fn test_type_guard_different_parameters_incompatible() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(TypeId::STRING),
@@ -274,6 +283,7 @@ fn test_type_guard_different_parameters_incompatible() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(param_y),
             type_id: Some(TypeId::STRING),
@@ -309,6 +319,7 @@ fn test_asserts_more_specific_than_type_guard() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: true,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(TypeId::STRING),
@@ -324,6 +335,7 @@ fn test_asserts_more_specific_than_type_guard() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(TypeId::STRING),
@@ -356,6 +368,7 @@ fn test_type_guard_not_compatible_with_asserts() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(TypeId::STRING),
@@ -371,6 +384,7 @@ fn test_type_guard_not_compatible_with_asserts() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: true,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(TypeId::STRING),
@@ -403,6 +417,7 @@ fn test_bare_asserts_compatibility() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: true,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: None, // Bare assertion, no type
@@ -418,6 +433,7 @@ fn test_bare_asserts_compatibility() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: true,
             target: TypePredicateTarget::Identifier(param_x),
             type_id: Some(TypeId::STRING),
@@ -459,6 +475,7 @@ fn test_type_guard_in_overloads() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             asserts: false,
             target: TypePredicateTarget::Identifier(param_value),
             type_id: Some(TypeId::STRING),

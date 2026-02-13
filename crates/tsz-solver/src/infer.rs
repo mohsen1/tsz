@@ -1223,6 +1223,38 @@ impl<'a> InferenceContext<'a> {
         // Return type is covariant: normal order
         self.infer_from_types(source_sig.return_type, target_sig.return_type, priority)?;
 
+        // This type is contravariant
+        if let (Some(source_this), Some(target_this)) = (source_sig.this_type, target_sig.this_type)
+        {
+            self.infer_from_types(target_this, source_this, priority)?;
+        }
+
+        // Type predicates are covariant
+        if let (Some(source_pred), Some(target_pred)) =
+            (&source_sig.type_predicate, &target_sig.type_predicate)
+        {
+            // Compare targets by index if possible
+            let targets_match = match (source_pred.parameter_index, target_pred.parameter_index) {
+                (Some(s_idx), Some(t_idx)) => s_idx == t_idx,
+                _ => source_pred.target == target_pred.target,
+            };
+
+            tracing::trace!(
+                targets_match,
+                ?source_pred.parameter_index,
+                ?target_pred.parameter_index,
+                "Inferring from type predicates"
+            );
+
+            if targets_match && source_pred.asserts == target_pred.asserts {
+                if let (Some(source_ty), Some(target_ty)) =
+                    (source_pred.type_id, target_pred.type_id)
+                {
+                    self.infer_from_types(source_ty, target_ty, priority)?;
+                }
+            }
+        }
+
         Ok(())
     }
 

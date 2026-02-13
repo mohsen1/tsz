@@ -306,7 +306,7 @@ impl<'a> CheckerState<'a> {
             self.check_type_for_parameter_properties(type_annotation);
             // Check for undefined type names in return type
             self.check_type_for_missing_names(type_annotation);
-            self.return_type_and_predicate(type_annotation)
+            self.return_type_and_predicate(type_annotation, &params)
         } else {
             // Use UNKNOWN as default to enforce strict checking
             // This ensures return statements are checked even without annotation
