@@ -1018,14 +1018,38 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // a file is an external module, because default exports may not correspond to a named
         // export in `file_locals`.
         let mut exports = SymbolTable::new();
+        let mut export_equals_old: Option<SymbolId> = None;
 
         // 1) Named exports collected from file_locals.
         for (name, &sym_id) in result.file_locals.iter() {
+            if name == "export=" {
+                export_equals_old = Some(sym_id);
+            }
             if let Some(sym) = result.symbols.get(sym_id)
-                && sym.is_exported
+                && (sym.is_exported || name == "export=")
                 && let Some(&remapped_id) = id_remap.get(&sym_id)
             {
                 exports.set(name.clone(), remapped_id);
+            }
+        }
+
+        // 1b) `export = target` should also expose namespace members from `target`.
+        if let Some(old_export_equals_sym) = export_equals_old
+            && let Some(target_symbol) = result.symbols.get(old_export_equals_sym)
+        {
+            if let Some(target_exports) = target_symbol.exports.as_ref() {
+                for (export_name, old_sym_id) in target_exports.iter() {
+                    if let Some(&remapped_id) = id_remap.get(old_sym_id) {
+                        exports.set(export_name.clone(), remapped_id);
+                    }
+                }
+            }
+            if let Some(target_members) = target_symbol.members.as_ref() {
+                for (member_name, old_sym_id) in target_members.iter() {
+                    if let Some(&remapped_id) = id_remap.get(old_sym_id) {
+                        exports.set(member_name.clone(), remapped_id);
+                    }
+                }
             }
         }
 
@@ -1603,6 +1627,7 @@ pub fn check_files_parallel(
 
             if !lib_contexts.is_empty() {
                 checker.ctx.set_lib_contexts(lib_contexts.clone());
+                checker.ctx.set_actual_lib_file_count(lib_contexts.len());
             }
 
             checker.check_source_file(file.source_file);

@@ -48,6 +48,15 @@ impl BinderState {
                 // Check if exported BEFORE allocating symbol
                 let is_exported = self.is_node_exported(arena, idx);
 
+                if self.in_module_augmentation
+                    && let Some(ref module_spec) = self.current_augmented_module
+                {
+                    self.module_augmentations
+                        .entry(module_spec.clone())
+                        .or_default()
+                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+                }
+
                 let sym_id = self.declare_symbol(name, flags, idx, is_exported);
                 self.node_symbols.insert(decl.name.0, sym_id);
             } else {
@@ -94,6 +103,16 @@ impl BinderState {
             // Function declaration creates a symbol in the current scope
             if let Some(name) = self.get_identifier_name(arena, func.name) {
                 let is_exported = self.has_export_modifier(arena, &func.modifiers);
+
+                if self.in_module_augmentation
+                    && let Some(ref module_spec) = self.current_augmented_module
+                {
+                    self.module_augmentations
+                        .entry(module_spec.clone())
+                        .or_default()
+                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+                }
+
                 self.declare_symbol(name, symbol_flags::FUNCTION, idx, is_exported);
             }
 
@@ -297,6 +316,15 @@ impl BinderState {
 
                 // Check if exported BEFORE allocating symbol
                 let is_exported = self.has_export_modifier(arena, &class.modifiers);
+
+                if self.in_module_augmentation
+                    && let Some(ref module_spec) = self.current_augmented_module
+                {
+                    self.module_augmentations
+                        .entry(module_spec.clone())
+                        .or_default()
+                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+                }
 
                 self.declare_symbol(name, flags, idx, is_exported);
             }
@@ -517,6 +545,15 @@ impl BinderState {
         {
             // Check if exported BEFORE allocating symbol
             let is_exported = self.has_export_modifier(arena, &enum_decl.modifiers);
+
+            if self.in_module_augmentation
+                && let Some(ref module_spec) = self.current_augmented_module
+            {
+                self.module_augmentations
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+            }
 
             // Check if this is a const enum
             let is_const = self.has_const_modifier(arena, &enum_decl.modifiers);
@@ -1987,6 +2024,15 @@ impl BinderState {
     /// - The module specifier refers to an already declared module
     /// - The specifier looks like an external package (not a relative path)
     pub(crate) fn is_potential_module_augmentation(&self, module_specifier: &str) -> bool {
+        // In external modules, relative `declare module "./x"` is always an augmentation target.
+        if module_specifier.starts_with("./")
+            || module_specifier.starts_with("../")
+            || module_specifier == "."
+            || module_specifier == ".."
+        {
+            return true;
+        }
+
         // Check if we've already declared this module
         if self.declared_modules.contains(module_specifier) {
             return true;

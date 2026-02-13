@@ -446,7 +446,15 @@ impl<'a> CheckerState<'a> {
             if let Some(augmentations) = self.ctx.binder.module_augmentations.get(module_name) {
                 for aug in augmentations {
                     // Get the type of the augmentation declaration
-                    let aug_type = self.get_type_of_node(aug.node);
+                    let aug_type = if aug
+                        .arena
+                        .as_ref()
+                        .is_some_and(|arena| std::ptr::eq(arena.as_ref(), self.ctx.arena))
+                    {
+                        self.get_type_of_node(aug.node)
+                    } else {
+                        tsz_solver::TypeId::ANY
+                    };
                     let name_atom = self.ctx.types.intern_string(&aug.name);
 
                     // Check if this augments an existing export

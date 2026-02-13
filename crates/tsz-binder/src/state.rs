@@ -1662,9 +1662,13 @@ impl BinderState {
 
         // Collect all exports from all module-level symbols in this file
         let mut file_exports = SymbolTable::new();
+        let mut export_equals_target: Option<SymbolId> = None;
 
         // Iterate through file_locals to find modules and their exports
         for (name, &sym_id) in self.file_locals.iter() {
+            if name == "export=" {
+                export_equals_target = Some(sym_id);
+            }
             if let Some(symbol) = self.symbols.get(sym_id) {
                 // Check if this is a module/namespace symbol
                 if (symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
@@ -1683,8 +1687,28 @@ impl BinderState {
                 // Also collect symbols that are explicitly exported via `export { X }`
                 // or `export` modifier. These may not be module/namespace symbols but
                 // need to be in module_exports for cross-file import resolution.
-                if symbol.is_exported && !file_exports.has(name) {
+                if (symbol.is_exported || name == "export=") && !file_exports.has(name) {
                     file_exports.set(name.clone(), sym_id);
+                }
+            }
+        }
+
+        // `export = target` should expose namespace members from `target`.
+        if let Some(target_sym_id) = export_equals_target
+            && let Some(target_symbol) = self.symbols.get(target_sym_id)
+        {
+            if let Some(target_exports) = target_symbol.exports.as_ref() {
+                for (export_name, &export_sym_id) in target_exports.iter() {
+                    if !file_exports.has(export_name) {
+                        file_exports.set(export_name.clone(), export_sym_id);
+                    }
+                }
+            }
+            if let Some(target_members) = target_symbol.members.as_ref() {
+                for (member_name, &member_sym_id) in target_members.iter() {
+                    if !file_exports.has(member_name) {
+                        file_exports.set(member_name.clone(), member_sym_id);
+                    }
                 }
             }
         }

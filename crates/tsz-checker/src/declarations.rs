@@ -1190,6 +1190,30 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         message,
                         diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION_MODULE_CANNOT_BE_FOUND,
                     );
+                } else if self.is_external_module()
+                    && self.module_exists(&lit.text)
+                    && self.ctx.module_resolves_to_non_module_entity(&lit.text)
+                {
+                    let has_value_exports = self.module_augmentation_has_value_exports(module.body);
+                    let (code, message) = if has_value_exports {
+                        (
+                            diagnostic_codes::CANNOT_AUGMENT_MODULE_WITH_VALUE_EXPORTS_BECAUSE_IT_RESOLVES_TO_A_NON_MODULE_ENT,
+                            format_message(
+                                diagnostic_messages::CANNOT_AUGMENT_MODULE_WITH_VALUE_EXPORTS_BECAUSE_IT_RESOLVES_TO_A_NON_MODULE_ENT,
+                                &[&lit.text],
+                            ),
+                        )
+                    } else {
+                        (
+                            diagnostic_codes::CANNOT_AUGMENT_MODULE_BECAUSE_IT_RESOLVES_TO_A_NON_MODULE_ENTITY,
+                            format_message(
+                                diagnostic_messages::CANNOT_AUGMENT_MODULE_BECAUSE_IT_RESOLVES_TO_A_NON_MODULE_ENTITY,
+                                &[&lit.text],
+                            ),
+                        )
+                    };
+                    self.ctx
+                        .error(name_node.pos, name_node.end - name_node.pos, message, code);
                 }
             }
 
@@ -1716,6 +1740,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Returns true if the module is in resolved_modules, module_exports,
     /// declared_modules, or shorthand_ambient_modules.
     fn module_exists(&self, module_name: &str) -> bool {
+        if self.ctx.resolve_import_target(module_name).is_some() {
+            return true;
+        }
+
         // Check if the module was resolved by the CLI driver (multi-file mode)
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
@@ -1726,6 +1754,24 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
             return true;
+        }
+
+        if let Some(target_idx) = self.ctx.resolve_import_target(module_name)
+            && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+        {
+            if let Some(target_file_name) = self
+                .ctx
+                .get_arena_for_file(target_idx as u32)
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str())
+                && target_binder.module_exports.contains_key(target_file_name)
+            {
+                return true;
+            }
+            if target_binder.module_exports.contains_key(module_name) {
+                return true;
+            }
         }
 
         // Check ambient module declarations (`declare module "X" { ... }`)
@@ -1795,6 +1841,62 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check if a module name is relative (starts with ./ or ../)
     fn is_relative_module_name(&self, name: &str) -> bool {
         name.starts_with("./") || name.starts_with("../") || name == "." || name == ".."
+    }
+
+    fn module_augmentation_has_value_exports(&self, module_body: NodeIndex) -> bool {
+        if module_body.is_none() {
+            return false;
+        }
+
+        let Some(body_node) = self.ctx.arena.get(module_body) else {
+            return false;
+        };
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return false;
+        }
+        let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+            return false;
+        };
+        let Some(stmts) = block.statements.as_ref() else {
+            return false;
+        };
+
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                syntax_kind_ext::VARIABLE_STATEMENT
+                | syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
+                syntax_kind_ext::EXPORT_DECLARATION => {
+                    if let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) {
+                        if export_decl.is_default_export
+                            || !export_decl.module_specifier.is_none()
+                            || export_decl.export_clause.is_none()
+                        {
+                            return true;
+                        }
+                        if let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) {
+                            match clause_node.kind {
+                                syntax_kind_ext::VARIABLE_STATEMENT
+                                | syntax_kind_ext::FUNCTION_DECLARATION
+                                | syntax_kind_ext::CLASS_DECLARATION
+                                | syntax_kind_ext::ENUM_DECLARATION => return true,
+                                _ => {}
+                            }
+                        }
+                    } else {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
     }
 
     /// Normalize module augmentation keys for relative specifiers.
