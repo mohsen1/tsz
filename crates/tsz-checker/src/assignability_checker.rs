@@ -12,6 +12,11 @@
 //! This module extends CheckerState with assignability-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
+use crate::query_boundaries::assignability::{
+    AssignabilityEvalKind, ExcessPropertiesKind, TypeTraversalKind,
+    classify_for_assignability_eval, classify_for_excess_properties, classify_for_traversal,
+    is_callable_type, object_shape_for_type,
+};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
@@ -50,8 +55,6 @@ impl<'a> CheckerState<'a> {
         if !visited.insert(type_id) {
             return;
         }
-
-        use tsz_solver::type_queries::{TypeTraversalKind, classify_for_traversal};
 
         // Classify the type to determine how to traverse it
         let traversal_kind = classify_for_traversal(self.ctx.types, type_id);
@@ -206,8 +209,6 @@ impl<'a> CheckerState<'a> {
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries::{AssignabilityEvalKind, classify_for_assignability_eval};
-
         match classify_for_assignability_eval(self.ctx.types, type_id) {
             AssignabilityEvalKind::Application => self.evaluate_type_with_resolution(type_id),
             AssignabilityEvalKind::NeedsEnvEval => self.evaluate_type_with_env(type_id),
@@ -268,7 +269,7 @@ impl<'a> CheckerState<'a> {
             });
             if is_function_target {
                 let source_eval = self.evaluate_type_for_assignability(source);
-                if tsz_solver::type_queries::is_callable_type(self.ctx.types, source_eval) {
+                if is_callable_type(self.ctx.types, source_eval) {
                     return true;
                 }
             }
@@ -480,15 +481,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // There are excess properties. Check if all matching properties have compatible types.
-        let Some(source_shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, source)
-        else {
+        let Some(source_shape) = object_shape_for_type(self.ctx.types, source) else {
             return true;
         };
 
         let resolved_target = self.resolve_type_for_property_access(target);
-        let Some(target_shape) =
-            tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_target)
-        else {
+        let Some(target_shape) = object_shape_for_type(self.ctx.types, resolved_target) else {
             return true;
         };
 
@@ -575,15 +573,12 @@ impl<'a> CheckerState<'a> {
         _source_idx: NodeIndex,
     ) -> bool {
         use tsz_solver::freshness;
-        use tsz_solver::type_queries::{ExcessPropertiesKind, classify_for_excess_properties};
-
         // Only fresh object literals trigger excess property checking.
         if !freshness::is_fresh_object_type(self.ctx.types, source) {
             return false;
         }
 
-        let Some(source_shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, source)
-        else {
+        let Some(source_shape) = object_shape_for_type(self.ctx.types, source) else {
             return false;
         };
 
@@ -617,9 +612,7 @@ impl<'a> CheckerState<'a> {
 
                 for member in members {
                     let resolved_member = self.resolve_type_for_property_access(member);
-                    let Some(shape) =
-                        tsz_solver::type_queries::get_object_shape(self.ctx.types, resolved_member)
-                    else {
+                    let Some(shape) = object_shape_for_type(self.ctx.types, resolved_member) else {
                         continue;
                     };
 
