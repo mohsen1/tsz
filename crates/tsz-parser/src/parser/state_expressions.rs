@@ -1324,7 +1324,7 @@ impl ParserState {
                             );
                         } else {
                             // Not a call or tagged template - this is an instantiation expression
-                            // (e.g., f<string>, new Foo<number>)
+                            // (e.g., f<string>, new Foo<number>, a<b>?.())
                             let end_pos = self.token_end();
                             expr = self.arena.add_expr_with_type_args(
                                 crate::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
@@ -1335,7 +1335,9 @@ impl ParserState {
                                     type_arguments: Some(type_args),
                                 },
                             );
-                            break;
+                            // Continue the loop so optional chaining (?.),
+                            // property access (.), etc. can follow
+                            continue;
                         }
                     } else {
                         break;
