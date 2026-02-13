@@ -7,6 +7,58 @@ use crate::db::TypeDatabase;
 use crate::types::TypeId;
 use tsz_common::interner::Atom;
 
+/// Extension trait for iterators of TypeId to collect into unions or intersections.
+///
+/// This trait provides ergonomic methods to reduce boilerplate when collecting
+/// types into type unions or intersections, automatically handling the common
+/// cases of empty collections, single elements, and multiple elements.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Collect filtered types into a union
+/// let result = members
+///     .iter()
+///     .filter(|&t| predicate(t))
+///     .union_or_single(db);
+///
+/// // Collect mapped types into an intersection
+/// let result = types
+///     .iter()
+///     .map(|&t| transform(t))
+///     .filter(|&t| t != TypeId::NEVER)
+///     .intersection_or_single(db);
+/// ```
+#[allow(dead_code)]
+pub trait TypeIdIteratorExt: Iterator<Item = TypeId> + Sized {
+    /// Collects types into a union, returning NEVER for empty, single type for one element,
+    /// or a union type for multiple elements.
+    ///
+    /// This is equivalent to calling `.collect()` and then `union_or_single()`.
+    fn union_or_single(self, db: &dyn TypeDatabase) -> TypeId;
+
+    /// Collects types into an intersection, returning NEVER for empty, single type for one element,
+    /// or an intersection type for multiple elements.
+    ///
+    /// This is equivalent to calling `.collect()` and then `intersection_or_single()`.
+    fn intersection_or_single(self, db: &dyn TypeDatabase) -> TypeId;
+}
+
+impl<I> TypeIdIteratorExt for I
+where
+    I: Iterator<Item = TypeId>,
+{
+    #[inline]
+    fn union_or_single(self, db: &dyn TypeDatabase) -> TypeId {
+        union_or_single(db, self.collect())
+    }
+
+    #[inline]
+    fn intersection_or_single(self, db: &dyn TypeDatabase) -> TypeId {
+        intersection_or_single(db, self.collect())
+    }
+}
+
 /// Checks if a property name is numeric by resolving the atom and checking its string representation.
 ///
 /// This function consolidates the previously duplicated `is_numeric_property_name` implementations
@@ -295,6 +347,7 @@ impl TypeIdExt for TypeId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TypeInterner;
 
     #[test]
     fn test_is_numeric_literal_name() {
@@ -382,5 +435,47 @@ mod tests {
             TypeId::NEVER
         );
         assert_eq!(TypeId::unwrap_or_undefined(None), TypeId::UNDEFINED);
+    }
+
+    #[test]
+    fn test_iterator_ext_union_or_single() {
+        let interner = TypeInterner::new();
+        let db: &dyn TypeDatabase = &interner;
+
+        // Empty iterator -> NEVER
+        let result = std::iter::empty().union_or_single(db);
+        assert_eq!(result, TypeId::NEVER);
+
+        // Single element -> that element
+        let result = std::iter::once(TypeId::STRING).union_or_single(db);
+        assert_eq!(result, TypeId::STRING);
+
+        // Multiple elements -> union
+        let types = vec![TypeId::STRING, TypeId::NUMBER];
+        let result = types.into_iter().union_or_single(db);
+        // Verify it's a union (not one of the inputs)
+        assert_ne!(result, TypeId::STRING);
+        assert_ne!(result, TypeId::NUMBER);
+    }
+
+    #[test]
+    fn test_iterator_ext_intersection_or_single() {
+        let interner = TypeInterner::new();
+        let db: &dyn TypeDatabase = &interner;
+
+        // Empty iterator -> NEVER
+        let result = std::iter::empty().intersection_or_single(db);
+        assert_eq!(result, TypeId::NEVER);
+
+        // Single element -> that element
+        let result = std::iter::once(TypeId::STRING).intersection_or_single(db);
+        assert_eq!(result, TypeId::STRING);
+
+        // Multiple elements -> intersection
+        let types = vec![TypeId::STRING, TypeId::NUMBER];
+        let result = types.into_iter().intersection_or_single(db);
+        // Verify it's an intersection (not one of the inputs)
+        assert_ne!(result, TypeId::STRING);
+        assert_ne!(result, TypeId::NUMBER);
     }
 }
