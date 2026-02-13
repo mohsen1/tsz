@@ -868,14 +868,84 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         for s_sig in &s_callable.call_signatures {
+            // Try direct match first
             if self
                 .check_call_signature_subtype_to_fn(s_sig, &t_fn)
                 .is_true()
             {
                 return SubtypeResult::True;
             }
+
+            // If source has type parameters and target doesn't, try instantiating
+            // Example: <V>(x: V) => {value: V} should be assignable to (x: number) => {value: number}
+            if !s_sig.type_params.is_empty() && t_fn.type_params.is_empty() {
+                if self
+                    .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
+                    .is_true()
+                {
+                    return SubtypeResult::True;
+                }
+            }
         }
         SubtypeResult::False
+    }
+
+    /// Try to instantiate a generic callable signature to match a concrete function type.
+    /// This handles cases like: `declare function box<V>(x: V): {value: V}; const f: (x: number) => {value: number} = box;`
+    fn try_instantiate_generic_callable_to_function(
+        &mut self,
+        s_sig: &crate::types::CallSignature,
+        t_fn: &crate::types::FunctionShape,
+    ) -> SubtypeResult {
+        use crate::TypeKey;
+        use crate::instantiate::{TypeSubstitution, instantiate_type};
+
+        // Create a substitution mapping type parameters to the target's parameter types
+        // This is a simplified instantiation - we map each source type param to the corresponding target param type
+        let mut substitution = TypeSubstitution::new();
+
+        // For a simple case like <V>(x: V) => R vs (x: T) => S, map V to T
+        // This handles the common case where type parameters flow through from parameters to return type
+        for (s_param, t_param) in s_sig.params.iter().zip(t_fn.params.iter()) {
+            // If source param is a type parameter, map it to target param type
+            if let Some(TypeKey::TypeParameter(tp)) = self.interner.lookup(s_param.type_id) {
+                substitution.insert(tp.name, t_param.type_id);
+            }
+        }
+
+        // If we couldn't infer any type parameters, fall back to checking with unknown
+        // This handles cases where type params aren't directly in parameters
+        if substitution.is_empty() {
+            for tp in &s_sig.type_params {
+                substitution.insert(tp.name, crate::TypeId::UNKNOWN);
+            }
+        }
+
+        // Instantiate the source signature
+        let instantiated_params: Vec<_> = s_sig
+            .params
+            .iter()
+            .map(|p| crate::types::ParamInfo {
+                name: p.name,
+                type_id: instantiate_type(self.interner, p.type_id, &substitution),
+                optional: p.optional,
+                rest: p.rest,
+            })
+            .collect();
+
+        let instantiated_return = instantiate_type(self.interner, s_sig.return_type, &substitution);
+
+        let instantiated_sig = crate::types::CallSignature {
+            type_params: Vec::new(), // No type params after instantiation
+            params: instantiated_params,
+            this_type: s_sig.this_type,
+            return_type: instantiated_return,
+            type_predicate: s_sig.type_predicate.clone(),
+            is_method: s_sig.is_method,
+        };
+
+        // Check if instantiated signature is compatible with target
+        self.check_call_signature_subtype_to_fn(&instantiated_sig, t_fn)
     }
 
     /// Check callable subtyping with overloaded signatures.
