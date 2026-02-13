@@ -1566,10 +1566,15 @@ impl<'a> CheckerState<'a> {
         declared_type: TypeId,
         sym_id: SymbolId,
     ) -> TypeId {
+        use tracing::trace;
+
+        trace!(?idx, ?declared_type, ?sym_id, "check_flow_usage called");
+
         // Flow narrowing is only meaningful for variable-like bindings.
         // Class/function/namespace symbols have stable declared types and
         // do not participate in definite-assignment analysis.
         if !self.symbol_participates_in_flow_analysis(sym_id) {
+            trace!("Symbol does not participate in flow analysis, returning declared type");
             return declared_type;
         }
 
@@ -1581,11 +1586,15 @@ impl<'a> CheckerState<'a> {
             // Report TS2454 error: Variable used before assignment
             self.emit_definite_assignment_error(idx, sym_id);
             // Return declared type to avoid cascading errors
+            trace!("Definite assignment error, returning declared type");
             return declared_type;
         }
 
         // Apply type narrowing based on control flow
-        self.apply_flow_narrowing(idx, declared_type)
+        trace!("Applying flow narrowing");
+        let result = self.apply_flow_narrowing(idx, declared_type);
+        trace!(?result, "check_flow_usage result");
+        result
     }
 
     fn symbol_participates_in_flow_analysis(&self, sym_id: SymbolId) -> bool {

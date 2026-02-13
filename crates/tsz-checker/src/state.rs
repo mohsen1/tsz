@@ -704,6 +704,24 @@ impl<'a> CheckerState<'a> {
     pub fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId {
         // Check cache first
         if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+            // CRITICAL FIX: For identifiers, apply flow narrowing to the cached type
+            // Identifiers can have different types in different control flow branches.
+            // Example: if (typeof x === "string") { x.toUpperCase(); }
+            // The cache stores the declared type "string | number", but inside the if block,
+            // x should have the narrowed type "string".
+            //
+            // Only apply narrowing if skip_flow_narrowing is false (respects testing/special contexts)
+            let should_narrow = !self.ctx.skip_flow_narrowing
+                && self.ctx.arena.get(idx).is_some_and(|node| {
+                    use tsz_scanner::SyntaxKind;
+                    node.kind == SyntaxKind::Identifier as u16
+                });
+
+            if should_narrow {
+                // Apply flow narrowing to get the context-specific type
+                return self.apply_flow_narrowing(idx, cached);
+            }
+
             tracing::trace!(idx = idx.0, type_id = cached.0, "(cached) get_type_of_node");
             return cached;
         }
@@ -759,7 +777,8 @@ impl<'a> CheckerState<'a> {
         self.ctx.node_resolution_stack.pop();
         self.ctx.node_resolution_set.remove(&idx);
 
-        // Cache result
+        // Cache result - identifiers cache their DECLARED type,
+        // but get_type_of_node applies flow narrowing when returning cached identifier types
         self.ctx.node_types.insert(idx.0, result);
 
         tracing::trace!(idx = idx.0, type_id = result.0, "get_type_of_node");

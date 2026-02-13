@@ -2216,6 +2216,10 @@ impl<'a> FlowAnalyzer<'a> {
         call: &CallExprData,
         _condition: NodeIndex,
     ) -> Option<(TypeGuard, NodeIndex)> {
+        use tracing::trace;
+
+        trace!("check_array_every_predicate called");
+
         // Get the callee (should be a property access: array.every)
         let callee_node = self.arena.get(call.expression)?;
         let access = self.arena.get_access_expr(callee_node)?;
@@ -2227,26 +2231,59 @@ impl<'a> FlowAnalyzer<'a> {
             .and_then(|node| self.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
 
+        trace!(?prop_text, "Property name");
+
         if prop_text != "every" {
             return None;
         }
 
+        trace!("Found .every() call");
+
         // Get the first argument (the callback)
-        let callback_idx = call.arguments.as_ref()?.nodes.first().copied()?;
+        let Some(args) = call.arguments.as_ref() else {
+            trace!("No arguments");
+            return None;
+        };
+        let Some(&callback_idx) = args.nodes.first() else {
+            trace!("No first argument");
+            return None;
+        };
+        trace!(?callback_idx, "Callback node index");
 
         // Get the type of the callback
-        let callback_type = *self.node_types?.get(&callback_idx.0)?;
+        // During control flow analysis, types might not be cached yet.
+        // Try to get from cache first, but if not available, we can't extract the guard
+        // (we'd need full CheckerState to compute it, which isn't available in narrowing context).
+        let Some(node_types) = self.node_types else {
+            trace!("No node_types available");
+            return None;
+        };
+        let Some(&callback_type) = node_types.get(&callback_idx.0) else {
+            trace!("Callback type not in node_types - type not computed yet");
+            return None;
+        };
+        trace!(?callback_type, "Callback type");
 
         // Check if the callback has a type predicate
-        let signature = self.predicate_signature_for_type(callback_type)?;
+        let Some(signature) = self.predicate_signature_for_type(callback_type) else {
+            trace!("No predicate signature for callback type");
+            return None;
+        };
+        trace!(?signature.predicate, "Found type predicate");
 
         // Only handle predicates with a type (x is T), not just asserts
-        let predicate_type = signature.predicate.type_id?;
+        let Some(predicate_type) = signature.predicate.type_id else {
+            trace!("No type_id in predicate");
+            return None;
+        };
+        trace!(?predicate_type, "Predicate type ID");
 
         // The target is the array being called on (access.expression)
         let array_target = access.expression;
+        trace!(?array_target, "Array target node");
 
         // Create an ArrayElementPredicate guard that will narrow the array's element type
+        trace!("Creating ArrayElementPredicate guard");
         Some((
             TypeGuard::ArrayElementPredicate {
                 element_type: predicate_type,

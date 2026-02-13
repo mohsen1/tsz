@@ -2246,11 +2246,19 @@ impl<'a> NarrowingContext<'a> {
             }
 
             TypeGuard::ArrayElementPredicate { element_type } => {
+                trace!(
+                    ?element_type,
+                    ?sense,
+                    "Applying ArrayElementPredicate guard"
+                );
                 if sense {
                     // True branch: narrow array element type
-                    self.narrow_array_element_type(source_type, *element_type)
+                    let result = self.narrow_array_element_type(source_type, *element_type);
+                    trace!(?result, "ArrayElementPredicate narrowing result");
+                    result
                 } else {
                     // False branch: we don't narrow (arr.every could be false for various reasons)
+                    trace!("ArrayElementPredicate false branch, no narrowing");
                     source_type
                 }
             }
@@ -2329,20 +2337,35 @@ impl<'a> NarrowingContext<'a> {
     ///
     /// Only applies to array types. Non-array types are returned unchanged.
     fn narrow_array_element_type(&self, source_type: TypeId, narrowed_element: TypeId) -> TypeId {
+        use tracing::trace;
+
+        trace!(
+            ?source_type,
+            ?narrowed_element,
+            "narrow_array_element_type called"
+        );
+
         let resolved = self.resolve_type(source_type);
+        trace!(?resolved, "Resolved source type");
 
         // Check if this is an array type
         if let Some(TypeKey::Array(current_elem)) = self.db.lookup(resolved) {
+            trace!(?current_elem, "Found array type");
             // Narrow the element type
             let new_elem = self.narrow_to_type(current_elem, narrowed_element);
+            trace!(?new_elem, "Narrowed element type");
 
             // Reconstruct the array with narrowed element type
-            return self.db.array(new_elem);
+            let result = self.db.array(new_elem);
+            trace!(?result, "Created narrowed array type");
+            return result;
         }
 
         // Check if this is a union - narrow each member that's an array
         if let Some(TypeKey::Union(list_id)) = self.db.lookup(resolved) {
+            trace!(?list_id, "Found union type");
             let members = self.db.type_list(list_id);
+            trace!(?members, "Union members");
             let narrowed_members: Vec<TypeId> = members
                 .iter()
                 .map(|&member| self.narrow_array_element_type(member, narrowed_element))
@@ -2354,10 +2377,12 @@ impl<'a> NarrowingContext<'a> {
                 .zip(members.iter())
                 .any(|(a, b)| a != b)
             {
+                trace!("Union members changed, creating new union");
                 return self.db.union(narrowed_members);
             }
         }
 
+        trace!("Not an array or union of arrays, returning unchanged");
         // Not an array or union of arrays - return unchanged
         source_type
     }
