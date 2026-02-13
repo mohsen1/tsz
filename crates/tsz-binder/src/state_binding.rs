@@ -1256,6 +1256,16 @@ impl BinderState {
         idx: NodeIndex,
     ) {
         if let Some(module) = arena.get_module(node) {
+            if self.in_module_augmentation
+                && let Some(ref module_spec) = self.current_augmented_module
+                && let Some(name) = self.get_identifier_name(arena, module.name)
+            {
+                self.module_augmentations
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
+            }
+
             let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0
                 || arena
                     .get(module.name)
@@ -1391,9 +1401,24 @@ impl BinderState {
 
             // Populate exports for the module symbol
             if !module_symbol_id.is_none() && !module.body.is_none() {
-                let is_ambient_module = !is_augmentation
+                let mut is_ambient_module = !is_augmentation
                     && (declared_module_specifier.is_some()
                         || self.has_declare_modifier(arena, &module.modifiers));
+
+                // Nested namespaces inside ambient external modules (`declare module "x" { namespace N { ... } }`)
+                // should treat declarations as ambient-exported for symbol visibility.
+                if !is_ambient_module
+                    && let Some(ext) = arena.get_extended(idx)
+                    && let Some(parent_node) = arena.get(ext.parent)
+                    && parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(parent_module) = arena.get_module(parent_node)
+                    && let Some(parent_name_node) = arena.get(parent_module.name)
+                    && (parent_name_node.kind == SyntaxKind::StringLiteral as u16
+                        || parent_name_node.kind
+                            == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                {
+                    is_ambient_module = true;
+                }
                 self.populate_module_exports(
                     arena,
                     module.body,
@@ -1621,19 +1646,58 @@ impl BinderState {
                                 }
 
                                 if let Some(target_symbol) = self.symbols.get(target_sym_id) {
-                                    if let Some(exports) = target_symbol.exports.as_ref() {
-                                        for (export_name, &export_sym_id) in exports.iter() {
-                                            if export_name != "export=" {
-                                                exported_symbols
-                                                    .push((export_name.clone(), export_sym_id));
+                                    let collect_members_from_symbol =
+                                        |symbol: &Symbol,
+                                         exported_symbols: &mut Vec<(String, SymbolId)>| {
+                                            if let Some(exports) = symbol.exports.as_ref() {
+                                                for (export_name, &export_sym_id) in exports.iter() {
+                                                    if export_name != "export=" {
+                                                        exported_symbols.push((
+                                                            export_name.clone(),
+                                                            export_sym_id,
+                                                        ));
+                                                    }
+                                                }
                                             }
+                                            if let Some(members) = symbol.members.as_ref() {
+                                                for (member_name, &member_sym_id) in members.iter() {
+                                                    exported_symbols
+                                                        .push((member_name.clone(), member_sym_id));
+                                                }
+                                            }
+                                        };
+
+                                    collect_members_from_symbol(
+                                        target_symbol,
+                                        &mut exported_symbols,
+                                    );
+
+                                    // Some declaration patterns keep value and namespace halves in
+                                    // sibling symbols with the same name (e.g. function + namespace).
+                                    // Include namespace-shaped siblings so `export = X` exposes all
+                                    // merged members for named import compatibility.
+                                    for candidate_id in
+                                        self.symbols.find_all_by_name(&target_symbol.escaped_name)
+                                    {
+                                        if candidate_id == target_sym_id {
+                                            continue;
                                         }
-                                    }
-                                    if let Some(members) = target_symbol.members.as_ref() {
-                                        for (member_name, &member_sym_id) in members.iter() {
-                                            exported_symbols
-                                                .push((member_name.clone(), member_sym_id));
+                                        let Some(candidate_symbol) = self.symbols.get(candidate_id)
+                                        else {
+                                            continue;
+                                        };
+                                        if (candidate_symbol.flags
+                                            & (symbol_flags::MODULE
+                                                | symbol_flags::NAMESPACE_MODULE
+                                                | symbol_flags::VALUE_MODULE))
+                                            == 0
+                                        {
+                                            continue;
                                         }
+                                        collect_members_from_symbol(
+                                            candidate_symbol,
+                                            &mut exported_symbols,
+                                        );
                                     }
                                 }
                             }

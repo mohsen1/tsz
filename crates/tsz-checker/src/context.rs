@@ -1344,8 +1344,6 @@ impl<'a> CheckerContext<'a> {
     /// Returns true if an augmentation target resolves to an `export =` value without
     /// namespace/module shape (TS2671/TS2649 cases).
     pub fn module_resolves_to_non_module_entity(&self, module_specifier: &str) -> bool {
-        use tsz_binder::symbol_flags;
-
         let export_equals_is_non_module = |binder: &BinderState,
                                            exports: &tsz_binder::SymbolTable|
          -> Option<bool> {
@@ -1361,6 +1359,8 @@ impl<'a> CheckerContext<'a> {
             let mut candidate_symbols = Vec::with_capacity(2);
             if let Some(sym) = binder.get_symbol(export_equals_sym_id) {
                 candidate_symbols.push((binder, sym));
+            } else if let Some(sym) = self.binder.get_symbol(export_equals_sym_id) {
+                candidate_symbols.push((self.binder, sym));
             } else if let Some(all_binders) = self.all_binders.as_ref() {
                 for other in all_binders.iter() {
                     if let Some(sym) = other.get_symbol(export_equals_sym_id) {
@@ -1378,16 +1378,33 @@ impl<'a> CheckerContext<'a> {
                     sym_binder
                         .declaration_arenas
                         .get(&(sym.id, *decl_idx))
-                        .and_then(|arena| arena.get(*decl_idx))
-                        .is_some_and(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
+                        .is_some_and(|arena| {
+                            let Some(node) = arena.get(*decl_idx) else {
+                                return false;
+                            };
+                            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                                return false;
+                            }
+                            let Some(module_decl) = arena.get_module(node) else {
+                                return false;
+                            };
+                            if module_decl.body.is_none() {
+                                return false;
+                            }
+                            let Some(body_node) = arena.get(module_decl.body) else {
+                                return false;
+                            };
+                            if body_node.kind == syntax_kind_ext::MODULE_BLOCK
+                                && let Some(block) = arena.get_module_block(body_node)
+                                && let Some(statements) = block.statements.as_ref()
+                            {
+                                return !statements.nodes.is_empty();
+                            }
+                            true
+                        })
                 });
 
-                (sym.flags
-                    & (symbol_flags::MODULE
-                        | symbol_flags::NAMESPACE_MODULE
-                        | symbol_flags::VALUE_MODULE))
-                    != 0
-                    || sym.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
+                sym.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
                     || sym.members.as_ref().is_some_and(|tbl| !tbl.is_empty())
                     || has_namespace_decl
             };
@@ -1484,16 +1501,33 @@ impl<'a> CheckerContext<'a> {
                 binder
                     .declaration_arenas
                     .get(&(sym.id, *decl_idx))
-                    .and_then(|arena| arena.get(*decl_idx))
-                    .is_some_and(|node| node.kind == syntax_kind_ext::MODULE_DECLARATION)
+                    .is_some_and(|arena| {
+                        let Some(node) = arena.get(*decl_idx) else {
+                            return false;
+                        };
+                        if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                            return false;
+                        }
+                        let Some(module_decl) = arena.get_module(node) else {
+                            return false;
+                        };
+                        if module_decl.body.is_none() {
+                            return false;
+                        }
+                        let Some(body_node) = arena.get(module_decl.body) else {
+                            return false;
+                        };
+                        if body_node.kind == syntax_kind_ext::MODULE_BLOCK
+                            && let Some(block) = arena.get_module_block(body_node)
+                            && let Some(statements) = block.statements.as_ref()
+                        {
+                            return !statements.nodes.is_empty();
+                        }
+                        true
+                    })
             });
 
-            (sym.flags
-                & (symbol_flags::MODULE
-                    | symbol_flags::NAMESPACE_MODULE
-                    | symbol_flags::VALUE_MODULE))
-                != 0
-                || sym.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
+            sym.exports.as_ref().is_some_and(|tbl| !tbl.is_empty())
                 || sym.members.as_ref().is_some_and(|tbl| !tbl.is_empty())
                 || has_namespace_decl
         };
@@ -1612,21 +1646,7 @@ impl<'a> CheckerContext<'a> {
                             .any(|top_stmt| {
                                 contains_namespace_decl_named(arena, top_stmt, &target_name, 0)
                             });
-                        let target_is_namespace_augmentable = binder
-                            .get_symbols()
-                            .find_all_by_name(&target_name)
-                            .into_iter()
-                            .filter_map(|target_id| binder.get_symbol(target_id))
-                            .any(|target_sym| {
-                                (target_sym.flags
-                                    & (symbol_flags::CLASS
-                                        | symbol_flags::FUNCTION
-                                        | symbol_flags::REGULAR_ENUM
-                                        | symbol_flags::CONST_ENUM))
-                                    != 0
-                            });
-
-                        if has_matching_namespace_decl && target_is_namespace_augmentable {
+                        if has_matching_namespace_decl {
                             return true;
                         }
                         if binder
