@@ -1417,6 +1417,163 @@ impl<'a> CheckerState<'a> {
     }
 
     // =========================================================================
+    // JSDoc Helpers for Implicit Any Suppression
+    // =========================================================================
+
+    /// Get the JSDoc comment content for a function node.
+    ///
+    /// Walks up the parent chain from the function node to find the JSDoc
+    /// comment. For variable-assigned functions (e.g., `const f = () => {}`),
+    /// the JSDoc is on the variable statement, not the function itself.
+    ///
+    /// Returns the raw JSDoc content (without `/**` and `*/` delimiters).
+    pub(crate) fn get_jsdoc_for_function(&self, func_idx: NodeIndex) -> Option<String> {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+
+        // Try the function node itself first
+        let func_node = self.ctx.arena.get(func_idx)?;
+
+        // For inline JSDoc (comment overlapping with node position)
+        if let Some(comment) = comments
+            .iter()
+            .find(|c| c.pos <= func_node.pos && func_node.pos < c.end)
+        {
+            if is_jsdoc_comment(comment, source_text) {
+                return Some(get_jsdoc_content(comment, source_text));
+            }
+        }
+
+        // Try leading comments before the function node
+        if let Some(content) = self.try_leading_jsdoc(comments, func_node.pos, source_text) {
+            return Some(content);
+        }
+
+        // Walk up the parent chain: function -> variable declaration -> variable
+        // declaration list -> variable statement, looking for JSDoc at each level.
+        // This handles `const f = value => ...` where JSDoc is on the `const` line.
+        let mut current = func_idx;
+        for _ in 0..4 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+            if let Some(content) = self.try_leading_jsdoc(comments, parent_node.pos, source_text) {
+                return Some(content);
+            }
+            current = parent;
+        }
+
+        None
+    }
+
+    /// Try to find a leading JSDoc comment before a given position.
+    fn try_leading_jsdoc(
+        &self,
+        comments: &[tsz_common::comments::CommentRange],
+        pos: u32,
+        source_text: &str,
+    ) -> Option<String> {
+        use tsz_common::comments::{
+            get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment,
+        };
+
+        let leading = get_leading_comments_from_cache(comments, pos, source_text);
+        if let Some(comment) = leading.last() {
+            let end = comment.end as usize;
+            let check = pos as usize;
+            if end <= check
+                && source_text
+                    .get(end..check)
+                    .is_some_and(|gap| gap.chars().all(|c| c.is_whitespace()))
+                && is_jsdoc_comment(comment, source_text)
+            {
+                return Some(get_jsdoc_content(comment, source_text));
+            }
+        }
+        None
+    }
+
+    /// Check if a JSDoc comment has a `@param {type}` annotation for the given parameter name.
+    ///
+    /// Returns true if the JSDoc contains `@param {someType} paramName`.
+    pub(crate) fn jsdoc_has_param_type(jsdoc: &str, param_name: &str) -> bool {
+        for line in jsdoc.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("@param") else {
+                continue;
+            };
+            let rest = rest.trim();
+            // Must have a type in braces: @param {type} name
+            if !rest.starts_with('{') {
+                continue;
+            }
+            let Some(brace_end) = rest.find('}') else {
+                continue;
+            };
+            // Extract name after the type
+            let after_type = rest[brace_end + 1..].trim();
+            // The name is the first word (may be followed by description)
+            let name = after_type.split_whitespace().next().unwrap_or("");
+            // Handle [name] and [name=default] syntax
+            let name = name.trim_start_matches('[');
+            let name = name.split('=').next().unwrap_or(name);
+            let name = name.trim_end_matches(']');
+            if name == param_name {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if a JSDoc comment has any type annotations (`@param {type}`, `@returns {type}`,
+    /// `@type {type}`, or `@template`).
+    ///
+    /// In tsc, when a function has JSDoc type annotations, implicit any errors (TS7010/TS7011)
+    /// are suppressed even without explicit `@returns`, because the developer is providing
+    /// type information through JSDoc.
+    pub(crate) fn jsdoc_has_type_annotations(jsdoc: &str) -> bool {
+        for line in jsdoc.lines() {
+            let trimmed = line.trim();
+            // @param {type} name
+            if let Some(rest) = trimmed.strip_prefix("@param") {
+                if rest.trim().starts_with('{') {
+                    return true;
+                }
+            }
+            // @returns {type} or @return {type}
+            if let Some(rest) = trimmed
+                .strip_prefix("@returns")
+                .or_else(|| trimmed.strip_prefix("@return"))
+            {
+                if rest.trim().starts_with('{') {
+                    return true;
+                }
+            }
+            // @type {type}
+            if let Some(rest) = trimmed.strip_prefix("@type") {
+                if rest.trim().starts_with('{') {
+                    return true;
+                }
+            }
+            // @template T
+            if trimmed.starts_with("@template") {
+                return true;
+            }
+        }
+        false
+    }
+
+    // =========================================================================
     // Class Helper Methods
     // =========================================================================
 

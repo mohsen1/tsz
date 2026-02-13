@@ -200,6 +200,10 @@ impl<'a> CheckerState<'a> {
             None
         };
 
+        // Extract JSDoc for the function to check for @param/@returns annotations.
+        // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
+        let func_jsdoc = self.get_jsdoc_for_function(idx);
+
         let mut contextual_index = 0;
         for &param_idx in parameters.nodes.iter() {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -268,10 +272,25 @@ impl<'a> CheckerState<'a> {
                 // the build_type_environment phase. During that phase, contextual types are not
                 // yet available (they're set during check_variable_declaration). The closure
                 // will be re-evaluated with contextual types during the checking phase.
+                //
+                // JSDoc @param {type} annotations also suppress TS7006 in JS files
+                let has_jsdoc_param = if !has_contextual_type && param.type_annotation.is_none() {
+                    if let Some(ref jsdoc) = func_jsdoc {
+                        let pname = self.parameter_name_for_error(param.name);
+                        Self::jsdoc_has_param_type(jsdoc, &pname)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
                 let skip_implicit_any =
                     is_closure && !self.ctx.is_checking_statements && !has_contextual_type;
                 if !skip_implicit_any {
-                    self.maybe_report_implicit_any_parameter(param, has_contextual_type);
+                    self.maybe_report_implicit_any_parameter(
+                        param,
+                        has_contextual_type || has_jsdoc_param,
+                    );
                 }
 
                 // Check if optional or has initializer
@@ -402,7 +421,15 @@ impl<'a> CheckerState<'a> {
             // When a function is used as a callback (e.g., array.map(x => ...)), the
             // contextual type provides the expected return type. TypeScript doesn't
             // emit TS7010 in these cases because the contextual type guides inference.
-            if !is_function_declaration && !is_async && !has_contextual_return {
+            //
+            // JSDoc type annotations also suppress TS7010/TS7011 in JS files.
+            // When a function has any JSDoc type info (@param, @returns, @template),
+            // tsc considers it as having explicit types and doesn't emit TS7010.
+            let has_jsdoc_return = func_jsdoc
+                .as_ref()
+                .is_some_and(|j| Self::jsdoc_has_type_annotations(j));
+            if !is_function_declaration && !is_async && !has_contextual_return && !has_jsdoc_return
+            {
                 self.maybe_report_implicit_any_return(
                     name_for_error,
                     name_node,
