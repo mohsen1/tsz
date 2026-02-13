@@ -138,7 +138,7 @@ impl<'a> TracerSubtypeChecker<'a> {
         }
 
         // Everything is subtype of any and unknown
-        if target == TypeId::ANY || target == TypeId::UNKNOWN {
+        if target.is_any_or_unknown() {
             return true;
         }
 
@@ -186,7 +186,7 @@ impl<'a> TracerSubtypeChecker<'a> {
         tracer: &mut T,
     ) -> bool {
         // Non-strict null checks
-        if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && source.is_nullish() {
             return true;
         }
 

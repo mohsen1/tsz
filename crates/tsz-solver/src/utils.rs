@@ -4,6 +4,7 @@
 //! to avoid code duplication.
 
 use crate::db::TypeDatabase;
+use crate::types::TypeId;
 use tsz_common::interner::Atom;
 
 /// Checks if a property name is numeric by resolving the atom and checking its string representation.
@@ -78,6 +79,96 @@ fn js_number_to_string(value: f64) -> String {
         "0".to_string()
     } else {
         formatted
+    }
+}
+
+/// Reduces a vector of types to a union, single type, or NEVER.
+///
+/// This helper eliminates the common pattern:
+/// ```ignore
+/// if types.is_empty() {
+///     TypeId::NEVER
+/// } else if types.len() == 1 {
+///     types[0]
+/// } else {
+///     db.union(types)
+/// }
+/// ```
+///
+/// # Examples
+///
+/// ```ignore
+/// let narrowed = union_or_single(db, filtered_members);
+/// ```
+pub fn union_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
+    match types.len() {
+        0 => TypeId::NEVER,
+        1 => types[0],
+        _ => db.union(types),
+    }
+}
+
+/// Reduces a vector of types to an intersection, single type, or NEVER.
+///
+/// This helper eliminates the common pattern:
+/// ```ignore
+/// if types.is_empty() {
+///     TypeId::NEVER
+/// } else if types.len() == 1 {
+///     types[0]
+/// } else {
+///     db.intersection(types)
+/// }
+/// ```
+///
+/// # Examples
+///
+/// ```ignore
+/// let narrowed = intersection_or_single(db, instance_types);
+/// ```
+pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
+    match types.len() {
+        0 => TypeId::NEVER,
+        1 => types[0],
+        _ => db.intersection(types),
+    }
+}
+
+/// Extension trait for iterators of TypeId to filter out NEVER types.
+///
+/// This eliminates the common pattern:
+/// ```ignore
+/// .filter_map(|&id| {
+///     let result = some_operation(id);
+///     if result != TypeId::NEVER {
+///         Some(result)
+///     } else {
+///         None
+///     }
+/// })
+/// ```
+///
+/// With this trait, you can write:
+/// ```ignore
+/// .filter_map(|&id| some_operation(id).non_never())
+/// ```
+pub trait TypeIdExt {
+    /// Returns Some(self) if self is not NEVER, otherwise None.
+    ///
+    /// This is useful for filter_map chains where you want to skip NEVER results.
+    fn non_never(self) -> Option<Self>
+    where
+        Self: Sized;
+}
+
+impl TypeIdExt for TypeId {
+    #[inline]
+    fn non_never(self) -> Option<Self> {
+        if self != TypeId::NEVER {
+            Some(self)
+        } else {
+            None
+        }
     }
 }
 

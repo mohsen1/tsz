@@ -1799,7 +1799,7 @@ impl TypeInterner {
 
         for &member in members {
             // Check for null or undefined
-            if member == TypeId::NULL || member == TypeId::UNDEFINED || member == TypeId::VOID {
+            if member.is_nullable() {
                 has_null_or_undefined = true;
             } else {
                 // Check if this is an object type
@@ -2078,10 +2078,10 @@ impl TypeInterner {
         }
 
         // Handle Top/Bottom types
-        if target == TypeId::ANY || target == TypeId::UNKNOWN {
+        if target.is_any_or_unknown() {
             return true;
         }
-        if source == TypeId::NEVER {
+        if source.is_never() {
             return true;
         }
 

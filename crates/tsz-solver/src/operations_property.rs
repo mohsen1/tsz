@@ -56,6 +56,84 @@ pub enum PropertyAccessResult {
     IsUnknown,
 }
 
+impl PropertyAccessResult {
+    /// Returns true if this is a successful property access.
+    #[inline]
+    pub fn is_success(&self) -> bool {
+        matches!(self, PropertyAccessResult::Success { .. })
+    }
+
+    /// Returns true if the property was not found.
+    #[inline]
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, PropertyAccessResult::PropertyNotFound { .. })
+    }
+
+    /// Returns true if the type is possibly null or undefined.
+    #[inline]
+    pub fn is_possibly_null_or_undefined(&self) -> bool {
+        matches!(self, PropertyAccessResult::PossiblyNullOrUndefined { .. })
+    }
+
+    /// Returns true if the type is unknown.
+    #[inline]
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, PropertyAccessResult::IsUnknown)
+    }
+
+    /// Extracts the type_id from a Success result, or None otherwise.
+    pub fn success_type(&self) -> Option<TypeId> {
+        match self {
+            PropertyAccessResult::Success { type_id, .. } => Some(*type_id),
+            _ => None,
+        }
+    }
+
+    /// Extracts both type_id and from_index_signature from a Success result.
+    pub fn success_info(&self) -> Option<(TypeId, bool)> {
+        match self {
+            PropertyAccessResult::Success {
+                type_id,
+                from_index_signature,
+                ..
+            } => Some((*type_id, *from_index_signature)),
+            _ => None,
+        }
+    }
+
+    /// Maps the type_id in a Success result, leaving other variants unchanged.
+    pub fn map_success_type<F>(self, f: F) -> Self
+    where
+        F: FnOnce(TypeId) -> TypeId,
+    {
+        match self {
+            PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                from_index_signature,
+            } => PropertyAccessResult::Success {
+                type_id: f(type_id),
+                write_type,
+                from_index_signature,
+            },
+            other => other,
+        }
+    }
+
+    /// Returns the type if Success, otherwise returns the default value.
+    pub fn success_type_or(&self, default: TypeId) -> TypeId {
+        self.success_type().unwrap_or(default)
+    }
+
+    /// Extracts the property_type from a PossiblyNullOrUndefined result.
+    pub fn nullable_property_type(&self) -> Option<TypeId> {
+        match self {
+            PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => *property_type,
+            _ => None,
+        }
+    }
+}
+
 /// Evaluates property access.
 ///
 /// Uses QueryDatabase which provides both TypeDatabase and TypeResolver functionality,
@@ -693,7 +771,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         for &member in &non_unknown_members {
             // Check for null/undefined directly
-            if member == TypeId::NULL || member == TypeId::UNDEFINED || member == TypeId::VOID {
+            if member.is_nullable() {
                 let cause = if member == TypeId::VOID {
                     TypeId::UNDEFINED
                 } else {
@@ -985,7 +1063,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let result = self.resolve_array_property(array_type, prop_name, prop_atom);
 
         // If property not found on array, return None to fall through to normal handling
-        if matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
+        if result.is_not_found() {
             return None;
         }
 
@@ -2314,7 +2392,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Only fall back if the property was NOT found on the boxed type.
             // This ensures that if the environment defines the interface but is incomplete
             // (e.g., during bootstrapping or partial lib loading), we still find the intrinsic methods.
-            if !matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
+            if !result.is_not_found() {
                 return result;
             }
         }
@@ -2364,7 +2442,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let result = self.resolve_property_access_inner(app_type, prop_name, Some(prop_atom));
 
             // If we found the property, simplify Application types back to arrays and return it
-            if !matches!(result, PropertyAccessResult::PropertyNotFound { .. }) {
+            if !result.is_not_found() {
                 return self.simplify_array_application_in_result(result, array_base);
             }
         }
