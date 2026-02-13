@@ -1074,8 +1074,11 @@ impl ParserState {
                     self.next_token();
                     let argument = self.parse_expression();
                     if argument.is_none() {
-                        // Emit TS1109 for empty brackets or invalid expression: obj[[missing]]
-                        self.error_expression_expected();
+                        // TS1011: An element access expression should take an argument
+                        self.parse_error_at_current_token(
+                            tsz_common::diagnostics::diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                            tsz_common::diagnostics::diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                        );
                     }
                     let end_pos = self.token_end();
                     self.parse_expected(SyntaxKind::CloseBracketToken);
@@ -3307,8 +3310,11 @@ impl ParserState {
                     self.next_token();
                     let argument = self.parse_expression();
                     if argument.is_none() {
-                        // Emit TS1109 for empty brackets or invalid expression: obj[[missing]]
-                        self.error_expression_expected();
+                        // TS1011: An element access expression should take an argument
+                        self.parse_error_at_current_token(
+                            tsz_common::diagnostics::diagnostic_messages::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                            tsz_common::diagnostics::diagnostic_codes::AN_ELEMENT_ACCESS_EXPRESSION_SHOULD_TAKE_AN_ARGUMENT,
+                        );
                     }
                     let end_pos = self.token_end();
                     self.parse_expected(SyntaxKind::CloseBracketToken);
