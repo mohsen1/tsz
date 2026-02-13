@@ -402,7 +402,17 @@ impl ParserState {
                 }
             }
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
-            SyntaxKind::DeclareKeyword => self.parse_ambient_declaration(),
+            SyntaxKind::DeclareKeyword => {
+                // `declare` is a contextual keyword — it can be used as an identifier.
+                // Only parse as ambient declaration if the next token is a valid
+                // declaration keyword. E.g., `declare instanceof C` should parse
+                // `declare` as an identifier in an expression statement.
+                if self.look_ahead_is_declare_before_declaration() {
+                    self.parse_ambient_declaration()
+                } else {
+                    self.parse_expression_statement()
+                }
+            }
             SyntaxKind::NamespaceKeyword
             | SyntaxKind::ModuleKeyword
             | SyntaxKind::GlobalKeyword => {
@@ -481,6 +491,34 @@ impl ParserState {
                 | SyntaxKind::TypeKeyword
         );
 
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_decl
+    }
+
+    /// Check if `declare` is followed by a valid declaration keyword.
+    /// Used to distinguish `declare class ...` (ambient declaration) from
+    /// `declare instanceof C` (expression using `declare` as identifier).
+    fn look_ahead_is_declare_before_declaration(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip `declare`
+        let is_decl = matches!(
+            self.token(),
+            SyntaxKind::ClassKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::EnumKeyword
+                | SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::VarKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::TypeKeyword
+                | SyntaxKind::GlobalKeyword
+                | SyntaxKind::AsyncKeyword
+        );
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_decl
