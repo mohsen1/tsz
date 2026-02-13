@@ -12,14 +12,16 @@
 //! This module extends CheckerState with methods for iterable/iterator protocol
 //! checking, providing cleaner APIs for iteration-related type operations.
 
+use crate::query_boundaries::iterable_checker::{
+    AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, call_signatures_for_type,
+    classify_async_iterable_type, classify_for_of_element_type, classify_full_iterable_type,
+    function_shape_for_type, is_array_type, is_string_literal_type, is_string_type, is_tuple_type,
+    union_members_for_type,
+};
 use crate::state::CheckerState;
 use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{
-    AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, classify_async_iterable_type,
-    classify_for_of_element_type, classify_full_iterable_type,
-};
 
 // =============================================================================
 // Iterable Type Checking Methods
@@ -335,15 +337,13 @@ impl<'a> CheckerState<'a> {
     /// Get the return type of calling a function type.
     /// Returns ANY if the type is not callable.
     fn get_call_return_type(&self, fn_type: TypeId) -> TypeId {
-        use tsz_solver::type_queries::{get_call_signatures, get_function_shape};
-
         if fn_type == TypeId::ANY {
             return TypeId::ANY;
         }
-        if let Some(sig) = get_function_shape(self.ctx.types, fn_type) {
+        if let Some(sig) = function_shape_for_type(self.ctx.types, fn_type) {
             return sig.return_type;
         }
-        if let Some(call_signatures) = get_call_signatures(self.ctx.types, fn_type) {
+        if let Some(call_signatures) = call_signatures_for_type(self.ctx.types, fn_type) {
             return call_signatures
                 .first()
                 .map(|sig| sig.return_type)
@@ -596,12 +596,11 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type is an array or tuple type (for ES5 destructuring).
     fn is_array_or_tuple_type(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries::{get_union_members, is_array_type, is_tuple_type};
         if is_array_type(self.ctx.types, type_id) || is_tuple_type(self.ctx.types, type_id) {
             return true;
         }
         // Check unions: all members must be array/tuple
-        if let Some(members) = get_union_members(self.ctx.types, type_id) {
+        if let Some(members) = union_members_for_type(self.ctx.types, type_id) {
             return members
                 .iter()
                 .all(|&member| self.is_array_or_tuple_type(member));
@@ -611,11 +610,6 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type is an array, tuple, or string type (for ES5 for-of).
     fn is_array_or_tuple_or_string(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries::{
-            get_union_members, is_array_type, is_string_type, is_tuple_type,
-        };
-        use tsz_solver::type_queries_extended::is_string_literal;
-
         if type_id == TypeId::STRING || is_string_type(self.ctx.types, type_id) {
             return true;
         }
@@ -623,11 +617,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         // String literals count as string types
-        if is_string_literal(self.ctx.types, type_id) {
+        if is_string_literal_type(self.ctx.types, type_id) {
             return true;
         }
         // Check unions: all members must be array/tuple/string
-        if let Some(members) = get_union_members(self.ctx.types, type_id) {
+        if let Some(members) = union_members_for_type(self.ctx.types, type_id) {
             return members
                 .iter()
                 .all(|&member| self.is_array_or_tuple_or_string(member));
