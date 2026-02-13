@@ -71,17 +71,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if the current checking context is within an ambient module declaration.
-    /// Returns true if we're inside a `declare module "name" { }` block.
-    ///
-    /// Note: This is a simplified check that returns false for now.
-    /// The actual check would need to track the current node during traversal.
-    /// For TS2714, we rely on the is_declaration_file check instead.
-    fn is_in_ambient_module(&self) -> bool {
-        // TODO: Implement proper ambient module detection by tracking current node during traversal
-        false
-    }
-
     /// Check whether a named import can be satisfied via `export =` target members.
     fn has_named_export_via_export_equals(
         &self,
@@ -873,6 +862,11 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_export_assignment(&mut self, statements: &[NodeIndex]) {
         use crate::types::diagnostics::diagnostic_codes;
 
+        let mut export_assignment_indices: Vec<NodeIndex> = Vec::new();
+        let mut export_default_indices: Vec<NodeIndex> = Vec::new();
+        let mut has_other_exports = false;
+
+        // Check if we're in a declaration file (implicitly ambient)
         let is_declaration_file = self
             .ctx
             .arena
@@ -880,10 +874,6 @@ impl<'a> CheckerState<'a> {
             .first()
             .is_some_and(|sf| sf.is_declaration_file)
             || self.ctx.file_name.contains(".d.");
-
-        let mut export_assignment_indices: Vec<NodeIndex> = Vec::new();
-        let mut export_default_indices: Vec<NodeIndex> = Vec::new();
-        let mut has_other_exports = false;
 
         for &stmt_idx in statements {
             let Some(node) = self.ctx.arena.get(stmt_idx) else {
@@ -895,11 +885,13 @@ impl<'a> CheckerState<'a> {
                     export_assignment_indices.push(stmt_idx);
 
                     if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
-                        // TS2714: In ambient contexts, skip type resolution for
-                        // invalid expressions (avoids cascading TS2304 errors).
-                        let is_invalid_ambient = is_declaration_file
-                            && !self.is_identifier_or_qualified_name(export_data.expression);
-                        if is_invalid_ambient {
+                        // TS2714: In ambient context, export assignment expression must be
+                        // an identifier or qualified name
+                        let is_ambient =
+                            is_declaration_file || self.is_ambient_declaration(stmt_idx);
+                        if is_ambient
+                            && !self.is_identifier_or_qualified_name(export_data.expression)
+                        {
                             self.error_at_node(
                                 export_data.expression,
                                 "The expression of an export assignment must be an identifier or qualified name in an ambient context.",
@@ -914,8 +906,12 @@ impl<'a> CheckerState<'a> {
                     if let Some(export_data) = self.ctx.arena.get_export_decl(node) {
                         if export_data.is_default_export {
                             export_default_indices.push(stmt_idx);
-                            // TS2714: In ambient contexts, validate export default expressions
-                            if is_declaration_file
+
+                            // TS2714: In ambient context, export default expression must be
+                            // an identifier or qualified name
+                            let is_ambient =
+                                is_declaration_file || self.is_ambient_declaration(stmt_idx);
+                            if is_ambient
                                 && !export_data.export_clause.is_none()
                                 && !self.is_identifier_or_qualified_name(export_data.export_clause)
                             {
@@ -951,35 +947,6 @@ impl<'a> CheckerState<'a> {
                     "Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.",
                     diagnostic_codes::EXPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
                 );
-            }
-        }
-
-        // TS2714: In ambient contexts (declaration files or ambient modules),
-        // export assignments must use an identifier or qualified name.
-        // This prevents expressions like `export = 2 + 2` or `export = typeof Foo`.
-        let is_ambient_context = is_declaration_file || self.is_in_ambient_module();
-        if is_ambient_context {
-            for &export_idx in &export_assignment_indices {
-                if let Some(node) = self.ctx.arena.get(export_idx) {
-                    if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
-                        // Check if the expression is an identifier or qualified name
-                        if let Some(expr_node) = self.ctx.arena.get(export_data.expression) {
-                            let is_valid_expr = expr_node.kind == SyntaxKind::Identifier as u16
-                                || expr_node.kind == syntax_kind_ext::QUALIFIED_NAME;
-
-                            if !is_valid_expr {
-                                use crate::types::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages,
-                                };
-                                self.error_at_node(
-                                    export_data.expression,
-                                    diagnostic_messages::THE_EXPRESSION_OF_AN_EXPORT_ASSIGNMENT_MUST_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME_I,
-                                    diagnostic_codes::THE_EXPRESSION_OF_AN_EXPORT_ASSIGNMENT_MUST_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME_I,
-                                );
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -1022,26 +989,15 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a node is an identifier or qualified name (property access chain).
-    /// Used for TS2714 validation in ambient contexts.
+    /// Check if a node is an identifier or qualified name (e.g., `X` or `X.Y.Z`).
+    /// Used for TS2714 validation of export assignment expressions in ambient contexts.
     fn is_identifier_or_qualified_name(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return true;
-        }
-        // PropertyAccessExpression is the expression form of qualified names (e.g., Foo.Bar)
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.ctx.arena.get_access_expr(node) {
-                return self.is_identifier_or_qualified_name(access.expression);
-            }
-        }
-        // QualifiedName (in type positions)
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            return true;
-        }
-        false
+        node.kind == SyntaxKind::Identifier as u16
+            || node.kind == syntax_kind_ext::QUALIFIED_NAME
+            || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
     }
 
     /// Check if a statement has an export modifier.
@@ -1248,18 +1204,6 @@ impl<'a> CheckerState<'a> {
                                 );
                                 return;
                             }
-                        }
-
-                        // TS2439: Import or export declaration in an ambient module declaration
-                        // cannot reference module through relative module name
-                        let is_relative_path =
-                            imported_module.starts_with("./") || imported_module.starts_with("../");
-                        if is_relative_path {
-                            self.error_at_node(
-                                import.module_specifier,
-                                diagnostic_messages::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
-                                diagnostic_codes::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
-                            );
                         }
                     }
                 }
@@ -1618,13 +1562,10 @@ impl<'a> CheckerState<'a> {
                                 .binder
                                 .get_symbol_with_libs(resolved_sym, &lib_binders)
                             {
-                                // A symbol is type-only if it has INTERFACE/TYPE_ALIAS flags
-                                // but NO value flags (e.g., a class merged with a namespace
-                                // has both CLASS and NAMESPACE_MODULE — it's NOT type-only)
+                                // Check if this is a type-only symbol (interface or type alias)
                                 let is_type_only = (symbol.flags
                                     & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
-                                    != 0
-                                    && (symbol.flags & symbol_flags::VALUE) == 0;
+                                    != 0;
                                 if is_type_only {
                                     if self.should_suppress_namespace_value_error_for_failed_import(
                                         qn.left,
