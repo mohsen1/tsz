@@ -999,6 +999,27 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         };
 
         if let Some(module) = self.ctx.arena.get_module(node) {
+            // TS2580: Anonymous module declaration with `module` keyword (not `namespace`)
+            // When `module {` is parsed as a module declaration with a missing name,
+            // TSC also emits TS2580 because `module` could be a Node.js identifier reference.
+            let is_namespace = (node.flags as u32) & node_flags::NAMESPACE != 0;
+            if !is_namespace {
+                if let Some(name_node) = self.ctx.arena.get(module.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    && ident.escaped_text.is_empty()
+                {
+                    self.ctx.error(
+                        node.pos,
+                        6, // length of "module"
+                        format_message(
+                            diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+                            &["module"],
+                        ),
+                        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
+                    );
+                }
+            }
+
             // TS2668: 'export' modifier cannot be applied to ambient modules
             // This only applies to string-literal-named ambient modules (declare module "foo"),
             // not to namespace-form modules (declare namespace Foo)
