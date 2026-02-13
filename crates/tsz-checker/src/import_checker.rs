@@ -862,6 +862,14 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_export_assignment(&mut self, statements: &[NodeIndex]) {
         use crate::types::diagnostics::diagnostic_codes;
 
+        let is_declaration_file = self
+            .ctx
+            .arena
+            .source_files
+            .first()
+            .is_some_and(|sf| sf.is_declaration_file)
+            || self.ctx.file_name.contains(".d.");
+
         let mut export_assignment_indices: Vec<NodeIndex> = Vec::new();
         let mut export_default_indices: Vec<NodeIndex> = Vec::new();
         let mut has_other_exports = false;
@@ -876,13 +884,36 @@ impl<'a> CheckerState<'a> {
                     export_assignment_indices.push(stmt_idx);
 
                     if let Some(export_data) = self.ctx.arena.get_export_assignment(node) {
-                        self.get_type_of_node(export_data.expression);
+                        // TS2714: In ambient contexts, skip type resolution for
+                        // invalid expressions (avoids cascading TS2304 errors).
+                        let is_invalid_ambient = is_declaration_file
+                            && !self.is_identifier_or_qualified_name(export_data.expression);
+                        if is_invalid_ambient {
+                            self.error_at_node(
+                                export_data.expression,
+                                "The expression of an export assignment must be an identifier or qualified name in an ambient context.",
+                                diagnostic_codes::THE_EXPRESSION_OF_AN_EXPORT_ASSIGNMENT_MUST_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME_I,
+                            );
+                        } else {
+                            self.get_type_of_node(export_data.expression);
+                        }
                     }
                 }
                 syntax_kind_ext::EXPORT_DECLARATION => {
                     if let Some(export_data) = self.ctx.arena.get_export_decl(node) {
                         if export_data.is_default_export {
                             export_default_indices.push(stmt_idx);
+                            // TS2714: In ambient contexts, validate export default expressions
+                            if is_declaration_file
+                                && !export_data.export_clause.is_none()
+                                && !self.is_identifier_or_qualified_name(export_data.export_clause)
+                            {
+                                self.error_at_node(
+                                    export_data.export_clause,
+                                    "The expression of an export assignment must be an identifier or qualified name in an ambient context.",
+                                    diagnostic_codes::THE_EXPRESSION_OF_AN_EXPORT_ASSIGNMENT_MUST_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME_I,
+                                );
+                            }
                         } else {
                             has_other_exports = true;
                         }
@@ -902,13 +933,6 @@ impl<'a> CheckerState<'a> {
         // This must be checked first before TS2300/TS2309
         // Declaration files (.d.ts, .d.mts, .d.cts) are exempt: they describe
         // the shape of CJS modules and `export = X` is valid in declarations.
-        let is_declaration_file = self
-            .ctx
-            .arena
-            .source_files
-            .first()
-            .is_some_and(|sf| sf.is_declaration_file)
-            || self.ctx.file_name.contains(".d.");
         if self.ctx.compiler_options.module.is_es_module() && !is_declaration_file {
             for &export_idx in &export_assignment_indices {
                 self.error_at_node(
@@ -956,6 +980,28 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// Check if a node is an identifier or qualified name (property access chain).
+    /// Used for TS2714 validation in ambient contexts.
+    fn is_identifier_or_qualified_name(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return true;
+        }
+        // PropertyAccessExpression is the expression form of qualified names (e.g., Foo.Bar)
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                return self.is_identifier_or_qualified_name(access.expression);
+            }
+        }
+        // QualifiedName (in type positions)
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            return true;
+        }
+        false
     }
 
     /// Check if a statement has an export modifier.
