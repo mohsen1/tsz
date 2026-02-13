@@ -5239,7 +5239,6 @@ export function update(obj: Person, updates: Person): Person {
 }
 
 #[test]
-#[ignore = "TODO: Function call spread compilation"]
 fn compile_function_call_spread() {
     // Test spread in function calls
     let temp = TempDir::new().expect("temp dir");
