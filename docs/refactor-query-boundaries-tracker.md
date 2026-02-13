@@ -1,6 +1,6 @@
 # Query-Boundary Refactor Tracker
 
-Last updated: 2026-02-14
+Last updated: 2026-02-13
 Branch: `refactor/checker-query-boundaries`
 Goal: reduce checker complexity while preserving exact `tsc` behavior.
 
@@ -8,11 +8,11 @@ Goal: reduce checker complexity while preserving exact `tsc` behavior.
 
 1. Centralize checker-side predicates into solver queries
 Status: In progress
-Notes: Significant migration done in `type_checking`, `type_computation`, `state_type_analysis`, `class_type`, `assignability_checker`, `constructor_checker`, `call_checker`, `iterable_checker`, `object_type`.
+Notes: Significant migration done in `type_checking`, `type_computation`, `state_type_analysis`, `state_type_resolution`, `class_type`, `assignability_checker`, `constructor_checker`, `call_checker`, `iterable_checker`, `object_type`.
 
 2. Remove direct `TypeKey` matching in checker hot paths
 Status: In progress
-Notes: Still heavy in `state_type_resolution`, `state_type_environment`, `dispatch`, and selected large flow paths.
+Notes: Still heavy in `state_type_environment`, `dispatch`, and selected large flow paths.
 
 3. Unify callable/function/constructor resolution behind one query surface
 Status: In progress
@@ -32,7 +32,7 @@ Notes: Some evaluator paths improved; broad dedup still pending in flow/control/
 
 7. Introduce consistent query-boundary modules per checker subsystem
 Status: In progress (advanced)
-Notes: Boundaries added for multiple subsystems; still missing a few major modules.
+Notes: Boundaries now cover most high-traffic checker subsystems; remaining work is concentrated in environment/dispatch and smaller edge modules.
 
 8. Reduce option/plumbing duplication beyond `context.rs`
 Status: In progress
@@ -58,6 +58,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/iterable_checker.rs`
 - `query_boundaries/object_type.rs`
 - `query_boundaries/flow_analysis.rs`
+- `query_boundaries/state_type_resolution.rs`
 - plus existing: `class.rs`, `diagnostics.rs`, `state.rs`
 
 ## Known Workspace Test Baseline
@@ -75,7 +76,7 @@ No additional failures should be introduced by refactor-only changes.
 
 ## Next Queue (high impact)
 
-1. `state_type_resolution.rs` targeted boundary for high-frequency query access.
-2. `state_type_environment.rs` boundary for resolution/classification helpers.
-3. `dispatch.rs` cleanup for remaining direct low-level type handling.
-4. `callable_type.rs` and `union_type.rs` final direct-query cleanup.
+1. `state_type_environment.rs` boundary for resolution/classification helpers.
+2. `dispatch.rs` cleanup for remaining direct low-level type handling.
+3. `callable_type.rs` and `union_type.rs` final direct-query cleanup.
+4. Add seam-focused tests for `state_type_resolution` boundary behavior to lock parity.
