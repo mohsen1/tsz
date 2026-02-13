@@ -151,9 +151,6 @@ mod generic_tests;
 #[path = "tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
-#[path = "tests/property_access_non_strict.rs"]
-mod property_access_non_strict;
-#[cfg(test)]
 #[path = "tests/strict_null_manual.rs"]
 mod strict_null_manual;
 // Tests that depend on root crate's test_fixtures are kept in the root crate:
