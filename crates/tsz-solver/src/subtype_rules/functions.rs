@@ -398,19 +398,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return SubtypeResult::False;
                     };
 
-                    // Handle tuple rest parameters - check tuple assignability to array
-                    // TypeScript allows (...args: [T]) to be compatible with (...args: T[])
+                    // Handle tuple rest parameters - check tuple elements against target rest element
                     use crate::type_queries::get_tuple_list_id;
-                    if get_tuple_list_id(self.interner, s_rest_param.type_id).is_some() {
-                        // Source has tuple rest, target has array rest
-                        // Check if entire tuple type is assignable to target array type
-                        let target_rest_type = target.params.last().unwrap().type_id;
-                        if !self.are_parameters_compatible_impl(
-                            s_rest_param.type_id,
-                            target_rest_type,
-                            is_method,
-                        ) {
-                            return SubtypeResult::False;
+                    if let Some(s_tuple_id) = get_tuple_list_id(self.interner, s_rest_param.type_id)
+                    {
+                        // Source has tuple rest, target has array rest.
+                        // In TypeScript, a tuple rest in source acts like a sequence of fixed parameters.
+                        // Each element of the tuple must be compatible with the target's rest element type.
+                        let s_tuple_elements = self.interner.tuple_list(s_tuple_id);
+                        for s_elem in s_tuple_elements.iter() {
+                            let s_elem_type = if s_elem.rest {
+                                self.get_array_element_type(s_elem.type_id)
+                            } else {
+                                s_elem.type_id
+                            };
+
+                            if !self.are_parameters_compatible_impl(
+                                s_elem_type,
+                                rest_elem_type,
+                                is_method,
+                            ) {
+                                return SubtypeResult::False;
+                            }
                         }
                     } else {
                         // Both have array rest - check element types
