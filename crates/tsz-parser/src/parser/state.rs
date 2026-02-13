@@ -656,7 +656,7 @@ impl ParserState {
     }
 
     /// Check if current token could start a parameter
-    pub(crate) fn is_parameter_start(&self) -> bool {
+    pub(crate) fn is_parameter_start(&mut self) -> bool {
         // Parameters can start with modifiers, identifiers, or binding patterns
         self.is_parameter_modifier()
             || self.is_token(SyntaxKind::AtToken) // decorators on parameters

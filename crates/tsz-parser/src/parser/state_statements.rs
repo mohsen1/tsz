@@ -1541,18 +1541,66 @@ impl ParserState {
         self.make_node_list(params)
     }
 
-    /// Check if current token is a parameter modifier
-    pub(crate) fn is_parameter_modifier(&self) -> bool {
+    /// Check if current token is a valid parameter modifier
+    fn is_valid_parameter_modifier(&self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::PublicKeyword
                 | SyntaxKind::PrivateKeyword
                 | SyntaxKind::ProtectedKeyword
                 | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::OverrideKeyword
         )
     }
 
-    /// Parse parameter modifiers (public, private, protected, readonly)
+    /// Check if current token is a modifier keyword used as a parameter modifier.
+    /// This includes invalid modifiers like static/export that tsc accepts during
+    /// parsing but reports TS1090 for in the checker.
+    /// Uses look-ahead to distinguish `(static x: number)` (modifier) from
+    /// `(async: boolean)` (parameter name).
+    pub(crate) fn is_parameter_modifier(&mut self) -> bool {
+        if self.is_valid_parameter_modifier() {
+            return true;
+        }
+        if !matches!(
+            self.current_token,
+            SyntaxKind::StaticKeyword
+                | SyntaxKind::ExportKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::DefaultKeyword
+                | SyntaxKind::InKeyword
+                | SyntaxKind::OutKeyword
+        ) {
+            return false;
+        }
+        // Look ahead: if the next token can follow a modifier (identifier/keyword,
+        // string/number literal, [, {, *, ...), then this keyword is being used as
+        // a modifier. Otherwise it's a parameter name (e.g., `async: boolean`).
+        // This mirrors tsc's canFollowModifier() + isLiteralPropertyName() check.
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        self.next_token();
+        let can_follow = !self.scanner.has_preceding_line_break()
+            && (matches!(
+                self.current_token,
+                SyntaxKind::OpenBracketToken
+                    | SyntaxKind::OpenBraceToken
+                    | SyntaxKind::AsteriskToken
+                    | SyntaxKind::DotDotDotToken
+                    | SyntaxKind::StringLiteral
+                    | SyntaxKind::NumericLiteral
+            ) || self.is_identifier_or_keyword());
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+        can_follow
+    }
+
+    /// Parse parameter modifiers (public, private, protected, readonly, override,
+    /// and invalid ones like static/export/declare/async which get TS1090).
     pub(crate) fn parse_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
         let mut seen_readonly = false;
@@ -1560,6 +1608,30 @@ impl ParserState {
         while self.is_parameter_modifier() {
             let mod_start = self.token_pos();
             let mod_kind = self.current_token;
+
+            // Emit TS1090 for modifiers that cannot appear on parameters.
+            // tsc does this in the checker via checkGrammarModifiers, but we
+            // emit it here during parsing so we don't need checker support yet.
+            if !self.is_valid_parameter_modifier() {
+                use tsz_common::diagnostics::diagnostic_codes;
+                let modifier_name = match mod_kind {
+                    SyntaxKind::StaticKeyword => "static",
+                    SyntaxKind::ExportKeyword => "export",
+                    SyntaxKind::DeclareKeyword => "declare",
+                    SyntaxKind::AsyncKeyword => "async",
+                    SyntaxKind::AbstractKeyword => "abstract",
+                    SyntaxKind::AccessorKeyword => "accessor",
+                    SyntaxKind::ConstKeyword => "const",
+                    SyntaxKind::DefaultKeyword => "default",
+                    SyntaxKind::InKeyword => "in",
+                    SyntaxKind::OutKeyword => "out",
+                    _ => "modifier",
+                };
+                self.parse_error_at_current_token(
+                    &format!("'{modifier_name}' modifier cannot appear on a parameter."),
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_PARAMETER,
+                );
+            }
 
             // Check for modifier ordering violations
             // Parameter modifiers must be in order: accessibility, readonly
