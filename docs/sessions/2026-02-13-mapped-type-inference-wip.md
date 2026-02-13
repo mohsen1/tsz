@@ -1,7 +1,7 @@
 # Mapped Type Inference - Work in Progress
 
-**Date**: 2026-02-13  
-**Status**: IN PROGRESS - Partial fix implemented, debugging required
+**Date**: 2026-02-13
+**Status**: BLOCKED - Requires architectural changes (see below)
 
 ## Summary
 
@@ -106,3 +106,44 @@ const result = id(p);
 ## Warning
 
 Uncommitted changes exist. They compile but don't fix the issue yet. Need more debugging before committing.
+
+## Updated Investigation (Later Same Day)
+
+### Multiple Fix Attempts - All Failed
+
+**Attempt 1**: Evaluate Applications in `constrain_types`
+- Added `(_, Application)` case to evaluate target before constraining
+- **Failed**: `evaluate_type()` returns unevaluated Application
+
+**Attempt 2**: Manual instantiation  
+- Tried calling `resolve_lazy()` and `get_lazy_type_params()` directly
+- **Failed**: Both return `None` during constraint generation
+
+### Confirmed Root Cause
+
+Used extensive tracing to confirm the architectural issue:
+```
+During constraint generation:
+  DefId(21749): has_type_params=false, has_resolved=false
+
+Later in execution:
+  DefId(21749): has_type_params=true, type_params_count=1, has_resolved=true, resolved_key=Some(Mapped(...))
+```
+
+**Conclusion**: Type definitions are registered AFTER functions using them are type-checked.
+
+### Why This is Hard
+
+Cannot fix without architectural changes because:
+1. Type aliases need to be fully registered before constraint generation
+2. Current architecture interleaves type checking and type registration
+3. Application evaluator fundamentally depends on resolver having complete info
+4. All workarounds hit the same limitation: type info not available yet
+
+### Recommendation
+
+File this as a known limitation requiring architectural work. The issue affects:
+- Homomorphic mapped types in generic function parameters  
+- Any pattern where type inference relies on expanding type alias applications
+
+Not blocking for initial release - users can work around with explicit annotations.

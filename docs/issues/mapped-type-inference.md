@@ -1,7 +1,7 @@
 # Mapped Type Inference Issue
 
 ## Status
-**DIAGNOSED** - Root cause identified
+**BLOCKED** - Root cause identified, requires architectural changes
 
 ## Problem Summary
 When a generic function has a mapped type in its parameter position, tsz fails to infer the type parameter, returning `unknown` instead.
@@ -87,7 +87,61 @@ When we can't evaluate a mapped type:
 - Affects any generic function with mapped type parameters
 - Essential for utility type patterns: `Partial<T>`, `Required<T>`, etc.
 
+## Investigation Results (2026-02-13)
+
+### Attempted Fix #1: Evaluate Applications in `constrain_types`
+Added cases to evaluate Application types on source/target sides before constraining.
+
+**Result**: Failed - Application evaluation returns the same unevaluated type
+
+### Attempted Fix #2: Manual instantiation in `constrain_types`
+Tried to bypass evaluation by directly calling `resolve_lazy()` and `get_lazy_type_params()`.
+
+**Result**: Failed - these methods return `None` during constraint generation
+
+### Root Cause: Architectural Timing Issue
+
+The fundamental problem is **initialization order**:
+
+1. **During constraint generation** (when `id(p)` is type-checked):
+   - `Identity<__infer_N>` Application type is created
+   - `resolve_lazy(DefId(21749))` returns `None`
+   - `get_lazy_type_params(DefId(21749))` returns `None`
+   - Type info not yet registered with resolver
+
+2. **Later in execution** (confirmed via tracing):
+   - Same `DefId(21749)` CAN be resolved
+   - Type params ARE available
+   - Evaluation succeeds
+
+3. **Constraint generation happens BEFORE type registration**:
+   - Function parameters are instantiated early
+   - Type aliases used in those parameters aren't fully registered yet
+   - Application evaluator can't expand them
+
+### What's Needed
+
+This requires **architectural changes** to the type registration system:
+
+1. **Option A**: Defer constraint generation until all type definitions are registered
+2. **Option B**: Two-phase type checking - register all definitions, then check constraints
+3. **Option C**: Lazy constraint evaluation - defer Application constraints until types are ready
+
+All three options require significant refactoring of the checker/solver interaction.
+
+### Workaround
+
+Users can explicitly annotate return types to avoid the inference:
+```typescript
+function id<T>(arg: Identity<T>): T {
+  return arg as T;  // Explicit cast
+}
+
+const result: Point = id(p);  // Explicit annotation
+```
+
 ## Next Steps
-1. Implement inverse inference for homomorphic mapped types
-2. Add test cases for various mapped type patterns
-3. Verify no regressions with `cargo nextest run`
+1. Design type registration architecture to ensure definitions are available during constraint generation
+2. Implement chosen approach (likely Option B - two-phase checking)
+3. Add test cases for homomorphic mapped type inference
+4. Verify no regressions
