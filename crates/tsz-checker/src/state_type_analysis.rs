@@ -674,10 +674,15 @@ impl<'a> CheckerState<'a> {
             } else if let Some(name) = name_text {
                 if is_identifier {
                     // Handle global intrinsics that may not have symbols in the binder
-                    // (e.g., `typeof undefined`, `typeof NaN`, `typeof Infinity`)
+                    // (e.g., `typeof undefined`, `typeof NaN`, `typeof Infinity`, `typeof globalThis`)
                     match name.as_str() {
                         "undefined" => return TypeId::UNDEFINED,
                         "NaN" | "Infinity" => return TypeId::NUMBER,
+                        // globalThis is a synthetic symbol in tsc whose exports are all globals.
+                        // typeof globalThis should resolve to a type with all global members.
+                        // For now, return ANY to suppress false TS2304/TS2552 errors.
+                        // TODO: Create a proper object type with global members.
+                        "globalThis" => return TypeId::ANY,
                         _ => {}
                     }
                     if self.is_known_global_value_name(&name) {
