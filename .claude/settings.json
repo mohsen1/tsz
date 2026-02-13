@@ -19,16 +19,6 @@
         ]
       }
     ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if [ -f session.sh ]; then ./session.sh; else echo 'Continue with work if there is more work to do. Otherwise you can always find new work to do if you have nothing to do. scripts/conformance.sh should be a good start. unit tests too.' >&2; exit 2; fi"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
