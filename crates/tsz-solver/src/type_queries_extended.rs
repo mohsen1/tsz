@@ -1608,6 +1608,10 @@ pub enum ContextualLiteralAllowKind {
     Application,
     /// Mapped type - needs evaluation
     Mapped,
+    /// Template literal type - always allows string literals (pattern matching check
+    /// happens later during assignability). This prevents premature widening of string
+    /// literals like `"*hello*"` to `string` when the target is `` `*${string}*` ``.
+    TemplateLiteral,
     /// Does not allow literal
     NotAllowed,
 }
@@ -1633,6 +1637,7 @@ pub fn classify_for_contextual_literal(
         }
         TypeKey::Application(_) => ContextualLiteralAllowKind::Application,
         TypeKey::Mapped(_) => ContextualLiteralAllowKind::Mapped,
+        TypeKey::TemplateLiteral(_) => ContextualLiteralAllowKind::TemplateLiteral,
         _ => ContextualLiteralAllowKind::NotAllowed,
     }
 }

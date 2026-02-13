@@ -3096,6 +3096,10 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
+            // Template literal types always allow string literals — the actual pattern
+            // matching ("*hello*" matches `*${string}*`) is done during assignability.
+            // We preserve the literal here to avoid premature widening to `string`.
+            ContextualLiteralAllowKind::TemplateLiteral => true,
             ContextualLiteralAllowKind::NotAllowed => false,
         }
     }

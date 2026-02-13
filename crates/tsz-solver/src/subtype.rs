@@ -1217,7 +1217,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     fn visit_template_literal(&mut self, template_id: u32) -> Self::Output {
         use crate::types::IntrinsicKind;
         use crate::types::TemplateLiteralId;
-        
+
         use crate::visitor::{intrinsic_kind, template_literal_id};
 
         // Template literal <: string is always true
