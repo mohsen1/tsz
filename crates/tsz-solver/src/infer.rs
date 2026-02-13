@@ -24,6 +24,23 @@ use tsz_common::interner::Atom;
 #[cfg(test)]
 use crate::TypeInterner;
 
+/// Helper function to extend a vector with deduplicated items.
+/// Uses a HashSet for O(1) lookups instead of O(n) contains checks.
+fn extend_dedup<T>(target: &mut Vec<T>, items: &[T])
+where
+    T: Clone + Eq + std::hash::Hash,
+{
+    if items.is_empty() {
+        return;
+    }
+    let existing: FxHashSet<_> = target.iter().cloned().collect();
+    for item in items {
+        if !existing.contains(item) {
+            target.push(item.clone());
+        }
+    }
+}
+
 /// An inference variable representing an unknown type.
 /// These are created when instantiating generic functions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -77,25 +94,11 @@ impl UnifyValue for InferenceInfo {
     fn unify_values(a: &Self, b: &Self) -> Result<Self, Self::Error> {
         let mut merged = a.clone();
 
-        // Deduplicate candidates using HashSet for O(1) lookups instead of O(n) Vec::contains
-        if !b.candidates.is_empty() {
-            let existing: FxHashSet<_> = merged.candidates.iter().cloned().collect();
-            for candidate in &b.candidates {
-                if !existing.contains(candidate) {
-                    merged.candidates.push(candidate.clone());
-                }
-            }
-        }
+        // Deduplicate candidates using helper
+        extend_dedup(&mut merged.candidates, &b.candidates);
 
-        // Deduplicate upper bounds using HashSet for O(1) lookups
-        if !b.upper_bounds.is_empty() {
-            let existing: FxHashSet<_> = merged.upper_bounds.iter().copied().collect();
-            for &bound in &b.upper_bounds {
-                if !existing.contains(&bound) {
-                    merged.upper_bounds.push(bound);
-                }
-            }
-        }
+        // Deduplicate upper bounds using helper
+        extend_dedup(&mut merged.upper_bounds, &b.upper_bounds);
 
         if merged.resolved.is_none() {
             merged.resolved = b.resolved;
