@@ -1364,27 +1364,34 @@ impl<'a> CheckerState<'a> {
         names: &mut Vec<String>,
         depth: usize,
     ) {
-        use tsz_solver::TypeKey;
+        use tsz_solver::type_queries::{TypeTraversalKind, classify_for_traversal};
 
         if depth > 5 {
             return;
         }
 
-        match self.ctx.types.lookup(type_id) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.ctx.types.object_shape(shape_id);
+        match classify_for_traversal(self.ctx.types, type_id) {
+            TypeTraversalKind::Object(_) => {
+                let Some(shape) =
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, type_id)
+                else {
+                    return;
+                };
                 for prop in shape.properties.iter() {
                     names.push(self.ctx.types.resolve_atom_ref(prop.name).to_string());
                 }
             }
-            Some(TypeKey::Callable(callable_id)) => {
-                let shape = self.ctx.types.callable_shape(callable_id);
+            TypeTraversalKind::Callable(_) => {
+                let Some(shape) =
+                    tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
+                else {
+                    return;
+                };
                 for prop in shape.properties.iter() {
                     names.push(self.ctx.types.resolve_atom_ref(prop.name).to_string());
                 }
             }
-            Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
+            TypeTraversalKind::Members(members) => {
                 for &member in members.iter() {
                     self.collect_type_property_names_inner(member, names, depth + 1);
                 }

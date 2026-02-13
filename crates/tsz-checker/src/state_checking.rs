@@ -1374,7 +1374,7 @@ impl<'a> CheckerState<'a> {
             && element_type != TypeId::ANY
             && element_type != TypeId::ERROR
             && !self.type_contains_error(var_type)
-            && !self.is_assignable_to(element_type, var_type)
+            && self.should_report_assignability_mismatch(element_type, var_type, initializer)
         {
             self.error_type_not_assignable_with_reason_at(element_type, var_type, initializer);
         }
@@ -1549,16 +1549,13 @@ impl<'a> CheckerState<'a> {
                     // Only evaluate conditional/mapped/index access types - NOT type aliases or interface
                     // references, as evaluating those can change their representation and break variance checking.
                     let evaluated_type = if declared_type != TypeId::ANY {
-                        use tsz_solver::TypeKey;
-                        let should_evaluate =
-                            checker.ctx.types.lookup(declared_type).is_some_and(|key| {
-                                matches!(
-                                    key,
-                                    TypeKey::Conditional(_)
-                                        | TypeKey::Mapped(_)
-                                        | TypeKey::IndexAccess(_, _)
-                                )
-                            });
+                        use tsz_solver::type_queries::{EvaluationNeeded, classify_for_evaluation};
+                        let should_evaluate = matches!(
+                            classify_for_evaluation(checker.ctx.types, declared_type),
+                            EvaluationNeeded::Conditional { .. }
+                                | EvaluationNeeded::Mapped { .. }
+                                | EvaluationNeeded::IndexAccess { .. }
+                        );
                         if should_evaluate {
                             checker.judge_evaluate(declared_type)
                         } else {

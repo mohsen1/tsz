@@ -2164,7 +2164,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check if getter return type is assignable to setter param type
-                if !self.is_assignable_to(getter_type, setter_type) {
+                if self.should_report_assignability_mismatch(getter_type, setter_type, error_pos) {
                     // Get type strings for error message
                     let getter_type_str = self.format_type(getter_type);
                     let setter_type_str = self.format_type(setter_type);

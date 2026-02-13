@@ -1031,7 +1031,11 @@ impl<'a> CheckerState<'a> {
                             };
 
                             if param_count_incompatible
-                                || !self.is_assignable_to(*member_type, base_type)
+                                || self.should_report_assignability_mismatch(
+                                    *member_type,
+                                    base_type,
+                                    *derived_member_idx,
+                                )
                             {
                                 let member_type_str = self.format_type(*member_type);
                                 let base_type_str = self.format_type(base_type);
@@ -1480,7 +1484,11 @@ impl<'a> CheckerState<'a> {
                                 && class_member_type != TypeId::ANY
                                 && interface_member_type != TypeId::ERROR
                                 && class_member_type != TypeId::ERROR
-                                && !self.is_assignable_to(class_member_type, interface_member_type)
+                                && self.should_report_assignability_mismatch(
+                                    class_member_type,
+                                    interface_member_type,
+                                    class_member_idx,
+                                )
                             {
                                 let expected_str = self.format_type(interface_member_type);
                                 let actual_str = self.format_type(class_member_type);
