@@ -1804,8 +1804,24 @@ impl<'a> CheckerState<'a> {
 
         let prop_name = ident.escaped_text.clone();
 
+        // Check if the property is an enum member (TS2540) BEFORE property existence check.
+        // Enum members may not be found by resolve_property_access_with_env because
+        // they are resolved through the binder's enum symbol, not the type system.
+        if self.is_enum_member_property(access.expression, &prop_name) {
+            self.error_readonly_property_at(&prop_name, target_idx);
+            return true;
+        }
+
         // Get the type of the object being accessed
         let obj_type = self.get_type_of_node(access.expression);
+
+        // Check if the property is a const export from a namespace/module (TS2540).
+        // For `M.x = 1` where `export const x = 0` in namespace M.
+        // Check before property existence, similar to enum members.
+        if self.is_namespace_const_property(access.expression, &prop_name) {
+            self.error_readonly_property_at(&prop_name, target_idx);
+            return true;
+        }
 
         // P1 fix: First check if the property exists on the type.
         // If the property doesn't exist, skip the readonly check - TS2339 will be
@@ -1853,13 +1869,6 @@ impl<'a> CheckerState<'a> {
         if let Some(type_name) = self.get_declared_type_name_from_expression(access.expression)
             && self.is_interface_property_readonly(&type_name, &prop_name)
         {
-            self.error_readonly_property_at(&prop_name, target_idx);
-            return true;
-        }
-
-        // Check if the property is a const export from a namespace/module (TS2540).
-        // For `M.x = 1` where `export const x = 0` in namespace M.
-        if self.is_namespace_const_property(access.expression, &prop_name) {
             self.error_readonly_property_at(&prop_name, target_idx);
             return true;
         }
@@ -1922,6 +1931,20 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(decl_flags & node_flags::CONST != 0)
+    }
+
+    /// Check if a property access refers to an enum member.
+    /// All enum members are readonly — `A.foo = 1` is invalid for `enum A { foo }`.
+    fn is_enum_member_property(&self, object_expr: NodeIndex, _prop_name: &str) -> bool {
+        let sym_id = self.resolve_identifier_symbol(object_expr);
+        let Some(sym_id) = sym_id else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        use tsz_binder::symbol_flags;
+        symbol.flags & symbol_flags::ENUM != 0
     }
 
     /// Check if a readonly property assignment is allowed in the current constructor context.
