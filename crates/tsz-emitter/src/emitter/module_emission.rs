@@ -545,12 +545,18 @@ impl<'a> Printer<'a> {
             && let Some(named_exports) = self.arena.get_named_imports(clause_node)
         {
             let value_specs = self.collect_value_specifiers(&named_exports.elements);
-            if value_specs.is_empty() {
+            if value_specs.is_empty() && !named_exports.elements.nodes.is_empty() {
+                // All specifiers were type-only — skip the export entirely
                 return;
             }
-            self.write("export { ");
-            self.emit_comma_separated(&value_specs);
-            self.write(" }");
+            // Emit `export { ... }` or `export {}` (when originally empty)
+            if value_specs.is_empty() {
+                self.write("export {}");
+            } else {
+                self.write("export { ");
+                self.emit_comma_separated(&value_specs);
+                self.write(" }");
+            }
             if !export.module_specifier.is_none() {
                 self.write(" from ");
                 self.emit(export.module_specifier);
@@ -845,6 +851,7 @@ impl<'a> Printer<'a> {
                     if let Some(named_exports) = self.arena.get_named_imports(clause_node) {
                         let value_specs = self.collect_value_specifiers(&named_exports.elements);
                         if value_specs.is_empty() {
+                            // `export {}` or all type-only → no-op in CommonJS
                             return;
                         }
 
