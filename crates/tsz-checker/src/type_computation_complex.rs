@@ -1871,6 +1871,19 @@ impl<'a> CheckerState<'a> {
                     value_decl = ?value_decl,
                     "get_type_of_identifier: merged interface+value path"
                 );
+                // For ES2015+ types (Symbol, Promise, Map, Set, etc.) used as values
+                // in targets below ES2015, tsc emits TS2585 even though the lib files
+                // DO include the value declaration (via dom.d.ts → es2015.d.ts chain).
+                // tsc checks the target version directly, not lib availability.
+                {
+                    use tsz_binder::lib_loader;
+                    if lib_loader::is_es2015_plus_type(name)
+                        && self.ctx.compiler_options.target.is_es5()
+                    {
+                        self.error_type_only_value_at(name, idx);
+                        return TypeId::ERROR;
+                    }
+                }
                 // Prefer value-declaration resolution for merged symbols so we pick
                 // the constructor-side type (e.g. Promise -> PromiseConstructor).
                 let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
