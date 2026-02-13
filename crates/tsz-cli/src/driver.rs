@@ -2486,7 +2486,14 @@ fn collect_diagnostics(
                 let _check_span =
                     tracing::info_span!("check_file", file = %file.file_name).entered();
                 checker.check_source_file(file.source_file);
-                file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
+                let mut checker_diags = std::mem::take(&mut checker.ctx.diagnostics);
+                // When allowJs is enabled but checkJs is not, JS files only get
+                // syntactic/grammar errors (TS1xxx). Semantic errors (TS2xxx+)
+                // are suppressed, matching TSC behavior.
+                if is_js && !options.check_js {
+                    checker_diags.retain(|d| d.code < 2000);
+                }
+                file_diagnostics.extend(checker_diags);
             }
 
             // Update the cache and check for export hash changes
@@ -2714,7 +2721,14 @@ fn check_file_for_parallel(
     let skip_check = is_js && !allow_js && !check_js;
     if !no_check && !skip_check {
         checker.check_source_file(file.source_file);
-        file_diagnostics.extend(std::mem::take(&mut checker.ctx.diagnostics));
+        let mut checker_diags = std::mem::take(&mut checker.ctx.diagnostics);
+        // When allowJs is enabled but checkJs is not, JS files only get
+        // syntactic/grammar errors (TS1xxx). Semantic errors (TS2xxx+)
+        // are suppressed, matching TSC behavior.
+        if is_js && !check_js {
+            checker_diags.retain(|d| d.code < 2000);
+        }
+        file_diagnostics.extend(checker_diags);
     }
 
     file_diagnostics
