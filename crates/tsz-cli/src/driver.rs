@@ -3492,6 +3492,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.check_js {
         options.check_js = true;
+        options.checker.check_js = true;
     }
     if let Some(version) = args.types_versions_compiler_version.as_ref() {
         options.types_versions_compiler_version = Some(version.clone());

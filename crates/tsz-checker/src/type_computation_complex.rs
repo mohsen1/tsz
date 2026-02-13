@@ -1794,6 +1794,19 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
+            // ES2015+ globals (Symbol, Promise, Map, Set, etc.) used as values
+            // require target >= ES2015. When target < ES2015, emit TS2585 even
+            // if the value is transitively available through DOM typings.
+            {
+                use tsz_binder::lib_loader;
+                if lib_loader::is_es2015_plus_type(name)
+                    && !self.ctx.compiler_options.target.supports_es2015()
+                {
+                    self.error_type_only_value_at(name, idx);
+                    return TypeId::ERROR;
+                }
+            }
+
             // If the symbol wasn't found in the main binder (flags==0), it came
             // from a lib or cross-file binder.  For known ES2015+ global type
             // names (Symbol, Promise, Map, Set, etc.) we need to check whether
@@ -2105,6 +2118,12 @@ impl<'a> CheckerState<'a> {
     fn resolve_symbol_constructor(&mut self, idx: NodeIndex, name: &str) -> TypeId {
         if !self.ctx.has_symbol_in_lib() {
             self.error_cannot_find_name_change_lib(name, idx);
+            return TypeId::ERROR;
+        }
+        // When target < ES2015, Symbol is type-only even if transitively
+        // loaded through DOM typings. TSC emits TS2585 in this case.
+        if !self.ctx.compiler_options.target.supports_es2015() {
+            self.error_type_only_value_at(name, idx);
             return TypeId::ERROR;
         }
         let value_type = self.type_of_value_symbol_by_name(name);
