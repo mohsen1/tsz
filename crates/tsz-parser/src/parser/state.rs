@@ -42,6 +42,9 @@ pub const CONTEXT_FLAG_AMBIENT: u32 = 32;
 /// When set, arrow function lookahead should not treat ':' as a return type annotation
 /// because the ':' belongs to the enclosing conditional expression
 pub const CONTEXT_FLAG_IN_CONDITIONAL_TRUE: u32 = 64;
+/// Context flag: inside a decorator expression (@expr)
+/// When set, `[` should not be treated as element access (it starts a computed property name)
+pub const CONTEXT_FLAG_IN_DECORATOR: u32 = 128;
 
 // =============================================================================
 // Parse Diagnostic
