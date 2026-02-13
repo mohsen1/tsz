@@ -3475,6 +3475,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.allow_js {
         options.allow_js = true;
     }
+    if args.check_js {
+        options.check_js = true;
+    }
     if let Some(version) = args.types_versions_compiler_version.as_ref() {
         options.types_versions_compiler_version = Some(version.clone());
     } else if let Ok(version) = std::env::var("TSZ_TYPES_VERSIONS_COMPILER_VERSION") {
