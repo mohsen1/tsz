@@ -135,8 +135,7 @@ impl ParserState {
                 statements.push(stmt);
             } else {
                 // Statement parsing failed, resync to recover
-                // Emit error for unexpected token if we haven't already
-                // Also suppress cascading errors when a recent error was within 3 chars
+                // Suppress cascading errors when a recent error was within 3 chars
                 let current = self.token_pos();
                 if (self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
@@ -189,8 +188,8 @@ impl ParserState {
                 statements.push(stmt);
             } else {
                 // Statement parsing failed, resync to recover
-                // Emit error for unexpected token if we haven't already
-                // Also suppress cascading errors when a recent error was within 3 chars
+                // Emit error if we haven't already at the exact same position
+                // Suppress cascading errors when a recent error was within 3 chars
                 let current = self.token_pos();
                 if (self.last_error_pos == 0 || current.abs_diff(self.last_error_pos) > 3)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
@@ -358,6 +357,20 @@ impl ParserState {
                     );
                     self.next_token();
                     self.parse_statement()
+                } else if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
+                    // Modifier keyword followed by identifier/keyword on same line but
+                    // NOT a valid declaration. Matches tsc's isStartOfStatement() which
+                    // returns false here. In tsc, abortParsingListOrMoveToNextToken
+                    // emits TS1128 and skips the token without parsing it.
+                    // e.g., "static try" inside error recovery.
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                    self.next_token();
+                    // Continue to parse the next statement (e.g., "try" after "static")
+                    self.parse_statement()
                 } else {
                     self.parse_expression_statement()
                 }
@@ -458,6 +471,20 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_decl
+    }
+
+    /// Check if the next token is an identifier or keyword on the same line.
+    /// Matches tsc's `nextTokenIsIdentifierOrKeywordOnSameLine`.
+    /// Used by isStartOfStatement() for modifier keywords (static, public, etc.)
+    /// to distinguish class-member-like context from standalone expressions.
+    fn look_ahead_next_is_identifier_or_keyword_on_same_line(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip the modifier keyword
+        let result = !self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     /// Check if the next token is on a new line (ASI applies).
