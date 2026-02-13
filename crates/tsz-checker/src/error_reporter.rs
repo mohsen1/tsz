@@ -1864,7 +1864,9 @@ impl<'a> CheckerState<'a> {
         // TS18050 is only emitted for strictly-arithmetic and bitwise operators with null/undefined operands.
         // The `+` operator is NOT included: tsc emits TS2365 for `null + null`, not TS18050,
         // because `+` can be string concatenation and has its own type-checking path.
-        // Comparison operators (==, !=, ===, !==, <, >, <=, >=) also don't emit TS18050.
+        // Relational operators (<, >, <=, >=) also emit TS18050, but only for literal null/undefined.
+        // For now, we only handle arithmetic/bitwise since our evaluator doesn't distinguish
+        // literal values from variables typed as null/undefined.
         let should_emit_nullish_error = matches!(
             op,
             "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"

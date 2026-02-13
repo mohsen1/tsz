@@ -927,7 +927,7 @@ impl ParserState {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Namespace must be given a name.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                    diagnostic_codes::NAMESPACE_MUST_BE_GIVEN_A_NAME,
                 );
                 // Create a missing identifier for anonymous module
                 let name_start = self.token_pos();
@@ -1022,7 +1022,7 @@ impl ParserState {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Namespace must be given a name.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                    diagnostic_codes::NAMESPACE_MUST_BE_GIVEN_A_NAME,
                 );
                 // Create a missing identifier for anonymous module
                 let name_start = self.token_pos();
