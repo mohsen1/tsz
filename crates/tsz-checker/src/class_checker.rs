@@ -551,18 +551,12 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
-
-                    if let Some((pos, end)) = self.get_node_span(member_name_idx) {
-                        self.error(
-                            pos,
-                            end - pos,
-                            format!(
-                                "Type '{}' is not assignable to type '{}'.",
-                                member_type_str, base_type_str
-                            ),
-                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
-                        );
-                    }
+                    self.report_type_not_assignable_detail(
+                        member_name_idx,
+                        &member_type_str,
+                        &base_type_str,
+                        diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                    );
                 }
             }
         }
@@ -1048,27 +1042,13 @@ impl<'a> CheckerState<'a> {
                                     ),
                                     diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                 );
-
-                                if let Some((pos, end)) = self.get_node_span(iface_data.name) {
-                                    self.error(
-                                        pos,
-                                        end - pos,
-                                        format!(
-                                            "Types of property '{}' are incompatible.",
-                                            member_name
-                                        ),
-                                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                                    );
-                                    self.error(
-                                        pos,
-                                        end - pos,
-                                        format!(
-                                            "Type '{}' is not assignable to type '{}'.",
-                                            member_type_str, base_type_str
-                                        ),
-                                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
-                                    );
-                                }
+                                self.report_property_type_incompatible_detail(
+                                    iface_data.name,
+                                    member_name,
+                                    &member_type_str,
+                                    &base_type_str,
+                                    diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                                );
 
                                 self.pop_type_parameters(base_type_param_updates);
                                 return;
@@ -1085,6 +1065,53 @@ impl<'a> CheckerState<'a> {
 
                 self.pop_type_parameters(base_type_param_updates);
             }
+        }
+    }
+
+    fn report_type_not_assignable_detail(
+        &mut self,
+        node_idx: NodeIndex,
+        source_type: &str,
+        target_type: &str,
+        code: u32,
+    ) {
+        if let Some((pos, end)) = self.get_node_span(node_idx) {
+            self.error(
+                pos,
+                end - pos,
+                format!(
+                    "Type '{}' is not assignable to type '{}'.",
+                    source_type, target_type
+                ),
+                code,
+            );
+        }
+    }
+
+    fn report_property_type_incompatible_detail(
+        &mut self,
+        node_idx: NodeIndex,
+        member_name: &str,
+        source_type: &str,
+        target_type: &str,
+        code: u32,
+    ) {
+        if let Some((pos, end)) = self.get_node_span(node_idx) {
+            self.error(
+                pos,
+                end - pos,
+                format!("Types of property '{}' are incompatible.", member_name),
+                code,
+            );
+            self.error(
+                pos,
+                end - pos,
+                format!(
+                    "Type '{}' is not assignable to type '{}'.",
+                    source_type, target_type
+                ),
+                code,
+            );
         }
     }
 
