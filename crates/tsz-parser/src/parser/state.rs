@@ -533,6 +533,18 @@ impl ParserState {
         }
     }
 
+    /// Error: Argument expression expected (TS1135)
+    /// Used in function call argument list parsing instead of generic TS1109.
+    pub(crate) fn error_argument_expression_expected(&mut self) {
+        if self.should_report_error() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Argument expression expected.",
+                diagnostic_codes::ARGUMENT_EXPRESSION_EXPECTED,
+            );
+        }
+    }
+
     /// Error: Type expected (TS1110)
     pub(crate) fn error_type_expected(&mut self) {
         use tsz_common::diagnostics::diagnostic_codes;

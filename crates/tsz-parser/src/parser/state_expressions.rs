@@ -1337,7 +1337,7 @@ impl ParserState {
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
             if self.is_argument_list_recovery_boundary() {
-                self.error_expression_expected();
+                self.error_argument_expression_expected();
                 break;
             }
 
@@ -1346,8 +1346,8 @@ impl ParserState {
                 self.next_token();
                 let expression = self.parse_assignment_expression();
                 if expression.is_none() {
-                    // Emit TS1109 for incomplete spread argument: func(...missing)
-                    self.error_expression_expected();
+                    // Emit TS1135 for incomplete spread argument: func(...missing)
+                    self.error_argument_expression_expected();
                 }
                 let spread_end = self.token_end();
                 let spread = self.arena.add_spread(
@@ -1360,8 +1360,8 @@ impl ParserState {
             } else {
                 let arg = self.parse_assignment_expression();
                 if arg.is_none() {
-                    // Emit TS1109 for missing function argument: func(a, , c)
-                    self.error_expression_expected();
+                    // Emit TS1135 for missing function argument: func(a, , c)
+                    self.error_argument_expression_expected();
                     // Continue parsing for error recovery
                 }
                 args.push(arg);

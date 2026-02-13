@@ -943,12 +943,12 @@ const y = 1;
     let _root = parser.parse_source_file();
 
     let diagnostics = parser.get_diagnostics();
-    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+    let ts1135_count = diagnostics.iter().filter(|d| d.code == 1135).count();
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
 
     assert!(
-        ts1109_count >= 1,
-        "Expected at least 1 TS1109 for malformed argument list, got diagnostics: {diagnostics:?}"
+        ts1135_count >= 1,
+        "Expected at least 1 TS1135 for malformed argument list, got diagnostics: {diagnostics:?}"
     );
     assert!(
         ts1005_count <= 2,
