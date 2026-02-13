@@ -1389,11 +1389,9 @@ impl ParserState {
             // Successfully parsed type arguments, now consume >
             self.parse_expected_greater_than();
 
-            // Check if followed by ( or ` (which indicates a call/tagged template)
-            if self.is_token(SyntaxKind::OpenParenToken)
-                || self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
-                || self.is_token(SyntaxKind::TemplateHead)
-            {
+            // Check if the following token indicates these were type arguments
+            // (call, tagged template, or instantiation expression)
+            if self.can_follow_type_arguments_in_expression() {
                 return Some(self.make_node_list(args));
             }
         }
@@ -1406,6 +1404,43 @@ impl ParserState {
         // Drop any speculative diagnostics from the failed parse
         self.parse_diagnostics.truncate(saved_diagnostics_len);
         None
+    }
+
+    /// Check if the token following `>` can follow type arguments in an expression.
+    /// Implements tsc's `canFollowTypeArgumentsInExpression()`.
+    ///
+    /// Returns true for:
+    /// - `(` — call expression: `f<T>(args)`
+    /// - template literal — tagged template: `f<T>\`...\``
+    /// - line break — instantiation expression: `f<T>\n`
+    /// - binary operator — instantiation expression: `f<T> || fallback`
+    /// - non-expression-starter — instantiation expression: `f<T>; f<T>}`
+    ///
+    /// Returns false for:
+    /// - `<` — ambiguous: `f<T><U>` → treat as relational
+    /// - `>` — ambiguous: `f<T>>` → treat as relational
+    /// - `+`/`-` — unary: `f < T > +1` → treat as relational chain
+    fn can_follow_type_arguments_in_expression(&self) -> bool {
+        match self.token() {
+            // These always indicate type arguments (call or tagged template)
+            SyntaxKind::OpenParenToken
+            | SyntaxKind::NoSubstitutionTemplateLiteral
+            | SyntaxKind::TemplateHead => true,
+
+            // These never follow type arguments (ambiguous with relational)
+            SyntaxKind::LessThanToken
+            | SyntaxKind::GreaterThanToken
+            | SyntaxKind::PlusToken
+            | SyntaxKind::MinusToken => false,
+
+            // Everything else: favor type arguments when followed by
+            // a line break, binary operator, or non-expression-starter
+            _ => {
+                self.scanner.has_preceding_line_break()
+                    || self.is_binary_operator()
+                    || !self.is_expression_start()
+            }
+        }
     }
 
     /// Parse array type suffix (T[]) or indexed access type (T[K])

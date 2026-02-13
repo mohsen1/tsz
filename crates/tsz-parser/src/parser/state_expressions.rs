@@ -1321,7 +1321,18 @@ impl ParserState {
                                 },
                             );
                         } else {
-                            // Not a call - leave type args attached (expression with type args)
+                            // Not a call or tagged template - this is an instantiation expression
+                            // (e.g., f<string>, new Foo<number>)
+                            let end_pos = self.token_end();
+                            expr = self.arena.add_expr_with_type_args(
+                                crate::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
+                                start_pos,
+                                end_pos,
+                                crate::parser::node::ExprWithTypeArgsData {
+                                    expression: expr,
+                                    type_arguments: Some(type_args),
+                                },
+                            );
                             break;
                         }
                     } else {
