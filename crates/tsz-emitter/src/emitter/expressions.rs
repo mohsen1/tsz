@@ -362,6 +362,13 @@ impl<'a> Printer<'a> {
             self.write("[");
             self.increase_indent();
             self.emit_comma_separated(&array.elements.nodes);
+            // Preserve trailing comma for elisions: [,,] must keep both commas
+            // Elided elements are represented as NodeIndex::NONE, not OMITTED_EXPRESSION nodes
+            if let Some(&last_idx) = array.elements.nodes.last() {
+                if last_idx.is_none() {
+                    self.write(",");
+                }
+            }
             self.decrease_indent();
             self.write("]");
         } else {
@@ -396,6 +403,12 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.emit(elem);
                 }
+                // Trailing comma for elisions
+                if let Some(&last_idx) = array.elements.nodes.last() {
+                    if last_idx.is_none() {
+                        self.write(",");
+                    }
+                }
                 self.write_line();
                 self.decrease_indent();
                 self.write("]");
@@ -408,6 +421,12 @@ impl<'a> Printer<'a> {
                     self.write(",");
                     self.write_line();
                     self.emit(elem);
+                }
+                // Trailing comma for elisions
+                if let Some(&last_idx) = array.elements.nodes.last() {
+                    if last_idx.is_none() {
+                        self.write(",");
+                    }
                 }
                 self.decrease_indent();
                 self.write("]");

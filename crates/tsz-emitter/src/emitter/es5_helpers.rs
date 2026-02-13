@@ -811,7 +811,7 @@ impl<'a> Printer<'a> {
     /// Check if a concise arrow body resolves to an object literal expression
     /// and needs wrapping in parens. Returns false if already parenthesized
     /// (to avoid double-parens). Unwraps through type assertions and as-expressions.
-    fn concise_body_needs_parens(&self, body_idx: NodeIndex) -> bool {
+    pub(super) fn concise_body_needs_parens(&self, body_idx: NodeIndex) -> bool {
         let mut idx = body_idx;
         loop {
             let Some(node) = self.arena.get(idx) else {

@@ -1858,6 +1858,9 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::SET_ACCESSOR => {
                 self.emit_set_accessor(node);
             }
+            k if k == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT => {
+                self.write(";");
+            }
             k if k == syntax_kind_ext::DECORATOR => {
                 self.emit_decorator(node);
             }

@@ -64,8 +64,20 @@ impl<'a> Printer<'a> {
 
         self.write(" => ");
 
-        // Body
-        self.emit(func.body);
+        // Body - wrap in parens if it resolves to an object literal
+        // (e.g., `a => <any>{}` → `a => ({})` to avoid block ambiguity)
+        let body_is_block = self
+            .arena
+            .get(func.body)
+            .map(|n| n.kind == syntax_kind_ext::BLOCK)
+            .unwrap_or(false);
+        if !body_is_block && self.concise_body_needs_parens(func.body) {
+            self.write("(");
+            self.emit(func.body);
+            self.write(")");
+        } else {
+            self.emit(func.body);
+        }
     }
 
     /// Emit an async arrow function lowered for ES2015/ES2016 targets.
