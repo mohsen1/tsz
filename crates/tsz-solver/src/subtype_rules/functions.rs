@@ -294,11 +294,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Method bivariance
         let is_method = source.is_method || target.is_method;
 
-        // Check rest parameter handling
-        let target_has_rest = target_params.last().is_some_and(|p| p.rest);
-        let source_has_rest = source.params.last().is_some_and(|p| p.rest);
+        // Unpack tuple rest parameters before comparison.
+        // In TypeScript, `(...args: [A, B]) => R` is equivalent to `(a: A, b: B) => R`.
+        // We unpack tuple rest parameters into individual fixed parameters for proper matching.
+        use crate::type_queries::unpack_tuple_rest_parameter;
+        let source_params_unpacked: Vec<ParamInfo> = source
+            .params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+        let target_params_unpacked: Vec<ParamInfo> = target_params
+            .iter()
+            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+            .collect();
+
+        // Check rest parameter handling (after unpacking)
+        let target_has_rest = target_params_unpacked.last().is_some_and(|p| p.rest);
+        let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
         let rest_elem_type = if target_has_rest {
-            target_params
+            target_params_unpacked
                 .last()
                 .map(|param| self.get_array_element_type(param.type_id))
         } else {
@@ -309,14 +323,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Count non-rest parameters (needed for arity check below)
         let target_fixed_count = if target_has_rest {
-            target_params.len().saturating_sub(1)
+            target_params_unpacked.len().saturating_sub(1)
         } else {
-            target_params.len()
+            target_params_unpacked.len()
         };
         let source_fixed_count = if source_has_rest {
-            source.params.len().saturating_sub(1)
+            source_params_unpacked.len().saturating_sub(1)
         } else {
-            source.params.len()
+            source_params_unpacked.len()
         };
 
         // Check parameter arity: source's required params must not exceed
@@ -324,7 +338,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // When target has a rest parameter, skip the arity check entirely —
         // the rest parameter can accept any number of arguments, and type
         // compatibility of extra params is checked later against the rest element type.
-        let source_required = self.required_param_count(&source.params);
+        let source_required = self.required_param_count(&source_params_unpacked);
         if !self.allow_bivariant_param_count
             && !target_has_rest
             && source_required > target_fixed_count
@@ -343,11 +357,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let param_check_result = (|| -> SubtypeResult {
-            // Compare fixed parameters
+            // Compare fixed parameters (using unpacked params)
             let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
             for i in 0..fixed_compare_count {
-                let s_param = &source.params[i];
-                let t_param = &target_params[i];
+                let s_param = &source_params_unpacked[i];
+                let t_param = &target_params_unpacked[i];
 
                 // Optional parameters have effective type `T | undefined`.
                 // TypeScript widens optional params to include undefined for
@@ -391,7 +405,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 for i in target_fixed_count..source_fixed_count {
-                    let s_param = &source.params[i];
+                    let s_param = &source_params_unpacked[i];
                     if !self.are_parameters_compatible_impl(
                         s_param.type_id,
                         rest_elem_type,
@@ -402,49 +416,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 if source_has_rest {
-                    let Some(s_rest_param) = source.params.last() else {
+                    let Some(s_rest_param) = source_params_unpacked.last() else {
                         return SubtypeResult::False;
                     };
 
-                    // Handle tuple rest parameters - check tuple elements against target rest element
-                    use crate::type_queries::get_tuple_list_id;
-                    if let Some(s_tuple_id) = get_tuple_list_id(self.interner, s_rest_param.type_id)
+                    // After unpacking, tuple rest parameters are already expanded into fixed params.
+                    // Only non-tuple rest parameters (like ...args: string[]) remain as rest.
+                    // Check the rest element type against target's rest element type.
+                    let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
+                    if !self.are_parameters_compatible_impl(s_rest_elem, rest_elem_type, is_method)
                     {
-                        // Source has tuple rest, target has array rest.
-                        // In TypeScript, a tuple rest in source acts like a sequence of fixed parameters.
-                        // Each element of the tuple must be compatible with the target's rest element type.
-                        let s_tuple_elements = self.interner.tuple_list(s_tuple_id);
-                        for s_elem in s_tuple_elements.iter() {
-                            let s_elem_type = if s_elem.rest {
-                                self.get_array_element_type(s_elem.type_id)
-                            } else {
-                                s_elem.type_id
-                            };
-
-                            if !self.are_parameters_compatible_impl(
-                                s_elem_type,
-                                rest_elem_type,
-                                is_method,
-                            ) {
-                                return SubtypeResult::False;
-                            }
-                        }
-                    } else {
-                        // Both have array rest - check element types
-                        let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                        if !self.are_parameters_compatible_impl(
-                            s_rest_elem,
-                            rest_elem_type,
-                            is_method,
-                        ) {
-                            return SubtypeResult::False;
-                        }
+                        return SubtypeResult::False;
                     }
                 }
             }
 
             if source_has_rest {
-                let rest_param = if let Some(rest_param) = source.params.last() {
+                let rest_param = if let Some(rest_param) = source_params_unpacked.last() {
                     rest_param
                 } else {
                     return SubtypeResult::False;
@@ -455,7 +443,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                 if !rest_is_top {
                     for i in source_fixed_count..target_fixed_count {
-                        let t_param = &target_params[i];
+                        let t_param = &target_params_unpacked[i];
                         if !self.are_parameters_compatible_impl(
                             rest_elem_type,
                             t_param.type_id,

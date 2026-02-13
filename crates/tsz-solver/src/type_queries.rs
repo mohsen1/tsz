@@ -737,6 +737,62 @@ pub fn get_tuple_elements(
     }
 }
 
+/// Unpack a rest parameter with tuple type into individual fixed parameters.
+///
+/// In TypeScript, `(...args: [A, B, C]) => R` is equivalent to `(a: A, b: B, c: C) => R`.
+/// This function handles the unpacking:
+///
+/// # Examples
+///
+/// - Input: `...args: [string, number]`
+///   Output: `[ParamInfo { type_id: string, optional: false, rest: false },
+///            ParamInfo { type_id: number, optional: false, rest: false }]`
+///
+/// - Input: `...args: [string, number?]`
+///   Output: `[ParamInfo { type_id: string, optional: false, rest: false },
+///            ParamInfo { type_id: number, optional: true, rest: false }]`
+///
+/// - Input: `...args: [string, ...number[]]`
+///   Output: `[ParamInfo { type_id: string, optional: false, rest: false },
+///            ParamInfo { type_id: number[], optional: false, rest: true }]`
+///
+/// - Input: `x: string` (non-rest parameter)
+///   Output: `[ParamInfo { type_id: string, ... }]` (unchanged)
+///
+/// - Input: `...args: string[]` (array rest, not tuple)
+///   Output: `[ParamInfo { type_id: string[], rest: true }]` (unchanged)
+///
+/// This enables proper function type compatibility and generic inference for patterns like:
+/// - `pipe<A extends any[], B>(ab: (...args: A) => B): (...args: A) => B`
+/// - Where `A = [T]` should be inferred from a single-parameter function
+pub fn unpack_tuple_rest_parameter(
+    db: &dyn TypeDatabase,
+    param: &crate::types::ParamInfo,
+) -> Vec<crate::types::ParamInfo> {
+    // Non-rest parameters pass through unchanged
+    if !param.rest {
+        return vec![param.clone()];
+    }
+
+    // Check if the rest parameter type is a tuple
+    if let Some(tuple_elements) = get_tuple_elements(db, param.type_id) {
+        // Convert tuple elements to individual parameters
+        tuple_elements
+            .into_iter()
+            .map(|elem| crate::types::ParamInfo {
+                name: elem.name, // Preserve tuple element names if present
+                type_id: elem.type_id,
+                optional: elem.optional,
+                rest: elem.rest, // Preserve rest flag for trailing ...T[] in tuple
+            })
+            .collect()
+    } else {
+        // Not a tuple - keep the rest parameter as-is
+        // This handles cases like `...args: string[]` which should remain a rest parameter
+        vec![param.clone()]
+    }
+}
+
 /// Get the object shape ID for an object type.
 ///
 /// Returns None if the type is not an object type.
