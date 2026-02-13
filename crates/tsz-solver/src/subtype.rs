@@ -1682,11 +1682,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Top types: any/unknown overlap with everything except never
-        if a == TypeId::ANY || a == TypeId::UNKNOWN {
-            return b != TypeId::NEVER;
+        if a.is_any_or_unknown() {
+            return !b.is_never();
         }
-        if b == TypeId::ANY || b == TypeId::UNKNOWN {
-            return a != TypeId::NEVER;
+        if b.is_any_or_unknown() {
+            return !a.is_never();
         }
 
         // Bottom type: never overlaps with nothing
@@ -2385,7 +2385,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn check_subtype_inner(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
         // Types are already evaluated in check_subtype, so no need to re-evaluate here
 
-        if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && source.is_nullish() {
             return SubtypeResult::True;
         }
 
@@ -3363,19 +3363,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
-        if !self.strict_null_checks && (source == TypeId::NULL || source == TypeId::UNDEFINED) {
+        if !self.strict_null_checks && source.is_nullish() {
             return None;
         }
 
         // Check for any/unknown/never special cases
-        if source == TypeId::ANY || target == TypeId::ANY || target == TypeId::UNKNOWN {
+        if source.is_any() || target.is_any_or_unknown() {
             return None;
         }
-        if source == TypeId::NEVER {
+        if source.is_never() {
             return None;
         }
         // ERROR types should produce ErrorType failure reason
-        if source == TypeId::ERROR || target == TypeId::ERROR {
+        if source.is_error() || target.is_error() {
             return Some(SubtypeFailureReason::ErrorType {
                 source_type: source,
                 target_type: target,
@@ -4176,8 +4176,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source_has_rest {
             let rest_param = source.params.last()?;
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
-            let rest_is_top = self.allow_bivariant_rest
-                && (rest_elem_type == TypeId::ANY || rest_elem_type == TypeId::UNKNOWN);
+            let rest_is_top = self.allow_bivariant_rest && rest_elem_type.is_any_or_unknown();
 
             if !rest_is_top {
                 for i in source_fixed_count..target_fixed_count {

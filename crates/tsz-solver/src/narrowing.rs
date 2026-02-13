@@ -2031,7 +2031,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // everything is assignable to any/unknown
-        if target == TypeId::ANY || target == TypeId::UNKNOWN {
+        if target.is_any_or_unknown() {
             return true;
         }
 

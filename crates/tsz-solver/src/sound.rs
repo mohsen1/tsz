@@ -220,13 +220,13 @@ impl<'a> SoundLawyer<'a> {
         if target == TypeId::ANY {
             return true;
         }
-        if source == TypeId::ANY {
+        if source.is_any() {
             // In sound mode, any can only be assigned to any or unknown
-            return target == TypeId::ANY || target == TypeId::UNKNOWN;
+            return target.is_any_or_unknown();
         }
 
         // Error types
-        if source == TypeId::ERROR || target == TypeId::ERROR {
+        if source.is_error() || target.is_error() {
             return source == target;
         }
 
