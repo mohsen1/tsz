@@ -2689,4 +2689,106 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// Check if a class extends a type parameter and is "transparent" (adds no new instance members).
+    ///
+    /// When a class expression extends a generic type parameter but adds no new instance properties
+    /// or methods (only has a constructor), it should be typed as that type parameter to maintain
+    /// generic compatibility. This is common in simple wrapper patterns.
+    ///
+    /// # Returns
+    /// - `Some(TypeId)` if the class extends a type parameter and has no additional instance members
+    /// - `None` otherwise
+    pub(crate) fn get_extends_type_parameter_if_transparent(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> Option<TypeId> {
+        // Check if class has an extends clause with a type parameter
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
+
+        let mut extends_type_param = None;
+        for &clause_idx in &heritage_clauses.nodes {
+            let clause_node = self.ctx.arena.get(clause_idx)?;
+            let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+
+            // Only process extends clauses
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            let &type_idx = heritage.types.nodes.first()?;
+            let type_node = self.ctx.arena.get(type_idx)?;
+
+            // Handle ExpressionWithTypeArguments
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+
+            // Get the type of the extends expression
+            let base_type = self.get_type_of_node(expr_idx);
+
+            // Check if this is a type parameter
+            if matches!(
+                self.ctx.types.lookup(base_type),
+                Some(tsz_solver::TypeKey::TypeParameter(_))
+            ) {
+                extends_type_param = Some(base_type);
+                break;
+            }
+        }
+
+        let base_type_param = extends_type_param?;
+
+        // Check if class adds any new instance members (excluding constructor)
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            // Skip constructors and static members
+            match member_node.kind {
+                k if k == syntax_kind_ext::CONSTRUCTOR => continue,
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
+                        // Skip static properties
+                        if self.has_static_modifier(&prop.modifiers) {
+                            continue;
+                        }
+                        // Found an instance property - class is not transparent
+                        return None;
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
+                        // Skip static methods
+                        if self.has_static_modifier(&method.modifiers) {
+                            continue;
+                        }
+                        // Found an instance method - class is not transparent
+                        return None;
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                        // Skip static accessors
+                        if self.has_static_modifier(&accessor.modifiers) {
+                            continue;
+                        }
+                        // Found an instance accessor - class is not transparent
+                        return None;
+                    }
+                }
+                _ => {
+                    // Other member types - be conservative
+                    continue;
+                }
+            }
+        }
+
+        // Class is transparent - return the type parameter
+        Some(base_type_param)
+    }
 }

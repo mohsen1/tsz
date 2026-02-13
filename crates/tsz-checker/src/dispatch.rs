@@ -246,7 +246,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 if let Some(class) = self.checker.ctx.arena.get_class(node).cloned() {
                     self.checker.check_class_expression(idx, &class);
-                    self.checker.get_class_constructor_type(idx, &class)
+
+                    // When a class extends a type parameter and adds no new instance members,
+                    // type it as the type parameter to maintain generic compatibility
+                    if let Some(base_type_param) = self
+                        .checker
+                        .get_extends_type_parameter_if_transparent(&class)
+                    {
+                        base_type_param
+                    } else {
+                        self.checker.get_class_constructor_type(idx, &class)
+                    }
                 } else {
                     // Return ANY to prevent cascading TS2571 errors
                     TypeId::ANY
