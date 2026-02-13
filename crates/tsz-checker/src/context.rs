@@ -1243,9 +1243,12 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             report_unresolved_imports: false,
-            // CRITICAL: SymbolId is binder-local; never reuse parent symbol caches.
-            symbol_types: FxHashMap::default(),
-            symbol_instance_types: FxHashMap::default(),
+            // Share symbol caches: after merge, all binders use global SymbolIds,
+            // so SymbolId(N) means the same entity regardless of which arena/binder
+            // the child checker operates on. Sharing avoids redundant re-resolution
+            // of lib types (Array, Promise, etc.) in each child context.
+            symbol_types: parent.symbol_types.clone(),
+            symbol_instance_types: parent.symbol_instance_types.clone(),
             var_decl_types: FxHashMap::default(),
             // CRITICAL: Do NOT share node_types across arenas. Node indices are arena-specific,
             // so a cached type for node X in arena A would be incorrect for node X in arena B.
@@ -1264,16 +1267,16 @@ impl<'a> CheckerContext<'a> {
             object_spread_property_set: parent.object_spread_property_set.clone(),
             element_access_type_cache: parent.element_access_type_cache.clone(),
             element_access_type_set: parent.element_access_type_set.clone(),
-            // CRITICAL: FlowNodeId/SymbolId are binder-local; isolate flow cache per context.
+            // FlowNodeId/SymbolId are binder-local; isolate flow cache per context.
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             contains_infer_types_true: FxHashSet::default(),
             contains_infer_types_false: FxHashSet::default(),
-            // CRITICAL: NodeIndex is arena-local; keep class declaration maps local.
+            // NodeIndex is arena-local; keep class declaration maps local.
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),
-            // CRITICAL: Symbol dependency keys are SymbolId; isolate per binder.
+            // Symbol dependency keys are SymbolId; isolate per binder.
             symbol_dependencies: FxHashMap::default(),
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
@@ -1317,9 +1320,7 @@ impl<'a> CheckerContext<'a> {
             // across parent/child checkers. This prevents DefId collisions where
             // the child's DefId(1) means a different thing than the parent's DefId(1).
             definition_store: parent.definition_store.clone(),
-            // CRITICAL: symbol_to_def is context-local because SymbolIds are binder-local.
-            // The same SymbolId maps to different symbols in different binders, so the
-            // mapping must be kept separate.
+            // SymbolId is binder-local; keep DefId mappings local.
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),

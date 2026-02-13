@@ -843,6 +843,23 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     for lib_binder in &lib_binders {
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
 
+        // Pre-build a set of top-level symbol IDs from file_locals for O(1) lookup.
+        // This avoids an O(N*F) quadratic scan where each symbol would linearly
+        // search file_locals to check if it's top-level.
+        let top_level_ids: FxHashSet<SymbolId> =
+            lib_binder.file_locals.iter().map(|(_, id)| *id).collect();
+
+        // Pre-build a per-symbol index of declaration_arenas entries to avoid
+        // O(N*D) iteration where each symbol scans all declaration_arenas.
+        let mut decl_arenas_by_sym: FxHashMap<SymbolId, Vec<(NodeIndex, Arc<NodeArena>)>> =
+            FxHashMap::default();
+        for (&(sym_id, decl_idx), arena) in &lib_binder.declaration_arenas {
+            decl_arenas_by_sym
+                .entry(sym_id)
+                .or_default()
+                .push((decl_idx, Arc::clone(arena)));
+        }
+
         // Process all symbols in this lib binder
         for i in 0..lib_binder.symbols.len() {
             let local_id = SymbolId(i as u32);
@@ -852,7 +869,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // in a child scope (e.g., ScopeId(1)) even though they're conceptually
                 // top-level. Using file_locals is more reliable than the scope check
                 // for determining which lib symbols should be globally merged.
-                let is_top_level = lib_binder.file_locals.iter().any(|(_, &id)| id == local_id);
+                let is_top_level = top_level_ids.contains(&local_id);
 
                 // Check if a symbol with this name already exists (cross-lib merging)
                 // IMPORTANT: Only merge top-level symbols (those in file_locals)
@@ -911,9 +928,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
                 // Also copy declaration_arenas for precise cross-file declaration lookup
                 // This is needed when a symbol has declarations across multiple lib files
-                for (&(old_sym_id, decl_idx), arena) in &lib_binder.declaration_arenas {
-                    if old_sym_id == local_id {
-                        declaration_arenas.insert((global_id, decl_idx), Arc::clone(arena));
+                if let Some(entries) = decl_arenas_by_sym.get(&local_id) {
+                    for (decl_idx, arena) in entries {
+                        declaration_arenas.insert((global_id, *decl_idx), Arc::clone(arena));
                     }
                 }
             }
