@@ -289,6 +289,30 @@ For every new change, ask:
 2. If `WHAT`, move it to Solver or a Solver query helper.
 3. If `WHERE`, keep it in Checker and call the Solver/queries.
 
+### 3.5 DefId-Centric Type Resolution
+
+TSZ's current architecture is **DefId-first** for semantic type references.
+
+#### Canonical Model
+
+1. Binder owns symbol identity (`SymbolId`) and declaration graphs.
+2. Checker creates stable definition identities (`DefId`) for semantic type references.
+3. Solver represents unresolved semantic references as `TypeKey::Lazy(DefId)`.
+4. `TypeEnvironment` resolves `DefId -> TypeId` during evaluation/compatibility.
+5. Checker ensures required `DefId -> TypeId` mappings exist before deep relation checks.
+
+#### Why This Matters
+
+- Eliminates fragile direct symbol-handle type references in the solver type graph.
+- Makes lazy type resolution explicit and queryable.
+- Stabilizes recursive and cross-module type resolution behavior.
+
+#### Rules
+
+1. New semantic type references must use `Lazy(DefId)`, not ad-hoc symbol-backed ref keys.
+2. Checker code should prefer solver query helpers (`get_lazy_def_id`, classifiers) over direct low-level matching.
+3. Relation/evaluation code paths must guarantee needed `DefId` mappings are available in `TypeEnvironment`.
+
 | TypeScript Quirk | Judge Behavior | Lawyer Override |
 |------------------|----------------|-----------------|
 | `any` assignability | Strict sets | Both top & bottom type |
@@ -575,9 +599,9 @@ pub enum TypeKey {
     Function(FunctionShapeId),
     Callable(CallableShapeId),
 
-    // Generics
+    // Generics / semantic references
     TypeParameter(TypeParamInfo),
-    Ref(SymbolRef),
+    Lazy(DefId),
     Application(TypeApplicationId),
 
     // Advanced
