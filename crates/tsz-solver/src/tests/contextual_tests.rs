@@ -1024,3 +1024,87 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
     // With noImplicitAny: false, different parameter types result in None (falls back to `any`)
     assert_eq!(ctx.get_parameter_type(0), None);
 }
+
+// =============================================================================
+// Union Contextual Types - Property Extraction
+// =============================================================================
+
+#[test]
+fn test_contextual_property_union_with_undefined() {
+    let interner = TypeInterner::new();
+
+    // { fn: (x: number) => void } | undefined
+    let fn_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("fn"),
+        fn_type,
+    )]);
+    let union = interner.union(vec![obj, TypeId::UNDEFINED]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union);
+
+    // Property "fn" should be found from the object member of the union
+    let prop_type = ctx.get_property_type("fn");
+    assert!(
+        prop_type.is_some(),
+        "Should find property 'fn' in union with undefined"
+    );
+    assert_eq!(prop_type.unwrap(), fn_type);
+}
+
+#[test]
+fn test_contextual_property_union_with_null() {
+    let interner = TypeInterner::new();
+
+    // { x: number } | null
+    let obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let union = interner.union(vec![obj, TypeId::NULL]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union);
+
+    assert_eq!(
+        ctx.get_property_type("x"),
+        Some(TypeId::NUMBER),
+        "Should find property in union with null"
+    );
+}
+
+#[test]
+fn test_contextual_property_union_of_two_objects() {
+    let interner = TypeInterner::new();
+
+    // { x: number } | { x: string }
+    let obj1 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::NUMBER,
+    )]);
+    let obj2 = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
+    let union = interner.union(vec![obj1, obj2]);
+
+    let ctx = ContextualTypeContext::with_expected(&interner, union);
+
+    // Property type should be number | string
+    let prop_type = ctx.get_property_type("x");
+    assert!(prop_type.is_some());
+    let expected = interner.union_preserve_members(vec![TypeId::NUMBER, TypeId::STRING]);
+    assert_eq!(prop_type.unwrap(), expected);
+}
