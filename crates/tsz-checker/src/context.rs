@@ -444,7 +444,7 @@ pub struct CheckerContext<'a> {
     // --- DefId Migration Infrastructure ---
     /// Storage for type definitions (interfaces, classes, type aliases).
     /// Part of the DefId migration to decouple Solver from Binder.
-    pub definition_store: Rc<DefinitionStore>,
+    pub definition_store: Arc<DefinitionStore>,
 
     /// Mapping from Binder SymbolId to Solver DefId.
     /// Used during migration to avoid creating duplicate DefIds for the same symbol.
@@ -702,7 +702,132 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: Rc::new(DefinitionStore::new()),
+            definition_store: Arc::new(DefinitionStore::new()),
+            symbol_to_def: RefCell::new(FxHashMap::default()),
+            def_to_symbol: RefCell::new(FxHashMap::default()),
+            def_type_params: RefCell::new(FxHashMap::default()),
+            def_no_type_params: RefCell::new(FxHashSet::default()),
+            abstract_constructor_types: FxHashSet::default(),
+            protected_constructor_types: FxHashSet::default(),
+            private_constructor_types: FxHashSet::default(),
+            cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
+            all_arenas: None,
+            all_binders: None,
+            resolved_module_paths: None,
+            current_file_idx: 0,
+            resolved_modules: None,
+            module_augmentation_value_decls: FxHashMap::default(),
+            is_external_module_by_file: None,
+            resolved_module_errors: None,
+            import_resolution_stack: Vec::new(),
+            type_only_nodes: FxHashSet::default(),
+            lib_contexts: Vec::new(),
+            actual_lib_file_count: 0,
+            flow_graph,
+            async_depth: 0,
+            inside_closure_depth: 0,
+            in_const_assertion: false,
+            iteration_depth: 0,
+            switch_depth: 0,
+            function_depth: 0,
+            label_stack: Vec::new(),
+            had_outer_loop: false,
+            suppress_definite_assignment_errors: false,
+            js_body_uses_arguments: false,
+            emitted_ts2454_errors: FxHashSet::default(),
+            type_resolution_fuel: RefCell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
+            fuel_exhausted: RefCell::new(false),
+            typeof_resolution_stack: RefCell::new(FxHashSet::default()),
+        }
+    }
+
+    /// Create a new CheckerContext with a shared DefinitionStore.
+    ///
+    /// This allows multiple contexts (e.g., main file + lib files) to share the same
+    /// DefId namespace, preventing DefId collisions where different symbols would
+    /// otherwise get the same DefId from independent stores.
+    ///
+    /// # Arguments
+    /// * `definition_store` - Shared DefinitionStore (wrapped in Arc for thread-safety)
+    /// * Other args same as `new()`
+    pub fn new_with_shared_def_store(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: CheckerOptions,
+        definition_store: Arc<DefinitionStore>,
+    ) -> Self {
+        let compiler_options = compiler_options.apply_strict_defaults();
+        types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
+        // Create flow graph from the binder's flow nodes
+        let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
+
+        CheckerContext {
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            report_unresolved_imports: false,
+            symbol_types: FxHashMap::default(),
+            symbol_instance_types: FxHashMap::default(),
+            var_decl_types: FxHashMap::default(),
+            node_types: FxHashMap::default(),
+            relation_cache: RefCell::new(FxHashMap::default()),
+            type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            application_eval_cache: FxHashMap::default(),
+            application_eval_set: FxHashSet::default(),
+            mapped_eval_cache: FxHashMap::default(),
+            mapped_eval_set: FxHashSet::default(),
+            object_spread_property_cache: FxHashMap::default(),
+            object_spread_property_set: FxHashSet::default(),
+            element_access_type_cache: FxHashMap::default(),
+            element_access_type_set: FxHashSet::default(),
+            flow_analysis_cache: RefCell::new(FxHashMap::default()),
+            application_symbols_resolved: FxHashSet::default(),
+            application_symbols_resolution_set: FxHashSet::default(),
+            contains_infer_types_true: FxHashSet::default(),
+            contains_infer_types_false: FxHashSet::default(),
+            class_instance_type_to_decl: FxHashMap::default(),
+            class_instance_type_cache: FxHashMap::default(),
+            symbol_dependencies: FxHashMap::default(),
+            symbol_dependency_stack: Vec::new(),
+            referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            written_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            destructured_bindings: FxHashMap::default(),
+            next_binding_group_id: 0,
+            has_parse_errors: false,
+            diagnostics: Vec::new(),
+            emitted_diagnostics: FxHashSet::default(),
+            modules_with_ts2307_emitted: FxHashSet::default(),
+            symbol_resolution_stack: Vec::new(),
+            symbol_resolution_set: FxHashSet::default(),
+            symbol_resolution_depth: Cell::new(0),
+            max_symbol_resolution_depth: 50,
+            class_instance_resolution_set: FxHashSet::default(),
+            class_constructor_resolution_set: FxHashSet::default(),
+            inheritance_graph: tsz_solver::inheritance::InheritanceGraph::new(),
+            node_resolution_stack: Vec::new(),
+            node_resolution_set: FxHashSet::default(),
+            type_parameter_scope: FxHashMap::default(),
+            contextual_type: None,
+            is_checking_statements: false,
+            in_destructuring_target: false,
+            skip_flow_narrowing: false,
+            instantiation_depth: RefCell::new(0),
+            depth_exceeded: RefCell::new(false),
+            recursion_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CheckerRecursion,
+            )),
+            call_depth: RefCell::new(tsz_solver::recursion::DepthCounter::with_profile(
+                tsz_solver::recursion::RecursionProfile::CallResolution,
+            )),
+            return_type_stack: Vec::new(),
+            this_type_stack: Vec::new(),
+            enclosing_class: None,
+            type_env: RefCell::new(TypeEnvironment::new()),
+            definition_store, // Use the shared store instead of creating new
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
@@ -817,7 +942,7 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: Rc::new(DefinitionStore::new()),
+            definition_store: Arc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
@@ -935,7 +1060,7 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: Rc::new(DefinitionStore::new()),
+            definition_store: Arc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),
@@ -1052,7 +1177,7 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: Rc::new(DefinitionStore::new()),
+            definition_store: Arc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),

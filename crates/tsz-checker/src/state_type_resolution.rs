@@ -120,7 +120,11 @@ impl<'a> CheckerState<'a> {
 
                 // For `import * as x from "m"; type T = x.A`, apply module augmentations
                 // to the referenced member type (A) using the module specifier from `x`.
-                if let Some(qn) = self.ctx.arena.get(type_name_idx).and_then(|n| self.ctx.arena.get_qualified_name(n))
+                if let Some(qn) = self
+                    .ctx
+                    .arena
+                    .get(type_name_idx)
+                    .and_then(|n| self.ctx.arena.get_qualified_name(n))
                     && let Some(right_node) = self.ctx.arena.get(qn.right)
                     && let Some(right_ident) = self.ctx.arena.get_identifier(right_node)
                     && let Some(left_node) = self.ctx.arena.get(qn.left)

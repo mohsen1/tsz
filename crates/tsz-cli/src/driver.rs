@@ -2220,6 +2220,11 @@ fn collect_diagnostics(
     // 2. Cached (watch mode): Sequential work queue with export-hash-based
     //    dependency cascade for incremental invalidation.
 
+    // Create a shared DefinitionStore to prevent DefId collisions across files/libs.
+    // All CheckerContexts must share this store to ensure unique DefIds.
+    // Use Arc instead of Rc for thread-safety in parallel checking.
+    let shared_def_store = std::sync::Arc::new(tsz_solver::def::DefinitionStore::new());
+
     if cache.is_none() {
         // --- PARALLEL PATH: No cache, check all files concurrently ---
         let _parallel_span =
@@ -2421,12 +2426,13 @@ fn collect_diagnostics(
                     compiler_options,
                 )
             } else {
-                CheckerState::new(
+                CheckerState::new_with_shared_def_store(
                     &file.arena,
                     &binder,
                     &query_cache,
                     file.file_name.clone(),
                     compiler_options,
+                    std::sync::Arc::clone(&shared_def_store),
                 )
             };
             checker.ctx.report_unresolved_imports = true;
