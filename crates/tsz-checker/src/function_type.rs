@@ -696,60 +696,60 @@ impl<'a> CheckerState<'a> {
     }
 
     fn contextual_type_params_from_expected(&self, expected: TypeId) -> Option<Vec<TypeParamInfo>> {
-        use tsz_solver::TypeKey;
+        use tsz_solver::type_queries::{
+            get_callable_shape, get_function_shape, get_type_application, get_union_members,
+        };
 
-        match self.ctx.types.lookup(expected) {
-            Some(TypeKey::Function(shape_id)) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                if shape.type_params.is_empty() {
-                    None
-                } else {
-                    Some(shape.type_params.clone())
-                }
-            }
-            Some(TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.call_signatures.len() != 1 {
-                    return None;
-                }
-                let sig = &shape.call_signatures[0];
-                if sig.type_params.is_empty() {
-                    None
-                } else {
-                    Some(sig.type_params.clone())
-                }
-            }
-            Some(TypeKey::Application(app_id)) => {
-                let app = self.ctx.types.type_application(app_id);
-                self.contextual_type_params_from_expected(app.base)
-            }
-            Some(TypeKey::Union(list_id)) => {
-                let members = self.ctx.types.type_list(list_id);
-                if members.is_empty() {
-                    return None;
-                }
-
-                let mut candidate: Option<Vec<TypeParamInfo>> = None;
-                for &member in members.iter() {
-                    let params = self.contextual_type_params_from_expected(member)?;
-                    if let Some(existing) = &candidate {
-                        if existing.len() != params.len()
-                            || existing
-                                .iter()
-                                .zip(params.iter())
-                                .any(|(left, right)| left != right)
-                        {
-                            return None;
-                        }
-                    } else {
-                        candidate = Some(params);
-                    }
-                }
-
-                candidate
-            }
-            _ => None,
+        if let Some(shape) = get_function_shape(self.ctx.types, expected) {
+            return if shape.type_params.is_empty() {
+                None
+            } else {
+                Some(shape.type_params.clone())
+            };
         }
+
+        if let Some(shape) = get_callable_shape(self.ctx.types, expected) {
+            if shape.call_signatures.len() != 1 {
+                return None;
+            }
+            let sig = &shape.call_signatures[0];
+            return if sig.type_params.is_empty() {
+                None
+            } else {
+                Some(sig.type_params.clone())
+            };
+        }
+
+        if let Some(app) = get_type_application(self.ctx.types, expected) {
+            return self.contextual_type_params_from_expected(app.base);
+        }
+
+        if let Some(members) = get_union_members(self.ctx.types, expected) {
+            if members.is_empty() {
+                return None;
+            }
+
+            let mut candidate: Option<Vec<TypeParamInfo>> = None;
+            for &member in members.iter() {
+                let params = self.contextual_type_params_from_expected(member)?;
+                if let Some(existing) = &candidate {
+                    if existing.len() != params.len()
+                        || existing
+                            .iter()
+                            .zip(params.iter())
+                            .any(|(left, right)| left != right)
+                    {
+                        return None;
+                    }
+                } else {
+                    candidate = Some(params);
+                }
+            }
+
+            return candidate;
+        }
+
+        None
     }
 
     /// Check if a function body references the `arguments` object.
