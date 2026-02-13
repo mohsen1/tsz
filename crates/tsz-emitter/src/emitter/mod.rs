@@ -2010,19 +2010,20 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
-        // Filter out comments that are leading trivia for erased declarations
-        // (interfaces, type aliases). These should not appear in JS output.
-        // Node positions in tsz don't include leading trivia (node.pos is at the
-        // actual token start), so we find comments between the previous statement's
-        // end and the erased node's pos.
+        // Filter out comments associated with erased declarations
+        // (interfaces, type aliases). TSC strips both the declaration body
+        // and its leading trivia (comments directly before it). However,
+        // file-level comments before any declarations are preserved.
+        // We use prev_end to track the previous statement's end position;
+        // for the first statement, we use node.pos to preserve file-level comments.
         if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
             let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
-            let mut prev_end: u32 = 0;
+            let mut prev_end: Option<u32> = None;
             for &stmt_idx in &source.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
                     let mut is_erased = false;
 
-                    // Check if statement is directly an interface or type alias
+                    // Check if statement is a type-only declaration (erased in JS)
                     if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                         || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     {
@@ -2042,13 +2043,14 @@ impl<'a> Printer<'a> {
                     }
 
                     if is_erased {
-                        // Filter comments in the entire span of the erased declaration,
-                        // including leading trivia (from prev_end to node end).
-                        // This ensures comments before type-only declarations don't leak
-                        // into the JavaScript output.
-                        erased_ranges.push((prev_end, stmt_node.end));
+                        // For the first statement, use node.pos to preserve file-level
+                        // comments before any declarations. For subsequent statements,
+                        // use prev_end to also strip leading trivia (comments between
+                        // the previous statement and this erased declaration).
+                        let range_start = prev_end.unwrap_or(stmt_node.pos);
+                        erased_ranges.push((range_start, stmt_node.end));
                     }
-                    prev_end = stmt_node.end;
+                    prev_end = Some(stmt_node.end);
                 }
             }
             if !erased_ranges.is_empty() {
