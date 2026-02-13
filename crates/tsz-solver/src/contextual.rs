@@ -953,7 +953,11 @@ impl<'a> ContextualTypeContext<'a> {
             } else if prop_types.len() == 1 {
                 Some(prop_types[0])
             } else {
-                Some(self.interner.union(prop_types))
+                // CRITICAL: Use union_preserve_members to keep literal types intact
+                // For discriminated unions like `{ success: false } | { success: true }`,
+                // the property type should be `false | true`, NOT widened to `boolean`.
+                // This preserves literal types for contextual typing.
+                Some(self.interner.union_preserve_members(prop_types))
             };
         }
 
