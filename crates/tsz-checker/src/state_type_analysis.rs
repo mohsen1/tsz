@@ -2726,6 +2726,9 @@ impl<'a> CheckerState<'a> {
                     // Fall back to cross-file resolution if local lookup fails
                     .or_else(|| self.resolve_cross_file_export(module_name, export_name))
                     .or_else(|| {
+                        self.resolve_named_export_via_export_equals(module_name, export_name)
+                    })
+                    .or_else(|| {
                         let mut visited_aliases = Vec::new();
                         self.resolve_reexported_member_symbol(
                             module_name,
@@ -2765,6 +2768,20 @@ impl<'a> CheckerState<'a> {
                             "[DEBUG] ALIAS"
                         );
                     }
+                    return (result, Vec::new());
+                }
+
+                // Module augmentations can introduce named exports that don't appear
+                // in the base module export table. Treat those names as resolvable.
+                if self
+                    .ctx
+                    .binder
+                    .module_augmentations
+                    .get(module_name)
+                    .is_some_and(|augs| augs.iter().any(|aug| aug.name == *export_name))
+                {
+                    let mut result = TypeId::ANY;
+                    result = self.apply_module_augmentations(module_name, export_name, result);
                     return (result, Vec::new());
                 }
 

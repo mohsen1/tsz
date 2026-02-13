@@ -77,6 +77,17 @@ impl<'a> CheckerState<'a> {
         exports_table: &tsz_binder::SymbolTable,
         import_name: &str,
     ) -> bool {
+        let symbol_has_named_member = |symbol: &tsz_binder::Symbol, member_name: &str| {
+            symbol
+                .exports
+                .as_ref()
+                .is_some_and(|exports| exports.has(member_name))
+                || symbol
+                    .members
+                    .as_ref()
+                    .is_some_and(|members| members.has(member_name))
+        };
+
         let Some(export_equals_sym) = exports_table.get("export=") else {
             return false;
         };
@@ -137,21 +148,55 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        candidate_symbol_ids.into_iter().any(|sym_id| {
-            self.ctx
+        let mut seen_symbol_ids = rustc_hash::FxHashSet::default();
+
+        for sym_id in candidate_symbol_ids {
+            if !seen_symbol_ids.insert(sym_id) {
+                continue;
+            }
+
+            let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+                continue;
+            };
+
+            if symbol_has_named_member(symbol, import_name) {
+                return true;
+            }
+
+            // Some binder paths keep function/class + namespace merges split across
+            // sibling symbols with the same escaped name. Probe those namespace-shaped
+            // siblings as a fallback for `export =` member lookup.
+            for candidate_id in self
+                .ctx
                 .binder
-                .get_symbol_with_libs(sym_id, &lib_binders)
-                .is_some_and(|symbol| {
-                    symbol
-                        .exports
-                        .as_ref()
-                        .is_some_and(|exports| exports.has(import_name))
-                        || symbol
-                            .members
-                            .as_ref()
-                            .is_some_and(|members| members.has(import_name))
-                })
-        })
+                .get_symbols()
+                .find_all_by_name(&symbol.escaped_name)
+            {
+                if !seen_symbol_ids.insert(candidate_id) {
+                    continue;
+                }
+                let Some(candidate_symbol) = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(candidate_id, &lib_binders)
+                else {
+                    continue;
+                };
+                if (candidate_symbol.flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE))
+                    == 0
+                {
+                    continue;
+                }
+                if symbol_has_named_member(candidate_symbol, import_name) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     // =========================================================================

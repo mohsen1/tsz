@@ -2063,6 +2063,169 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Resolve a named export through an `export =` target's members.
+    ///
+    /// This supports declaration patterns like:
+    /// `declare module "m" { namespace e { interface X {} } export = e }`
+    /// where `import { X } from "m"` should resolve via the export-assignment target.
+    pub(crate) fn resolve_named_export_via_export_equals(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let module_specifier_candidates = |specifier: &str| -> Vec<String> {
+            let mut candidates = Vec::with_capacity(5);
+            let mut push_unique = |value: String| {
+                if !candidates.contains(&value) {
+                    candidates.push(value);
+                }
+            };
+
+            push_unique(specifier.to_string());
+
+            let trimmed = specifier.trim().trim_matches('"').trim_matches('\'');
+            if trimmed != specifier {
+                push_unique(trimmed.to_string());
+            }
+            if !trimmed.is_empty() {
+                push_unique(format!("\"{trimmed}\""));
+                push_unique(format!("'{trimmed}'"));
+                if trimmed.contains('\\') {
+                    push_unique(trimmed.replace('\\', "/"));
+                }
+            }
+
+            candidates
+        };
+
+        let symbol_export_named_member =
+            |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<tsz_binder::SymbolId> {
+                if let Some(exports) = symbol.exports.as_ref()
+                    && let Some(sym_id) = exports.get(member_name)
+                {
+                    return Some(sym_id);
+                }
+                if let Some(members) = symbol.members.as_ref()
+                    && let Some(sym_id) = members.get(member_name)
+                {
+                    return Some(sym_id);
+                }
+                None
+            };
+
+        let lookup_symbol = |sym_id: tsz_binder::SymbolId| -> Option<&tsz_binder::Symbol> {
+            if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                return Some(sym);
+            }
+            self.ctx
+                .all_binders
+                .as_ref()
+                .and_then(|binders| binders.iter().find_map(|binder| binder.get_symbol(sym_id)))
+        };
+
+        let lookup_by_name = |name: &str| -> Vec<tsz_binder::SymbolId> {
+            let mut result = self.ctx.binder.get_symbols().find_all_by_name(name);
+            if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                for binder in all_binders.iter() {
+                    for sym_id in binder.get_symbols().find_all_by_name(name) {
+                        if !result.contains(&sym_id) {
+                            result.push(sym_id);
+                        }
+                    }
+                }
+            }
+            result
+        };
+
+        let resolve_from_exports =
+            |exports: &tsz_binder::SymbolTable| -> Option<tsz_binder::SymbolId> {
+                let export_equals_sym = exports.get("export=")?;
+                let export_equals_symbol = lookup_symbol(export_equals_sym)?;
+
+                if let Some(sym_id) = symbol_export_named_member(export_equals_symbol, export_name)
+                {
+                    return Some(sym_id);
+                }
+
+                // Namespace-merge fallback (function/class + namespace split symbols).
+                let candidates = lookup_by_name(&export_equals_symbol.escaped_name);
+                for candidate_id in candidates {
+                    let Some(candidate_symbol) = lookup_symbol(candidate_id) else {
+                        continue;
+                    };
+                    if (candidate_symbol.flags
+                        & (symbol_flags::MODULE
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE))
+                        == 0
+                    {
+                        continue;
+                    }
+                    if let Some(sym_id) = symbol_export_named_member(candidate_symbol, export_name)
+                    {
+                        return Some(sym_id);
+                    }
+                }
+
+                None
+            };
+
+        for candidate in module_specifier_candidates(module_specifier) {
+            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate)
+                && let Some(sym_id) = resolve_from_exports(exports)
+            {
+                return Some(sym_id);
+            }
+            if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                for binder in all_binders.iter() {
+                    if let Some(exports) = binder.module_exports.get(&candidate)
+                        && let Some(sym_id) = resolve_from_exports(exports)
+                    {
+                        return Some(sym_id);
+                    }
+                }
+            }
+        }
+
+        if let Some(target_idx) = self.ctx.resolve_import_target(module_specifier)
+            && let Some(target_binder) = self.ctx.get_binder_for_file(target_idx)
+        {
+            if let Some(target_file_name) = self
+                .ctx
+                .get_arena_for_file(target_idx as u32)
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone())
+                && let Some(exports) = target_binder.module_exports.get(&target_file_name)
+                && let Some(sym_id) = resolve_from_exports(exports)
+            {
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow_mut()
+                    .insert(sym_id, target_idx);
+                return Some(sym_id);
+            }
+
+            if let Some(exports) = target_binder.module_exports.get(module_specifier)
+                && let Some(sym_id) = resolve_from_exports(exports)
+            {
+                self.ctx
+                    .cross_file_symbol_targets
+                    .borrow_mut()
+                    .insert(sym_id, target_idx);
+                return Some(sym_id);
+            }
+        }
+
+        if let Some(exports) = self.resolve_cross_file_namespace_exports(module_specifier)
+            && let Some(sym_id) = resolve_from_exports(&exports)
+        {
+            return Some(sym_id);
+        }
+
+        None
+    }
+
     fn module_has_export_assignment_declaration(&self, module_specifier: &str) -> bool {
         self.ctx
             .resolve_import_target(module_specifier)

@@ -865,8 +865,12 @@ impl<'a> CheckerState<'a> {
         module_spec: &str,
         interface_name: &str,
     ) -> Vec<tsz_solver::PropertyInfo> {
-        use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+        use tsz_parser::parser::syntax_kind_ext::{
+            EXPORT_DECLARATION, FUNCTION_DECLARATION, INTERFACE_DECLARATION, METHOD_SIGNATURE,
+            MODULE_BLOCK, MODULE_DECLARATION, PROPERTY_SIGNATURE, VARIABLE_STATEMENT,
+        };
         use tsz_solver::PropertyInfo;
+        use tsz_solver::TypeId;
 
         let augmentation_decls =
             self.get_module_augmentation_declarations(module_spec, interface_name);
@@ -875,45 +879,257 @@ impl<'a> CheckerState<'a> {
 
         for augmentation in augmentation_decls {
             // Use the stored arena from the augmentation (cross-file resolution)
-            let Some(arena) = augmentation.arena.as_ref() else {
-                continue;
-            };
+            let arena = augmentation.arena.as_deref().unwrap_or(self.ctx.arena);
 
             let Some(node) = arena.get(augmentation.node) else {
                 continue;
             };
 
-            let Some(interface) = arena.get_interface(node) else {
-                continue;
-            };
+            if let Some(interface) = arena.get_interface(node) {
+                // Extract members from interface augmentations.
+                for &member_idx in &interface.members.nodes {
+                    let Some(member_node) = arena.get(member_idx) else {
+                        continue;
+                    };
 
-            // Extract members from the augmentation interface
-            for &member_idx in &interface.members.nodes {
-                let Some(member_node) = arena.get(member_idx) else {
-                    continue;
-                };
-
-                if member_node.kind == PROPERTY_SIGNATURE || member_node.kind == METHOD_SIGNATURE {
-                    if let Some(sig) = arena.get_signature(member_node)
-                        && let Some(name_node) = arena.get(sig.name)
-                        && let Some(id_data) = arena.get_identifier(name_node)
+                    if member_node.kind == PROPERTY_SIGNATURE
+                        || member_node.kind == METHOD_SIGNATURE
                     {
-                        let type_id = if !sig.type_annotation.is_none() {
-                            self.get_type_of_node(sig.type_annotation)
-                        } else {
-                            tsz_solver::TypeId::ANY
-                        };
+                        if let Some(sig) = arena.get_signature(member_node)
+                            && let Some(name_node) = arena.get(sig.name)
+                            && let Some(id_data) = arena.get_identifier(name_node)
+                        {
+                            let type_id = if !sig.type_annotation.is_none()
+                                && std::ptr::eq(arena, self.ctx.arena)
+                            {
+                                self.get_type_of_node(sig.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            };
 
-                        members.push(PropertyInfo {
-                            name: self.ctx.types.intern_string(&id_data.escaped_text),
-                            type_id,
-                            write_type: type_id,
-                            optional: sig.question_token,
-                            readonly: self.has_readonly_modifier(&sig.modifiers),
-                            is_method: member_node.kind == METHOD_SIGNATURE,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                        });
+                            members.push(PropertyInfo {
+                                name: self.ctx.types.intern_string(&id_data.escaped_text),
+                                type_id,
+                                write_type: type_id,
+                                optional: sig.question_token,
+                                readonly: self.has_readonly_modifier(&sig.modifiers),
+                                is_method: member_node.kind == METHOD_SIGNATURE,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            });
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Namespace/module augmentations contribute value members.
+            if node.kind == MODULE_DECLARATION
+                && let Some(module_decl) = arena.get_module(node)
+                && !module_decl.body.is_none()
+                && let Some(body_node) = arena.get(module_decl.body)
+                && body_node.kind == MODULE_BLOCK
+                && let Some(block) = arena.get_module_block(body_node)
+                && let Some(statements) = block.statements.as_ref()
+            {
+                for &stmt_idx in &statements.nodes {
+                    let Some(stmt_node) = arena.get(stmt_idx) else {
+                        continue;
+                    };
+
+                    match stmt_node.kind {
+                        VARIABLE_STATEMENT => {
+                            if let Some(var_stmt) = arena.get_variable(stmt_node) {
+                                for &decl_idx in &var_stmt.declarations.nodes {
+                                    if let Some(list_node) = arena.get(decl_idx)
+                                        && let Some(decl_list) = arena.get_variable(list_node)
+                                    {
+                                        for &inner_decl_idx in &decl_list.declarations.nodes {
+                                            let Some(decl_node) = arena.get(inner_decl_idx) else {
+                                                continue;
+                                            };
+                                            let Some(decl) =
+                                                arena.get_variable_declaration(decl_node)
+                                            else {
+                                                continue;
+                                            };
+                                            let Some(name_node) = arena.get(decl.name) else {
+                                                continue;
+                                            };
+                                            let Some(id_data) = arena.get_identifier(name_node)
+                                            else {
+                                                continue;
+                                            };
+
+                                            let type_id = if !decl.type_annotation.is_none()
+                                                && std::ptr::eq(arena, self.ctx.arena)
+                                            {
+                                                self.get_type_of_node(decl.type_annotation)
+                                            } else {
+                                                TypeId::ANY
+                                            };
+
+                                            members.push(PropertyInfo {
+                                                name: self
+                                                    .ctx
+                                                    .types
+                                                    .intern_string(&id_data.escaped_text),
+                                                type_id,
+                                                write_type: type_id,
+                                                optional: false,
+                                                readonly: false,
+                                                is_method: false,
+                                                visibility: Visibility::Public,
+                                                parent_id: None,
+                                            });
+                                        }
+                                    } else if let Some(decl_node) = arena.get(decl_idx)
+                                        && let Some(decl) =
+                                            arena.get_variable_declaration(decl_node)
+                                        && let Some(name_node) = arena.get(decl.name)
+                                        && let Some(id_data) = arena.get_identifier(name_node)
+                                    {
+                                        let type_id = if !decl.type_annotation.is_none()
+                                            && std::ptr::eq(arena, self.ctx.arena)
+                                        {
+                                            self.get_type_of_node(decl.type_annotation)
+                                        } else {
+                                            TypeId::ANY
+                                        };
+
+                                        members.push(PropertyInfo {
+                                            name: self
+                                                .ctx
+                                                .types
+                                                .intern_string(&id_data.escaped_text),
+                                            type_id,
+                                            write_type: type_id,
+                                            optional: false,
+                                            readonly: false,
+                                            is_method: false,
+                                            visibility: Visibility::Public,
+                                            parent_id: None,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        FUNCTION_DECLARATION => {
+                            if let Some(func) = arena.get_function(stmt_node)
+                                && let Some(name_node) = arena.get(func.name)
+                                && let Some(id_data) = arena.get_identifier(name_node)
+                            {
+                                members.push(PropertyInfo {
+                                    name: self.ctx.types.intern_string(&id_data.escaped_text),
+                                    type_id: TypeId::ANY,
+                                    write_type: TypeId::ANY,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: true,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
+                                });
+                            }
+                        }
+                        INTERFACE_DECLARATION => {
+                            if let Some(iface) = arena.get_interface(stmt_node)
+                                && let Some(name_node) = arena.get(iface.name)
+                                && let Some(id_data) = arena.get_identifier(name_node)
+                            {
+                                members.push(PropertyInfo {
+                                    name: self.ctx.types.intern_string(&id_data.escaped_text),
+                                    type_id: TypeId::ANY,
+                                    write_type: TypeId::ANY,
+                                    optional: false,
+                                    readonly: false,
+                                    is_method: false,
+                                    visibility: Visibility::Public,
+                                    parent_id: None,
+                                });
+                            }
+                        }
+                        EXPORT_DECLARATION => {
+                            if let Some(export_decl) = arena.get_export_decl(stmt_node)
+                                && !export_decl.export_clause.is_none()
+                                && let Some(clause_node) = arena.get(export_decl.export_clause)
+                                && clause_node.kind == VARIABLE_STATEMENT
+                                && let Some(var_stmt) = arena.get_variable(clause_node)
+                            {
+                                for &decl_idx in &var_stmt.declarations.nodes {
+                                    if let Some(list_node) = arena.get(decl_idx)
+                                        && let Some(decl_list) = arena.get_variable(list_node)
+                                    {
+                                        for &inner_decl_idx in &decl_list.declarations.nodes {
+                                            let Some(decl_node) = arena.get(inner_decl_idx) else {
+                                                continue;
+                                            };
+                                            let Some(decl) =
+                                                arena.get_variable_declaration(decl_node)
+                                            else {
+                                                continue;
+                                            };
+                                            let Some(name_node) = arena.get(decl.name) else {
+                                                continue;
+                                            };
+                                            let Some(id_data) = arena.get_identifier(name_node)
+                                            else {
+                                                continue;
+                                            };
+
+                                            let type_id = if !decl.type_annotation.is_none()
+                                                && std::ptr::eq(arena, self.ctx.arena)
+                                            {
+                                                self.get_type_of_node(decl.type_annotation)
+                                            } else {
+                                                TypeId::ANY
+                                            };
+
+                                            members.push(PropertyInfo {
+                                                name: self
+                                                    .ctx
+                                                    .types
+                                                    .intern_string(&id_data.escaped_text),
+                                                type_id,
+                                                write_type: type_id,
+                                                optional: false,
+                                                readonly: false,
+                                                is_method: false,
+                                                visibility: Visibility::Public,
+                                                parent_id: None,
+                                            });
+                                        }
+                                    } else if let Some(decl_node) = arena.get(decl_idx)
+                                        && let Some(decl) =
+                                            arena.get_variable_declaration(decl_node)
+                                        && let Some(name_node) = arena.get(decl.name)
+                                        && let Some(id_data) = arena.get_identifier(name_node)
+                                    {
+                                        let type_id = if !decl.type_annotation.is_none()
+                                            && std::ptr::eq(arena, self.ctx.arena)
+                                        {
+                                            self.get_type_of_node(decl.type_annotation)
+                                        } else {
+                                            TypeId::ANY
+                                        };
+
+                                        members.push(PropertyInfo {
+                                            name: self
+                                                .ctx
+                                                .types
+                                                .intern_string(&id_data.escaped_text),
+                                            type_id,
+                                            write_type: type_id,
+                                            optional: false,
+                                            readonly: false,
+                                            is_method: false,
+                                            visibility: Visibility::Public,
+                                            parent_id: None,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
