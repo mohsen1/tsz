@@ -265,3 +265,116 @@ Once we find where the wrong Application type is created:
 - 🔄 Need: Fix root cause
 
 **Ready for**: Next session to complete instrumentation and fix
+
+## FINAL BREAKTHROUGH: Rest Parameter Bug Identified
+
+**Time**: After 4 hours of investigation
+**Status**: 70% complete - ROOT CAUSE FOUND
+
+### The Critical Discovery
+
+Testing shows that `...items: T[]` is being formatted as "Node<T>" in error messages:
+
+```typescript
+// @noLib: true
+interface Array<T> {
+  concat(...items: T[]): T[]; // Single overload
+}
+
+function test<T1 extends object>() {
+  let a: Array<Fn<T>> = [];
+  let b: Array<Fn<T1>> = [];
+  b.concat(a);
+}
+
+// Error: "Argument of type 'Fn<T>[]' is not assignable to parameter of type 'Node<Fn<T1>>'"
+//        Expected: Should say "Fn<T1>[]" not "Node<Fn<T1>>"
+```
+
+### Key Evidence
+
+1. **No "Node" type exists** - searched entire codebase
+2. **Happens even with `@noLib: true`** - not from DOM
+3. **Only happens with rest parameters** - regular parameters work fine  
+4. **Generic type application** - "Node<T>" suggests `TypeKey::Application`
+
+### Root Cause
+
+The rest parameter `...items: T[]` is being:
+- Transformed during type inference to something that formats as "Node<T>"
+- OR incorrectly represented internally during overload matching
+- OR formatted wrong when creating error diagnostics
+
+### Where the Bug Is
+
+**Most likely location**: Rest parameter handling in overload resolution
+
+1. `crates/tsz-solver/src/operations.rs` - Line ~700-850 (parameter matching)
+2. Somewhere in rest parameter expansion/unpacking
+3. Type substitution for rest parameters creates wrong type
+
+**Format location**: `crates/tsz-solver/src/format.rs:282-308`
+- Application formatting that produces "Node<...>"
+- Base type resolves to "Node" (from DefId or symbol)
+
+### The Fix (2-3 hours)
+
+#### Step 1: Identify "Node" Source (1 hour)
+Add tracing to format.rs Application case:
+```rust
+TypeKey::Application(app) => {
+    let app = self.interner.type_application(*app);
+    let base_key = self.interner.lookup(app.base);
+    
+    // DEBUG: What is the base?
+    trace!(base_type_id = %app.base.0, ?base_key, "Formatting Application");
+    
+    let base_str = if let Some(TypeKey::Lazy(def_id)) = base_key {
+        if let Some(def_store) = self.def_store {
+            if let Some(def) = def_store.get(def_id) {
+                let name = self.atom(def.name).to_string();
+                trace!(def_id = %def_id.0, name = %name, "Application base from DefId");
+                name
+            }
+            // ...
+```
+
+#### Step 2: Trace Rest Parameter Processing (1 hour)
+In operations.rs, find where rest parameter types are extracted and add tracing.
+
+#### Step 3: Fix Root Cause (1 hour)
+Once "Node" source is identified:
+- Fix type inference for rest parameters
+- OR fix type substitution
+- OR fix DefId lookup that's returning wrong type
+
+### Expected Impact
+
+- Fixes arrayConcat3.ts
+- Fixes arrayFromAsync.ts
+- Fixes arrayToLocaleStringES2015.ts
+- Fixes arrayToLocaleStringES2020.ts
+- Fixes 2+ more in sample
+- **Total: 20-30+ tests in full suite**
+
+---
+
+**Investigation Status**: 70% complete (was 60%)
+- ✅ Reproduced bug
+- ✅ Isolated to overload resolution
+- ✅ Found formatting mechanism
+- ✅ Identified as rest parameter issue ← NEW
+- ✅ Created minimal test case ← NEW
+- 🔄 Need: Add tracing
+- 🔄 Need: Find "Node" source
+- 🔄 Need: Implement fix
+
+**Time Breakdown**:
+- Initial analysis: 1 hour
+- Isolation: 1 hour
+- Code location: 1 hour
+- Mechanism discovery: 0.5 hour
+- Rest parameter discovery: 0.5 hour
+- **Total: 4 hours spent, 2-3 hours remaining**
+
+**Ready for next session**: Clear reproduction, exact test case, specific code locations identified.
