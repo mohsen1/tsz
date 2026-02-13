@@ -18,23 +18,18 @@
 
 ## Failing Tests (5 only!)
 
-### Complex Architectural Issues (8 tests)
+### Complex Architectural Issues (5 tests)
 1. `ambiguousGenericAssertion1.ts` - Parser ambiguity (TS1434 vs TS2304)
-2. `amdDeclarationEmitNoExtraDeclare.ts` - Declaration emit + AMD (TS2322, TS2345)
-3. `amdLikeInputDeclarationEmit.ts` - AMD declaration (TS2339)
-4. `amdModuleConstEnumUsage.ts` - Module resolution bug (TS2339)
-5. `anonClassDeclarationEmitIsAnon.ts` - Declaration emit (TS2345)
-6. `argumentsObjectIterator02_ES5.ts` - Lib file bug (TS2488)
-7. `argumentsObjectIterator02_ES6.ts` - Lib file bug (TS2488)
-8. `argumentsReferenceInFunction1_Js.ts` - Missing implementations (TS2345, TS7006)
+2. `amdDeclarationEmitNoExtraDeclare.ts` - Declaration emit false positive (TS2322)
+3. `amdLikeInputDeclarationEmit.ts` - Declaration emit false positive (TS2339)
+4. `argumentsObjectIterator02_ES5.ts` - Lib file bug ES5 (TS2488)
+5. `argumentsReferenceInFunction1_Js.ts` - Missing implementations (TS2345, TS7006)
 
 ### Issue Categories
-- **Module Resolution**: 1 test (imported enums resolve to wrong types)
-- **Lib File Loading**: 2 tests (Symbol.iterator resolves incorrectly)
-- **Declaration Emit**: 3 tests (false positives with --declaration flag)
-- **JS Leniency**: 1 test (too strict on JS files)
+- **Declaration Emit**: 2 tests (false positives with AMD + --declaration)
+- **Lib File Loading**: 1 test (Symbol.iterator in ES5)
 - **Parser**: 1 test (ambiguity edge case)
-- **Missing Errors**: 1 test (needs new implementations)
+- **Missing Errors**: 1 test (JS strict mode implementations)
 
 ## Assessment
 
