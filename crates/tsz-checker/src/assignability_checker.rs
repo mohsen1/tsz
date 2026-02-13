@@ -558,6 +558,13 @@ impl<'a> CheckerState<'a> {
             && !self.should_skip_weak_union_error(source, target, source_idx)
     }
 
+    /// Check bidirectional assignability.
+    ///
+    /// Useful in checker locations that need type comparability/equivalence-like checks.
+    pub(crate) fn are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
+        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
+    }
+
     /// Check if source object literal has properties that don't exist in target.
     ///
     /// Uses TypeId-based freshness tracking (fresh object literals only).
