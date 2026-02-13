@@ -701,8 +701,15 @@ impl<'a> CheckerState<'a> {
                     false
                 };
 
-                if is_js_file && is_this_access {
-                    // Allow dynamic property on 'this' in JavaScript files
+                // When noImplicitAny is false (non-strict mode), accessing non-existent properties
+                // should return 'any' without error, matching TypeScript's behavior.
+                // This is consistent with how implicit any works for other contexts.
+                let allow_implicit_any = !self.ctx.no_implicit_any();
+
+                if (is_js_file && is_this_access) || allow_implicit_any {
+                    // Allow dynamic property access in:
+                    // - JavaScript files on 'this'
+                    // - Non-strict TypeScript files (noImplicitAny: false)
                     TypeId::ANY
                 } else {
                     // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere
