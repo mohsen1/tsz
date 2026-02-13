@@ -1441,37 +1441,37 @@ impl<'a> CheckerState<'a> {
             // is assignable to the narrowed sibling type
             let is_object = !sib_info.property_name.is_empty();
             remaining_members.retain(|&member| {
-                    let member_prop_type = if is_object {
-                        if let Some(shape) = get_object_shape(self.ctx.types, member) {
-                            shape
-                                .properties
-                                .iter()
-                                .find(|p| {
-                                    self.ctx.types.resolve_atom_ref(p.name).as_ref()
-                                        == sib_info.property_name
-                                })
-                                .map(|p| p.type_id)
-                        } else {
-                            None
-                        }
-                    } else if let Some(elems) = get_tuple_elements(self.ctx.types, member) {
-                        elems
-                            .get(sib_info.element_index as usize)
-                            .map(|e| e.type_id)
+                let member_prop_type = if is_object {
+                    if let Some(shape) = get_object_shape(self.ctx.types, member) {
+                        shape
+                            .properties
+                            .iter()
+                            .find(|p| {
+                                self.ctx.types.resolve_atom_ref(p.name).as_ref()
+                                    == sib_info.property_name
+                            })
+                            .map(|p| p.type_id)
                     } else {
                         None
-                    };
-
-                    if let Some(prop_type) = member_prop_type {
-                        // Keep this member if the sibling's narrowed type overlaps
-                        // with the member's property type
-                        prop_type == sib_narrowed
-                            || tsz_solver::is_subtype_of(self.ctx.types, sib_narrowed, prop_type)
-                            || tsz_solver::is_subtype_of(self.ctx.types, prop_type, sib_narrowed)
-                    } else {
-                        true // Keep if we can't determine
                     }
-                });
+                } else if let Some(elems) = get_tuple_elements(self.ctx.types, member) {
+                    elems
+                        .get(sib_info.element_index as usize)
+                        .map(|e| e.type_id)
+                } else {
+                    None
+                };
+
+                if let Some(prop_type) = member_prop_type {
+                    // Keep this member if the sibling's narrowed type overlaps
+                    // with the member's property type
+                    prop_type == sib_narrowed
+                        || tsz_solver::is_subtype_of(self.ctx.types, sib_narrowed, prop_type)
+                        || tsz_solver::is_subtype_of(self.ctx.types, prop_type, sib_narrowed)
+                } else {
+                    true // Keep if we can't determine
+                }
+            });
         }
 
         // If no members were filtered, no correlated narrowing happened

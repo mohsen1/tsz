@@ -238,6 +238,35 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Create a new CheckerState with a shared DefinitionStore.
+    ///
+    /// This ensures that all type definitions (interfaces, type aliases, etc.) across
+    /// different files and lib contexts share the same DefId namespace, preventing
+    /// DefId collisions.
+    ///
+    /// # Arguments
+    /// * `definition_store` - Shared DefinitionStore (wrapped in Arc for thread-safety)
+    /// * Other args same as `new()`
+    pub fn new_with_shared_def_store(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: CheckerOptions,
+        definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
+    ) -> Self {
+        CheckerState {
+            ctx: CheckerContext::new_with_shared_def_store(
+                arena,
+                binder,
+                types,
+                file_name,
+                compiler_options,
+                definition_store,
+            ),
+        }
+    }
+
     /// Create a new CheckerState with a persistent cache.
     /// This allows reusing type checking results from previous queries.
     ///
