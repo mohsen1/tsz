@@ -3158,11 +3158,15 @@ impl ParserState {
         let start_pos = self.token_pos();
 
         // Handle empty statement (semicolon) in class body - this is valid TypeScript/JavaScript
-        // A standalone semicolon in a class body is an empty class element
+        // A standalone semicolon in a class body is a SemicolonClassElement
         if self.is_token(SyntaxKind::SemicolonToken) {
-            // Consume the semicolon and return NONE (empty class element)
+            let end_pos = self.token_end();
             self.next_token();
-            return NodeIndex::NONE;
+            return self.arena.add_token(
+                syntax_kind_ext::SEMICOLON_CLASS_ELEMENT,
+                start_pos,
+                end_pos,
+            );
         }
 
         // Recovery: Handle stray statements in class bodies (common copy-paste error)
