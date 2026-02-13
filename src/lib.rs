@@ -572,6 +572,7 @@ impl CompilerOptions {
             no_unused_parameters: false,
             always_strict: strict,
             resolve_json_module: false, // WASM API: defaults to false
+            check_js: false,            // WASM API: defaults to false
         }
     }
 }

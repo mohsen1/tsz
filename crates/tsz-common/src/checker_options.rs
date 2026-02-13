@@ -74,6 +74,10 @@ pub struct CheckerOptions {
     /// When true, allows importing JSON files with `.json` extension.
     /// When false, importing JSON files emits TS2732 suggesting to enable this flag.
     pub resolve_json_module: bool,
+    /// When true, enable type checking in JavaScript files.
+    /// This corresponds to the --checkJs compiler flag.
+    /// With checkJs enabled, noImplicitAny and other type errors apply to .js files.
+    pub check_js: bool,
 }
 
 impl CheckerOptions {
