@@ -3513,6 +3513,20 @@ impl<'a> CheckerState<'a> {
             export_equals_sym
         };
 
+        // If alias resolution didn't fully resolve (symbol still only has ALIAS flag),
+        // we can't determine if it's type-only. Conservatively assume it's NOT type-only
+        // to avoid false TS2708 errors. This handles cases like:
+        //   declare module 'M' { import X = C; export = X; }
+        // where the export= -> X -> C chain can't be resolved across module boundaries.
+        if let Some(resolved_sym) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(resolved_export_equals, &lib_binders)
+            && resolved_sym.flags == symbol_flags::ALIAS
+        {
+            return false;
+        }
+
         if let Some(export_symbol) = self
             .ctx
             .binder
@@ -3527,17 +3541,26 @@ impl<'a> CheckerState<'a> {
             {
                 let mut has_runtime_value_member = false;
 
-                if let Some(exports) = export_symbol.exports.as_ref() {
-                    for (_, member_id) in exports.iter() {
-                        if let Some(member_symbol) = self
-                            .ctx
-                            .binder
-                            .get_symbol_with_libs(*member_id, &lib_binders)
-                            && (member_symbol.flags & symbol_flags::VALUE) != 0
-                            && !self.symbol_member_is_type_only(*member_id, None)
-                        {
-                            has_runtime_value_member = true;
-                            break;
+                // If the symbol also has non-namespace VALUE flags (CLASS, FUNCTION, etc.),
+                // it's clearly a value and we don't need to check namespace members
+                let non_namespace_value_flags = symbol_flags::VALUE & !(symbol_flags::VALUE_MODULE);
+                if (export_symbol.flags & non_namespace_value_flags) != 0 {
+                    has_runtime_value_member = true;
+                }
+
+                if !has_runtime_value_member {
+                    if let Some(exports) = export_symbol.exports.as_ref() {
+                        for (_, member_id) in exports.iter() {
+                            if let Some(member_symbol) = self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(*member_id, &lib_binders)
+                                && (member_symbol.flags & symbol_flags::VALUE) != 0
+                                && !self.symbol_member_is_type_only(*member_id, None)
+                            {
+                                has_runtime_value_member = true;
+                                break;
+                            }
                         }
                     }
                 }
