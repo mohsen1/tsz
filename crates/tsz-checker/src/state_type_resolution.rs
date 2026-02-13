@@ -514,6 +514,13 @@ impl<'a> CheckerState<'a> {
                                 .map(|p| p.default.unwrap_or(TypeId::UNKNOWN))
                                 .collect();
                             let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            // Resolve the type alias body so its type params and body
+                            // are registered in type_env. Without this, Application
+                            // expansion via try_expand_application fails because
+                            // resolve_lazy(def_id) returns None (body not registered).
+                            // This is critical for cross-file generic constraints like
+                            // `TBase extends Constructor` where Constructor<T = {}>.
+                            let _ = self.get_type_of_symbol(sym_id);
                             let base_type_id =
                                 self.ctx.types.intern(tsz_solver::TypeKey::Lazy(def_id));
                             return self.ctx.types.application(base_type_id, default_args);

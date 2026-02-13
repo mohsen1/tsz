@@ -572,6 +572,20 @@ impl TypeEnvironment {
         self.def_types.contains_key(&def_id.0)
     }
 
+    /// Merge def entries (types and type params) from this environment into another.
+    /// Used to propagate cross-file type alias information from child to parent checker.
+    pub fn merge_defs_into(&self, target: &mut TypeEnvironment) {
+        for (&key, &type_id) in &self.def_types {
+            target.def_types.entry(key).or_insert(type_id);
+        }
+        for (key, params) in &self.def_type_params {
+            target
+                .def_type_params
+                .entry(*key)
+                .or_insert_with(|| params.clone());
+        }
+    }
+
     // =========================================================================
     // DefKind Storage (Task #32: Graph Isomorphism)
     // =========================================================================
