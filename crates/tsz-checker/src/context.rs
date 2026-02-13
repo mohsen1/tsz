@@ -9,6 +9,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
+use tracing::trace;
 
 use crate::control_flow::FlowGraph;
 use crate::types::diagnostics::Diagnostic;
@@ -1962,6 +1963,13 @@ impl<'a> CheckerContext<'a> {
         };
 
         let def_id = self.definition_store.register(info);
+        trace!(
+            symbol_name = %symbol.escaped_name,
+            symbol_id = %sym_id.0,
+            def_id = %def_id.0,
+            kind = ?kind,
+            "Mapping symbol to DefId"
+        );
         self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
         self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
 
