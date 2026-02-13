@@ -72,8 +72,7 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::type_queries::{
             EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
         };
-        if let EvaluationNeeded::Union(members) = classify_for_evaluation(self.ctx.types, type_id)
-        {
+        if let EvaluationNeeded::Union(members) = classify_for_evaluation(self.ctx.types, type_id) {
             // Distribute evaluation over union members so lazy/application/etc.
             // inside a union get resolved through the checker's type environment.
             let mut changed = false;
