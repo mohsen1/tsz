@@ -8,11 +8,11 @@ Goal: reduce checker complexity while preserving exact `tsc` behavior.
 
 1. Centralize checker-side predicates into solver queries
 Status: In progress
-Notes: Significant migration done in `type_checking`, `type_computation`, `state_type_analysis`, `state_type_resolution`, `class_type`, `assignability_checker`, `constructor_checker`, `call_checker`, `iterable_checker`, `object_type`.
+Notes: Significant migration done in `type_checking`, `type_computation`, `state_type_analysis`, `state_type_resolution`, `state_type_environment`, `class_type`, `assignability_checker`, `constructor_checker`, `call_checker`, `iterable_checker`, `object_type`.
 
 2. Remove direct `TypeKey` matching in checker hot paths
 Status: In progress
-Notes: Still heavy in `state_type_environment`, `dispatch`, and selected large flow paths.
+Notes: Still heavy in `dispatch` and selected large flow/type-computation paths.
 
 3. Unify callable/function/constructor resolution behind one query surface
 Status: In progress
@@ -59,6 +59,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/object_type.rs`
 - `query_boundaries/flow_analysis.rs`
 - `query_boundaries/state_type_resolution.rs`
+- `query_boundaries/state_type_environment.rs`
 - plus existing: `class.rs`, `diagnostics.rs`, `state.rs`
 
 ## Known Workspace Test Baseline
@@ -76,7 +77,7 @@ No additional failures should be introduced by refactor-only changes.
 
 ## Next Queue (high impact)
 
-1. `state_type_environment.rs` boundary for resolution/classification helpers.
-2. `dispatch.rs` cleanup for remaining direct low-level type handling.
-3. `callable_type.rs` and `union_type.rs` final direct-query cleanup.
-4. Add seam-focused tests for `state_type_resolution` boundary behavior to lock parity.
+1. `dispatch.rs` cleanup for remaining direct low-level type handling.
+2. `callable_type.rs` and `union_type.rs` final direct-query cleanup.
+3. Add seam-focused tests for `state_type_resolution` and `state_type_environment` boundary behavior to lock parity.
+4. Continue de-duplicating relation/diagnostic plumbing across checker entry points.

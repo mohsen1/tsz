@@ -3,6 +3,7 @@
 //! Extracted from state.rs: Methods for building type environments, evaluating
 //! application types, resolving property access types, and type node resolution.
 
+use crate::query_boundaries::state_type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -186,9 +187,7 @@ impl<'a> CheckerState<'a> {
     /// 3. Instantiating the body with the provided type arguments
     /// 4. Recursively evaluating the result
     pub(crate) fn evaluate_application_type(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries;
-
-        if !type_queries::is_generic_type(self.ctx.types, type_id) {
+        if !query::is_generic_type(self.ctx.types, type_id) {
             return type_id;
         }
 
@@ -225,10 +224,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_application_type_inner(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries::get_application_info;
         use tsz_solver::{TypeSubstitution, instantiate_type};
 
-        let Some((base, args)) = get_application_info(self.ctx.types, type_id) else {
+        let Some((base, args)) = query::application_info(self.ctx.types, type_id) else {
             return type_id;
         };
 
@@ -278,8 +276,7 @@ impl<'a> CheckerState<'a> {
         // NOTE: Manual lookup preferred here - we need the mapped_id directly
         // to call mapped_type(mapped_id) below. Using get_mapped_type would
         // return the full Arc<MappedType>, which is more than needed.
-        let Some(mapped_id) = tsz_solver::type_queries::get_mapped_type_id(self.ctx.types, type_id)
-        else {
+        let Some(mapped_id) = query::mapped_type_id(self.ctx.types, type_id) else {
             return type_id;
         };
 
@@ -349,13 +346,11 @@ impl<'a> CheckerState<'a> {
             // types, because the TypeEvaluator might not have access to the type
             // environment's def_types map during evaluation.
             let property_type = if let Some((obj, _idx)) =
-                tsz_solver::type_queries::get_index_access_types(self.ctx.types, property_type)
+                query::index_access_types(self.ctx.types, property_type)
             {
                 // For IndexAccess types, we need to resolve the object type and get the property
                 // First, check if obj is a Lazy type that needs resolution
-                let obj_type = if let Some(def_id) =
-                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, obj)
-                {
+                let obj_type = if let Some(def_id) = query::lazy_def_id(self.ctx.types, obj) {
                     // Resolve the Lazy type to get the actual object type
                     if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                         self.get_type_of_symbol(sym_id)
@@ -415,25 +410,21 @@ impl<'a> CheckerState<'a> {
         &mut self,
         constraint: TypeId,
     ) -> TypeId {
-        use tsz_solver::type_queries::{MappedConstraintKind, classify_mapped_constraint};
-
-        match classify_mapped_constraint(self.ctx.types, constraint) {
-            MappedConstraintKind::KeyOf(operand) => {
+        match query::classify_mapped_constraint(self.ctx.types, constraint) {
+            query::MappedConstraintKind::KeyOf(operand) => {
                 // Evaluate the operand with symbol resolution
                 let evaluated = self.evaluate_type_with_resolution(operand);
                 self.get_keyof_type(evaluated)
             }
-            MappedConstraintKind::Resolved => constraint,
-            MappedConstraintKind::Other => constraint,
+            query::MappedConstraintKind::Resolved => constraint,
+            query::MappedConstraintKind::Other => constraint,
         }
     }
 
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries::{TypeResolutionKind, classify_for_type_resolution};
-
-        match classify_for_type_resolution(self.ctx.types, type_id) {
-            TypeResolutionKind::Lazy(def_id) => {
+        match query::classify_for_type_resolution(self.ctx.types, type_id) {
+            query::TypeResolutionKind::Lazy(def_id) => {
                 // Resolve Lazy(DefId) types by looking up the symbol and getting its concrete type
                 // Use get_type_of_symbol instead of type_reference_symbol_type because:
                 // - type_reference_symbol_type returns Lazy types (for error message formatting)
@@ -465,14 +456,13 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
             }
-            TypeResolutionKind::Application => self.evaluate_application_type(type_id),
-            TypeResolutionKind::Resolved => type_id,
+            query::TypeResolutionKind::Application => self.evaluate_application_type(type_id),
+            query::TypeResolutionKind::Resolved => type_id,
         }
     }
 
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         use tsz_solver::TypeEvaluator;
-        use tsz_solver::type_queries::get_index_access_types;
 
         self.ensure_application_symbols_resolved(type_id);
 
@@ -487,7 +477,7 @@ impl<'a> CheckerState<'a> {
 
         // If the result still contains IndexAccess types, try again with the full
         // checker context as resolver (which can resolve type parameters etc.)
-        if get_index_access_types(self.ctx.types, result).is_some() {
+        if query::index_access_types(self.ctx.types, result).is_some() {
             let mut evaluator = TypeEvaluator::with_resolver(self.ctx.types, &self.ctx);
             evaluator.evaluate(type_id)
         } else {
@@ -528,9 +518,6 @@ impl<'a> CheckerState<'a> {
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> TypeId {
         use tsz_binder::SymbolId;
-        use tsz_solver::type_queries::{
-            PropertyAccessResolutionKind, classify_for_property_access_resolution,
-        };
 
         if !visited.insert(type_id) {
             return type_id;
@@ -541,9 +528,10 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        let classification = classify_for_property_access_resolution(self.ctx.types, type_id);
+        let classification =
+            query::classify_for_property_access_resolution(self.ctx.types, type_id);
         let result = match classification {
-            PropertyAccessResolutionKind::Lazy(def_id) => {
+            query::PropertyAccessResolutionKind::Lazy(def_id) => {
                 // Resolve lazy type from definition store
                 if let Some(body) = self.ctx.definition_store.get_body(def_id) {
                     if body == type_id {
@@ -588,7 +576,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            PropertyAccessResolutionKind::TypeQuery(sym_ref) => {
+            query::PropertyAccessResolutionKind::TypeQuery(sym_ref) => {
                 let resolved = self.get_type_of_symbol(SymbolId(sym_ref.0));
                 if resolved == type_id {
                     type_id
@@ -596,7 +584,7 @@ impl<'a> CheckerState<'a> {
                     self.resolve_type_for_property_access_inner(resolved, visited)
                 }
             }
-            PropertyAccessResolutionKind::Application(app_id) => {
+            query::PropertyAccessResolutionKind::Application(app_id) => {
                 // For property access, we need to resolve type arguments to their constraints
                 // Example: Readonly<P> where P extends Props should resolve to Readonly<Props>
                 let app = self.ctx.types.type_application(app_id);
@@ -622,7 +610,7 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
             }
-            PropertyAccessResolutionKind::TypeParameter { constraint } => {
+            query::PropertyAccessResolutionKind::TypeParameter { constraint } => {
                 if let Some(constraint) = constraint {
                     if constraint == type_id {
                         type_id
@@ -633,7 +621,7 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
             }
-            PropertyAccessResolutionKind::NeedsEvaluation => {
+            query::PropertyAccessResolutionKind::NeedsEvaluation => {
                 let evaluated = self.evaluate_type_with_env(type_id);
                 if evaluated == type_id {
                     type_id
@@ -641,24 +629,24 @@ impl<'a> CheckerState<'a> {
                     self.resolve_type_for_property_access_inner(evaluated, visited)
                 }
             }
-            PropertyAccessResolutionKind::Union(members) => {
+            query::PropertyAccessResolutionKind::Union(members) => {
                 let resolved_members: Vec<TypeId> = members
                     .iter()
                     .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
                     .collect();
                 self.ctx.types.union_preserve_members(resolved_members)
             }
-            PropertyAccessResolutionKind::Intersection(members) => {
+            query::PropertyAccessResolutionKind::Intersection(members) => {
                 let resolved_members: Vec<TypeId> = members
                     .iter()
                     .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
                     .collect();
                 self.ctx.types.intersection(resolved_members)
             }
-            PropertyAccessResolutionKind::Readonly(inner) => {
+            query::PropertyAccessResolutionKind::Readonly(inner) => {
                 self.resolve_type_for_property_access_inner(inner, visited)
             }
-            PropertyAccessResolutionKind::FunctionLike => {
+            query::PropertyAccessResolutionKind::FunctionLike => {
                 // Function/Callable types already handle function properties
                 // (call, apply, bind, toString, length, prototype, arguments, caller)
                 // through resolve_function_property in the solver. Creating an
@@ -669,7 +657,7 @@ impl<'a> CheckerState<'a> {
                 // emitting TS2339).
                 type_id
             }
-            PropertyAccessResolutionKind::Resolved => type_id,
+            query::PropertyAccessResolutionKind::Resolved => type_id,
         };
 
         self.ctx.leave_recursion();
@@ -697,8 +685,6 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> TypeId {
-        use tsz_solver::types::TypeKey;
-
         // Prevent infinite loops in circular type aliases
         if !visited.insert(type_id) {
             return type_id;
@@ -726,8 +712,7 @@ impl<'a> CheckerState<'a> {
 
         // Handle unions and intersections - resolve each member
         // Only create a new union/intersection if members actually changed
-        if let Some(TypeKey::Union(list_id)) = self.ctx.types.lookup(type_id) {
-            let members = self.ctx.types.type_list(list_id);
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
             let resolved_members: Vec<TypeId> = members
                 .iter()
                 .map(|&member| self.resolve_lazy_type_inner(member, visited))
@@ -738,8 +723,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(TypeKey::Intersection(list_id)) = self.ctx.types.lookup(type_id) {
-            let members = self.ctx.types.type_list(list_id);
+        if let Some(members) = query::intersection_members(self.ctx.types, type_id) {
             let resolved_members: Vec<TypeId> = members
                 .iter()
                 .map(|&member| self.resolve_lazy_type_inner(member, visited))
@@ -788,9 +772,7 @@ impl<'a> CheckerState<'a> {
         // CRITICAL FIX: Only skip registering Lazy types if they point to THEMSELVES.
         // Skipping all Lazy types breaks alias chains (type A = B).
         let current_def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
-        if let Some(target_def_id) =
-            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved)
-        {
+        if let Some(target_def_id) = query::lazy_def_id(self.ctx.types, resolved) {
             if Some(target_def_id) == current_def_id {
                 return true; // Skip self-recursive alias (A -> A)
             }
@@ -860,16 +842,12 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> bool {
-        use tsz_solver::type_queries::{
-            SymbolResolutionTraversalKind, classify_for_symbol_resolution_traversal,
-        };
-
         if !visited.insert(type_id) {
             return true;
         }
 
-        match classify_for_symbol_resolution_traversal(self.ctx.types, type_id) {
-            SymbolResolutionTraversalKind::Application { base, args, .. } => {
+        match query::classify_for_symbol_resolution_traversal(self.ctx.types, type_id) {
+            query::SymbolResolutionTraversalKind::Application { base, args, .. } => {
                 let mut fully_resolved = true;
 
                 // If the base is a Lazy or Enum type, resolve the symbol
@@ -885,7 +863,7 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Lazy(def_id) => {
+            query::SymbolResolutionTraversalKind::Lazy(def_id) => {
                 let mut fully_resolved = true;
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     // Use get_type_of_symbol (not type_reference_symbol_type) because
@@ -897,7 +875,7 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::TypeParameter {
+            query::SymbolResolutionTraversalKind::TypeParameter {
                 constraint,
                 default,
             } => {
@@ -912,7 +890,7 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Members(members) => {
+            query::SymbolResolutionTraversalKind::Members(members) => {
                 let mut fully_resolved = true;
                 for member in members {
                     fully_resolved &=
@@ -920,7 +898,7 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Function(shape_id) => {
+            query::SymbolResolutionTraversalKind::Function(shape_id) => {
                 let mut fully_resolved = true;
                 let shape = self.ctx.types.function_shape(shape_id);
                 for type_param in shape.type_params.iter() {
@@ -951,7 +929,7 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Callable(shape_id) => {
+            query::SymbolResolutionTraversalKind::Callable(shape_id) => {
                 let mut fully_resolved = true;
                 let shape = self.ctx.types.callable_shape(shape_id);
                 for sig in shape
@@ -992,7 +970,7 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Object(shape_id) => {
+            query::SymbolResolutionTraversalKind::Object(shape_id) => {
                 let mut fully_resolved = true;
                 let shape = self.ctx.types.object_shape(shape_id);
                 for prop in shape.properties.iter() {
@@ -1009,10 +987,10 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Array(elem) => {
+            query::SymbolResolutionTraversalKind::Array(elem) => {
                 self.ensure_application_symbols_resolved_inner(elem, visited)
             }
-            SymbolResolutionTraversalKind::Tuple(elems_id) => {
+            query::SymbolResolutionTraversalKind::Tuple(elems_id) => {
                 let mut fully_resolved = true;
                 let elems = self.ctx.types.tuple_list(elems_id);
                 for elem in elems.iter() {
@@ -1021,7 +999,7 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Conditional(cond_id) => {
+            query::SymbolResolutionTraversalKind::Conditional(cond_id) => {
                 let mut fully_resolved = true;
                 let cond = self.ctx.types.conditional_type(cond_id);
                 fully_resolved &=
@@ -1034,7 +1012,7 @@ impl<'a> CheckerState<'a> {
                     self.ensure_application_symbols_resolved_inner(cond.false_type, visited);
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Mapped(mapped_id) => {
+            query::SymbolResolutionTraversalKind::Mapped(mapped_id) => {
                 let mut fully_resolved = true;
                 let mapped = self.ctx.types.mapped_type(mapped_id);
                 fully_resolved &=
@@ -1047,19 +1025,19 @@ impl<'a> CheckerState<'a> {
                 }
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::Readonly(inner) => {
+            query::SymbolResolutionTraversalKind::Readonly(inner) => {
                 self.ensure_application_symbols_resolved_inner(inner, visited)
             }
-            SymbolResolutionTraversalKind::IndexAccess { object, index } => {
+            query::SymbolResolutionTraversalKind::IndexAccess { object, index } => {
                 let mut fully_resolved = true;
                 fully_resolved &= self.ensure_application_symbols_resolved_inner(object, visited);
                 fully_resolved &= self.ensure_application_symbols_resolved_inner(index, visited);
                 fully_resolved
             }
-            SymbolResolutionTraversalKind::KeyOf(inner) => {
+            query::SymbolResolutionTraversalKind::KeyOf(inner) => {
                 self.ensure_application_symbols_resolved_inner(inner, visited)
             }
-            SymbolResolutionTraversalKind::Terminal => true,
+            query::SymbolResolutionTraversalKind::Terminal => true,
         }
     }
 
