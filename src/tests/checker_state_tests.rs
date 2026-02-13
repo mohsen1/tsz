@@ -1931,7 +1931,6 @@ rest("a", "b");
 }
 
 #[test]
-#[ignore = "TODO: Tuple spread in overload calls needs rest parameter handling"]
 fn test_overload_call_handles_tuple_spread_params() {
     use crate::parser::ParserState;
 
@@ -23883,7 +23882,6 @@ class C2 extends Mixed1 {
 }
 
 #[test]
-#[ignore = "TODO: Pre-existing failure - interface IMixin resolves to error in intersection type. Need to investigate why IMixin is not being resolved properly in the context of generic function return types."]
 fn test_abstract_mixin_intersection_ts2339() {
     use crate::parser::ParserState;
 
@@ -24511,7 +24509,6 @@ fn test_variadic_tuple_rest_param_no_ts2769() {
 }
 
 #[test]
-#[ignore = "TODO: Variadic tuple optional tail inference"]
 fn test_variadic_tuple_optional_tail_inference_no_ts2769() {
     use crate::parser::ParserState;
 
@@ -25053,7 +25050,6 @@ let { x = "hello" }: { x?: number } = {};
 /// fully implemented. The checker should detect circular type aliases and emit TS2456,
 /// but this is not being detected correctly for recursive mapped types.
 #[test]
-#[ignore]
 fn test_recursive_mapped_type_no_crash_and_ts2456() {
     use crate::parser::ParserState;
 
