@@ -2169,17 +2169,25 @@ fn collect_diagnostics(
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = tsz::solver::QueryCache::new(&program.type_interner);
 
+    // Create a shared DefinitionStore to prevent DefId collisions across files/libs.
+    // All CheckerContexts must share this store to ensure unique DefIds.
+    // Use Arc instead of Rc for thread-safety in parallel checking.
+    // CRITICAL: This must be created BEFORE any CheckerContext is instantiated,
+    // including the priming checker below.
+    let shared_def_store = std::sync::Arc::new(tsz_solver::def::DefinitionStore::new());
+
     // Prime Array<T> base type with global augmentations before any file checks.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
-        let mut checker = CheckerState::with_options(
+        let mut checker = CheckerState::with_options_and_shared_def_store(
             &file.arena,
             &binder,
             &query_cache,
             file.file_name.clone(),
             &options.checker,
+            std::sync::Arc::clone(&shared_def_store),
         );
         checker.ctx.set_lib_contexts(lib_contexts.to_vec());
         checker.ctx.set_actual_lib_file_count(lib_contexts.len());
@@ -2219,11 +2227,6 @@ fn collect_diagnostics(
     //    No dependency cascade needed since we're checking everything.
     // 2. Cached (watch mode): Sequential work queue with export-hash-based
     //    dependency cascade for incremental invalidation.
-
-    // Create a shared DefinitionStore to prevent DefId collisions across files/libs.
-    // All CheckerContexts must share this store to ensure unique DefIds.
-    // Use Arc instead of Rc for thread-safety in parallel checking.
-    let shared_def_store = std::sync::Arc::new(tsz_solver::def::DefinitionStore::new());
 
     if cache.is_none() {
         // --- PARALLEL PATH: No cache, check all files concurrently ---
