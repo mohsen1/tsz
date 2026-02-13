@@ -11,6 +11,7 @@
 //! This module extends CheckerState with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
+use crate::query_boundaries::type_computation::{is_type_parameter_type, union_members};
 use crate::state::CheckerState;
 use crate::types::{Diagnostic, DiagnosticCategory};
 use tsz_parser::parser::NodeIndex;
@@ -36,13 +37,11 @@ impl<'a> CheckerState<'a> {
     /// member is an unevaluated Application type that the solver's `NumberLikeVisitor`
     /// can't handle.
     pub(crate) fn evaluate_type_for_binary_ops(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries::get_union_members;
-
         // First try top-level evaluation
         let evaluated = self.evaluate_type_with_resolution(type_id);
 
         // If it's a union, evaluate each member individually
-        if let Some(members) = get_union_members(self.ctx.types, evaluated) {
+        if let Some(members) = union_members(self.ctx.types, evaluated) {
             let mut changed = false;
             let new_members: Vec<TypeId> = members
                 .iter()
@@ -1168,8 +1167,8 @@ impl<'a> CheckerState<'a> {
             if is_equality_op
                 && left_narrow != TypeId::ERROR
                 && right_narrow != TypeId::ERROR
-                && !tsz_solver::type_queries::is_type_parameter(self.ctx.types, left_narrow)
-                && !tsz_solver::type_queries::is_type_parameter(self.ctx.types, right_narrow)
+                && !is_type_parameter_type(self.ctx.types, left_narrow)
+                && !is_type_parameter_type(self.ctx.types, right_narrow)
                 && self.types_have_no_overlap(left_narrow, right_narrow)
             {
                 use crate::types::diagnostics::{
@@ -1372,10 +1371,8 @@ impl<'a> CheckerState<'a> {
                 // Skip TS2367 for type parameters — they can be instantiated
                 // to any type, so comparisons like `value != null` in generic
                 // functions are valid (e.g., `<T>(value: T) => value != null`).
-                let left_is_type_param =
-                    tsz_solver::type_queries::is_type_parameter(self.ctx.types, left_type);
-                let right_is_type_param =
-                    tsz_solver::type_queries::is_type_parameter(self.ctx.types, right_type);
+                let left_is_type_param = is_type_parameter_type(self.ctx.types, left_type);
+                let right_is_type_param = is_type_parameter_type(self.ctx.types, right_type);
                 if !left_is_type_param && !right_is_type_param {
                     // Check if the types have any overlap
                     if !self.are_types_overlapping(left_type, right_type) {
