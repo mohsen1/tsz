@@ -1359,3 +1359,61 @@ class TimestampedUser extends Timestamped(User) {
         relevant
     );
 }
+
+/// Issue: Contextual typing for method shorthand fails when parameter type is a union
+///
+/// When a function parameter is `Opts | undefined`, the contextual type should still
+/// flow through to object literal method parameters. TypeScript filters out non-object
+/// types from unions when computing contextual types for object literals.
+#[test]
+fn test_contextual_typing_union_with_undefined() {
+    let opts = CheckerOptions {
+        strict: true,
+        ..Default::default()
+    }
+    .apply_strict_defaults();
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Opts {
+    fn(x: number): void;
+}
+
+declare function a(opts: Opts | undefined): void;
+a({ fn(x) {} });
+        "#,
+        opts,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Should NOT emit TS7006 - 'x' should be contextually typed as number from Opts.fn.\nActual errors: {:#?}",
+        diagnostics
+    );
+}
+
+/// Issue: Contextual typing for property assignment fails when parameter type is a union
+#[test]
+fn test_contextual_typing_property_in_union_with_null() {
+    let opts = CheckerOptions {
+        strict: true,
+        ..Default::default()
+    }
+    .apply_strict_defaults();
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Opts {
+    callback: (x: number) => void;
+}
+
+declare function b(opts: Opts | null): void;
+b({ callback: (x) => {} });
+        "#,
+        opts,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Should NOT emit TS7006 - 'x' should be contextually typed as number from Opts.callback.\nActual errors: {:#?}",
+        diagnostics
+    );
+}

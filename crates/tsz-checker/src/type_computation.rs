@@ -74,6 +74,28 @@ impl<'a> CheckerState<'a> {
             EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
         };
 
+        if let EvaluationNeeded::Union(members) = classify_for_evaluation(self.ctx.types, type_id)
+        {
+            // Distribute evaluation over union members so lazy/application/etc.
+            // inside a union get resolved through the checker's type environment.
+            let mut changed = false;
+            let evaluated: Vec<TypeId> = members
+                .iter()
+                .map(|&member| {
+                    let ev = self.evaluate_contextual_type(member);
+                    if ev != member {
+                        changed = true;
+                    }
+                    ev
+                })
+                .collect();
+            return if changed {
+                self.ctx.types.union(evaluated)
+            } else {
+                type_id
+            };
+        }
+
         let needs_evaluation = get_lazy_def_id(self.ctx.types, type_id).is_some()
             || matches!(
                 classify_for_evaluation(self.ctx.types, type_id),
@@ -2081,6 +2103,7 @@ impl<'a> CheckerState<'a> {
 
                     // Get contextual type for this property
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                        let ctx_type = self.evaluate_contextual_type(ctx_type);
                         self.ctx.types.contextual_property_type(ctx_type, &name)
                     } else {
                         None
