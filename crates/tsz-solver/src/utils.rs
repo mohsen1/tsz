@@ -59,6 +59,52 @@ where
     }
 }
 
+/// Extension trait for slices of TypeId to create unions or intersections without cloning.
+///
+/// This trait provides zero-allocation methods for creating unions or intersections
+/// from slices of TypeId, avoiding the need to clone the slice into a Vec.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Create union from slice without cloning
+/// let types = [TypeId::STRING, TypeId::NUMBER];
+/// let result = types.as_slice().union_or_single(db);
+///
+/// // Create intersection from slice
+/// let result = types.as_slice().intersection_or_single(db);
+/// ```
+#[allow(dead_code)]
+pub trait TypeIdSliceExt {
+    /// Creates a union from a slice, returning NEVER for empty, single type for one element,
+    /// or a union type for multiple elements.
+    fn union_or_single(&self, db: &dyn TypeDatabase) -> TypeId;
+
+    /// Creates an intersection from a slice, returning NEVER for empty, single type for one element,
+    /// or an intersection type for multiple elements.
+    fn intersection_or_single(&self, db: &dyn TypeDatabase) -> TypeId;
+}
+
+impl TypeIdSliceExt for [TypeId] {
+    #[inline]
+    fn union_or_single(&self, db: &dyn TypeDatabase) -> TypeId {
+        match self.len() {
+            0 => TypeId::NEVER,
+            1 => self[0],
+            _ => db.union(self.to_vec()),
+        }
+    }
+
+    #[inline]
+    fn intersection_or_single(&self, db: &dyn TypeDatabase) -> TypeId {
+        match self.len() {
+            0 => TypeId::NEVER,
+            1 => self[0],
+            _ => db.intersection(self.to_vec()),
+        }
+    }
+}
+
 /// Checks if a property name is numeric by resolving the atom and checking its string representation.
 ///
 /// This function consolidates the previously duplicated `is_numeric_property_name` implementations
@@ -554,5 +600,49 @@ mod tests {
         assert!(!TypeId::NEVER.is_nullish());
         assert!(!TypeId::UNKNOWN.is_nullish());
         assert!(!TypeId::ANY.is_nullish());
+    }
+
+    #[test]
+    fn test_slice_ext_union_or_single() {
+        let interner = TypeInterner::new();
+        let db: &dyn TypeDatabase = &interner;
+
+        // Empty slice -> NEVER
+        let types: &[TypeId] = &[];
+        let result = types.union_or_single(db);
+        assert_eq!(result, TypeId::NEVER);
+
+        // Single element -> that element
+        let types = &[TypeId::STRING];
+        let result = types.union_or_single(db);
+        assert_eq!(result, TypeId::STRING);
+
+        // Multiple elements -> union
+        let types = &[TypeId::STRING, TypeId::NUMBER];
+        let result = types.union_or_single(db);
+        assert_ne!(result, TypeId::STRING);
+        assert_ne!(result, TypeId::NUMBER);
+    }
+
+    #[test]
+    fn test_slice_ext_intersection_or_single() {
+        let interner = TypeInterner::new();
+        let db: &dyn TypeDatabase = &interner;
+
+        // Empty slice -> NEVER
+        let types: &[TypeId] = &[];
+        let result = types.intersection_or_single(db);
+        assert_eq!(result, TypeId::NEVER);
+
+        // Single element -> that element
+        let types = &[TypeId::STRING];
+        let result = types.intersection_or_single(db);
+        assert_eq!(result, TypeId::STRING);
+
+        // Multiple elements -> intersection
+        let types = &[TypeId::STRING, TypeId::NUMBER];
+        let result = types.intersection_or_single(db);
+        assert_ne!(result, TypeId::STRING);
+        assert_ne!(result, TypeId::NUMBER);
     }
 }
