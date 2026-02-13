@@ -1341,6 +1341,33 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Get a symbol, preferring the cross-file binder for known cross-file SymbolIds.
+    ///
+    /// Unlike `get_symbol_globally` (which checks the local binder first and may find
+    /// a WRONG symbol due to SymbolId collisions), this method checks
+    /// `cross_file_symbol_targets` FIRST. If the SymbolId is known to belong to another
+    /// file, the target file's binder is used directly, avoiding the collision.
+    ///
+    /// Falls back to `get_symbol_globally` for non-cross-file symbols.
+    pub(crate) fn get_cross_file_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
+        // Check if this is a known cross-file symbol
+        let file_idx = self
+            .ctx
+            .cross_file_symbol_targets
+            .borrow()
+            .get(&sym_id)
+            .copied();
+        if let Some(file_idx) = file_idx {
+            if let Some(binder) = self.ctx.get_binder_for_file(file_idx) {
+                if let Some(sym) = binder.get_symbol(sym_id) {
+                    return Some(sym);
+                }
+            }
+        }
+        // Fall back to global search
+        self.get_symbol_globally(sym_id)
+    }
+
     /// Delegate symbol resolution to a checker using the correct arena.
     ///
     /// When a symbol's arena differs from the current arena (cross-file symbol),
@@ -1360,10 +1387,22 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        if let Some(symbol) = self.get_symbol_globally(sym_id)
-            && (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
-        {
-            return None;
+        // Fast path: if this is a known cross-file symbol, skip the namespace guard
+        // (which would check the wrong symbol in the current binder) and go straight
+        // to cross-file delegation.
+        let is_known_cross_file = self
+            .ctx
+            .cross_file_symbol_targets
+            .borrow()
+            .contains_key(&sym_id);
+
+        if !is_known_cross_file {
+            if let Some(symbol) = self.get_symbol_globally(sym_id)
+                && (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                    != 0
+            {
+                return None;
+            }
         }
 
         let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
@@ -1402,9 +1441,41 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(symbol_arena) = delegate_arena
-            && !std::ptr::eq(symbol_arena, self.ctx.arena)
-        {
+        // Check cross-file symbol target mapping as fallback.
+        // When resolve_cross_file_export returns a SymbolId from another file's binder,
+        // it records the target file index. Use that to find the correct arena AND binder.
+        let mut cross_file_idx: Option<usize> = None;
+        let needs_cross_file_delegation = delegate_arena
+            .is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
+            && self
+                .ctx
+                .cross_file_symbol_targets
+                .borrow()
+                .get(&sym_id)
+                .is_some_and(|&file_idx| {
+                    let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
+                    !std::ptr::eq(target_arena, self.ctx.arena)
+                });
+
+        if needs_cross_file_delegation {
+            let file_idx = *self
+                .ctx
+                .cross_file_symbol_targets
+                .borrow()
+                .get(&sym_id)
+                .unwrap();
+            cross_file_idx = Some(file_idx);
+        }
+
+        // Check if we have a valid delegate arena (either from symbol_arenas/declaration_arenas
+        // or from cross_file_symbol_targets).
+        let should_delegate = if needs_cross_file_delegation {
+            true
+        } else {
+            delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
+        };
+
+        if should_delegate {
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
             if !Self::enter_cross_arena_delegation() {
@@ -1424,13 +1495,29 @@ impl<'a> CheckerState<'a> {
             // want the child checker to observe that placeholder.
             self.ctx.symbol_types.remove(&sym_id);
 
+            // Re-fetch the arena reference after mutable operations above.
+            // For cross-file symbols, use the target file's arena and binder.
+            let (symbol_arena, delegate_binder) = if let Some(file_idx) = cross_file_idx {
+                let arena = self.ctx.get_arena_for_file(file_idx as u32);
+                let binder = self
+                    .ctx
+                    .get_binder_for_file(file_idx)
+                    .unwrap_or(self.ctx.binder);
+                (arena, binder)
+            } else {
+                // Non-cross-file delegation: use the already-computed arena.
+                // Safe to re-fetch since the data hasn't changed.
+                let arena = delegate_arena.unwrap_or(self.ctx.arena);
+                (arena, self.ctx.binder)
+            };
+
             // Box the child checker to keep it on the heap — nested delegations for
             // interdependent lib types (Array → ReadonlyArray → Iterator → ...) can
             // create deep call stacks, and CheckerState is too large to stack-allocate
             // at every level without risking stack overflow.
             let mut checker = Box::new(CheckerState::with_parent_cache(
                 symbol_arena,
-                self.ctx.binder,
+                delegate_binder,
                 self.ctx.types,
                 self.ctx.file_name.clone(),
                 self.ctx.compiler_options.clone(),
@@ -1438,6 +1525,16 @@ impl<'a> CheckerState<'a> {
             ));
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            // Copy cross-file symbol targets so nested resolutions work
+            if !self.ctx.cross_file_symbol_targets.borrow().is_empty() {
+                *checker.ctx.cross_file_symbol_targets.borrow_mut() =
+                    self.ctx.cross_file_symbol_targets.borrow().clone();
+            }
+            // Copy all_arenas and all_binders for nested cross-file resolution
+            checker.ctx.all_arenas = self.ctx.all_arenas.clone();
+            checker.ctx.all_binders = self.ctx.all_binders.clone();
+            checker.ctx.resolved_module_paths = self.ctx.resolved_module_paths.clone();
+            checker.ctx.current_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
             // Copy symbol resolution state to detect cross-file cycles, but exclude
             // the current symbol (which the parent added) since this checker will
             // add it again during get_type_of_symbol
@@ -1462,6 +1559,21 @@ impl<'a> CheckerState<'a> {
             // same node index maps to a StringKeyword in the lib arena).
             // The delegated symbol's result is returned directly and cached by the caller
             // in get_type_of_symbol, so no merge-back is needed for correctness.
+
+            // Merge child's DefId→SymbolId mappings to parent.
+            // The child creates DefIds (in the shared DefinitionStore) for enum/class/etc.
+            // symbols. These DefIds are embedded in TypeKeys in the shared TypeStore.
+            // The parent needs DefId→SymbolId mappings to resolve these types
+            // (e.g., for enum property access via resolve_namespace_value_member).
+            // NOTE: symbol_to_def is NOT merged because SymbolIds are binder-local;
+            // the same SymbolId maps to different symbols in different binders.
+            {
+                let child_d2s = checker.ctx.def_to_symbol.borrow();
+                let mut parent_d2s = self.ctx.def_to_symbol.borrow_mut();
+                for (&def_id, &sym_id) in child_d2s.iter() {
+                    parent_d2s.entry(def_id).or_insert(sym_id);
+                }
+            }
 
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();
@@ -1524,6 +1636,63 @@ impl<'a> CheckerState<'a> {
         Self::leave_cross_arena_delegation();
 
         result.map(|instance_type| (instance_type, Vec::new()))
+    }
+
+    /// Detect and record cross-file SymbolIds.
+    ///
+    /// In multi-file mode, the driver copies target file's module_exports into
+    /// the local binder, so SymbolIds may be from another file's binder. We
+    /// detect this by checking if the SymbolId maps to a symbol with the expected
+    /// name in the current binder. If not, we search all_binders to find the
+    /// correct source file.
+    fn record_cross_file_symbol_if_needed(
+        &self,
+        sym_id: SymbolId,
+        expected_name: &str,
+        module_name: &str,
+    ) {
+        // Skip if already recorded
+        if self
+            .ctx
+            .cross_file_symbol_targets
+            .borrow()
+            .contains_key(&sym_id)
+        {
+            return;
+        }
+
+        // Check if the SymbolId maps to the expected name in the current binder.
+        // If it does, this is a local symbol and no cross-file tracking needed.
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if symbol.escaped_name.as_str() == expected_name {
+                return;
+            }
+        }
+
+        // The SymbolId doesn't match in the current binder — it's cross-file.
+        // Try resolve_import_target first (most reliable).
+        if let Some(target_file_idx) = self.ctx.resolve_import_target(module_name) {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .insert(sym_id, target_file_idx);
+            return;
+        }
+
+        // Fallback: search all binders for one where this SymbolId has the expected name.
+        if let Some(binders) = &self.ctx.all_binders {
+            for (idx, binder) in binders.iter().enumerate() {
+                if let Some(symbol) = binder.get_symbol(sym_id) {
+                    if symbol.escaped_name.as_str() == expected_name {
+                        self.ctx
+                            .cross_file_symbol_targets
+                            .borrow_mut()
+                            .insert(sym_id, idx);
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// Compute the type of a class symbol.
@@ -2323,6 +2492,11 @@ impl<'a> CheckerState<'a> {
                         .or_else(|| self.resolve_cross_file_namespace_exports(module_name));
 
                     if let Some(exports_table) = exports_table {
+                        // Record cross-file symbol targets for all symbols in the table
+                        for (name, &sym_id) in exports_table.iter() {
+                            self.record_cross_file_symbol_if_needed(sym_id, name, module_name);
+                        }
+
                         // For `export = X`, the binder stores a synthetic `export=` entry
                         // that points to the assigned symbol. For `import A = require('M')`
                         // where M has `export = C`, A should be typed as C (not an object
@@ -2384,6 +2558,16 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.resolve_cross_file_export(module_name, export_name));
 
                 if let Some(export_sym_id) = export_sym_id {
+                    // Detect cross-file SymbolIds: the driver copies target file's
+                    // module_exports into the local binder, so SymbolIds may be from
+                    // another binder. Check if the SymbolId maps to the expected name
+                    // in the current binder — if not, it's from another file.
+                    self.record_cross_file_symbol_if_needed(
+                        export_sym_id,
+                        export_name,
+                        module_name,
+                    );
+
                     let mut result = self.get_type_of_symbol(export_sym_id);
 
                     // Rule #44: Apply module augmentations to the imported type

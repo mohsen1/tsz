@@ -3216,7 +3216,7 @@ impl<'a> CheckerState<'a> {
             // Handle Lazy types (direct namespace/module references)
             NamespaceMemberKind::Lazy(def_id) => {
                 let sym_id = self.ctx.def_to_symbol_id(def_id)?;
-                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                let symbol = self.get_cross_file_symbol(sym_id)?;
                 if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
                     return None;
                 }
@@ -3258,9 +3258,23 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if let Some(member_id) = direct_member_id {
+                    // Record member as cross-file so get_type_of_symbol delegates correctly
+                    let cross_file_idx = self
+                        .ctx
+                        .cross_file_symbol_targets
+                        .borrow()
+                        .get(&sym_id)
+                        .copied();
+                    if let Some(file_idx) = cross_file_idx {
+                        self.ctx
+                            .cross_file_symbol_targets
+                            .borrow_mut()
+                            .insert(member_id, file_idx);
+                    }
+
                     // Follow re-export chains to get the actual symbol
                     let resolved_member_id = if let Some(member_symbol) =
-                        self.ctx.binder.get_symbol(member_id)
+                        self.get_cross_file_symbol(member_id)
                         && member_symbol.flags & symbol_flags::ALIAS != 0
                     {
                         let mut visited_aliases = Vec::new();
@@ -3274,7 +3288,7 @@ impl<'a> CheckerState<'a> {
                         return None;
                     }
 
-                    if let Some(member_symbol) = self.ctx.binder.get_symbol(resolved_member_id)
+                    if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
                         && member_symbol.flags & symbol_flags::VALUE == 0
                         && member_symbol.flags & symbol_flags::ALIAS == 0
                     {
@@ -3299,8 +3313,22 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if let Some(member_id) = module_export_member_id {
+                    // Record member as cross-file so get_type_of_symbol delegates correctly
+                    let cross_file_idx = self
+                        .ctx
+                        .cross_file_symbol_targets
+                        .borrow()
+                        .get(&sym_id)
+                        .copied();
+                    if let Some(file_idx) = cross_file_idx {
+                        self.ctx
+                            .cross_file_symbol_targets
+                            .borrow_mut()
+                            .insert(member_id, file_idx);
+                    }
+
                     let resolved_member_id = if let Some(member_symbol) =
-                        self.ctx.binder.get_symbol(member_id)
+                        self.get_cross_file_symbol(member_id)
                         && member_symbol.flags & symbol_flags::ALIAS != 0
                     {
                         let mut visited_aliases = Vec::new();
@@ -3314,7 +3342,7 @@ impl<'a> CheckerState<'a> {
                         return None;
                     }
 
-                    if let Some(member_symbol) = self.ctx.binder.get_symbol(resolved_member_id)
+                    if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
                         && member_symbol.flags & symbol_flags::VALUE == 0
                         && member_symbol.flags & symbol_flags::ALIAS == 0
                     {
@@ -3337,7 +3365,7 @@ impl<'a> CheckerState<'a> {
                             return None;
                         }
 
-                        if let Some(member_symbol) = self.ctx.binder.get_symbol(reexported_sym)
+                        if let Some(member_symbol) = self.get_cross_file_symbol(reexported_sym)
                             && member_symbol.flags & symbol_flags::VALUE == 0
                             && member_symbol.flags & symbol_flags::ALIAS == 0
                         {
@@ -3381,7 +3409,9 @@ impl<'a> CheckerState<'a> {
                     return None;
                 };
 
-                let symbol = match self.ctx.binder.get_symbol(sym_id) {
+                // Use cross-file-aware lookup: SymbolIds from cross-file enums
+                // map to wrong symbols in the local binder (SymbolId collision).
+                let symbol = match self.get_cross_file_symbol(sym_id) {
                     Some(symbol) => symbol,
                     None => return None,
                 };
@@ -3394,6 +3424,19 @@ impl<'a> CheckerState<'a> {
                 if let Some(exports) = symbol.exports.as_ref()
                     && let Some(member_id) = exports.get(property_name)
                 {
+                    // Record member as cross-file so get_type_of_symbol delegates correctly
+                    let cross_file_idx = self
+                        .ctx
+                        .cross_file_symbol_targets
+                        .borrow()
+                        .get(&sym_id)
+                        .copied();
+                    if let Some(file_idx) = cross_file_idx {
+                        self.ctx
+                            .cross_file_symbol_targets
+                            .borrow_mut()
+                            .insert(member_id, file_idx);
+                    }
                     return Some(self.get_type_of_symbol(member_id));
                 }
 
