@@ -7573,3 +7573,116 @@ fn test_array_mapped_type_method_resolution() {
         }
     }
 }
+
+#[test]
+fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders() {
+    // Mirrors:
+    //   var dot: <T, S>(f: (_: T) => S) => <U>(g: (_: U) => T) => (_: U) => S;
+    //   var id: <T>(x:T) => T;
+    //   var r23 = dot(id)(id);
+    //
+    // Regression: the first call inferred `S = __infer_src_*`, leaking a transient
+    // placeholder into the intermediate signature and causing a false TS2345 on
+    // the second call.
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_strict_function_types(false);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let s_param = TypeParamInfo {
+        name: interner.intern_string("S"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let u_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let s_type = interner.intern(TypeKey::TypeParameter(s_param.clone()));
+    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+
+    let f_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(t_type)],
+        this_type: None,
+        return_type: s_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let g_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(u_type)],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let r_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(u_type)],
+        this_type: None,
+        return_type: s_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let dot_return = interner.function(FunctionShape {
+        type_params: vec![u_param],
+        params: vec![ParamInfo::unnamed(g_type)],
+        this_type: None,
+        return_type: r_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let dot = interner.function(FunctionShape {
+        type_params: vec![t_param, s_param],
+        params: vec![ParamInfo::unnamed(f_type)],
+        this_type: None,
+        return_type: dot_return,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let id_t_param = TypeParamInfo {
+        name: interner.intern_string("X"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let id_t = interner.intern(TypeKey::TypeParameter(id_t_param.clone()));
+    let id = interner.function(FunctionShape {
+        type_params: vec![id_t_param],
+        params: vec![ParamInfo::unnamed(id_t)],
+        this_type: None,
+        return_type: id_t,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let intermediate = match evaluator.resolve_call(dot, &[id]) {
+        CallResult::Success(ty) => ty,
+        other => panic!("Expected first call dot(id) to succeed, got {:?}", other),
+    };
+
+    let second = evaluator.resolve_call(intermediate, &[id]);
+    assert!(
+        matches!(second, CallResult::Success(_)),
+        "Expected second call dot(id)(id) to succeed, got {:?}",
+        second
+    );
+}

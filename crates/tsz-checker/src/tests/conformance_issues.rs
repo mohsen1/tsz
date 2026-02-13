@@ -16,6 +16,13 @@ use tsz_solver::TypeInterner;
 
 /// Helper to compile TypeScript and get diagnostics
 fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    compile_and_get_diagnostics_with_options(source, CheckerOptions::default())
+}
+
+fn compile_and_get_diagnostics_with_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -28,7 +35,7 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
         &binder,
         &types,
         "test.ts".to_string(),
-        CheckerOptions::default(),
+        options,
     );
 
     checker.check_source_file(root);
@@ -891,6 +898,81 @@ f(t => { });
     assert!(
         !has_error(&relevant, 7006),
         "Should NOT emit TS7006 - parameter 't' should be contextually typed from generic.\nActual errors: {:#?}",
+        relevant
+    );
+}
+
+/// Issue: false-positive assignability errors with contextual generic outer type parameters.
+///
+/// Mirrors: contextualOuterTypeParameters.ts
+/// Expected: no TS2322/TS2345 errors
+#[test]
+fn test_contextual_outer_type_parameters_no_false_assignability_errors() {
+    let source = r#"
+declare function f(fun: <T>(t: T) => void): void
+
+f(t => {
+    type isArray = (typeof t)[] extends string[] ? true : false;
+    type IsObject = { x: typeof t } extends { x: string } ? true : false;
+});
+
+const fn1: <T>(x: T) => void = t => {
+    type isArray = (typeof t)[] extends string[] ? true : false;
+    type IsObject = { x: typeof t } extends { x: string } ? true : false;
+};
+
+const fn2: <T>(x: T) => void = function test(t) {
+    type isArray = (typeof t)[] extends string[] ? true : false;
+    type IsObject = { x: typeof t } extends { x: string } ? true : false;
+};
+"#;
+
+    let mut options = CheckerOptions::default();
+    options.strict = true;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, options);
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2322),
+        "Should NOT emit TS2322 for contextual generic outer type parameters.\nActual errors: {:#?}",
+        relevant
+    );
+    assert!(
+        !has_error(&relevant, 2345),
+        "Should NOT emit TS2345 for contextual generic outer type parameters.\nActual errors: {:#?}",
+        relevant
+    );
+}
+
+/// Issue: false-positive TS2345 in contextual signature instantiation chain.
+///
+/// Mirrors: contextualSignatureInstantiation2.ts
+/// Expected: no TS2345
+#[test]
+fn test_contextual_signature_instantiation_chain_no_false_ts2345() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+var dot: <T, S>(f: (_: T) => S) => <U>(g: (_: U) => T) => (_: U) => S;
+dot = <T, S>(f: (_: T) => S) => <U>(g: (_: U) => T): (r:U) => S => (x) => f(g(x));
+var id: <T>(x:T) => T;
+var r23 = dot(id)(id);
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2345),
+        "Should NOT emit TS2345 for contextual signature instantiation chain.\nActual errors: {:#?}",
         relevant
     );
 }

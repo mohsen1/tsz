@@ -1067,3 +1067,230 @@ fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
     checker.strict_function_types = false;
     assert!(checker.check_subtype(source, target).is_true());
 }
+
+#[test]
+fn test_contextual_instantiation_generic_source_ignores_unknown_param_signal() {
+    // Mirrors contextualSignatureInstantiation2-style inference where target parameter
+    // side is unknown (uninformative) but return side carries a useful placeholder.
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+
+    let source = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let placeholder = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("__infer_src_2"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let target = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("_")),
+            type_id: TypeId::UNKNOWN,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: placeholder,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(checker.check_subtype(source, target).is_true());
+}
+
+#[test]
+fn test_contextual_instantiation_generic_target_from_source_type_param() {
+    // Mirrors contextualOuterTypeParameters-style assignment where source uses a
+    // contextual free type parameter and target is explicitly generic.
+    let interner = TypeInterner::new();
+
+    let contextual_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("__ctx_t"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let source = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("t")),
+            type_id: contextual_t,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let target = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = true;
+    assert!(checker.check_subtype(source, target).is_true());
+}
+
+#[test]
+fn test_contextual_instantiation_callable_to_generic_function_target() {
+    let interner = TypeInterner::new();
+
+    let contextual_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("__ctx_t"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("t")),
+                type_id: contextual_t,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let target = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = true;
+    assert!(checker.check_subtype(source, target).is_true());
+}
+
+#[test]
+fn test_contextual_instantiation_generic_function_to_callable_target() {
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let source = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let placeholder = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("__infer_src_3"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("_")),
+                type_id: TypeId::UNKNOWN,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: placeholder,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(checker.check_subtype(source, target).is_true());
+}

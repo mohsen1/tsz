@@ -19,7 +19,7 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ContextualTypeContext, TypeId};
+use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
 
 // =============================================================================
 // Function Type Resolution
@@ -130,7 +130,7 @@ impl<'a> CheckerState<'a> {
         // check_function_declaration scope.
         let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
 
-        let (type_params, type_param_updates) = self.push_type_parameters(type_parameters);
+        let (mut type_params, type_param_updates) = self.push_type_parameters(type_parameters);
 
         // Check for unused type parameters in function expressions and arrow functions (TS6133)
         // Function declarations, methods, classes, interfaces, and type aliases are checked
@@ -149,6 +149,7 @@ impl<'a> CheckerState<'a> {
         // IMPORTANT: Evaluate Application and Lazy types before creating context
         // - Application types: fix TS2571 false positives (see: docs/TS2571_INVESTIGATION.md)
         // - Lazy types (type aliases): fix TS7006 false positives for contextual parameter typing
+        let mut contextual_signature_type_params = None;
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
             use tsz_solver::TypeKey;
             use tsz_solver::type_queries::get_type_application;
@@ -169,6 +170,9 @@ impl<'a> CheckerState<'a> {
                 ctx_type
             };
 
+            contextual_signature_type_params =
+                self.contextual_type_params_from_expected(evaluated_type);
+
             Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 evaluated_type,
@@ -177,6 +181,17 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
+
+        // Contextually typed closures can acquire generic signatures even without
+        // explicit `<T>` syntax. This is required for parity with TypeScript in
+        // cases like:
+        //   const f: <T>(x: T) => void = x => {};
+        if is_closure
+            && type_params.is_empty()
+            && let Some(contextual_type_params) = contextual_signature_type_params
+        {
+            type_params = contextual_type_params;
+        }
 
         // For arrow functions, capture the outer `this` type to preserve lexical `this`
         // Arrow functions should inherit `this` from their enclosing scope
@@ -678,6 +693,63 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(self.ctx.types.function(shape))
+    }
+
+    fn contextual_type_params_from_expected(&self, expected: TypeId) -> Option<Vec<TypeParamInfo>> {
+        use tsz_solver::TypeKey;
+
+        match self.ctx.types.lookup(expected) {
+            Some(TypeKey::Function(shape_id)) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                if shape.type_params.is_empty() {
+                    None
+                } else {
+                    Some(shape.type_params.clone())
+                }
+            }
+            Some(TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                if shape.call_signatures.len() != 1 {
+                    return None;
+                }
+                let sig = &shape.call_signatures[0];
+                if sig.type_params.is_empty() {
+                    None
+                } else {
+                    Some(sig.type_params.clone())
+                }
+            }
+            Some(TypeKey::Application(app_id)) => {
+                let app = self.ctx.types.type_application(app_id);
+                self.contextual_type_params_from_expected(app.base)
+            }
+            Some(TypeKey::Union(list_id)) => {
+                let members = self.ctx.types.type_list(list_id);
+                if members.is_empty() {
+                    return None;
+                }
+
+                let mut candidate: Option<Vec<TypeParamInfo>> = None;
+                for &member in members.iter() {
+                    let params = self.contextual_type_params_from_expected(member)?;
+                    if let Some(existing) = &candidate {
+                        if existing.len() != params.len()
+                            || existing
+                                .iter()
+                                .zip(params.iter())
+                                .any(|(left, right)| left != right)
+                        {
+                            return None;
+                        }
+                    } else {
+                        candidate = Some(params);
+                    }
+                }
+
+                candidate
+            }
+            _ => None,
+        }
     }
 
     /// Check if a function body references the `arguments` object.
