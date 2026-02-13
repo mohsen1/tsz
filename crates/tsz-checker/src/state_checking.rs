@@ -1549,13 +1549,11 @@ impl<'a> CheckerState<'a> {
                     // Only evaluate conditional/mapped/index access types - NOT type aliases or interface
                     // references, as evaluating those can change their representation and break variance checking.
                     let evaluated_type = if declared_type != TypeId::ANY {
-                        use tsz_solver::type_queries::{EvaluationNeeded, classify_for_evaluation};
-                        let should_evaluate = matches!(
-                            classify_for_evaluation(checker.ctx.types, declared_type),
-                            EvaluationNeeded::Conditional { .. }
-                                | EvaluationNeeded::Mapped { .. }
-                                | EvaluationNeeded::IndexAccess { .. }
-                        );
+                        let should_evaluate =
+                            crate::query_boundaries::state::should_evaluate_contextual_declared_type(
+                                checker.ctx.types,
+                                declared_type,
+                            );
                         if should_evaluate {
                             checker.judge_evaluate(declared_type)
                         } else {

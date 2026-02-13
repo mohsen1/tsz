@@ -10,6 +10,7 @@
 //! This module extends CheckerState with class/interface-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
+use crate::query_boundaries::class::should_report_member_type_mismatch;
 use crate::state::CheckerState;
 use crate::types::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
@@ -1025,7 +1026,8 @@ impl<'a> CheckerState<'a> {
                             };
 
                             if param_count_incompatible
-                                || self.should_report_assignability_mismatch(
+                                || should_report_member_type_mismatch(
+                                    self,
                                     *member_type,
                                     base_type,
                                     *derived_member_idx,
@@ -1511,7 +1513,8 @@ impl<'a> CheckerState<'a> {
                                 && class_member_type != TypeId::ANY
                                 && interface_member_type != TypeId::ERROR
                                 && class_member_type != TypeId::ERROR
-                                && self.should_report_assignability_mismatch(
+                                && should_report_member_type_mismatch(
+                                    self,
                                     class_member_type,
                                     interface_member_type,
                                     class_member_idx,
