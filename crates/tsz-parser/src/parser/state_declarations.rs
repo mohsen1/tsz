@@ -476,9 +476,8 @@ impl ParserState {
         let param_start = self.token_pos();
         let param_name = self.parse_identifier();
         self.parse_expected(SyntaxKind::ColonToken);
-        // Capture the token kind before parsing — used for TS1268 grammar check below.
+        // Capture the token kind before parsing — used to detect invalid param types.
         let param_type_token = self.token();
-        let param_type_start = self.token_pos();
         let param_type = self.parse_type(); // Type of the index parameter (e.g., string, number)
 
         // Check for trailing comma (TS1025: invalid syntax)
@@ -492,41 +491,20 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::CloseBracketToken);
 
-        // TS1268: Check index signature parameter type (grammar check).
-        // Must be 'string', 'number', 'symbol', or a template literal type.
-        // This matches TSC's checkGrammarIndexSignatureParameters.
-        // Keyword types are wrapped in TYPE_REFERENCE nodes, so we look inside.
-        let has_invalid_param_type = if let Some(param_type_node) = self.arena.get(param_type) {
-            // Check if the parameter type is a known-invalid keyword for index signatures.
-            // Only flag keyword types that can NEVER be valid (any, boolean, void, etc.).
-            // Type references (Identifier) may resolve to valid types (e.g., PropertyKey = string | number | symbol)
-            // and are deferred to the checker.
-            let is_known_invalid_keyword = matches!(
-                param_type_token,
-                SyntaxKind::AnyKeyword
-                    | SyntaxKind::BooleanKeyword
-                    | SyntaxKind::VoidKeyword
-                    | SyntaxKind::NeverKeyword
-                    | SyntaxKind::UnknownKeyword
-                    | SyntaxKind::ObjectKeyword
-                    | SyntaxKind::BigIntKeyword
-                    | SyntaxKind::UndefinedKeyword
-            );
-            if is_known_invalid_keyword {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    param_type_start,
-                    param_type_node.end - param_type_start,
-                    "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.",
-                    diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
-                );
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+        // Detect known-invalid keyword types for index signature parameters.
+        // TS1268 is emitted by the checker; the parser only tracks this to suppress
+        // the TS1021 (missing type annotation) error when the param type is invalid.
+        let has_invalid_param_type = matches!(
+            param_type_token,
+            SyntaxKind::AnyKeyword
+                | SyntaxKind::BooleanKeyword
+                | SyntaxKind::VoidKeyword
+                | SyntaxKind::NeverKeyword
+                | SyntaxKind::UnknownKeyword
+                | SyntaxKind::ObjectKeyword
+                | SyntaxKind::BigIntKeyword
+                | SyntaxKind::UndefinedKeyword
+        );
 
         // Index signatures must have a type annotation (TS1021).
         // Skip when the parameter type is already invalid (TS1268) — matches TSC behavior.
