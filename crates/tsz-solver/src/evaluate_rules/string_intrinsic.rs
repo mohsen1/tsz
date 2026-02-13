@@ -26,7 +26,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(k) => k,
             None => return TypeId::ERROR,
         };
-
         match key {
             // Handle unions - distribute the operation over each member
             // Use recurse_string_intrinsic to respect depth limits
