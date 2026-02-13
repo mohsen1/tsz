@@ -1041,6 +1041,22 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
+        // Condition-based assertion narrowing: for `assert(condition)` where the predicate
+        // has no type (just `asserts value`), the argument expression acts as a narrowing
+        // condition. After the assertion, the condition is known true, so we narrow the
+        // reference using the condition expression, just like an if-statement.
+        // e.g., assert(typeof x === "string") narrows x to string.
+        if resolved_predicate.type_id.is_none() {
+            let antecedent_id = flow.antecedent.first().copied().unwrap_or(FlowNodeId::NONE);
+            return self.narrow_type_by_condition(
+                pre_type,
+                predicate_target,
+                reference,
+                true,
+                antecedent_id,
+            );
+        }
+
         pre_type
     }
 
