@@ -1873,13 +1873,22 @@ impl<'a> Printer<'a> {
                 self.emit_method_signature(node);
             }
             k if k == syntax_kind_ext::CALL_SIGNATURE => {
-                self.emit_call_signature(node);
+                // Call signatures are TypeScript-only - emit only in declaration mode (.d.ts)
+                if self.ctx.flags.in_declaration_emit {
+                    self.emit_call_signature(node);
+                }
             }
             k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                self.emit_construct_signature(node);
+                // Construct signatures are TypeScript-only - emit only in declaration mode (.d.ts)
+                if self.ctx.flags.in_declaration_emit {
+                    self.emit_construct_signature(node);
+                }
             }
             k if k == syntax_kind_ext::INDEX_SIGNATURE => {
-                self.emit_index_signature(node);
+                // Index signatures are TypeScript-only - emit only in declaration mode (.d.ts)
+                if self.ctx.flags.in_declaration_emit {
+                    self.emit_index_signature(node);
+                }
             }
 
             // Template literals
