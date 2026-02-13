@@ -772,21 +772,17 @@ impl<'a> CheckerState<'a> {
 
         if expected_type != TypeId::ANY
             && !is_constructor_return_without_expr
-            && !self.is_assignable_to(return_type, expected_type)
+            && !self.check_assignable_or_report(
+                return_type,
+                expected_type,
+                if !return_data.expression.is_none() {
+                    return_data.expression
+                } else {
+                    stmt_idx
+                },
+            )
         {
-            // Report error at the return expression (or at return keyword if no expression)
-            let error_node = if !return_data.expression.is_none() {
-                return_data.expression
-            } else {
-                stmt_idx
-            };
-            if !self.should_skip_weak_union_error(return_type, expected_type, error_node) {
-                self.error_type_not_assignable_with_reason_at(
-                    return_type,
-                    expected_type,
-                    error_node,
-                );
-            }
+            // Diagnostic emitted by check_assignable_or_report.
         }
 
         if expected_type != TypeId::ANY

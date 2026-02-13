@@ -1285,14 +1285,9 @@ impl<'a> CheckerState<'a> {
                 if !is_for_in
                     && declared != TypeId::ANY
                     && !self.type_contains_error(declared)
-                    && !self.is_assignable_to(element_type, declared)
-                    && !self.should_skip_weak_union_error(element_type, declared, var_decl.name)
+                    && !self.check_assignable_or_report(element_type, declared, var_decl.name)
                 {
-                    self.error_type_not_assignable_with_reason_at(
-                        element_type,
-                        declared,
-                        var_decl.name,
-                    );
+                    // Diagnostic emitted by check_assignable_or_report.
                 }
 
                 // Assign types for binding patterns (e.g., `for (const [a] of arr)`).

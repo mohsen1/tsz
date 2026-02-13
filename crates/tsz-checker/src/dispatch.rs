@@ -109,20 +109,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     error_node,
                 );
             } else if !self.checker.type_contains_error(expected_yield_type)
-                && !self
-                    .checker
-                    .is_assignable_to(yielded_type, expected_yield_type)
-                && !self.checker.should_skip_weak_union_error(
+                && !self.checker.check_assignable_or_report(
                     yielded_type,
                     expected_yield_type,
                     error_node,
                 )
             {
-                self.checker.error_type_not_assignable_with_reason_at(
-                    yielded_type,
-                    expected_yield_type,
-                    error_node,
-                );
+                // Diagnostic emitted by check_assignable_or_report.
             }
         }
 
