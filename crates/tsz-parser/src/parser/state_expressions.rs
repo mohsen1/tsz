@@ -151,17 +151,19 @@ impl ParserState {
     /// The line break prevents 'async' from being treated as a modifier.
     /// Example: `async\nx => x` parses as `async; (x => x);` not as an async arrow function.
     pub(crate) fn look_ahead_is_arrow_function_after_async(&mut self) -> bool {
-        // IMPORTANT: Check for line break BEFORE consuming 'async'
-        // If there's a line break after 'async', it cannot be an async arrow function
-        if self.scanner.has_preceding_line_break() {
-            return false;
-        }
-
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
 
         // Skip 'async'
         self.next_token();
+
+        // Check for line break AFTER 'async' — if the next token has a preceding
+        // line break, 'async' is not a modifier (ASI applies)
+        if self.scanner.has_preceding_line_break() {
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            return false;
+        }
 
         let result = match self.token() {
             // async (params) => ...
