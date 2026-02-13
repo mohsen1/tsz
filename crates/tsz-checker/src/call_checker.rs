@@ -320,7 +320,11 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.union(signature_types.clone())
         };
 
-        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, union_contextual);
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            union_contextual,
+            self.ctx.compiler_options.no_implicit_any,
+        );
 
         let mut original_node_types = std::mem::take(&mut self.ctx.node_types);
 
@@ -379,8 +383,11 @@ impl<'a> CheckerState<'a> {
                 // Phase 6 Task 4: CRITICAL FIX - Check excess properties against the MATCHED signature,
                 // not the union. Using the union would allow properties that exist in other overloads
                 // but not in the selected one, causing false negatives.
-                let matched_sig_helper =
-                    ContextualTypeContext::with_expected(self.ctx.types, func_type);
+                let matched_sig_helper = ContextualTypeContext::with_expected_and_options(
+                    self.ctx.types,
+                    func_type,
+                    self.ctx.compiler_options.no_implicit_any,
+                );
                 self.check_call_argument_excess_properties(args, &arg_types, |i, arg_count| {
                     matched_sig_helper.get_parameter_type_for_call(i, arg_count)
                 });
@@ -394,7 +401,11 @@ impl<'a> CheckerState<'a> {
         // type callback/object-literal arguments correctly. The union pass above can
         // miss those, producing false negatives and downstream false TS2345/TS2322.
         for (_sig, &func_type) in signatures.iter().zip(signature_types.iter()) {
-            let sig_helper = ContextualTypeContext::with_expected(self.ctx.types, func_type);
+            let sig_helper = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                func_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
 
             let diagnostics_checkpoint = self.ctx.diagnostics.len();
             self.ctx.node_types = Default::default();

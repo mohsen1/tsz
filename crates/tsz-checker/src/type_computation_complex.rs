@@ -365,7 +365,11 @@ impl<'a> CheckerState<'a> {
         // Prepare argument types with contextual typing
         // Note: We use a generic context helper here because we delegate the specific
         // signature selection to the solver.
-        let ctx_helper = ContextualTypeContext::with_expected(self.ctx.types, constructor_type);
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            constructor_type,
+            self.ctx.compiler_options.no_implicit_any,
+        );
         let check_excess_properties = true; // Default to true, solver handles specifics
         let arg_types = self.collect_call_argument_types_with_context(
             args,
@@ -1181,8 +1185,11 @@ impl<'a> CheckerState<'a> {
             && call.type_arguments.is_none(); // Only use two-pass if no explicit type args
 
         // Create contextual context from callee type with type arguments applied
-        let ctx_helper =
-            ContextualTypeContext::with_expected(self.ctx.types, callee_type_for_resolution);
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            callee_type_for_resolution,
+            self.ctx.compiler_options.no_implicit_any,
+        );
         let check_excess_properties = overload_signatures.is_none();
 
         // Two-pass argument collection for generic calls is only needed when at least one

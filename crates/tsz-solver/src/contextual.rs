@@ -514,11 +514,16 @@ fn extract_param_type_at(
 struct ParameterExtractor<'a> {
     db: &'a dyn TypeDatabase,
     index: usize,
+    no_implicit_any: bool,
 }
 
 impl<'a> ParameterExtractor<'a> {
-    fn new(db: &'a dyn TypeDatabase, index: usize) -> Self {
-        Self { db, index }
+    fn new(db: &'a dyn TypeDatabase, index: usize, no_implicit_any: bool) -> Self {
+        Self {
+            db,
+            index,
+            no_implicit_any,
+        }
     }
 
     fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
@@ -556,7 +561,14 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
         } else if param_types.len() == 1 {
             Some(param_types[0])
         } else {
-            Some(self.db.union(param_types))
+            // Multiple different parameter types
+            // If noImplicitAny is false, fall back to `any` (return None)
+            // If noImplicitAny is true, create a union type
+            if self.no_implicit_any {
+                Some(self.db.union(param_types))
+            } else {
+                None // Falls back to `any` in the checker
+            }
         }
     }
 
@@ -707,22 +719,41 @@ pub struct ContextualTypeContext<'a> {
     interner: &'a dyn TypeDatabase,
     /// The expected type (contextual type)
     expected: Option<TypeId>,
+    /// Whether noImplicitAny is enabled (affects contextual typing for multi-signature functions)
+    no_implicit_any: bool,
 }
 
 impl<'a> ContextualTypeContext<'a> {
     /// Create a new contextual type context.
+    /// Defaults to `no_implicit_any: false` for compatibility.
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         ContextualTypeContext {
             interner,
             expected: None,
+            no_implicit_any: false,
         }
     }
 
     /// Create a context with an expected type.
+    /// Defaults to `no_implicit_any: false` for compatibility.
     pub fn with_expected(interner: &'a dyn TypeDatabase, expected: TypeId) -> Self {
         ContextualTypeContext {
             interner,
             expected: Some(expected),
+            no_implicit_any: false,
+        }
+    }
+
+    /// Create a context with an expected type and explicit noImplicitAny setting.
+    pub fn with_expected_and_options(
+        interner: &'a dyn TypeDatabase,
+        expected: TypeId,
+        no_implicit_any: bool,
+    ) -> Self {
+        ContextualTypeContext {
+            interner,
+            expected: Some(expected),
+            no_implicit_any,
         }
     }
 
@@ -752,7 +783,11 @@ impl<'a> ContextualTypeContext<'a> {
             let param_types: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&m| {
-                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        m,
+                        self.no_implicit_any,
+                    );
                     ctx.get_parameter_type(index)
                 })
                 .collect();
@@ -769,7 +804,11 @@ impl<'a> ContextualTypeContext<'a> {
         // Handle Application explicitly - unwrap to base type
         if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
-            let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
+            let ctx = ContextualTypeContext::with_expected_and_options(
+                self.interner,
+                app.base,
+                self.no_implicit_any,
+            );
             return ctx.get_parameter_type(index);
         }
 
@@ -778,7 +817,11 @@ impl<'a> ContextualTypeContext<'a> {
             Some(TypeKey::Mapped(_) | TypeKey::Conditional(_)) => {
                 let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
-                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        self.interner,
+                        evaluated,
+                        self.no_implicit_any,
+                    );
                     return ctx.get_parameter_type(index);
                 }
             }
@@ -786,7 +829,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Use visitor for Function/Callable types
-        let mut extractor = ParameterExtractor::new(self.interner, index);
+        let mut extractor = ParameterExtractor::new(self.interner, index, self.no_implicit_any);
         extractor.extract(expected)
     }
 
@@ -1391,7 +1434,8 @@ impl<'a> GeneratorContextualType<'a> {
     /// Extract next type from next method's parameter.
     fn extract_next_from_method(&self, method_type: TypeId) -> Option<TypeId> {
         // Use ParameterExtractor to get the first parameter (index 0)
-        let mut param_extractor = ParameterExtractor::new(self.interner, 0);
+        // Default to no_implicit_any: false for generator internal typing
+        let mut param_extractor = ParameterExtractor::new(self.interner, 0, false);
         param_extractor.extract(method_type)
     }
 
@@ -1408,7 +1452,8 @@ impl<'a> GeneratorContextualType<'a> {
     /// Extract return type from return method's parameter.
     fn extract_return_from_method(&self, method_type: TypeId) -> Option<TypeId> {
         // Use ParameterExtractor to get the first parameter (index 0)
-        let mut param_extractor = ParameterExtractor::new(self.interner, 0);
+        // Default to no_implicit_any: false for generator internal typing
+        let mut param_extractor = ParameterExtractor::new(self.interner, 0, false);
         param_extractor.extract(method_type)
     }
 }

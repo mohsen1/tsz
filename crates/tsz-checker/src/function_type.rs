@@ -169,9 +169,10 @@ impl<'a> CheckerState<'a> {
                 ctx_type
             };
 
-            Some(ContextualTypeContext::with_expected(
+            Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 evaluated_type,
+                self.ctx.compiler_options.no_implicit_any,
             ))
         } else {
             None
