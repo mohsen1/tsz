@@ -1282,28 +1282,45 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
+        // Helper: record the cross-file origin so delegate_cross_arena_symbol_resolution
+        // can find the correct arena for this SymbolId.
+        let record_and_return = |sym_id: tsz_binder::SymbolId| -> Option<tsz_binder::SymbolId> {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .insert(sym_id, target_file_idx);
+            Some(sym_id)
+        };
+
         // Look up the export in the target binder's module_exports.
         // Prefer canonical file key, then module specifier fallback.
         if let Some(exports_table) = target_binder.module_exports.get(&target_file_name) {
             if let Some(sym_id) = exports_table.get(export_name) {
-                return Some(sym_id);
+                return record_and_return(sym_id);
             }
         }
 
         if let Some(exports_table) = target_binder.module_exports.get(module_specifier) {
             if let Some(sym_id) = exports_table.get(export_name) {
-                return Some(sym_id);
+                return record_and_return(sym_id);
             }
         }
 
         // Fall back to checking file_locals in the target binder
         if let Some(sym_id) = target_binder.file_locals.get(export_name) {
-            return Some(sym_id);
+            return record_and_return(sym_id);
         }
 
         // Follow re-export chains (wildcard and named re-exports)
         let mut visited = rustc_hash::FxHashSet::default();
-        self.resolve_export_in_file(target_file_idx, export_name, &mut visited)
+        let result = self.resolve_export_in_file(target_file_idx, export_name, &mut visited);
+        if let Some(sym_id) = result {
+            self.ctx
+                .cross_file_symbol_targets
+                .borrow_mut()
+                .insert(sym_id, target_file_idx);
+        }
+        result
     }
 
     fn resolve_ambient_module_export(
@@ -1402,12 +1419,21 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
+        // Helper: record cross-file origin for all symbols in a table.
+        let record_symbols = |table: &tsz_binder::SymbolTable| {
+            let mut targets = self.ctx.cross_file_symbol_targets.borrow_mut();
+            for (_, &sym_id) in table.iter() {
+                targets.insert(sym_id, target_file_idx);
+            }
+        };
+
         // Try to find exports in the target binder's module_exports.
         // Prefer canonical file key first.
         if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
             let mut combined = exports.clone();
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            record_symbols(&combined);
             return Some(combined);
         }
 
@@ -1416,6 +1442,7 @@ impl<'a> CheckerState<'a> {
             let mut combined = exports.clone();
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            record_symbols(&combined);
             return Some(combined);
         }
 
@@ -1425,6 +1452,7 @@ impl<'a> CheckerState<'a> {
             // Also collect exports from re-export chains
             let mut visited = rustc_hash::FxHashSet::default();
             self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            record_symbols(&combined);
             return Some(combined);
         }
 

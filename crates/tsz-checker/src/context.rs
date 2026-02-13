@@ -417,7 +417,7 @@ pub struct CheckerContext<'a> {
     // --- DefId Migration Infrastructure ---
     /// Storage for type definitions (interfaces, classes, type aliases).
     /// Part of the DefId migration to decouple Solver from Binder.
-    pub definition_store: DefinitionStore,
+    pub definition_store: Rc<DefinitionStore>,
 
     /// Mapping from Binder SymbolId to Solver DefId.
     /// Used during migration to avoid creating duplicate DefIds for the same symbol.
@@ -447,6 +447,11 @@ pub struct CheckerContext<'a> {
 
     /// Private constructor types (TypeIds) produced for private constructors.
     pub private_constructor_types: FxHashSet<TypeId>,
+
+    /// Maps cross-file SymbolIds to their source file index.
+    /// Populated by resolve_cross_file_export/resolve_cross_file_namespace_exports
+    /// so delegate_cross_arena_symbol_resolution can find the correct arena.
+    pub cross_file_symbol_targets: RefCell<FxHashMap<SymbolId, usize>>,
 
     /// All arenas for cross-file resolution (indexed by file_idx from Symbol.decl_file_idx).
     /// Set during multi-file type checking to allow resolving declarations across files.
@@ -668,7 +673,7 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: DefinitionStore::new(),
+            definition_store: Rc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
@@ -676,6 +681,7 @@ impl<'a> CheckerContext<'a> {
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
+            cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
             all_arenas: None,
             all_binders: None,
             resolved_module_paths: None,
@@ -780,7 +786,7 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: DefinitionStore::new(),
+            definition_store: Rc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
@@ -788,6 +794,7 @@ impl<'a> CheckerContext<'a> {
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
+            cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
             all_arenas: None,
             all_binders: None,
             resolved_module_paths: None,
@@ -895,7 +902,7 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: DefinitionStore::new(),
+            definition_store: Rc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),
@@ -903,6 +910,7 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
             def_to_symbol: RefCell::new(cache.def_to_symbol),
+            cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
             all_arenas: None,
             all_binders: None,
             resolved_module_paths: None,
@@ -1009,7 +1017,7 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: DefinitionStore::new(),
+            definition_store: Rc::new(DefinitionStore::new()),
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),
@@ -1017,6 +1025,7 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: cache.protected_constructor_types,
             private_constructor_types: cache.private_constructor_types,
             def_to_symbol: RefCell::new(cache.def_to_symbol),
+            cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
             all_arenas: None,
             all_binders: None,
             resolved_module_paths: None,
@@ -1142,9 +1151,13 @@ impl<'a> CheckerContext<'a> {
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
-            definition_store: DefinitionStore::new(),
-            // CRITICAL: DefId mappings are context-local and tied to definition_store.
-            // Never reuse parent DefId maps in a child context.
+            // Share DefinitionStore with parent so DefIds are globally unique
+            // across parent/child checkers. This prevents DefId collisions where
+            // the child's DefId(1) means a different thing than the parent's DefId(1).
+            definition_store: parent.definition_store.clone(),
+            // CRITICAL: symbol_to_def is context-local because SymbolIds are binder-local.
+            // The same SymbolId maps to different symbols in different binders, so the
+            // mapping must be kept separate.
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),
@@ -1152,6 +1165,7 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: parent.protected_constructor_types.clone(),
             private_constructor_types: parent.private_constructor_types.clone(),
             def_to_symbol: RefCell::new(FxHashMap::default()),
+            cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
             all_arenas: None,
             all_binders: None,
             resolved_module_paths: None,
