@@ -1787,6 +1787,14 @@ impl ParserState {
                 NodeIndex::NONE
             };
 
+            // Parse optional initializer (= expr).
+            // Syntactically valid here; the checker reports TS2371 if invalid.
+            let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+                self.parse_assignment_expression()
+            } else {
+                NodeIndex::NONE
+            };
+
             let param_end = self.token_end();
 
             let param = self.arena.add_parameter(
@@ -1799,7 +1807,7 @@ impl ParserState {
                     name,
                     question_token: question,
                     type_annotation,
-                    initializer: NodeIndex::NONE,
+                    initializer,
                 },
             );
             params.push(param);
