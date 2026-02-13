@@ -229,6 +229,12 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // Check if this symbol is a namespace/module (TS2708)
+        if symbol.flags & symbol_flags::MODULE != 0 {
+            self.error_namespace_used_as_value_at(name, inner);
+            return true;
+        }
+
         // Check if this symbol is a class, enum, or function (TS2629, TS2628, TS2630)
         use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let (msg_template, code) = if symbol.flags & symbol_flags::CLASS != 0 {
