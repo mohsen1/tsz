@@ -56,10 +56,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             if check_type == TypeId::ANY {
-                // For distributive `any extends X ? T : F`:
-                // - Distributive: return union of both branches (any distributes over the conditional)
-                // - Non-distributive: return union of both branches (any poisons the result)
-                // In both cases, we evaluate and union the branches to handle infer types correctly
+                // For `any extends X ? T : F`, return union of both branches.
+                // When X contains infer patterns, perform infer pattern matching
+                // so the infer variables get bound to `any` and properly substituted.
+                // e.g., `any extends infer U ? U : never` → union(any, never) → any
+                if self.type_contains_infer(extends_type) {
+                    let mut bindings = FxHashMap::default();
+                    let mut visited = FxHashSet::default();
+                    let mut checker =
+                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    checker.allow_bivariant_rest = true;
+                    self.match_infer_pattern(
+                        check_type,
+                        extends_type,
+                        &mut bindings,
+                        &mut visited,
+                        &mut checker,
+                    );
+                    let true_sub = self.substitute_infer(cond.true_type, &bindings);
+                    let false_sub = self.substitute_infer(cond.false_type, &bindings);
+                    let true_eval = self.evaluate(true_sub);
+                    let false_eval = self.evaluate(false_sub);
+                    return self.interner().union2(true_eval, false_eval);
+                }
                 let true_eval = self.evaluate(cond.true_type);
                 let false_eval = self.evaluate(cond.false_type);
                 return self.interner().union2(true_eval, false_eval);
