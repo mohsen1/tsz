@@ -1,5 +1,6 @@
 pub(crate) mod assignability;
 pub(crate) mod call_checker;
+pub(crate) mod callable_type;
 pub(crate) mod class;
 pub(crate) mod class_type;
 pub(crate) mod constructor_checker;
@@ -14,3 +15,4 @@ pub(crate) mod state_type_environment;
 pub(crate) mod state_type_resolution;
 pub(crate) mod type_checking;
 pub(crate) mod type_computation;
+pub(crate) mod union_type;
