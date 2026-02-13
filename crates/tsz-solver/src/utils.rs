@@ -268,6 +268,21 @@ pub trait TypeIdExt {
     fn unwrap_or_undefined(option: Option<Self>) -> Self
     where
         Self: Sized;
+
+    /// Returns true if this is either NEVER, UNKNOWN, or ANY.
+    ///
+    /// Useful for checking if a type represents an error or placeholder state.
+    fn is_error_like(&self) -> bool;
+
+    /// Returns true if this is a definite value type (not NEVER, UNKNOWN, ANY, or VOID).
+    ///
+    /// Useful for checking if a type represents a concrete value.
+    fn is_concrete(&self) -> bool;
+
+    /// Returns true if this is NULL, UNDEFINED, or a union containing them.
+    ///
+    /// Note: This is a simple check for the primitive types only, not union members.
+    fn is_nullish(&self) -> bool;
 }
 
 impl TypeIdExt for TypeId {
@@ -341,6 +356,24 @@ impl TypeIdExt for TypeId {
     #[inline]
     fn unwrap_or_undefined(option: Option<Self>) -> Self {
         option.unwrap_or(TypeId::UNDEFINED)
+    }
+
+    #[inline]
+    fn is_error_like(&self) -> bool {
+        *self == TypeId::NEVER || *self == TypeId::UNKNOWN || *self == TypeId::ANY
+    }
+
+    #[inline]
+    fn is_concrete(&self) -> bool {
+        *self != TypeId::NEVER
+            && *self != TypeId::UNKNOWN
+            && *self != TypeId::ANY
+            && *self != TypeId::VOID
+    }
+
+    #[inline]
+    fn is_nullish(&self) -> bool {
+        *self == TypeId::NULL || *self == TypeId::UNDEFINED
     }
 }
 
@@ -477,5 +510,49 @@ mod tests {
         // Verify it's an intersection (not one of the inputs)
         assert_ne!(result, TypeId::STRING);
         assert_ne!(result, TypeId::NUMBER);
+    }
+
+    #[test]
+    fn test_type_id_ext_is_error_like() {
+        // Error-like types
+        assert!(TypeId::NEVER.is_error_like());
+        assert!(TypeId::UNKNOWN.is_error_like());
+        assert!(TypeId::ANY.is_error_like());
+
+        // Not error-like
+        assert!(!TypeId::STRING.is_error_like());
+        assert!(!TypeId::NUMBER.is_error_like());
+        assert!(!TypeId::VOID.is_error_like());
+        assert!(!TypeId::NULL.is_error_like());
+    }
+
+    #[test]
+    fn test_type_id_ext_is_concrete() {
+        // Concrete types
+        assert!(TypeId::STRING.is_concrete());
+        assert!(TypeId::NUMBER.is_concrete());
+        assert!(TypeId::BOOLEAN.is_concrete());
+        assert!(TypeId::NULL.is_concrete());
+        assert!(TypeId::UNDEFINED.is_concrete());
+
+        // Not concrete
+        assert!(!TypeId::NEVER.is_concrete());
+        assert!(!TypeId::UNKNOWN.is_concrete());
+        assert!(!TypeId::ANY.is_concrete());
+        assert!(!TypeId::VOID.is_concrete());
+    }
+
+    #[test]
+    fn test_type_id_ext_is_nullish() {
+        // Nullish types
+        assert!(TypeId::NULL.is_nullish());
+        assert!(TypeId::UNDEFINED.is_nullish());
+
+        // Not nullish
+        assert!(!TypeId::STRING.is_nullish());
+        assert!(!TypeId::NUMBER.is_nullish());
+        assert!(!TypeId::NEVER.is_nullish());
+        assert!(!TypeId::UNKNOWN.is_nullish());
+        assert!(!TypeId::ANY.is_nullish());
     }
 }
