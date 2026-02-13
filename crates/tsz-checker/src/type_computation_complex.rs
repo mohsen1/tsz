@@ -426,7 +426,7 @@ impl<'a> CheckerState<'a> {
                     // Check if this is a weak union violation or excess property case
                     // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
                     // We should skip the TS2322 error regardless of check_excess_properties flag
-                    if !self.should_skip_weak_union_error(actual, expected, arg_idx) {
+                    if self.should_report_assignability_mismatch(actual, expected, arg_idx) {
                         if !self.should_suppress_weak_key_arg_mismatch(
                             new_expr.expression,
                             args,
@@ -1464,7 +1464,7 @@ impl<'a> CheckerState<'a> {
 
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
-                    if !self.should_skip_weak_union_error(actual, expected, arg_idx) {
+                    if self.should_report_assignability_mismatch(actual, expected, arg_idx) {
                         if !self.should_suppress_weak_key_arg_mismatch(
                             callee_expr,
                             args,
@@ -1476,7 +1476,7 @@ impl<'a> CheckerState<'a> {
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
-                    if !self.should_skip_weak_union_error(actual, expected, last_arg) {
+                    if self.should_report_assignability_mismatch(actual, expected, last_arg) {
                         if !self.should_suppress_weak_key_arg_mismatch(
                             callee_expr,
                             args,

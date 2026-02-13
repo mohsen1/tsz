@@ -911,6 +911,35 @@ pub fn get_callable_shape(
     }
 }
 
+/// Check if a type has at least one call signature.
+///
+/// Returns false if the type is not a callable shape.
+pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    get_callable_shape(db, type_id)
+        .map(|shape| !shape.call_signatures.is_empty())
+        .unwrap_or(false)
+}
+
+/// Get call signatures from a callable type.
+///
+/// Returns None if the type is not callable.
+pub fn get_call_signatures(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<crate::CallSignature>> {
+    get_callable_shape(db, type_id).map(|shape| shape.call_signatures.clone())
+}
+
+/// Get construct signatures from a callable type.
+///
+/// Returns None if the type is not callable.
+pub fn get_construct_signatures(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<crate::CallSignature>> {
+    get_callable_shape(db, type_id).map(|shape| shape.construct_signatures.clone())
+}
+
 /// Get the function shape ID for a function type.
 ///
 /// Returns None if the type is not a Function.

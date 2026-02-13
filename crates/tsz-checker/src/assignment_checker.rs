@@ -344,25 +344,14 @@ impl<'a> CheckerState<'a> {
         };
 
         if !is_const && !is_readonly && left_type != TypeId::ANY {
-            if let Some((source_level, target_level)) =
-                self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
-            {
-                self.error_constructor_accessibility_not_assignable(
-                    right_type,
-                    left_type,
-                    source_level,
-                    target_level,
-                    right_idx,
-                );
-            } else if !is_array_destructuring
-                && !self.is_assignable_to(right_type, left_type)
-                && !self.should_skip_weak_union_error(right_type, left_type, right_idx)
-            {
-                // Don't emit errors if either side is ERROR - prevents cascading errors
-                if right_type != TypeId::ERROR && left_type != TypeId::ERROR {
-                    self.error_type_not_assignable_with_reason_at(right_type, left_type, right_idx);
-                }
-            }
+            self.check_assignment_compatibility(
+                left_idx,
+                right_idx,
+                right_type,
+                left_type,
+                !is_array_destructuring,
+                true,
+            );
 
             if left_type != TypeId::UNKNOWN
                 && let Some(right_node) = self.ctx.arena.get(right_idx)
@@ -616,21 +605,14 @@ impl<'a> CheckerState<'a> {
         };
 
         if left_type != TypeId::ANY && !emitted_operator_error {
-            if let Some((source_level, target_level)) =
-                self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
-            {
-                self.error_constructor_accessibility_not_assignable(
-                    assigned_type,
-                    left_type,
-                    source_level,
-                    target_level,
-                    right_idx,
-                );
-            } else if !self.is_assignable_to(assigned_type, left_type)
-                && !self.should_skip_weak_union_error(right_type, left_type, right_idx)
-            {
-                self.error_type_not_assignable_with_reason_at(assigned_type, left_type, right_idx);
-            }
+            self.check_assignment_compatibility(
+                left_idx,
+                right_idx,
+                assigned_type,
+                left_type,
+                true,
+                false,
+            );
 
             if left_type != TypeId::UNKNOWN
                 && let Some(right_node) = self.ctx.arena.get(right_idx)
@@ -694,5 +676,43 @@ impl<'a> CheckerState<'a> {
 
         // Return ANY for unknown binary operand types to prevent cascading errors
         TypeId::ANY
+    }
+
+    fn check_assignment_compatibility(
+        &mut self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        source_type: TypeId,
+        target_type: TypeId,
+        check_assignability: bool,
+        suppress_error_for_error_types: bool,
+    ) {
+        if let Some((source_level, target_level)) =
+            self.constructor_accessibility_mismatch_for_assignment(left_idx, right_idx)
+        {
+            self.error_constructor_accessibility_not_assignable(
+                source_type,
+                target_type,
+                source_level,
+                target_level,
+                right_idx,
+            );
+            return;
+        }
+
+        if !check_assignability
+            || self.is_assignable_to(source_type, target_type)
+            || self.should_skip_weak_union_error(source_type, target_type, right_idx)
+        {
+            return;
+        }
+
+        if suppress_error_for_error_types
+            && (source_type == TypeId::ERROR || target_type == TypeId::ERROR)
+        {
+            return;
+        }
+
+        self.error_type_not_assignable_with_reason_at(source_type, target_type, right_idx);
     }
 }

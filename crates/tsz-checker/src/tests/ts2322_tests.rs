@@ -472,3 +472,44 @@ fn test_ts2322_no_false_positive_nested_conditional() {
         ts2322_errors
     );
 }
+
+#[test]
+fn test_ts2322_accessor_getter_setter_type_mismatch_message() {
+    let source = r#"
+        class C {
+            get x(): string { return "s"; }
+            set x(value: number) {}
+        }
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for accessor type mismatch; diagnostics: {:?}",
+        diagnostics
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, msg)| msg.contains("string") && msg.contains("number")),
+        "Expected accessor TS2322 message to mention string and number; TS2322 diagnostics: {:?}",
+        ts2322
+    );
+}
+
+#[test]
+fn test_ts2322_for_of_annotation_mismatch() {
+    let source = r#"
+        for (const x: string of [1, 2, 3]) {}
+    "#;
+
+    assert!(
+        has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for for-of annotation mismatch"
+    );
+}

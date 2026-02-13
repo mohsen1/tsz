@@ -1285,14 +1285,9 @@ impl<'a> CheckerState<'a> {
                 if !is_for_in
                     && declared != TypeId::ANY
                     && !self.type_contains_error(declared)
-                    && !self.is_assignable_to(element_type, declared)
-                    && !self.should_skip_weak_union_error(element_type, declared, var_decl.name)
+                    && !self.check_assignable_or_report(element_type, declared, var_decl.name)
                 {
-                    self.error_type_not_assignable_with_reason_at(
-                        element_type,
-                        declared,
-                        var_decl.name,
-                    );
+                    // Diagnostic emitted by check_assignable_or_report.
                 }
 
                 // Assign types for binding patterns (e.g., `for (const [a] of arr)`).
@@ -1379,7 +1374,7 @@ impl<'a> CheckerState<'a> {
             && element_type != TypeId::ANY
             && element_type != TypeId::ERROR
             && !self.type_contains_error(var_type)
-            && !self.is_assignable_to(element_type, var_type)
+            && self.should_report_assignability_mismatch(element_type, var_type, initializer)
         {
             self.error_type_not_assignable_with_reason_at(element_type, var_type, initializer);
         }
@@ -1554,16 +1549,11 @@ impl<'a> CheckerState<'a> {
                     // Only evaluate conditional/mapped/index access types - NOT type aliases or interface
                     // references, as evaluating those can change their representation and break variance checking.
                     let evaluated_type = if declared_type != TypeId::ANY {
-                        use tsz_solver::TypeKey;
                         let should_evaluate =
-                            checker.ctx.types.lookup(declared_type).is_some_and(|key| {
-                                matches!(
-                                    key,
-                                    TypeKey::Conditional(_)
-                                        | TypeKey::Mapped(_)
-                                        | TypeKey::IndexAccess(_, _)
-                                )
-                            });
+                            crate::query_boundaries::state::should_evaluate_contextual_declared_type(
+                                checker.ctx.types,
+                                declared_type,
+                            );
                         if should_evaluate {
                             checker.judge_evaluate(declared_type)
                         } else {
@@ -1599,13 +1589,11 @@ impl<'a> CheckerState<'a> {
                                 target_level,
                                 var_decl.initializer,
                             );
-                        } else if !checker.is_assignable_to(init_type, declared_type)
-                            && !checker.should_skip_weak_union_error(
-                                init_type,
-                                declared_type,
-                                var_decl.initializer,
-                            )
-                        {
+                        } else if checker.should_report_assignability_mismatch(
+                            init_type,
+                            declared_type,
+                            var_decl.initializer,
+                        ) {
                             // For destructuring patterns, emit a generic TS2322 error
                             // instead of detailed property mismatch errors (TS2326)
                             if is_destructuring {
