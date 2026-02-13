@@ -120,6 +120,9 @@ impl BinderState {
             self.enter_scope(ContainerKind::Function, idx);
             self.declare_arguments_symbol();
 
+            // Bind type parameters
+            self.bind_type_parameters(arena, &func.type_parameters);
+
             self.with_fresh_flow(|binder| {
                 // Bind parameters
                 for &param_idx in &func.parameters.nodes {
@@ -176,6 +179,29 @@ impl BinderState {
         }
     }
 
+    /// Bind type parameters for a function/class/interface
+    pub(crate) fn bind_type_parameters(
+        &mut self,
+        arena: &NodeArena,
+        type_params: &Option<NodeList>,
+    ) {
+        if let Some(params) = type_params {
+            for &param_idx in &params.nodes {
+                if let Some(node) = arena.get(param_idx)
+                    && let Some(type_param) = arena.get_type_parameter(node)
+                {
+                    if let Some(name) = self.get_identifier_name(arena, type_param.name) {
+                        tracing::debug!(
+                            type_param_name = %name,
+                            "Binding type parameter"
+                        );
+                        self.declare_symbol(name, symbol_flags::TYPE_PARAMETER, param_idx, false);
+                    }
+                }
+            }
+        }
+    }
+
     /// Bind an arrow function expression - creates a scope and binds the body.
     #[tracing::instrument(level = "debug", skip(self, arena, node), fields(arrow_fn_idx = idx.0))]
     pub(crate) fn bind_arrow_function(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
@@ -187,6 +213,9 @@ impl BinderState {
             self.bind_modifiers(arena, &func.modifiers);
             // Enter function scope
             self.enter_scope(ContainerKind::Function, idx);
+
+            // Bind type parameters (e.g., <T> in arrow functions)
+            self.bind_type_parameters(arena, &func.type_parameters);
 
             // Capture enclosing flow for closures (preserves narrowing for const/let variables)
             self.with_fresh_flow_inner(
@@ -233,6 +262,9 @@ impl BinderState {
             if let Some(name) = self.get_identifier_name(arena, func.name) {
                 self.declare_symbol(name, symbol_flags::FUNCTION, idx, false);
             }
+
+            // Bind type parameters
+            self.bind_type_parameters(arena, &func.type_parameters);
 
             // Capture enclosing flow for closures (preserves narrowing for const/let variables)
             self.with_fresh_flow_inner(
