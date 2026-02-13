@@ -62,8 +62,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // Both have predicates - check compatibility
             (Some(source_pred), Some(target_pred)) => {
-                // First, check if predicates target the same parameter
-                if source_pred.target != target_pred.target {
+                // First, check if predicates target the same parameter.
+                // We compare by parameter index if available, falling back to name
+                // comparison only if indices are missing (e.g. for synthetic types).
+                let targets_match = match (source_pred.parameter_index, target_pred.parameter_index)
+                {
+                    (Some(s_idx), Some(t_idx)) => s_idx == t_idx,
+                    _ => source_pred.target == target_pred.target,
+                };
+
+                if !targets_match {
                     return false;
                 }
 

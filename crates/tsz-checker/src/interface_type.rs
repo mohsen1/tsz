@@ -110,7 +110,7 @@ impl<'a> CheckerState<'a> {
                             .map(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE)
                             .unwrap_or(false);
                         if is_predicate {
-                            self.return_type_and_predicate(sig.type_annotation)
+                            self.return_type_and_predicate(sig.type_annotation, &params)
                         } else {
                             (self.get_type_from_type_node(sig.type_annotation), None)
                         }
@@ -143,7 +143,7 @@ impl<'a> CheckerState<'a> {
                             .map(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE)
                             .unwrap_or(false);
                         if is_predicate {
-                            self.return_type_and_predicate(sig.type_annotation)
+                            self.return_type_and_predicate(sig.type_annotation, &params)
                         } else {
                             (self.get_type_from_type_node(sig.type_annotation), None)
                         }

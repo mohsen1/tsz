@@ -237,6 +237,7 @@ impl<'a> TypeInstantiator<'a> {
             asserts: predicate.asserts,
             target: predicate.target.clone(),
             type_id: predicate.type_id.map(|type_id| self.instantiate(type_id)),
+            parameter_index: predicate.parameter_index,
         }
     }
 

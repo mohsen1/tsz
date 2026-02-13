@@ -795,7 +795,8 @@ impl<'a> CheckerState<'a> {
 
             let (type_params, type_param_updates) = self.push_type_parameters(&sig.type_parameters);
             let (params, this_type) = self.extract_params_from_signature(sig);
-            let (return_type, type_predicate) = self.return_type_and_predicate(sig.type_annotation);
+            let (return_type, type_predicate) =
+                self.return_type_and_predicate(sig.type_annotation, &params);
 
             let shape = FunctionShape {
                 type_params,
@@ -851,7 +852,7 @@ impl<'a> CheckerState<'a> {
                     self.push_type_parameters(&sig.type_parameters);
                 let (params, this_type) = self.extract_params_from_signature(sig);
                 let (return_type, type_predicate) =
-                    self.return_type_and_predicate(sig.type_annotation);
+                    self.return_type_and_predicate(sig.type_annotation, &params);
 
                 let shape = FunctionShape {
                     type_params,

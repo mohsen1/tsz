@@ -914,7 +914,11 @@ impl<'a> TypeLowering<'a> {
         (lowered, this_type)
     }
 
-    fn lower_return_type(&self, node_idx: NodeIndex) -> (TypeId, Option<TypePredicate>) {
+    fn lower_return_type(
+        &self,
+        node_idx: NodeIndex,
+        params: &[ParamInfo],
+    ) -> (TypeId, Option<TypePredicate>) {
         if node_idx == NodeIndex::NONE {
             // Return ERROR for missing return type annotations to prevent "Any poisoning".
             // This forces explicit return type annotations and surfaces bugs early.
@@ -922,16 +926,33 @@ impl<'a> TypeLowering<'a> {
             return (TypeId::ERROR, None);
         }
 
-        let node = match self.arena.get(node_idx) {
-            Some(n) => n,
-            None => return (TypeId::ERROR, None),
-        };
-
-        if node.kind == syntax_kind_ext::TYPE_PREDICATE {
-            return self.lower_type_predicate_return(node_idx);
+        if let Some(predicate_node_idx) = self.find_type_predicate_node(node_idx) {
+            return self.lower_type_predicate_return(predicate_node_idx, params);
         }
 
         (self.lower_type(node_idx), None)
+    }
+
+    /// Recursively find a type predicate node within a type node (e.g., inside parentheses or intersections).
+    fn find_type_predicate_node(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.arena.get(node_idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_PREDICATE => Some(node_idx),
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                let wrapped = self.arena.get_wrapped_type(node)?;
+                self.find_type_predicate_node(wrapped.type_node)
+            }
+            k if k == syntax_kind_ext::INTERSECTION_TYPE => {
+                let composite = self.arena.get_composite_type(node)?;
+                for &member in &composite.types.nodes {
+                    if let Some(found) = self.find_type_predicate_node(member) {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Lower a function type ((a: T, b: U) => R)
@@ -947,7 +968,7 @@ impl<'a> TypeLowering<'a> {
                     let (params, this_type) = self.lower_params_with_this(&data.parameters);
 
                     let (return_type, type_predicate) =
-                        self.lower_return_type(data.type_annotation);
+                        self.lower_return_type(data.type_annotation, &params);
                     (params, this_type, return_type, type_predicate)
                 });
 
@@ -1254,7 +1275,7 @@ impl<'a> TypeLowering<'a> {
                             if let Some(override_type) = return_type_override {
                                 (override_type, None)
                             } else {
-                                self.lower_return_type(method.type_annotation)
+                                self.lower_return_type(method.type_annotation, &params)
                             };
 
                         (params, this_type, return_type, type_predicate)
@@ -1304,7 +1325,7 @@ impl<'a> TypeLowering<'a> {
                             if let Some(override_type) = return_type_override {
                                 (override_type, None)
                             } else {
-                                self.lower_return_type(func.type_annotation)
+                                self.lower_return_type(func.type_annotation, &params)
                             };
 
                         (params, this_type, return_type, type_predicate)
@@ -1497,7 +1518,8 @@ impl<'a> TypeLowering<'a> {
         let (type_params, (params, this_type, return_type, type_predicate)) = self
             .with_type_params(&sig.type_parameters, || {
                 let (params, this_type) = self.lower_signature_params(sig);
-                let (return_type, type_predicate) = self.lower_return_type(sig.type_annotation);
+                let (return_type, type_predicate) =
+                    self.lower_return_type(sig.type_annotation, &params);
                 (params, this_type, return_type, type_predicate)
             });
 
@@ -1515,7 +1537,8 @@ impl<'a> TypeLowering<'a> {
         let (type_params, (params, this_type, return_type, type_predicate)) = self
             .with_type_params(&sig.type_parameters, || {
                 let (params, this_type) = self.lower_signature_params(sig);
-                let (return_type, type_predicate) = self.lower_return_type(sig.type_annotation);
+                let (return_type, type_predicate) =
+                    self.lower_return_type(sig.type_annotation, &params);
                 (params, this_type, return_type, type_predicate)
             });
 
@@ -2839,7 +2862,7 @@ impl<'a> TypeLowering<'a> {
     }
 
     fn lower_type_predicate(&self, node_idx: NodeIndex) -> TypeId {
-        self.lower_type_predicate_return(node_idx).0
+        self.lower_type_predicate_return(node_idx, &[]).0
     }
 
     fn lower_type_predicate_target(&self, node_idx: NodeIndex) -> Option<TypePredicateTarget> {
@@ -2853,7 +2876,11 @@ impl<'a> TypeLowering<'a> {
         })
     }
 
-    fn lower_type_predicate_return(&self, node_idx: NodeIndex) -> (TypeId, Option<TypePredicate>) {
+    fn lower_type_predicate_return(
+        &self,
+        node_idx: NodeIndex,
+        params: &[ParamInfo],
+    ) -> (TypeId, Option<TypePredicate>) {
         let node = match self.arena.get(node_idx) {
             Some(n) => n,
             None => return (TypeId::ERROR, None),
@@ -2880,10 +2907,16 @@ impl<'a> TypeLowering<'a> {
             None
         };
 
+        let mut parameter_index = None;
+        if let TypePredicateTarget::Identifier(name) = &target {
+            parameter_index = params.iter().position(|p| p.name == Some(*name));
+        }
+
         let predicate = TypePredicate {
             asserts: data.asserts_modifier,
             target,
             type_id,
+            parameter_index,
         };
 
         (return_type, Some(predicate))
@@ -3001,7 +3034,7 @@ impl<'a> TypeLowering<'a> {
                     let (params, this_type) = self.lower_params_with_this(&data.parameters);
 
                     let (return_type, type_predicate) =
-                        self.lower_return_type(data.type_annotation);
+                        self.lower_return_type(data.type_annotation, &params);
                     (params, this_type, return_type, type_predicate)
                 });
 

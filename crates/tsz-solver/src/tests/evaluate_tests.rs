@@ -19142,6 +19142,7 @@ fn test_return_type_type_predicate_function() {
         this_type: None,
         return_type: TypeId::BOOLEAN,
         type_predicate: Some(TypePredicate {
+            parameter_index: None,
             target: TypePredicateTarget::Identifier(x_name),
             type_id: Some(TypeId::STRING),
             asserts: false,

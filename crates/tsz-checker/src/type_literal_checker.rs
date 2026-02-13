@@ -400,8 +400,11 @@ impl<'a> CheckerState<'a> {
                         self.check_unused_type_params(&sig.type_parameters, member_idx);
                         let (params, this_type) =
                             self.extract_params_from_signature_in_type_literal(sig);
-                        let (return_type, type_predicate) =
-                            self.return_type_and_predicate_in_type_literal(sig.type_annotation);
+                        let (return_type, type_predicate) = self
+                            .return_type_and_predicate_in_type_literal(
+                                sig.type_annotation,
+                                &params,
+                            );
                         call_signatures.push(CallSignature {
                             type_params,
                             params,
@@ -419,8 +422,11 @@ impl<'a> CheckerState<'a> {
                         self.check_unused_type_params(&sig.type_parameters, member_idx);
                         let (params, this_type) =
                             self.extract_params_from_signature_in_type_literal(sig);
-                        let (return_type, type_predicate) =
-                            self.return_type_and_predicate_in_type_literal(sig.type_annotation);
+                        let (return_type, type_predicate) = self
+                            .return_type_and_predicate_in_type_literal(
+                                sig.type_annotation,
+                                &params,
+                            );
                         construct_signatures.push(CallSignature {
                             type_params,
                             params,
@@ -442,8 +448,11 @@ impl<'a> CheckerState<'a> {
                                 self.push_type_parameters(&sig.type_parameters);
                             let (params, this_type) =
                                 self.extract_params_from_signature_in_type_literal(sig);
-                            let (return_type, type_predicate) =
-                                self.return_type_and_predicate_in_type_literal(sig.type_annotation);
+                            let (return_type, type_predicate) = self
+                                .return_type_and_predicate_in_type_literal(
+                                    sig.type_annotation,
+                                    &params,
+                                );
                             let shape = FunctionShape {
                                 type_params,
                                 params,

@@ -829,6 +829,7 @@ fn test_type_predicate_basic_structure() {
         asserts: false,
         target: TypePredicateTarget::Identifier(x_name),
         type_id: Some(TypeId::STRING),
+        parameter_index: None,
     };
 
     assert!(!predicate.asserts);
@@ -849,6 +850,7 @@ fn test_type_predicate_asserts_structure() {
         asserts: true,
         target: TypePredicateTarget::Identifier(x_name),
         type_id: Some(TypeId::STRING),
+        parameter_index: None,
     };
 
     assert!(predicate.asserts);
@@ -872,6 +874,7 @@ fn test_type_predicate_this_target() {
         asserts: false,
         target: TypePredicateTarget::This,
         type_id: Some(foo_type),
+        parameter_index: None,
     };
 
     assert!(!predicate.asserts);
@@ -892,6 +895,7 @@ fn test_type_predicate_asserts_without_type() {
         asserts: true,
         target: TypePredicateTarget::Identifier(x_name),
         type_id: None,
+        parameter_index: None,
     };
 
     assert!(predicate.asserts);
@@ -916,6 +920,7 @@ fn test_function_shape_with_type_predicate() {
             asserts: false,
             target: TypePredicateTarget::Identifier(x_name),
             type_id: Some(TypeId::STRING),
+            parameter_index: None,
         }),
         is_constructor: false,
         is_method: false,
@@ -944,6 +949,7 @@ fn test_call_signature_with_type_predicate() {
             asserts: false,
             target: TypePredicateTarget::Identifier(x_name),
             type_id: Some(TypeId::NUMBER),
+            parameter_index: None,
         }),
         is_method: false,
     };

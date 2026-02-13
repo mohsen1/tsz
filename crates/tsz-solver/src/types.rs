@@ -936,6 +936,7 @@ pub struct TypePredicate {
     pub asserts: bool,
     pub target: TypePredicateTarget,
     pub type_id: Option<TypeId>,
+    pub parameter_index: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

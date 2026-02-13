@@ -41,7 +41,8 @@ impl<'a> CheckerState<'a> {
 
         let (type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&func.parameters);
-        let (return_type, type_predicate) = self.return_type_and_predicate(func.type_annotation);
+        let (return_type, type_predicate) =
+            self.return_type_and_predicate(func.type_annotation, &params);
 
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_updates);
@@ -89,7 +90,7 @@ impl<'a> CheckerState<'a> {
                 }
                 (inferred, None)
             } else {
-                self.return_type_and_predicate(method.type_annotation)
+                self.return_type_and_predicate(method.type_annotation, &params)
             };
 
         self.pop_type_parameters(type_param_updates);
@@ -168,6 +169,7 @@ impl<'a> CheckerState<'a> {
                     type_id: predicate
                         .type_id
                         .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
+                    parameter_index: predicate.parameter_index,
                 });
 
         tsz_solver::CallSignature {
@@ -212,6 +214,7 @@ impl<'a> CheckerState<'a> {
             type_id: predicate
                 .type_id
                 .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
+            parameter_index: predicate.parameter_index,
         });
 
         CallSignature {
@@ -346,22 +349,20 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn return_type_and_predicate(
         &mut self,
         type_annotation: NodeIndex,
+        params: &[tsz_solver::ParamInfo],
     ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
-        use tsz_solver::TypePredicate;
+        use tsz_solver::{TypePredicate, TypePredicateTarget};
 
         if type_annotation.is_none() {
             // Return UNKNOWN instead of ANY to enforce strict type checking
             return (TypeId::UNKNOWN, None);
         }
 
-        let Some(node) = self.ctx.arena.get(type_annotation) else {
-            return (TypeId::UNKNOWN, None);
+        let Some(predicate_node_idx) = self.find_type_predicate_node(type_annotation) else {
+            return (self.get_type_from_type_node(type_annotation), None);
         };
 
-        if node.kind != syntax_kind_ext::TYPE_PREDICATE {
-            return (self.get_type_from_type_node(type_annotation), None);
-        }
-
+        let node = self.ctx.arena.get(predicate_node_idx).unwrap();
         let Some(data) = self.ctx.arena.get_type_predicate(node) else {
             return (TypeId::BOOLEAN, None);
         };
@@ -383,39 +384,64 @@ impl<'a> CheckerState<'a> {
             Some(self.get_type_from_type_node(data.type_node))
         };
 
+        let mut parameter_index = None;
+        if let TypePredicateTarget::Identifier(name) = &target {
+            parameter_index = params.iter().position(|p| p.name == Some(*name));
+        }
+
         let predicate = TypePredicate {
             asserts: data.asserts_modifier,
             target,
             type_id,
+            parameter_index,
         };
 
         (return_type, Some(predicate))
+    }
+
+    /// Recursively find a type predicate node within a type node (e.g., inside parentheses or intersections).
+    fn find_type_predicate_node(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(node_idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_PREDICATE => Some(node_idx),
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                let wrapped = self.ctx.arena.get_wrapped_type(node)?;
+                self.find_type_predicate_node(wrapped.type_node)
+            }
+            k if k == syntax_kind_ext::INTERSECTION_TYPE => {
+                let composite = self.ctx.arena.get_composite_type(node)?;
+                for &member in &composite.types.nodes {
+                    if let Some(found) = self.find_type_predicate_node(member) {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Extract return type and type predicate from a type literal annotation.
     pub(crate) fn return_type_and_predicate_in_type_literal(
         &mut self,
         type_annotation: NodeIndex,
+        params: &[tsz_solver::ParamInfo],
     ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
-        use tsz_solver::TypePredicate;
+        use tsz_solver::{TypePredicate, TypePredicateTarget};
 
         if type_annotation.is_none() {
             // Return UNKNOWN instead of ANY for missing type annotation
             return (TypeId::UNKNOWN, None);
         }
 
-        let Some(node) = self.ctx.arena.get(type_annotation) else {
-            // Return UNKNOWN instead of ANY for missing node
-            return (TypeId::UNKNOWN, None);
-        };
-
-        if node.kind != syntax_kind_ext::TYPE_PREDICATE {
+        let Some(predicate_node_idx) = self.find_type_predicate_node(type_annotation) else {
             return (
                 self.get_type_from_type_node_in_type_literal(type_annotation),
                 None,
             );
-        }
+        };
 
+        let node = self.ctx.arena.get(predicate_node_idx).unwrap();
         let Some(data) = self.ctx.arena.get_type_predicate(node) else {
             return (TypeId::BOOLEAN, None);
         };
@@ -437,10 +463,16 @@ impl<'a> CheckerState<'a> {
             Some(self.get_type_from_type_node_in_type_literal(data.type_node))
         };
 
+        let mut parameter_index = None;
+        if let TypePredicateTarget::Identifier(name) = &target {
+            parameter_index = params.iter().position(|p| p.name == Some(*name));
+        }
+
         let predicate = TypePredicate {
             asserts: data.asserts_modifier,
             target,
             type_id,
+            parameter_index,
         };
 
         (return_type, Some(predicate))
