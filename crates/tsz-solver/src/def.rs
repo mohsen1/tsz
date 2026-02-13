@@ -25,9 +25,13 @@
 use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tracing::trace;
 use tsz_common::interner::Atom;
+
+/// Global counter for assigning unique instance IDs to DefinitionStore instances.
+/// Used for debugging DefId collision issues.
+static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 // =============================================================================
 // DefId - Solver-Owned Definition Identifier
@@ -348,6 +352,10 @@ impl DefinitionInfo {
 /// let info = store.get(def_id).expect("definition exists");
 /// ```
 pub struct DefinitionStore {
+    /// Unique instance ID for debugging (tracks which store instance this is)
+    #[allow(dead_code)]
+    instance_id: u64,
+
     /// DefId -> DefinitionInfo mapping
     definitions: DashMap<DefId, DefinitionInfo>,
 
@@ -364,7 +372,10 @@ impl Default for DefinitionStore {
 impl DefinitionStore {
     /// Create a new definition store.
     pub fn new() -> Self {
+        let instance_id = NEXT_INSTANCE_ID.fetch_add(1, Ordering::SeqCst);
+        trace!(instance_id, "DefinitionStore::new - creating new instance");
         DefinitionStore {
+            instance_id,
             definitions: DashMap::new(),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
         }
@@ -374,6 +385,7 @@ impl DefinitionStore {
     fn allocate(&self) -> DefId {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         trace!(
+            instance_id = self.instance_id,
             allocated_def_id = %id,
             next_will_be = %(id + 1),
             "DefinitionStore::allocate"
@@ -385,6 +397,7 @@ impl DefinitionStore {
     pub fn register(&self, info: DefinitionInfo) -> DefId {
         let id = self.allocate();
         trace!(
+            instance_id = self.instance_id,
             def_id = %id.0,
             kind = ?info.kind,
             "DefinitionStore::register"
