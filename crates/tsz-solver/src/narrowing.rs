@@ -190,6 +190,25 @@ pub enum TypeGuard {
     /// This preserves element types - `string[] | number[]` stays as `string[] | number[]`,
     /// it doesn't collapse to `any[]`.
     Array,
+
+    /// `array.every(predicate)` where predicate has type predicate
+    ///
+    /// Narrows an array's element type based on a type predicate.
+    ///
+    /// # Examples
+    /// ```typescript
+    /// const arr: (number | string)[] = ['aaa'];
+    /// const isString = (x: unknown): x is string => typeof x === 'string';
+    /// if (arr.every(isString)) {
+    ///   arr; // string[] (element type narrowed from number | string to string)
+    /// }
+    /// ```
+    ///
+    /// This only applies to arrays. For non-array types, the type is unchanged.
+    ArrayElementPredicate {
+        /// The type to narrow array elements to
+        element_type: TypeId,
+    },
 }
 
 /// Result of a narrowing operation.
@@ -2225,6 +2244,16 @@ impl<'a> NarrowingContext<'a> {
                     self.narrow_excluding_array(source_type)
                 }
             }
+
+            TypeGuard::ArrayElementPredicate { element_type } => {
+                if sense {
+                    // True branch: narrow array element type
+                    self.narrow_array_element_type(source_type, *element_type)
+                } else {
+                    // False branch: we don't narrow (arr.every could be false for various reasons)
+                    source_type
+                }
+            }
         }
     }
 
@@ -2291,6 +2320,46 @@ impl<'a> NarrowingContext<'a> {
         }
 
         false
+    }
+
+    /// Narrow an array's element type when using array.every(predicate).
+    ///
+    /// For `arr.every(isString)` where `arr: (number | string)[]` and `isString: x is string`,
+    /// this narrows the array to `string[]`.
+    ///
+    /// Only applies to array types. Non-array types are returned unchanged.
+    fn narrow_array_element_type(&self, source_type: TypeId, narrowed_element: TypeId) -> TypeId {
+        let resolved = self.resolve_type(source_type);
+
+        // Check if this is an array type
+        if let Some(TypeKey::Array(current_elem)) = self.db.lookup(resolved) {
+            // Narrow the element type
+            let new_elem = self.narrow_to_type(current_elem, narrowed_element);
+
+            // Reconstruct the array with narrowed element type
+            return self.db.array(new_elem);
+        }
+
+        // Check if this is a union - narrow each member that's an array
+        if let Some(TypeKey::Union(list_id)) = self.db.lookup(resolved) {
+            let members = self.db.type_list(list_id);
+            let narrowed_members: Vec<TypeId> = members
+                .iter()
+                .map(|&member| self.narrow_array_element_type(member, narrowed_element))
+                .collect();
+
+            // If any members changed, create a new union
+            if narrowed_members
+                .iter()
+                .zip(members.iter())
+                .any(|(a, b)| a != b)
+            {
+                return self.db.union(narrowed_members);
+            }
+        }
+
+        // Not an array or union of arrays - return unchanged
+        source_type
     }
 
     /// Narrow a type by removing definitely falsy values (truthiness check).

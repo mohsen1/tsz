@@ -2058,6 +2058,12 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((guard, target, is_optional));
         }
 
+        // Check for array.every(predicate) calls
+        if let Some((guard, target)) = self.check_array_every_predicate(call, condition) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
         // 1. Check for optional chaining on the call
         let is_optional = self.is_optional_call(condition, call);
 
@@ -2126,6 +2132,63 @@ impl<'a> FlowAnalyzer<'a> {
         let arg = call.arguments.as_ref()?.nodes.first().copied()?;
 
         Some((TypeGuard::Array, arg))
+    }
+
+    /// Check if a call is `array.every(predicate)` where predicate has a type predicate.
+    ///
+    /// Returns `Some((guard, target))` if this is an array.every call with a type predicate.
+    /// The `guard` will narrow the array element type, and `target` is the array expression.
+    ///
+    /// # Examples
+    /// ```typescript
+    /// const arr: (number | string)[] = [];
+    /// const isString = (x: unknown): x is string => typeof x === 'string';
+    /// if (arr.every(isString)) {
+    ///   // arr is narrowed to string[]
+    /// }
+    /// ```
+    fn check_array_every_predicate(
+        &self,
+        call: &CallExprData,
+        _condition: NodeIndex,
+    ) -> Option<(TypeGuard, NodeIndex)> {
+        // Get the callee (should be a property access: array.every)
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+
+        // Check if the property name is "every"
+        let prop_text = self
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+
+        if prop_text != "every" {
+            return None;
+        }
+
+        // Get the first argument (the callback)
+        let callback_idx = call.arguments.as_ref()?.nodes.first().copied()?;
+
+        // Get the type of the callback
+        let callback_type = *self.node_types?.get(&callback_idx.0)?;
+
+        // Check if the callback has a type predicate
+        let signature = self.predicate_signature_for_type(callback_type)?;
+
+        // Only handle predicates with a type (x is T), not just asserts
+        let predicate_type = signature.predicate.type_id?;
+
+        // The target is the array being called on (access.expression)
+        let array_target = access.expression;
+
+        // Create an ArrayElementPredicate guard that will narrow the array's element type
+        Some((
+            TypeGuard::ArrayElementPredicate {
+                element_type: predicate_type,
+            },
+            array_target,
+        ))
     }
 
     /// Check if a call expression uses optional chaining.
