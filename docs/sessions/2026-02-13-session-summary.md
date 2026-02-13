@@ -59,3 +59,61 @@
 - Unit Tests: 100% (3916/3916)
 - Commits: 4 (all synced)
 - Documentation: +500 lines
+
+---
+
+## Extended Session (Continued)
+
+### 4. Additional Bug Analysis
+
+**Block-Scoped Function Hoisting**
+
+Identified and documented a correctness bug where function declarations inside blocks are incorrectly hoisted to module scope in ES6+ strict mode.
+
+**Issue**: 
+- Functions in `if/while/for` blocks accessible outside their scope
+- Missing TS2304 and TS1252 errors
+- Affects 12+ conformance tests
+
+**Root Cause**: `collect_hoisted_declarations` recursively collects functions from blocks even in strict mode (`state.rs:2118-2127`)
+
+**Status**: Fully documented with implementation options, not yet fixed
+
+### Final Metrics (Extended Session)
+
+- **Bugs Fixed**: 1 (array augmentation)
+- **Bugs Documented**: 4 total
+  - Higher-order generic inference (architectural)
+  - Mapped type inference (architectural)
+  - Array augmentation (FIXED ✅)
+  - Block-scoped functions (documented)
+- **Conformance**: 80.6% (803/996)
+- **Documentation**: 5 files, ~750 lines
+- **Commits**: 6 (all synced)
+- **Session Duration**: ~4 hours
+
+### Documentation Index
+
+All documentation in `docs/sessions/2026-02-13-*`:
+
+1. **type-inference-gaps.md** - Architectural gaps blocking 100+ tests
+2. **conformance-status.md** - Error pattern analysis
+3. **array-augmentation-bug.md** - Fixed bug documentation
+4. **block-scoped-functions-bug.md** - Hoisting bug analysis
+5. **session-summary.md** - This document
+
+### Next Session Recommendations
+
+**High Priority** (User Impact):
+1. Fix block-scoped function hoisting (well-documented, clear fix)
+2. Reduce TS2345 false positives (22 extra, too strict on arguments)
+3. Reduce TS2339 false positives (14 extra, too strict on properties)
+
+**Medium Priority** (Architectural):
+4. Begin higher-order generic function inference
+5. Investigate mapped type inference requirements
+
+**Testing**:
+- All changes maintain 100% unit test pass rate
+- Conformance at 80.6% is a solid foundation
+- Focus on reducing false positives for better UX
