@@ -42,7 +42,13 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_numeric_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
-            self.write(&lit.text);
+            // Strip numeric separators: 1_000_000 → 1000000
+            if lit.text.contains('_') {
+                let stripped: String = lit.text.chars().filter(|&c| c != '_').collect();
+                self.write(&stripped);
+            } else {
+                self.write(&lit.text);
+            }
         }
     }
 
