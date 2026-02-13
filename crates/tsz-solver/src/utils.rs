@@ -196,6 +196,26 @@ pub trait TypeIdExt {
     fn unwrap_or_never(option: Option<Self>) -> Self
     where
         Self: Sized;
+
+    /// Maps an Option<TypeId> to TypeId, using UNKNOWN as the default.
+    fn unwrap_or_unknown(option: Option<Self>) -> Self
+    where
+        Self: Sized;
+
+    /// Maps an Option<TypeId> to TypeId, using ANY as the default.
+    fn unwrap_or_any(option: Option<Self>) -> Self
+    where
+        Self: Sized;
+
+    /// Maps an Option<TypeId> to TypeId, using VOID as the default.
+    fn unwrap_or_void(option: Option<Self>) -> Self
+    where
+        Self: Sized;
+
+    /// Maps an Option<TypeId> to TypeId, using UNDEFINED as the default.
+    fn unwrap_or_undefined(option: Option<Self>) -> Self
+    where
+        Self: Sized;
 }
 
 impl TypeIdExt for TypeId {
@@ -249,6 +269,26 @@ impl TypeIdExt for TypeId {
     #[inline]
     fn unwrap_or_never(option: Option<Self>) -> Self {
         option.unwrap_or(TypeId::NEVER)
+    }
+
+    #[inline]
+    fn unwrap_or_unknown(option: Option<Self>) -> Self {
+        option.unwrap_or(TypeId::UNKNOWN)
+    }
+
+    #[inline]
+    fn unwrap_or_any(option: Option<Self>) -> Self {
+        option.unwrap_or(TypeId::ANY)
+    }
+
+    #[inline]
+    fn unwrap_or_void(option: Option<Self>) -> Self {
+        option.unwrap_or(TypeId::VOID)
+    }
+
+    #[inline]
+    fn unwrap_or_undefined(option: Option<Self>) -> Self {
+        option.unwrap_or(TypeId::UNDEFINED)
     }
 }
 
@@ -317,5 +357,30 @@ mod tests {
             TypeId::UNKNOWN
         );
         assert_eq!(TypeId::unwrap_or_never(None), TypeId::NEVER);
+    }
+
+    #[test]
+    fn test_type_id_ext_unwrap_or_defaults() {
+        // Test unwrap_or_unknown
+        assert_eq!(
+            TypeId::unwrap_or_unknown(Some(TypeId::NEVER)),
+            TypeId::NEVER
+        );
+        assert_eq!(TypeId::unwrap_or_unknown(None), TypeId::UNKNOWN);
+
+        // Test unwrap_or_any
+        assert_eq!(TypeId::unwrap_or_any(Some(TypeId::NEVER)), TypeId::NEVER);
+        assert_eq!(TypeId::unwrap_or_any(None), TypeId::ANY);
+
+        // Test unwrap_or_void
+        assert_eq!(TypeId::unwrap_or_void(Some(TypeId::NEVER)), TypeId::NEVER);
+        assert_eq!(TypeId::unwrap_or_void(None), TypeId::VOID);
+
+        // Test unwrap_or_undefined
+        assert_eq!(
+            TypeId::unwrap_or_undefined(Some(TypeId::NEVER)),
+            TypeId::NEVER
+        );
+        assert_eq!(TypeId::unwrap_or_undefined(None), TypeId::UNDEFINED);
     }
 }
