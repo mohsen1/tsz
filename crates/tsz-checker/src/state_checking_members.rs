@@ -4699,15 +4699,44 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_declaration_in_statement_position(&mut self, stmt_idx: NodeIndex) {
+        use tsz_parser::parser::node_flags;
+
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };
 
         // TS1156: '{0}' declarations can only be declared inside a block.
-        // This fires when an interface or type alias declaration appears as
+        // This fires when a const/let/interface/type declaration appears as
         // the body of a control flow statement (if/while/for) without braces.
         let decl_kind = match node.kind {
             syntax_kind_ext::INTERFACE_DECLARATION => Some("interface"),
+            syntax_kind_ext::VARIABLE_STATEMENT => {
+                // Check the VariableDeclarationList for const/let flags
+                if let Some(var_data) = self.ctx.arena.get_variable(node) {
+                    let list_idx = var_data
+                        .declarations
+                        .nodes
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE);
+                    if let Some(list_node) = self.ctx.arena.get(list_idx) {
+                        let flags = list_node.flags as u32;
+                        if flags & node_flags::CONST != 0 {
+                            Some("const")
+                        } else if flags & node_flags::LET != 0 {
+                            Some("let")
+                        } else if flags & node_flags::USING != 0 {
+                            Some("using")
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
 
