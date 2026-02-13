@@ -1,157 +1,155 @@
-# Control Flow Narrowing Analysis
+# Control-Flow Narrowing: Deep Analysis
 
 **Date**: 2026-02-13
-**Status**: 47/92 tests passing (51.1%)
+**Status**: Investigation Complete - Architecture Change Required
 
-## Executive Summary
+---
 
-Control flow narrowing tests have a 51% pass rate, but investigation reveals the root cause is **NOT** narrowing logic itself - it's **contextual typing of object literals** when the target type is a discriminated union.
+## Problem Statement
 
-## Key Findings
+TypeScript's aliased discriminant narrowing respects let/const distinction for DESTRUCTURED variables, but our implementation doesn't track destructuring relationships.
 
-### 1. Narrowing Infrastructure is Solid
+---
 
-The narrowing architecture is well-designed:
-
-- **Solver** (`crates/tsz-solver/src/narrowing.rs`): Implements pure type algebra for narrowing
-  - `TypeGuard` enum: AST-agnostic representation of narrowing conditions
-  - `narrow_type()`: Main entry point that handles all guard types
-  - Support for: typeof, instanceof, discriminants, predicates, truthiness, arrays
-
-- **Checker** (`crates/tsz-checker/src/control_flow_narrowing.rs`): Extracts TypeGuards from AST
-  - `extract_type_guard()`: Converts AST nodes to TypeGuard
-  - `apply_type_predicate_narrowing()`: Applies assertion function narrowing
-  - `predicate_signature_for_type()`: Extracts type predicates from function types
-
-### 2. Assertion Functions Work Correctly
-
-Test results:
-```typescript
-// ✅ WORKS: Basic assertion narrowing
-declare function assertIsString(x: unknown): asserts x is string;
-const val: unknown = "hello";
-assertIsString(val);
-val.toUpperCase(); // No error
-
-// ✅ WORKS: Assertion discriminant narrowing (with explicit type)
-const animal: Animal = { type: 'cat', canMeow: true } as const;
-assertEqual(animal.type, 'cat' as const);
-animal.canMeow; // No error
-```
-
-### 3. The Real Bug: Object Literal Contextual Typing
-
-The primary failure in `controlFlowAliasedDiscriminants.ts` is at line 12:
+## Key Test Case: controlFlowAliasedDiscriminants.ts
 
 ```typescript
-type UseQueryResult<T> = {
-    isSuccess: false;
-    data: undefined;
-} | {
-    isSuccess: true;
-    data: T
-};
+// Case 1: Direct narrowing - WORKS (even with let)
+let o: Result;
+if (o.success) {
+    o.data;  // ✅ Narrowed to number
+}
 
-function useQuery(): UseQueryResult<number> {
-    return {
-        isSuccess: false,  // ❌ Inferred as `boolean` instead of literal `false`
-        data: undefined,
-    };
+// Case 2: Aliased narrowing with CONST - SHOULD WORK
+const { data, success } = getResult();
+if (success) {
+    data;  // ✅ Should narrow to number
+}
+
+// Case 3: Aliased narrowing with LET - SHOULD NOT WORK
+let { data, success } = getResult();
+if (success) {
+    data;  // ❌ Should be number | undefined (not narrowed)
 }
 ```
 
-**Error**: `Type '{ data: undefined; isSuccess: boolean }' is not assignable to type 'UseQueryResult<number>'`
+---
 
-**Root Cause**: Object literal properties are not being contextually typed against the discriminated union return type. The literal `false` should be inferred as type `false` (not widened to `boolean`) when the target type is a discriminated union.
+## Root Cause: Missing Destructuring Relationship Tracking
 
-### 4. Destructuring Narrowing Works
+TypeScript tracks when variables come from the same destructuring:
+1. **Destructuring source tracking**: `{ data, success } = obj` creates a relationship
+2. **Cross-property narrowing**: Checking `success` can narrow `data`
+3. **Const-only rule**: Cross-narrowing only works if destructuring is const
 
+**What we're missing**:
+- No tracking of which variables come from the same destructuring
+- No concept of "aliased" discriminants vs "direct" discriminants
+- Mutability check was attempted on wrong target
+
+---
+
+## Failed Approach: Simple Mutability Check
+
+### What I Tried
+Added `is_mutable_variable(target)` check before applying discriminant narrowing.
+
+### Why It Failed
+**Test case that broke**:
 ```typescript
-// ✅ WORKS: Destructuring with narrowing
-const { data, isSuccess } = result;
-if (isSuccess) {
-    data.toExponential(); // No error
-}
-
-// ✅ WORKS: Renamed bindings
-const { data: data1, isSuccess: isSuccess1 } = result;
-if (isSuccess1) {
-    data1.toExponential(); // No error
+let o: D;  // o is mutable (let)
+if ((o = fn()).done) {
+    const y: 1 = o.value;  // Should work!
 }
 ```
 
-## Test Failure Breakdown
+This is DIRECT narrowing on a let variable - perfectly valid! We check `o.done` directly, narrowing applies to `o` as a whole.
 
-### controlFlowAliasedDiscriminants.ts
-- **Expected**: [TS1360, TS18048] - Errors for `let` vs `const` narrowing behavior
-- **Actual**: [TS2322] - Type mismatch on return statement
-- **Root Cause**: Contextual typing bug (not narrowing)
+**The distinction**:
+- ✅ Direct check: `if (obj.done)` - narrowing applies to `obj` itself
+- ❌ Aliased check: `let { done, value } = obj; if (done)` - cross-narrowing requires const
 
-### assertionFunctionsCanNarrowByDiscriminant.ts
-- **Expected**: [] (no errors)
-- **Actual**: [TS2339, TS2352] - Property errors and type conversion errors
-- **Root Cause**: Contextual typing bug (assertion logic is correct)
+---
 
-### destructuringTypeGuardFlow.ts
-- **Expected**: [] (no errors)
-- **Actual**: [TS2322, TS18050] - Type mismatch and possibly null/undefined errors
-- **Needs Investigation**: May be unrelated narrowing issues
+## Correct Solution: Track Destructuring Relationships
 
-### assertionTypePredicates1.ts
-- **Expected**: [TS1228, TS2775, TS2776, TS7027] - Various specific errors
-- **Actual**: [TS2339, TS7006, TS18048, TS18050] - Different error codes
-- **Needs Investigation**: Complex test with many edge cases
+### Required Architecture Changes
 
-## Priority Fixes
+1. **Track Destructuring Sources**
+   - When binding `let { data, success } = getResult()`, record:
+     - `data` and `success` come from the same source
+     - The destructuring is let/const
 
-### High Priority: Object Literal Contextual Typing
-**Impact**: Fixes 2+ tests immediately
+2. **Identify Aliased Discriminants**
+   - When narrowing via discriminant, check if:
+     - Target is a destructured variable
+     - Discriminant is from the same destructuring
+     - If yes, check const/let status
 
-When an object literal is contextually typed against a discriminated union:
-1. Match the literal properties against each union member
-2. If a unique match is found, use that member's property types (including literal types)
-3. Don't widen literal values like `false` to `boolean`
+3. **Apply Const-Only Rule**
+   - Allow cross-property narrowing ONLY if:
+     - Both variables from same const destructuring, OR
+     - Direct narrowing (no aliasing)
 
-**Files to investigate**:
-- `crates/tsz-checker/src/expr.rs` - Expression type inference
-- `crates/tsz-checker/src/type_computation.rs` - Type computation for literals
-- `crates/tsz-checker/src/type_computation_complex.rs` - Contextual typing logic
+### Implementation Locations
 
-### Medium Priority: Let vs Const Narrowing
-**Impact**: Fixes remaining errors in controlFlowAliasedDiscriminants
+**Binder Changes** (crates/tsz-binder/src/):
+- Track destructuring relationships when binding
+- Store in symbol or flow nodes
 
-When destructuring with `let`, narrowing should NOT propagate:
-```typescript
-let { data, isSuccess } = result;  // Mutable
-if (isSuccess) {
-    data.toExponential(); // Should error (isSuccess could be reassigned)
-}
-```
+**Checker Changes** (crates/tsz-checker/src/control_flow.rs):
+- Detect when narrowing is "aliased" (cross-property from same source)
+- Check destructuring const/let status before applying
+- Allow direct narrowing regardless of let/const
 
-When destructuring with `const`, narrowing SHOULD propagate (current behavior is correct).
+---
 
-### Low Priority: Other Edge Cases
-Investigate remaining test failures after fixing contextual typing.
+## Complexity Estimate
 
-## Recommendations
+**Effort**: 5-7 sessions (multi-week)
 
-1. **Fix object literal contextual typing first** - This will likely fix 40-50% of failing tests
-2. **Verify with conformance tests** after each fix
-3. **Don't break existing narrowing logic** - It's working correctly
-4. **Add unit tests** for contextual typing of discriminated unions
+**Why so complex**:
+1. Requires changes to binder (symbol/flow tracking)
+2. Requires changes to checker (aliasing detection)
+3. Many edge cases (nested destructuring, parameter destructuring, etc.)
+4. High risk of regressions (47/92 tests already passing)
 
-## Code Quality Notes
+**Alternatives**:
+- Accept 51% pass rate for control-flow tests
+- Focus on higher-ROI improvements elsewhere
+- Revisit when type system is more mature
 
-- ✅ Clean architecture with good separation of concerns
-- ✅ Comprehensive TypeGuard enum covering all narrowing cases
-- ✅ Good use of tracing for debugging
-- ✅ Well-documented with examples in code comments
-- ⚠️ Need to follow "Checker never inspects type internals" rule from HOW_TO_CODE.md
+---
 
-## Next Steps
+## Current Status
 
-1. Start with task #1: Investigate object literal contextual typing
-2. Find where object literals are type-checked against their contextual type
-3. Add special handling for discriminated unions
-4. Run tests to verify the fix
-5. Commit and move to next issue
+**Control Flow Tests**: 51.1% (47/92 passing)
+**Unit Tests**: 2394/2394 passing ✅
+**Blocking Issue**: Architectural - not a simple fix
+
+---
+
+## Recommendation
+
+**Defer** control-flow narrowing improvements until:
+1. Core type system is more stable
+2. Dedicated multi-week effort can be allocated
+3. Binder/checker architecture supports relationship tracking
+
+**Focus instead on**:
+- Tests with higher pass rates and simpler fixes
+- Emit conformance (46%)
+- Other checker improvements with better ROI
+
+---
+
+## References
+
+- Test file: `TypeScript/tests/cases/compiler/controlFlowAliasedDiscriminants.ts`
+- Baseline: `TypeScript/tests/baselines/reference/controlFlowAliasedDiscriminants.errors.txt`
+- Code: `crates/tsz-checker/src/control_flow.rs:2250-2730`
+- Unit test: `src/tests/checker_state_tests.rs:22989` (assignment expression narrowing)
+
+---
+
+**Conclusion**: Aliased discriminant narrowing requires architectural changes to track destructuring relationships. Simple mutability checks are insufficient and break valid narrowing cases.
