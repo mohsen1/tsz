@@ -989,3 +989,81 @@ fn test_optional_and_rest_param_overload() {
 
     assert!(is_subtype_of(&interner, single_param, fn_with_rest));
 }
+
+#[test]
+fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
+    // Mirrors contextualSigInstantiationRestParams.ts:
+    //   declare function toInstantiate<A, B>(a?: A, b?: B): B;
+    //   declare function contextual(...s: string[]): string;
+    //   var sig: typeof contextual = toInstantiate;
+    let interner = TypeInterner::new();
+
+    let a_name = interner.intern_string("A");
+    let b_name = interner.intern_string("B");
+    let a_param = TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let b_param = TypeParamInfo {
+        name: b_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let a_type = interner.intern(TypeKey::TypeParameter(a_param.clone()));
+    let b_type = interner.intern(TypeKey::TypeParameter(b_param.clone()));
+
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        call_signatures: vec![CallSignature {
+            type_params: vec![a_param, b_param],
+            params: vec![
+                ParamInfo {
+                    name: Some(interner.intern_string("a")),
+                    type_id: a_type,
+                    optional: true,
+                    rest: false,
+                },
+                ParamInfo {
+                    name: Some(interner.intern_string("b")),
+                    type_id: b_type,
+                    optional: true,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type: b_type,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("s")),
+                type_id: interner.array(TypeId::STRING),
+                optional: false,
+                rest: true,
+            }],
+            this_type: None,
+            return_type: TypeId::STRING,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    assert!(checker.check_subtype(source, target).is_true());
+}
