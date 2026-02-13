@@ -178,8 +178,659 @@ impl<'a> CheckerState<'a> {
             if self.ctx.no_unused_locals() || self.ctx.no_unused_parameters() {
                 self.check_unused_declarations();
             }
+            // JS grammar checks: emit TS8xxx errors for TypeScript-only syntax in JS files
+            if self.is_js_file() {
+                let js_start = Instant::now();
+                self.check_js_grammar_statements(&sf.statements.nodes);
+                perf_log("check_js_grammar", js_start);
+            }
+
             perf_log("post_checks", post_start);
         }
+    }
+
+    // =========================================================================
+    // JS Grammar Checking (TS8xxx errors)
+    // =========================================================================
+
+    /// Check all statements in a JS file for TypeScript-only syntax.
+    /// Emits TS8xxx errors for constructs that are not valid in JavaScript files.
+    fn check_js_grammar_statements(&mut self, statements: &[NodeIndex]) {
+        for &stmt_idx in statements {
+            self.check_js_grammar_statement(stmt_idx);
+        }
+    }
+
+    /// Check a single statement for TypeScript-only syntax in JS files.
+    fn check_js_grammar_statement(&mut self, stmt_idx: NodeIndex) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        match node.kind {
+            // TS8008: Type aliases can only be used in TypeScript files
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.error_at_node(
+                    stmt_idx,
+                    diagnostic_messages::TYPE_ALIASES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::TYPE_ALIASES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            // TS8006: 'interface'/'enum'/'module'/'namespace' declarations
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                let message = format_message(
+                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    &["interface"],
+                );
+                self.error_at_node(
+                    stmt_idx,
+                    &message,
+                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            syntax_kind_ext::ENUM_DECLARATION => {
+                let message = format_message(
+                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    &["enum"],
+                );
+                self.error_at_node(
+                    stmt_idx,
+                    &message,
+                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            syntax_kind_ext::MODULE_DECLARATION => {
+                // Determine if it's 'module' or 'namespace'
+                let keyword = if let Some(module) = self.ctx.arena.get_module(node) {
+                    if let Some(name_node) = self.ctx.arena.get(module.name) {
+                        // If name is a string literal, it's `module "foo"`, otherwise `namespace Foo`
+                        if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                            "module"
+                        } else {
+                            // Check source text for module vs namespace keyword
+                            let node_text = self.node_text(stmt_idx).unwrap_or_default();
+                            if node_text.starts_with("namespace")
+                                || node_text.contains("namespace ")
+                            {
+                                "namespace"
+                            } else {
+                                "module"
+                            }
+                        }
+                    } else {
+                        "module"
+                    }
+                } else {
+                    "module"
+                };
+                let message = format_message(
+                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    &[keyword],
+                );
+                self.error_at_node(
+                    stmt_idx,
+                    &message,
+                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            // TS8002: 'import ... =' can only be used in TypeScript files
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.error_at_node(
+                    stmt_idx,
+                    diagnostic_messages::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::IMPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            // TS8003: 'export =' can only be used in TypeScript files
+            syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                self.error_at_node(
+                    stmt_idx,
+                    diagnostic_messages::EXPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::EXPORT_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            // Function declarations: check for type params, return type, overloads, param types
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.check_js_grammar_function(stmt_idx, node);
+            }
+
+            // Class declarations: check for type params, implements, abstract, members
+            syntax_kind_ext::CLASS_DECLARATION => {
+                self.check_js_grammar_class(stmt_idx, node);
+            }
+
+            // Variable statements: check for declare modifier, type annotations
+            syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.check_js_grammar_variable_statement(stmt_idx, node);
+            }
+
+            // Export declarations may wrap other declarations
+            syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx) {
+                    if !export_decl.export_clause.is_none() {
+                        self.check_js_grammar_statement(export_decl.export_clause);
+                    }
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    /// Check function declaration for JS grammar errors.
+    fn check_js_grammar_function(
+        &mut self,
+        func_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some(func) = self.ctx.arena.get_function(node) else {
+            return;
+        };
+
+        // TS8009: 'declare' modifier on function
+        if self.has_declare_modifier(&func.modifiers) {
+            let message = format_message(
+                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                &["declare"],
+            );
+            if let Some(mod_idx) =
+                self.get_modifier_index(&func.modifiers, SyntaxKind::DeclareKeyword as u16)
+            {
+                self.error_at_node(
+                    mod_idx,
+                    &message,
+                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+
+        // TS8004: Type parameter declarations
+        if let Some(ref type_params) = func.type_parameters {
+            if !type_params.nodes.is_empty() {
+                // Point error at the first type parameter
+                self.error_at_node(
+                    type_params.nodes[0],
+                    diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+
+        // TS8010: Return type annotation
+        if !func.type_annotation.is_none() {
+            self.error_at_node(
+                func.type_annotation,
+                diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+            );
+        }
+
+        // TS8017: Function overload (function without body)
+        if func.body.is_none() && node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            self.error_at_node(
+                func_idx,
+                diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+            );
+        }
+
+        // Check parameter types and modifiers
+        self.check_js_grammar_parameters(&func.parameters.nodes);
+    }
+
+    /// Check class declaration for JS grammar errors.
+    fn check_js_grammar_class(
+        &mut self,
+        class_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some(class) = self.ctx.arena.get_class(node) else {
+            return;
+        };
+
+        // TS8004: Type parameter declarations on class
+        if let Some(ref type_params) = class.type_parameters {
+            if !type_params.nodes.is_empty() {
+                self.error_at_node(
+                    type_params.nodes[0],
+                    diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+
+        // TS8005: 'implements' clause
+        if let Some(ref heritage_clauses) = class.heritage_clauses {
+            for &clause_idx in &heritage_clauses.nodes {
+                if let Some(clause_node) = self.ctx.arena.get(clause_idx) {
+                    if clause_node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
+                        // Check if this is an 'implements' clause (token = ImplementsKeyword)
+                        if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) {
+                            if heritage.token == SyntaxKind::ImplementsKeyword as u16 {
+                                self.error_at_node(
+                                    clause_idx,
+                                    diagnostic_messages::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                    diagnostic_codes::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // TS8009: 'abstract' modifier on class
+        if self.has_abstract_modifier(&class.modifiers) {
+            let message = format_message(
+                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                &["abstract"],
+            );
+            if let Some(mod_idx) =
+                self.get_modifier_index(&class.modifiers, SyntaxKind::AbstractKeyword as u16)
+            {
+                self.error_at_node(
+                    mod_idx,
+                    &message,
+                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            } else {
+                self.error_at_node(
+                    class_idx,
+                    &message,
+                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+
+        // TS8009: 'declare' modifier on class
+        if self.has_declare_modifier(&class.modifiers) {
+            let message = format_message(
+                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                &["declare"],
+            );
+            if let Some(mod_idx) =
+                self.get_modifier_index(&class.modifiers, SyntaxKind::DeclareKeyword as u16)
+            {
+                self.error_at_node(
+                    mod_idx,
+                    &message,
+                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+
+        // Check class members for JS grammar errors
+        for &member_idx in &class.members.nodes {
+            self.check_js_grammar_class_member(member_idx);
+        }
+    }
+
+    /// Check a class member for JS grammar errors.
+    fn check_js_grammar_class_member(&mut self, member_idx: NodeIndex) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+
+        match node.kind {
+            // Methods
+            syntax_kind_ext::METHOD_DECLARATION => {
+                if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    // TS8009: accessibility modifiers (public/private/protected)
+                    self.check_js_grammar_accessibility_modifier(&method.modifiers, member_idx);
+
+                    // TS8009: abstract modifier
+                    if self.has_abstract_modifier(&method.modifiers) {
+                        let message = format_message(
+                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            &["abstract"],
+                        );
+                        if let Some(mod_idx) = self.get_modifier_index(
+                            &method.modifiers,
+                            SyntaxKind::AbstractKeyword as u16,
+                        ) {
+                            self.error_at_node(
+                                mod_idx,
+                                &message,
+                                diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            );
+                        }
+                    }
+
+                    // TS8009: 'override' modifier
+                    if self.has_modifier_kind(&method.modifiers, SyntaxKind::OverrideKeyword) {
+                        let message = format_message(
+                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            &["override"],
+                        );
+                        if let Some(mod_idx) = self.get_modifier_index(
+                            &method.modifiers,
+                            SyntaxKind::OverrideKeyword as u16,
+                        ) {
+                            self.error_at_node(
+                                mod_idx,
+                                &message,
+                                diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            );
+                        }
+                    }
+
+                    // TS8004: Type parameters on methods
+                    if let Some(ref type_params) = method.type_parameters {
+                        if !type_params.nodes.is_empty() {
+                            self.error_at_node(
+                                type_params.nodes[0],
+                                diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            );
+                        }
+                    }
+
+                    // TS8010: Return type annotation
+                    if !method.type_annotation.is_none() {
+                        self.error_at_node(
+                            method.type_annotation,
+                            diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
+                    }
+
+                    // TS8017: Method overload (no body)
+                    if method.body.is_none() {
+                        self.error_at_node(
+                            member_idx,
+                            diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
+                    }
+
+                    // TS8009: Optional method (question token)
+                    if method.question_token {
+                        let message = format_message(
+                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            &["?"],
+                        );
+                        self.error_at_node(
+                            member_idx,
+                            &message,
+                            diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
+                    }
+
+                    // Check parameters for type annotations and modifiers
+                    self.check_js_grammar_parameters(&method.parameters.nodes);
+                }
+            }
+
+            // Constructors
+            syntax_kind_ext::CONSTRUCTOR => {
+                if let Some(ctor) = self.ctx.arena.get_constructor(node) {
+                    // TS8009: accessibility modifiers (public/private/protected)
+                    self.check_js_grammar_accessibility_modifier(&ctor.modifiers, member_idx);
+
+                    // TS8017: Constructor overload (no body)
+                    if ctor.body.is_none() {
+                        self.error_at_node(
+                            member_idx,
+                            diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
+                    }
+
+                    // Check parameters for type annotations and modifiers
+                    self.check_js_grammar_parameters(&ctor.parameters.nodes);
+                }
+            }
+
+            // Properties are already checked in check_property_declaration
+            // but we need to check for optional properties here
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                if let Some(prop) = self.ctx.arena.get_property_decl(node) {
+                    // TS8009: Optional property (question token)
+                    if prop.question_token {
+                        let message = format_message(
+                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            &["?"],
+                        );
+                        self.error_at_node(
+                            member_idx,
+                            &message,
+                            diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
+                    }
+
+                    // TS8009: abstract modifier on property
+                    if self.has_abstract_modifier(&prop.modifiers) {
+                        let message = format_message(
+                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            &["abstract"],
+                        );
+                        if let Some(mod_idx) = self
+                            .get_modifier_index(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+                        {
+                            self.error_at_node(
+                                mod_idx,
+                                &message,
+                                diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            );
+                        }
+                    }
+
+                    // TS8009: accessibility modifiers on property
+                    self.check_js_grammar_accessibility_modifier(&prop.modifiers, member_idx);
+                }
+            }
+
+            // Get/Set accessors
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                    self.check_js_grammar_accessibility_modifier(&accessor.modifiers, member_idx);
+
+                    // TS8010: Return type on getter
+                    if !accessor.type_annotation.is_none() {
+                        self.error_at_node(
+                            accessor.type_annotation,
+                            diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
+                    }
+
+                    // Check parameter types on setter
+                    self.check_js_grammar_parameters(&accessor.parameters.nodes);
+                }
+            }
+
+            // Index signatures, call signatures, construct signatures
+            syntax_kind_ext::INDEX_SIGNATURE
+            | syntax_kind_ext::CALL_SIGNATURE
+            | syntax_kind_ext::CONSTRUCT_SIGNATURE => {
+                self.error_at_node(
+                    member_idx,
+                    diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            _ => {}
+        }
+    }
+
+    /// Check function parameters for JS grammar errors (type annotations, modifiers).
+    fn check_js_grammar_parameters(&mut self, param_nodes: &[NodeIndex]) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        for &param_idx in param_nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // TS8010: Type annotation on parameter
+            if !param.type_annotation.is_none() {
+                self.error_at_node(
+                    param.type_annotation,
+                    diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+
+            // TS8012: Parameter modifiers (public/private/protected/readonly on constructor params)
+            if let Some(ref modifiers) = param.modifiers {
+                for &mod_idx in &modifiers.nodes {
+                    if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                        match mod_node.kind {
+                            k if k == SyntaxKind::PublicKeyword as u16
+                                || k == SyntaxKind::PrivateKeyword as u16
+                                || k == SyntaxKind::ProtectedKeyword as u16
+                                || k == SyntaxKind::ReadonlyKeyword as u16 =>
+                            {
+                                self.error_at_node(
+                                    mod_idx,
+                                    diagnostic_messages::PARAMETER_MODIFIERS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                    diagnostic_codes::PARAMETER_MODIFIERS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            // TS8009: Optional parameter (question token)
+            if param.question_token {
+                let message = crate::types::diagnostics::format_message(
+                    diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    &["?"],
+                );
+                self.error_at_node(
+                    param_idx,
+                    &message,
+                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+    }
+
+    /// Check for accessibility modifiers (public/private/protected) on a declaration.
+    fn check_js_grammar_accessibility_modifier(
+        &mut self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        _fallback_idx: NodeIndex,
+    ) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                    let modifier_name = match mod_node.kind {
+                        k if k == SyntaxKind::PublicKeyword as u16 => Some("public"),
+                        k if k == SyntaxKind::PrivateKeyword as u16 => Some("private"),
+                        k if k == SyntaxKind::ProtectedKeyword as u16 => Some("protected"),
+                        _ => None,
+                    };
+                    if let Some(name) = modifier_name {
+                        let message = format_message(
+                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            &[name],
+                        );
+                        self.error_at_node(
+                            mod_idx,
+                            &message,
+                            diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check a variable statement for JS grammar errors.
+    fn check_js_grammar_variable_statement(
+        &mut self,
+        _stmt_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        // VariableStatement uses VariableData { modifiers, declarations }
+        let Some(var) = self.ctx.arena.get_variable(node) else {
+            return;
+        };
+
+        // TS8009: 'declare' modifier on variable statement
+        if self.has_declare_modifier(&var.modifiers) {
+            let message = format_message(
+                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                &["declare"],
+            );
+            if let Some(mod_idx) =
+                self.get_modifier_index(&var.modifiers, SyntaxKind::DeclareKeyword as u16)
+            {
+                self.error_at_node(
+                    mod_idx,
+                    &message,
+                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+
+        // Check variable declarations for type annotations
+        // VariableStatement.declarations contains VariableDeclarationList nodes
+        for &list_idx in &var.declarations.nodes {
+            if let Some(list_node) = self.ctx.arena.get(list_idx) {
+                if let Some(list) = self.ctx.arena.get_variable(list_node) {
+                    for &decl_idx in &list.declarations.nodes {
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                            if let Some(var_decl) =
+                                self.ctx.arena.get_variable_declaration(decl_node)
+                            {
+                                // TS8010: Type annotation on variable
+                                if !var_decl.type_annotation.is_none() {
+                                    self.error_at_node(
+                                        var_decl.type_annotation,
+                                        diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                        diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get the index of a specific modifier kind in a modifier list.
+    fn get_modifier_index(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        kind: u16,
+    ) -> Option<NodeIndex> {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                    if mod_node.kind == kind {
+                        return Some(mod_idx);
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub(crate) fn declaration_symbol_flags(&self, decl_idx: NodeIndex) -> Option<u32> {
@@ -3020,6 +3671,25 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) {
+        // TS8004: Type parameters on class expression in JS files
+        if self.is_js_file() {
+            if let Some(ref type_params) = class.type_parameters {
+                if !type_params.nodes.is_empty() {
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        type_params.nodes[0],
+                        diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    );
+                }
+            }
+
+            // Also check members for JS grammar errors
+            for &member_idx in &class.members.nodes {
+                self.check_js_grammar_class_member(member_idx);
+            }
+        }
+
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
         let class_type_param_names: Vec<String> = type_param_updates

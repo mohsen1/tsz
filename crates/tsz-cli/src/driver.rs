@@ -2489,10 +2489,11 @@ fn collect_diagnostics(
                 checker.check_source_file(file.source_file);
                 let mut checker_diags = std::mem::take(&mut checker.ctx.diagnostics);
                 // When allowJs is enabled but checkJs is not, JS files only get
-                // syntactic/grammar errors (TS1xxx). Semantic errors (TS2xxx+)
-                // are suppressed, matching TSC behavior.
+                // syntactic/grammar errors (TS1xxx) and JS-only grammar errors
+                // (TS8xxx like "type aliases can only be used in TypeScript files").
+                // Semantic errors (TS2xxx-TS7xxx) are suppressed, matching TSC behavior.
                 if is_js && !options.check_js {
-                    checker_diags.retain(|d| d.code < 2000);
+                    checker_diags.retain(|d| d.code < 2000 || d.code >= 8000);
                 }
                 file_diagnostics.extend(checker_diags);
             }
@@ -2724,10 +2725,11 @@ fn check_file_for_parallel(
         checker.check_source_file(file.source_file);
         let mut checker_diags = std::mem::take(&mut checker.ctx.diagnostics);
         // When allowJs is enabled but checkJs is not, JS files only get
-        // syntactic/grammar errors (TS1xxx). Semantic errors (TS2xxx+)
-        // are suppressed, matching TSC behavior.
+        // syntactic/grammar errors (TS1xxx) and JS-only grammar errors
+        // (TS8xxx like "type aliases can only be used in TypeScript files").
+        // Semantic errors (TS2xxx-TS7xxx) are suppressed, matching TSC behavior.
         if is_js && !check_js {
-            checker_diags.retain(|d| d.code < 2000);
+            checker_diags.retain(|d| d.code < 2000 || d.code >= 8000);
         }
         file_diagnostics.extend(checker_diags);
     }
