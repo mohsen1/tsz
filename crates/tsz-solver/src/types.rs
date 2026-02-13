@@ -169,6 +169,34 @@ impl TypeId {
         self == Self::NEVER
     }
 
+    /// Returns true if this type is nullish (null or undefined).
+    /// Useful for strict null checking logic.
+    #[inline]
+    pub fn is_nullish(self) -> bool {
+        self == Self::NULL || self == Self::UNDEFINED
+    }
+
+    /// Returns true if this type is nullable (null, undefined, or void).
+    /// VOID is considered nullable because it represents undefined in some contexts.
+    #[inline]
+    pub fn is_nullable(self) -> bool {
+        self == Self::NULL || self == Self::UNDEFINED || self == Self::VOID
+    }
+
+    /// Returns true if this type is a top type (any or unknown).
+    /// Top types are assignable from all other types.
+    #[inline]
+    pub fn is_top_type(self) -> bool {
+        self == Self::ANY || self == Self::UNKNOWN
+    }
+
+    /// Returns true if this type is any or unknown (types that accept anything).
+    /// Alias for is_top_type for clarity in some contexts.
+    #[inline]
+    pub fn is_any_or_unknown(self) -> bool {
+        self.is_top_type()
+    }
+
     // =========================================================================
     // Local/Global Partitioning (for ScopedTypeInterner GC)
     // =========================================================================

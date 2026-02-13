@@ -804,8 +804,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 };
                 let rest_elem_type = self.get_array_element_type(rest_param.type_id);
-                let rest_is_top = self.allow_bivariant_rest
-                    && (rest_elem_type == TypeId::ANY || rest_elem_type == TypeId::UNKNOWN);
+                let rest_is_top = self.allow_bivariant_rest && rest_elem_type.is_any_or_unknown();
 
                 if !rest_is_top {
                     for i in source_fixed_count..target_fixed_count {
