@@ -118,18 +118,17 @@ fn test_unknown_assignability() {
 }
 
 #[test]
-fn test_error_type_strictness() {
-    // ERROR types should NOT silently pass assignability checks.
-    // This prevents "error poisoning" where a TS2304 (cannot find name) masks
-    // downstream TS2322 (type not assignable) errors.
-    // This is a key design decision for catching more TS2322 errors.
+fn test_error_type_permissive() {
+    // ERROR types are assignable to/from everything (like `any` in tsc).
+    // This prevents cascading diagnostics: when one type resolution fails,
+    // tsc silences further errors involving that type.
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    // ERROR is NOT assignable to concrete types
-    assert!(!checker.is_assignable(TypeId::ERROR, TypeId::STRING));
-    // Concrete types are NOT assignable to ERROR
-    assert!(!checker.is_assignable(TypeId::STRING, TypeId::ERROR));
+    // ERROR is assignable to concrete types (like `any`)
+    assert!(checker.is_assignable(TypeId::ERROR, TypeId::STRING));
+    // Concrete types are assignable to ERROR (like `any`)
+    assert!(checker.is_assignable(TypeId::STRING, TypeId::ERROR));
     // ERROR is assignable to itself (reflexive)
     assert!(checker.is_assignable(TypeId::ERROR, TypeId::ERROR));
 }

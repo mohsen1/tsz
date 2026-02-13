@@ -48,25 +48,24 @@ fn test_legacy_null_undefined_subtyping() {
 }
 
 #[test]
-fn test_error_type_strictness_subtyping() {
-    // ERROR types should NOT silently pass subtype checks.
-    // This prevents "error poisoning" where a TS2304 (cannot find name) masks
-    // downstream TS2322 (type not assignable) errors.
+fn test_error_type_permissive_subtyping() {
+    // ERROR types are assignable to/from everything (like `any` in tsc).
+    // This prevents cascading diagnostics when type resolution fails.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    // ERROR is NOT a subtype of concrete types
-    assert!(!checker.is_subtype_of(TypeId::ERROR, TypeId::STRING));
-    // Concrete types are NOT subtypes of ERROR
-    assert!(!checker.is_subtype_of(TypeId::STRING, TypeId::ERROR));
+    // ERROR is a subtype of concrete types (like `any`)
+    assert!(checker.is_subtype_of(TypeId::ERROR, TypeId::STRING));
+    // Concrete types are subtypes of ERROR (like `any`)
+    assert!(checker.is_subtype_of(TypeId::STRING, TypeId::ERROR));
     // ERROR is a subtype of itself (reflexive)
     assert!(checker.is_subtype_of(TypeId::ERROR, TypeId::ERROR));
 }
 
 #[test]
-fn test_error_type_not_top_or_bottom() {
-    // ERROR should NOT act as a top or bottom type.
-    // It should fail subtype checks with other types.
+fn test_error_type_acts_like_any() {
+    // ERROR acts like `any` — assignable to/from all types.
+    // This matches tsc behavior where errorType silences cascading errors.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -77,10 +76,10 @@ fn test_error_type_not_top_or_bottom() {
         rest: false,
     }]);
 
-    // ERROR is NOT a subtype of object types
-    assert!(!checker.is_subtype_of(TypeId::ERROR, TypeId::OBJECT));
-    // Tuples are NOT subtypes of ERROR
-    assert!(!checker.is_subtype_of(tuple, TypeId::ERROR));
+    // ERROR is a subtype of object types (like `any`)
+    assert!(checker.is_subtype_of(TypeId::ERROR, TypeId::OBJECT));
+    // Tuples are subtypes of ERROR (like `any`)
+    assert!(checker.is_subtype_of(tuple, TypeId::ERROR));
 }
 
 #[test]
