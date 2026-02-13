@@ -11,6 +11,10 @@
 //! This module extends CheckerState with call-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
+use crate::query_boundaries::call_checker::{
+    array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type,
+    tuple_elements_for_type,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -52,7 +56,6 @@ impl<'a> CheckerState<'a> {
         F: FnMut(usize, usize) -> Option<TypeId>,
     {
         use tsz_solver::FunctionShape;
-        use tsz_solver::type_queries::{get_array_element_type, get_tuple_elements};
 
         // Pre-create a single placeholder for skipped sensitive arguments.
         // The solver's is_contextually_sensitive recognizes Function types and skips them
@@ -80,12 +83,12 @@ impl<'a> CheckerState<'a> {
                 let spread_type = self.get_type_of_node(spread_data.expression);
                 let spread_type = self.resolve_type_for_property_access(spread_type);
                 let spread_type = self.resolve_lazy_type(spread_type);
-                if let Some(elems) = get_tuple_elements(self.ctx.types, spread_type) {
+                if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
                     expanded_count += elems.len();
                     continue;
                 }
                 // Check if it's an array literal spread
-                if get_array_element_type(self.ctx.types, spread_type).is_some() {
+                if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
                     if let Some(expr_node) = self.ctx.arena.get(spread_data.expression) {
                         if let Some(literal) = self.ctx.arena.get_literal_expr(expr_node) {
                             expanded_count += literal.elements.nodes.len();
@@ -125,7 +128,7 @@ impl<'a> CheckerState<'a> {
                     self.check_spread_iterability(spread_type, spread_data.expression);
 
                     // If it's a tuple type, expand its elements
-                    if let Some(elems) = get_tuple_elements(self.ctx.types, spread_type) {
+                    if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
                         for elem in elems.iter() {
                             arg_types.push(elem.type_id);
                             effective_index += 1;
@@ -136,7 +139,7 @@ impl<'a> CheckerState<'a> {
                     // If it's an array type, check if it's an array literal spread
                     // For array literals, we want to check each element individually
                     // For non-literal arrays, treat as variadic (check element type against remaining params)
-                    if get_array_element_type(self.ctx.types, spread_type).is_some() {
+                    if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
                         // Check if the spread expression is an array literal
                         if let Some(expr_node) = self.ctx.arena.get(spread_data.expression) {
                             if let Some(literal) = self.ctx.arena.get_literal_expr(expr_node) {
@@ -149,9 +152,10 @@ impl<'a> CheckerState<'a> {
                                     if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
                                         if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
                                             // For nested spreads in array literals, use the element type
-                                            if let Some(elem_type) =
-                                                get_array_element_type(self.ctx.types, spread_type)
-                                            {
+                                            if let Some(elem_type) = array_element_type_for_type(
+                                                self.ctx.types,
+                                                spread_type,
+                                            ) {
                                                 arg_types.push(elem_type);
                                                 effective_index += 1;
                                             }
@@ -176,7 +180,7 @@ impl<'a> CheckerState<'a> {
                         // the element type (e.g. `string` for `...z: string[]`). Instead,
                         // we probe at a very large index: rest parameters accept unlimited
                         // args, so a probe returns Some only when a rest param exists.
-                        if get_array_element_type(self.ctx.types, spread_type).is_some() {
+                        if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
                             let current_expected =
                                 expected_for_index(effective_index, expanded_count);
                             // Determine if the target accepts this spread:
@@ -193,7 +197,7 @@ impl<'a> CheckerState<'a> {
                             }
                             // Continue processing - push the element type for assignability checking
                             if let Some(elem_type) =
-                                get_array_element_type(self.ctx.types, spread_type)
+                                array_element_type_for_type(self.ctx.types, spread_type)
                             {
                                 arg_types.push(elem_type);
                                 effective_index += 1;
@@ -226,7 +230,7 @@ impl<'a> CheckerState<'a> {
                 && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 // Skip excess property checking for type parameters - the type parameter
                 // captures the full object type, so extra properties are allowed.
-                && !tsz_solver::type_queries::is_type_parameter(self.ctx.types, expected)
+                && !is_type_parameter_type(self.ctx.types, expected)
             {
                 self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
             }
@@ -359,9 +363,7 @@ impl<'a> CheckerState<'a> {
                 // The solver's resolve_call doesn't handle Lazy types, so we must
                 // resolve to the concrete Function/Callable type here.
                 let resolved_func_type = {
-                    if let Some(def_id) =
-                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, func_type)
-                    {
+                    if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
                         env.get_def(def_id).unwrap_or(func_type)
                     } else {
                         func_type
@@ -445,9 +447,7 @@ impl<'a> CheckerState<'a> {
             let result = {
                 let env = self.ctx.type_env.borrow();
                 let resolved_func_type = {
-                    if let Some(def_id) =
-                        tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, func_type)
-                    {
+                    if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
                         env.get_def(def_id).unwrap_or(func_type)
                     } else {
                         func_type

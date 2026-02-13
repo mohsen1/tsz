@@ -1,4 +1,5 @@
 pub(crate) mod assignability;
+pub(crate) mod call_checker;
 pub(crate) mod class;
 pub(crate) mod class_type;
 pub(crate) mod constructor_checker;
