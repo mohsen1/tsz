@@ -21,7 +21,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::get_callable_shape;
+use tsz_solver::type_queries::{get_callable_shape, has_construct_signatures};
 use tsz_solver::type_queries_extended::classify_for_abstract_constructor;
 
 // =============================================================================
@@ -69,11 +69,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Construct signatures allow a type to be called with `new`.
     pub fn has_construct_sig(&self, type_id: TypeId) -> bool {
-        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
-            !shape.construct_signatures.is_empty()
-        } else {
-            false
-        }
+        has_construct_signatures(self.ctx.types, type_id)
     }
 
     /// Get the number of construct signatures for a type.

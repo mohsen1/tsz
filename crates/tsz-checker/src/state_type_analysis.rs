@@ -3151,18 +3151,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Also check union/intersection members for circular references
-        match self.ctx.types.lookup(resolved_type) {
-            Some(tsz_solver::TypeKey::Union(members))
-            | Some(tsz_solver::TypeKey::Intersection(members)) => {
-                let list = self.ctx.types.type_list(members);
-                for &member in list.iter() {
-                    if self.is_direct_circular_reference(sym_id, member, type_node) {
-                        return true;
-                    }
+        // Also check union/intersection members for circular references.
+        if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_type)
+        {
+            for &member in &members {
+                if self.is_direct_circular_reference(sym_id, member, type_node) {
+                    return true;
                 }
             }
-            _ => {}
+        }
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, resolved_type)
+        {
+            for &member in &members {
+                if self.is_direct_circular_reference(sym_id, member, type_node) {
+                    return true;
+                }
+            }
         }
 
         false
