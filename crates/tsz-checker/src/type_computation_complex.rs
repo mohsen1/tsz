@@ -2229,6 +2229,28 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
+        // TS2693: Primitive type keywords used as values
+        // TypeScript primitive type keywords (number, string, boolean, etc.) are language keywords
+        // for types, not identifiers. When used in value position, emit TS2693.
+        if matches!(
+            name,
+            "number"
+                | "string"
+                | "boolean"
+                | "symbol"
+                | "void"
+                | "undefined"
+                | "null"
+                | "any"
+                | "unknown"
+                | "never"
+                | "object"
+                | "bigint"
+        ) {
+            self.error_type_only_value_at(name, idx);
+            return TypeId::ERROR;
+        }
+
         if self.ctx.is_known_global_type(name) {
             self.error_cannot_find_global_type(name, idx);
         } else {
