@@ -89,6 +89,32 @@ fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
 
 **Solution:** Add `no_implicit_any` parameter to the contextual typing API, passed from checker.
 
+## Fix Implementation
+
+The fix was implemented by threading the `no_implicit_any` compiler option through the contextual typing system:
+
+1. **Added `no_implicit_any` field to `ContextualTypeContext`** (contextual.rs:710)
+   - New constructor `with_expected_and_options` accepts the flag
+   - Backward compatible: existing constructors default to `false`
+
+2. **Modified `ParameterExtractor` to respect the flag** (contextual.rs:517)
+   - Added `no_implicit_any` parameter to constructor
+   - Updated `visit_callable` to check the flag:
+     - If `no_implicit_any: false` and types differ → return `None` (falls back to `any`)
+     - If `no_implicit_any: true` and types differ → return union type
+
+3. **Updated all checker call sites** to pass `compiler_options.no_implicit_any`:
+   - `function_type.rs:172` - Lambda parameter typing (key fix)
+   - `state_checking_members.rs:2632` - Object literal methods
+   - `type_computation_complex.rs:368, 1184` - Constructor and function calls
+   - `type_computation.rs:187, 1943` - General contextual typing
+   - `call_checker.rs:323, 383, 397` - Call argument checking
+
+## Result
+Test `contextualTypingOfLambdaWithMultipleSignatures2.ts` now passes:
+- Expected: No errors in non-strict mode
+- Actual: No errors ✓
+
 ## Related TypeScript Behavior
 - [TypeScript Handbook - Type Inference](https://www.typescriptlang.org/docs/handbook/type-inference.html)
 - [noImplicitAny flag documentation](https://www.typescriptlang.org/tsconfig#noImplicitAny)
