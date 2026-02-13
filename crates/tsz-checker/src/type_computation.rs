@@ -595,8 +595,49 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == SyntaxKind::Identifier as u16
         {
+            // Check for local variable first (including "arguments" shadowing).
+            // This handles: `const arguments = ...; arguments = foo;`
+            if let Some(sym_id) = self.resolve_identifier_symbol_for_write(idx) {
+                if self.alias_resolves_to_type_only(sym_id) {
+                    if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                        self.error_type_only_value_at(&ident.escaped_text, idx);
+                    }
+                    return TypeId::ERROR;
+                }
+
+                // Check if this is "arguments" in a function body with a local declaration
+                if let Some(ident) = self.ctx.arena.get_identifier(node) {
+                    if ident.escaped_text == "arguments" && self.is_in_regular_function_body(idx) {
+                        // Check if the declaration is local to the current function
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            if !symbol.declarations.is_empty() {
+                                let decl_node = symbol.declarations[0];
+                                if let Some(current_fn) = self.find_enclosing_function(idx) {
+                                    if let Some(decl_fn) = self.find_enclosing_function(decl_node) {
+                                        if current_fn == decl_fn {
+                                            // Local "arguments" declaration - use it
+                                            let declared_type = self.get_type_of_symbol(sym_id);
+                                            return declared_type;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Symbol found but not local - fall through to IArguments check below
+                    } else {
+                        // Not "arguments" or not in function - use the symbol
+                        let declared_type = self.get_type_of_symbol(sym_id);
+                        return declared_type;
+                    }
+                } else {
+                    // Use the resolved symbol
+                    let declared_type = self.get_type_of_symbol(sym_id);
+                    return declared_type;
+                }
+            }
+
             // Inside a regular function body, `arguments` is the implicit IArguments object,
-            // overriding any outer `arguments` declaration.
+            // overriding any outer `arguments` declaration (but not local ones, checked above).
             if let Some(ident) = self.ctx.arena.get_identifier(node) {
                 if ident.escaped_text == "arguments" && self.is_in_regular_function_body(idx) {
                     let lib_binders = self.get_lib_binders();
@@ -609,17 +650,6 @@ impl<'a> CheckerState<'a> {
                     }
                     return TypeId::ANY;
                 }
-            }
-
-            if let Some(sym_id) = self.resolve_identifier_symbol_for_write(idx) {
-                if self.alias_resolves_to_type_only(sym_id) {
-                    if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                        self.error_type_only_value_at(&ident.escaped_text, idx);
-                    }
-                    return TypeId::ERROR;
-                }
-                let declared_type = self.get_type_of_symbol(sym_id);
-                return declared_type;
             }
         }
 
