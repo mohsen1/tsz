@@ -2169,13 +2169,10 @@ impl<'a> CheckerState<'a> {
                     let getter_type_str = self.format_type(getter_type);
                     let setter_type_str = self.format_type(setter_type);
 
-                    self.error_at_node(
+                    self.error_at_node_msg(
                         error_pos,
-                        &format!(
-                            "Type '{}' is not assignable to type '{}'.",
-                            getter_type_str, setter_type_str
-                        ),
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&getter_type_str, &setter_type_str],
                     );
                 }
             }
