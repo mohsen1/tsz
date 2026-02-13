@@ -729,6 +729,34 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR // Missing composite type data - propagate error
     }
 
+    /// Get type from an intersection type node (A & B).
+    ///
+    /// Uses CheckerState's get_type_from_type_node for each member to ensure
+    /// typeof expressions are resolved via binder (same reason as union types).
+    pub(crate) fn get_type_from_intersection_type(&mut self, idx: NodeIndex) -> TypeId {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+            let mut member_types = Vec::new();
+            for &type_idx in &composite.types.nodes {
+                member_types.push(self.get_type_from_type_node(type_idx));
+            }
+
+            if member_types.is_empty() {
+                return TypeId::UNKNOWN;
+            }
+            if member_types.len() == 1 {
+                return member_types[0];
+            }
+
+            return self.ctx.types.intersection(member_types);
+        }
+
+        TypeId::ERROR
+    }
+
     /// Get type from a type operator node (readonly T[], readonly [T, U], unique symbol).
     ///
     /// Handles type modifiers like:

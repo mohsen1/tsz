@@ -1558,6 +1558,22 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types.insert(idx.0, result);
                 return result;
             }
+            if node.kind == syntax_kind_ext::INTERSECTION_TYPE {
+                // Handle intersection types specially to ensure nested typeof expressions
+                // are resolved via binder (same reason as UNION_TYPE above)
+                // Check cache first - allow re-resolution of ERROR when type params in scope
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
+                    if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                        return cached;
+                    }
+                }
+                let result = self.get_type_from_intersection_type(idx);
+                self.ctx.node_types.insert(idx.0, result);
+                return result;
+            }
             if node.kind == syntax_kind_ext::TYPE_LITERAL {
                 // Type literals should use checker resolution so type parameters resolve correctly.
                 // Check cache first - allow re-resolution of ERROR when type params in scope
