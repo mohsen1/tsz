@@ -26,6 +26,7 @@ use crate::types::{ObjectFlags, ObjectShape, PropertyInfo, TypeId, TypeParamInfo
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use tracing::trace;
 use tsz_common::interner::Atom;
 
 // =============================================================================
@@ -372,12 +373,22 @@ impl DefinitionStore {
     /// Allocate a fresh DefId.
     fn allocate(&self) -> DefId {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        trace!(
+            allocated_def_id = %id,
+            next_will_be = %(id + 1),
+            "DefinitionStore::allocate"
+        );
         DefId(id)
     }
 
     /// Register a new definition and return its DefId.
     pub fn register(&self, info: DefinitionInfo) -> DefId {
         let id = self.allocate();
+        trace!(
+            def_id = %id.0,
+            kind = ?info.kind,
+            "DefinitionStore::register"
+        );
         self.definitions.insert(id, info);
         id
     }

@@ -2318,6 +2318,7 @@ fn collect_diagnostics(
                         &resolved_module_specifiers,
                         &resolved_module_errors,
                         &is_external_module_by_file,
+                        &shared_def_store,
                         no_check,
                         check_js,
                         allow_js,
@@ -2344,6 +2345,7 @@ fn collect_diagnostics(
                     &resolved_module_specifiers,
                     &resolved_module_errors,
                     &is_external_module_by_file,
+                    &shared_def_store,
                     no_check,
                     check_js,
                     allow_js,
@@ -2670,6 +2672,7 @@ fn check_file_for_parallel(
         FxHashMap<(usize, String), tsz::checker::context::ResolutionError>,
     >,
     is_external_module_by_file: &Arc<FxHashMap<String, bool>>,
+    shared_def_store: &Arc<tsz_solver::def::DefinitionStore>,
     no_check: bool,
     check_js: bool,
     allow_js: bool,
@@ -2687,12 +2690,13 @@ fn check_file_for_parallel(
         .map(|(specifier, _, _)| specifier.clone())
         .collect();
 
-    let mut checker = CheckerState::with_options(
+    let mut checker = CheckerState::with_options_and_shared_def_store(
         &file.arena,
         &binder,
         query_cache,
         file.file_name.clone(),
         compiler_options,
+        Arc::clone(shared_def_store),
     );
     checker.ctx.report_unresolved_imports = true;
 
