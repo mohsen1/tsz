@@ -1286,15 +1286,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // so that instantiate_type can find and replace TypeParameter nodes.
         let infer_subst = infer_ctx.get_current_substitution();
         let mut result_subst = TypeSubstitution::new();
+
+        // Pass 1: Collect all resolved (non-UNKNOWN) type parameters
+        let mut unresolved_indices = Vec::new();
         for (i, tp) in func.type_params.iter().enumerate() {
             use std::fmt::Write;
             placeholder_buf.clear();
             write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
             let placeholder_atom = self.interner.intern_string(&placeholder_buf);
             if let Some(resolved) = infer_subst.get(placeholder_atom) {
-                result_subst.insert(tp.name, resolved);
+                if resolved != TypeId::UNKNOWN {
+                    result_subst.insert(tp.name, resolved);
+                } else {
+                    unresolved_indices.push(i);
+                }
             }
         }
+
+        // Pass 2: For unresolved type params with constraints, try using the
+        // constraint instantiated with already-resolved params as a contextual type.
+        // This enables contextual typing for patterns like:
+        //   test<TContext, TFn extends (ctx: TContext) => void>(context: TContext, fn: TFn)
+        // where TContext is inferred in Round 1 but TFn needs its constraint as fallback.
+        for i in unresolved_indices {
+            let tp = &func.type_params[i];
+            if let Some(constraint) = tp.constraint {
+                let inst_constraint = instantiate_type(self.interner, constraint, &result_subst);
+                if !crate::visitor::contains_type_parameters(
+                    self.interner.as_type_database(),
+                    inst_constraint,
+                ) {
+                    result_subst.insert(tp.name, inst_constraint);
+                }
+            }
+        }
+
         result_subst
     }
 
