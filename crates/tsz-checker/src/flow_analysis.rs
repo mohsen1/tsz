@@ -1351,7 +1351,167 @@ impl<'a> CheckerState<'a> {
         .with_flow_cache(&self.ctx.flow_analysis_cache)
         .with_type_environment(Rc::clone(&self.ctx.type_environment));
 
-        analyzer.get_flow_type(idx, declared_type, flow_node)
+        let narrowed = analyzer.get_flow_type(idx, declared_type, flow_node);
+
+        // Correlated narrowing for destructured bindings.
+        // When `const { data, isSuccess } = useQuery()` and we check `isSuccess`,
+        // narrowing of `isSuccess` should also narrow `data`.
+        if narrowed == declared_type {
+            if let Some(sym_id) = self.get_symbol_for_identifier(idx) {
+                if let Some(info) = self.ctx.destructured_bindings.get(&sym_id).cloned() {
+                    if info.is_const {
+                        return self.apply_correlated_narrowing(
+                            &analyzer,
+                            sym_id,
+                            &info,
+                            declared_type,
+                            flow_node,
+                        );
+                    }
+                }
+            }
+        }
+
+        narrowed
+    }
+
+    /// Apply correlated narrowing for destructured bindings.
+    ///
+    /// When `const { data, isSuccess } = useQuery()` returns a union type,
+    /// and `isSuccess` is narrowed (e.g. via truthiness check in `if (isSuccess)`),
+    /// this function narrows the source union type and re-derives `data`'s type.
+    fn apply_correlated_narrowing(
+        &self,
+        analyzer: &FlowAnalyzer<'_>,
+        sym_id: SymbolId,
+        info: &crate::context::DestructuredBindingInfo,
+        declared_type: TypeId,
+        flow_node: tsz_binder::FlowNodeId,
+    ) -> TypeId {
+        use tsz_solver::type_queries::{get_object_shape, get_tuple_elements, get_union_members};
+
+        let Some(source_members) = get_union_members(self.ctx.types, info.source_type) else {
+            return declared_type;
+        };
+
+        // Find all siblings in the same binding group
+        let siblings: Vec<_> = self
+            .ctx
+            .destructured_bindings
+            .iter()
+            .filter(|(s, i)| **s != sym_id && i.group_id == info.group_id && i.is_const)
+            .map(|(s, i)| (*s, i.clone()))
+            .collect();
+
+        if siblings.is_empty() {
+            return declared_type;
+        }
+
+        // Start with the full source type members
+        let source_member_count = source_members.len();
+        let mut remaining_members = source_members;
+
+        // For each sibling, check if it's been narrowed
+        for (sib_sym, sib_info) in &siblings {
+            // Get the sibling's initial type (from the union source)
+            let sib_initial = if let Some(&cached) = self.ctx.symbol_types.get(sib_sym) {
+                cached
+            } else {
+                continue;
+            };
+
+            // Get the sibling's reference node (value_declaration)
+            let Some(sib_sym_data) = self.ctx.binder.symbols.get(*sib_sym) else {
+                continue;
+            };
+            let sib_ref = sib_sym_data.value_declaration;
+            if sib_ref.is_none() {
+                continue;
+            }
+
+            // Get the sibling's narrowed type at this flow node
+            let sib_narrowed = analyzer.get_flow_type(sib_ref, sib_initial, flow_node);
+
+            // If the sibling wasn't narrowed, skip
+            if sib_narrowed == sib_initial {
+                continue;
+            }
+
+            // Filter source members: keep only those where the sibling's property type
+            // is assignable to the narrowed sibling type
+            let is_object = !sib_info.property_name.is_empty();
+            remaining_members.retain(|&member| {
+                    let member_prop_type = if is_object {
+                        if let Some(shape) = get_object_shape(self.ctx.types, member) {
+                            shape
+                                .properties
+                                .iter()
+                                .find(|p| {
+                                    self.ctx.types.resolve_atom_ref(p.name).as_ref()
+                                        == sib_info.property_name
+                                })
+                                .map(|p| p.type_id)
+                        } else {
+                            None
+                        }
+                    } else if let Some(elems) = get_tuple_elements(self.ctx.types, member) {
+                        elems
+                            .get(sib_info.element_index as usize)
+                            .map(|e| e.type_id)
+                    } else {
+                        None
+                    };
+
+                    if let Some(prop_type) = member_prop_type {
+                        // Keep this member if the sibling's narrowed type overlaps
+                        // with the member's property type
+                        prop_type == sib_narrowed
+                            || tsz_solver::is_subtype_of(self.ctx.types, sib_narrowed, prop_type)
+                            || tsz_solver::is_subtype_of(self.ctx.types, prop_type, sib_narrowed)
+                    } else {
+                        true // Keep if we can't determine
+                    }
+                });
+        }
+
+        // If no members were filtered, no correlated narrowing happened
+        if remaining_members.len() == source_member_count {
+            return declared_type;
+        }
+
+        // If all members were filtered, return never
+        if remaining_members.is_empty() {
+            return TypeId::NEVER;
+        }
+
+        // Re-derive this symbol's property type from the remaining source members
+        let is_object = !info.property_name.is_empty();
+        let mut result_types = Vec::new();
+        for member in &remaining_members {
+            if is_object {
+                if let Some(shape) = get_object_shape(self.ctx.types, *member) {
+                    for prop in shape.properties.iter() {
+                        if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == info.property_name
+                        {
+                            result_types.push(prop.type_id);
+                            break;
+                        }
+                    }
+                }
+            } else if let Some(elems) = get_tuple_elements(self.ctx.types, *member) {
+                if let Some(e) = elems.get(info.element_index as usize) {
+                    result_types.push(e.type_id);
+                }
+            }
+        }
+
+        if result_types.is_empty() {
+            return declared_type;
+        }
+        if result_types.len() == 1 {
+            return result_types[0];
+        }
+        self.ctx.types.union(result_types)
     }
 
     /// Get the symbol for an identifier node.

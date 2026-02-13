@@ -224,6 +224,24 @@ impl TypeCache {
     }
 }
 
+/// Info about a symbol that came from destructuring a union type.
+/// Info about a symbol that came from destructuring a union type.
+/// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
+/// narrowing `isSuccess` should also narrow `data`.
+#[derive(Clone, Debug)]
+pub struct DestructuredBindingInfo {
+    /// The source type of the entire destructured expression (the union)
+    pub source_type: TypeId,
+    /// The property name that this symbol corresponds to (for object patterns)
+    pub property_name: String,
+    /// The element index for array/tuple patterns (u32::MAX if object pattern)
+    pub element_index: u32,
+    /// The binding group ID — all symbols from the same destructuring share this
+    pub group_id: u32,
+    /// Whether this is a const binding (only const bindings support correlated narrowing)
+    pub is_const: bool,
+}
+
 /// Shared state for type checking.
 pub struct CheckerContext<'a> {
     /// The NodeArena containing the AST.
@@ -336,6 +354,13 @@ pub struct CheckerContext<'a> {
     /// Set of symbols written to (assignment targets).
     /// Tracked separately from references for flow/usage checks.
     pub written_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
+
+    // --- Destructured Binding Tracking ---
+    /// Maps destructured const binding symbols to their source union type info.
+    /// Used for correlated discriminant narrowing (TS 4.6+ feature).
+    pub destructured_bindings: FxHashMap<SymbolId, DestructuredBindingInfo>,
+    /// Counter for generating unique binding group IDs.
+    pub next_binding_group_id: u32,
 
     // --- Diagnostics ---
     /// Whether the source file has parse errors.
@@ -644,6 +669,8 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             written_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            destructured_bindings: FxHashMap::default(),
+            next_binding_group_id: 0,
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
@@ -757,6 +784,8 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             written_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            destructured_bindings: FxHashMap::default(),
+            next_binding_group_id: 0,
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
@@ -873,6 +902,8 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             written_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            destructured_bindings: FxHashMap::default(),
+            next_binding_group_id: 0,
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
@@ -988,6 +1019,8 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             written_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            destructured_bindings: FxHashMap::default(),
+            next_binding_group_id: 0,
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
@@ -1119,6 +1152,8 @@ impl<'a> CheckerContext<'a> {
             symbol_dependency_stack: Vec::new(),
             referenced_symbols: std::cell::RefCell::new(FxHashSet::default()),
             written_symbols: std::cell::RefCell::new(FxHashSet::default()),
+            destructured_bindings: FxHashMap::default(),
+            next_binding_group_id: 0,
             has_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),

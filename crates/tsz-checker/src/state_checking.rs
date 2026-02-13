@@ -1848,6 +1848,32 @@ impl<'a> CheckerState<'a> {
             // Ensure binding element identifiers get the correct inferred types.
             self.assign_binding_pattern_symbol_types(var_decl.name, pattern_type);
             self.check_binding_pattern(var_decl.name, pattern_type);
+
+            // Track destructured binding groups for correlated narrowing.
+            // Only needed for union source types where narrowing one property affects others.
+            let resolved_for_union = self.evaluate_type_for_assignability(pattern_type);
+            if tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_for_union)
+                .is_some()
+            {
+                // Check if this is a const declaration
+                let is_const = if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
+                    if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
+                        use tsz_parser::parser::node_flags;
+                        (parent_node.flags & node_flags::CONST as u16) != 0
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                self.record_destructured_binding_group(
+                    var_decl.name,
+                    resolved_for_union,
+                    is_const,
+                    name_node.kind,
+                );
+            }
         }
     }
 
@@ -1921,6 +1947,91 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Record destructured binding group information for correlated narrowing.
+    /// When `const { data, isSuccess } = useQuery()`, this records that both `data` and
+    /// `isSuccess` come from the same union source and can be used for correlated narrowing.
+    fn record_destructured_binding_group(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_type: TypeId,
+        is_const: bool,
+        pattern_kind: u16,
+    ) {
+        use crate::context::DestructuredBindingInfo;
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        let group_id = self.ctx.next_binding_group_id;
+        self.ctx.next_binding_group_id += 1;
+
+        let is_object = pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
+
+        for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
+            if element_idx.is_none() {
+                continue;
+            }
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(element_data.name) else {
+                continue;
+            };
+
+            // Only track identifier bindings (not nested patterns)
+            if name_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name) else {
+                continue;
+            };
+
+            // Get the property name for object patterns
+            let property_name = if is_object {
+                if !element_data.property_name.is_none() {
+                    if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
+                        self.ctx
+                            .arena
+                            .get_identifier(prop_node)
+                            .map(|ident| ident.escaped_text.clone())
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    self.ctx
+                        .arena
+                        .get_identifier(name_node)
+                        .map(|ident| ident.escaped_text.clone())
+                        .unwrap_or_default()
+                }
+            } else {
+                String::new()
+            };
+
+            self.ctx.destructured_bindings.insert(
+                sym_id,
+                DestructuredBindingInfo {
+                    source_type,
+                    property_name,
+                    element_index: i as u32,
+                    group_id,
+                    is_const,
+                },
+            );
+        }
+    }
+
     /// Get the expected type for a binding element from its parent type.
     pub(crate) fn get_binding_element_type(
         &mut self,
@@ -1930,13 +2041,56 @@ impl<'a> CheckerState<'a> {
         element_data: &tsz_parser::parser::node::BindingElementData,
     ) -> TypeId {
         use tsz_solver::type_queries::{
-            get_array_element_type, get_object_shape, get_tuple_elements, unwrap_readonly_deep,
+            get_array_element_type, get_object_shape, get_tuple_elements, get_union_members,
+            unwrap_readonly_deep,
         };
+
+        // Resolve Application/Lazy types to their concrete form so that
+        // union members, object shapes, and tuple elements are accessible.
+        let parent_type = self.evaluate_type_for_assignability(parent_type);
 
         // Array binding patterns use the element position.
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
             if parent_type == TypeId::UNKNOWN || parent_type == TypeId::ERROR {
                 return parent_type;
+            }
+
+            // For union types of tuples/arrays, resolve element type from each member
+            if let Some(members) = get_union_members(self.ctx.types, parent_type) {
+                let mut elem_types = Vec::new();
+                for member in members {
+                    let member = unwrap_readonly_deep(self.ctx.types, member);
+                    if element_data.dot_dot_dot_token {
+                        let elem_type =
+                            if let Some(elem) = get_array_element_type(self.ctx.types, member) {
+                                self.ctx.types.array(elem)
+                            } else if let Some(elems) = get_tuple_elements(self.ctx.types, member) {
+                                let rest_elem = elems
+                                    .iter()
+                                    .find(|e| e.rest)
+                                    .or_else(|| elems.last())
+                                    .map(|e| e.type_id)
+                                    .unwrap_or(TypeId::ANY);
+                                self.ctx.types.array(rest_elem)
+                            } else {
+                                continue;
+                            };
+                        elem_types.push(elem_type);
+                    } else if let Some(elem) = get_array_element_type(self.ctx.types, member) {
+                        elem_types.push(elem);
+                    } else if let Some(elems) = get_tuple_elements(self.ctx.types, member) {
+                        if let Some(e) = elems.get(element_index) {
+                            elem_types.push(e.type_id);
+                        }
+                    }
+                }
+                return if elem_types.is_empty() {
+                    TypeId::ANY
+                } else if elem_types.len() == 1 {
+                    elem_types[0]
+                } else {
+                    self.ctx.types.union(elem_types)
+                };
             }
 
             // Unwrap readonly wrappers for destructuring element access
@@ -2011,8 +2165,29 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(prop_name_str) = property_name {
-            // Look up the property type in the parent type
-            if let Some(shape) = get_object_shape(self.ctx.types, parent_type) {
+            // Look up the property type in the parent type.
+            // For union types, resolve the property in each member and union the results.
+            if let Some(members) = get_union_members(self.ctx.types, parent_type) {
+                let mut prop_types = Vec::new();
+                for member in members {
+                    if let Some(shape) = get_object_shape(self.ctx.types, member) {
+                        for prop in shape.properties.as_slice() {
+                            if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str
+                            {
+                                prop_types.push(prop.type_id);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if prop_types.is_empty() {
+                    TypeId::ANY
+                } else if prop_types.len() == 1 {
+                    prop_types[0]
+                } else {
+                    self.ctx.types.union(prop_types)
+                }
+            } else if let Some(shape) = get_object_shape(self.ctx.types, parent_type) {
                 // Find the property by comparing names
                 for prop in shape.properties.as_slice() {
                     if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str {
