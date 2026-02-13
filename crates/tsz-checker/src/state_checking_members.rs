@@ -2539,7 +2539,11 @@ impl<'a> CheckerState<'a> {
 
             if declared_type != TypeId::ANY
                 && !self.type_contains_error(declared_type)
-                && !self.is_assignable_to(init_type, declared_type)
+                && self.should_report_assignability_mismatch(
+                    init_type,
+                    declared_type,
+                    prop.initializer,
+                )
             {
                 self.error_type_not_assignable_with_reason_at(
                     init_type,

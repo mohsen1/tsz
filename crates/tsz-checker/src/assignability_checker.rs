@@ -544,6 +544,20 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns true when an assignability mismatch should produce a diagnostic.
+    ///
+    /// This centralizes the standard "not assignable + not weak-union/excess-property
+    /// suppression" decision so call sites emitting different diagnostics can share it.
+    pub(crate) fn should_report_assignability_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> bool {
+        !self.is_assignable_to(source, target)
+            && !self.should_skip_weak_union_error(source, target, source_idx)
+    }
+
     /// Check if source object literal has properties that don't exist in target.
     ///
     /// Uses TypeId-based freshness tracking (fresh object literals only).
