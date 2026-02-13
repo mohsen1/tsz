@@ -4,6 +4,7 @@ pub(crate) mod class;
 pub(crate) mod class_type;
 pub(crate) mod constructor_checker;
 pub(crate) mod diagnostics;
+pub(crate) mod flow_analysis;
 pub(crate) mod iterable_checker;
 pub(crate) mod object_type;
 pub(crate) mod state;

@@ -57,6 +57,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/call_checker.rs`
 - `query_boundaries/iterable_checker.rs`
 - `query_boundaries/object_type.rs`
+- `query_boundaries/flow_analysis.rs`
 - plus existing: `class.rs`, `diagnostics.rs`, `state.rs`
 
 ## Known Workspace Test Baseline
@@ -74,7 +75,7 @@ No additional failures should be introduced by refactor-only changes.
 
 ## Next Queue (high impact)
 
-1. `flow_analysis.rs` boundary extraction for direct query calls.
-2. `state_type_resolution.rs` targeted boundary for high-frequency query access.
-3. `state_type_environment.rs` boundary for resolution/classification helpers.
-4. `dispatch.rs` cleanup for remaining direct low-level type handling.
+1. `state_type_resolution.rs` targeted boundary for high-frequency query access.
+2. `state_type_environment.rs` boundary for resolution/classification helpers.
+3. `dispatch.rs` cleanup for remaining direct low-level type handling.
+4. `callable_type.rs` and `union_type.rs` final direct-query cleanup.
