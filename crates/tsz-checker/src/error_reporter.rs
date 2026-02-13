@@ -1300,30 +1300,50 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Find a similar property name on a type for "did you mean?" suggestions (TS2551).
-    /// Returns the best matching property name if one is found above the similarity threshold.
+    /// Uses the same algorithm as tsc's `getSpellingSuggestion`.
     fn find_similar_property(&self, prop_name: &str, type_id: TypeId) -> Option<String> {
         let property_names = self.collect_type_property_names(type_id);
         if property_names.is_empty() {
             return None;
         }
 
-        let mut best_match: Option<(String, f64)> = None;
+        let name_len = prop_name.len();
+        let maximum_length_difference = if name_len * 34 / 100 > 2 {
+            name_len * 34 / 100
+        } else {
+            2
+        };
+        let mut best_distance = name_len * 4 / 10 + 1;
+        let mut best_candidate: Option<String> = None;
+
         for candidate in &property_names {
             if candidate == prop_name {
                 continue;
             }
-            let similarity = self.calculate_string_similarity(prop_name, candidate);
-            if similarity > 0.6 {
-                if best_match
-                    .as_ref()
-                    .is_none_or(|(_, best_sim)| similarity > *best_sim)
-                {
-                    best_match = Some((candidate.clone(), similarity));
+            let candidate_len = candidate.len();
+            let len_diff = name_len.abs_diff(candidate_len);
+            if len_diff > maximum_length_difference {
+                continue;
+            }
+            if name_len < 3 && candidate.to_lowercase() != prop_name.to_lowercase() {
+                continue;
+            }
+            if candidate.to_lowercase() == prop_name.to_lowercase() {
+                let distance = 1;
+                if distance < best_distance {
+                    best_distance = distance;
+                    best_candidate = Some(candidate.clone());
                 }
+                continue;
+            }
+            let distance = Self::levenshtein_distance(prop_name, candidate);
+            if distance < best_distance {
+                best_distance = distance;
+                best_candidate = Some(candidate.clone());
             }
         }
 
-        best_match.map(|(name, _)| name)
+        best_candidate
     }
 
     /// Collect all property names from a type, handling objects, callables, unions,
@@ -1377,76 +1397,69 @@ impl<'a> CheckerState<'a> {
     // Identifier Suggestion Helpers
     // =========================================================================
 
-    /// Find identifiers in scope that are similar to the given name.
-    /// Returns a list of suggestions sorted by similarity (empty if none found).
+    /// Find the best spelling suggestion for a name, matching tsc's `getSpellingSuggestion`.
+    /// Returns `Some(best_name)` if a close-enough match is found.
     pub(crate) fn find_similar_identifiers(
         &self,
         name: &str,
         idx: NodeIndex,
     ) -> Option<Vec<String>> {
-        let mut suggestions = Vec::new();
-
-        // Only suggest value-scope symbols (not type-only like interfaces/type aliases)
-        // to match tsc behavior: "Cannot find name 'X'. Did you mean 'Y'?" only suggests values
         let visible_names = self.ctx.binder.collect_visible_symbol_names_filtered(
             self.ctx.arena,
             idx,
             tsz_binder::symbol_flags::VALUE,
         );
-        for symbol_name in visible_names {
-            if symbol_name != name {
-                let similarity = self.calculate_string_similarity(name, &symbol_name);
-                // Use a high threshold (0.85) to match TypeScript's conservative suggestions
-                // TypeScript only suggests names that are very similar (case changes, typos)
-                if similarity > 0.85 {
-                    suggestions.push((symbol_name, similarity));
+
+        let name_len = name.len();
+        // tsc: bestDistance = (name.length + 2) * 0.34 rounded down, min 2
+        let maximum_length_difference = if name_len * 34 / 100 > 2 {
+            name_len * 34 / 100
+        } else {
+            2
+        };
+        // tsc: initial bestDistance = floor(name.length * 0.4) + 1
+        let mut best_distance = name_len * 4 / 10 + 1;
+        let mut best_candidate: Option<String> = None;
+
+        for candidate in visible_names {
+            if candidate == name {
+                continue;
+            }
+            let candidate_len = candidate.len();
+
+            // tsc: skip candidates whose length is too different
+            let len_diff = name_len.abs_diff(candidate_len);
+            if len_diff > maximum_length_difference {
+                continue;
+            }
+
+            // tsc: for short names (<3), only suggest if differs by case
+            if name_len < 3 && candidate.to_lowercase() != name.to_lowercase() {
+                continue;
+            }
+
+            // Case-insensitive exact match is distance 1
+            if candidate.to_lowercase() == name.to_lowercase() {
+                let distance = 1;
+                if distance < best_distance {
+                    best_distance = distance;
+                    best_candidate = Some(candidate);
                 }
+                continue;
+            }
+
+            let distance = Self::levenshtein_distance(name, &candidate);
+            if distance < best_distance {
+                best_distance = distance;
+                best_candidate = Some(candidate);
             }
         }
 
-        // Sort by similarity (descending) and take top 3
-        suggestions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        suggestions.truncate(3);
-
-        if suggestions.is_empty() {
-            None
-        } else {
-            Some(suggestions.into_iter().map(|(n, _)| n).collect())
-        }
+        best_candidate.map(|c| vec![c])
     }
 
-    /// Calculate string similarity using a simple edit distance algorithm.
-    /// Returns a value between 0.0 (no similarity) and 1.0 (exact match).
-    fn calculate_string_similarity(&self, a: &str, b: &str) -> f64 {
-        if a == b {
-            return 1.0;
-        }
-
-        let a_lower = a.to_lowercase();
-        let b_lower = b.to_lowercase();
-
-        if a_lower == b_lower {
-            return 0.95; // Very similar, just different case
-        }
-
-        // Check for prefix/suffix similarity
-        if a_lower.starts_with(&b_lower) || b_lower.starts_with(&a_lower) {
-            return 0.8;
-        }
-
-        // Simple Levenshtein distance
-        let max_len = a_lower.len().max(b_lower.len());
-        if max_len == 0 {
-            return 1.0;
-        }
-
-        let distance = self.levenshtein_distance(&a_lower, &b_lower);
-
-        1.0 - (distance as f64 / max_len as f64)
-    }
-
-    /// Calculate Levenshtein distance between two strings.
-    fn levenshtein_distance(&self, a: &str, b: &str) -> usize {
+    /// Calculate Levenshtein distance between two strings (case-sensitive, matching tsc).
+    fn levenshtein_distance(a: &str, b: &str) -> usize {
         let a_chars: Vec<char> = a.chars().collect();
         let b_chars: Vec<char> = b.chars().collect();
         let a_len = a_chars.len();
@@ -1459,41 +1472,27 @@ impl<'a> CheckerState<'a> {
             return a_len;
         }
 
-        let mut matrix = vec![vec![0; b_len + 1]; a_len + 1];
+        let mut prev = vec![0usize; b_len + 1];
+        let mut curr = vec![0usize; b_len + 1];
 
-        // Initialize first row and column
-        for i in 0..=a_len {
-            matrix[i][0] = i;
-        }
         for j in 0..=b_len {
-            matrix[0][j] = j;
+            prev[j] = j;
         }
 
-        // Fill the matrix
         for i in 1..=a_len {
+            curr[0] = i;
             for j in 1..=b_len {
                 let cost = if a_chars[i - 1] == b_chars[j - 1] {
                     0
                 } else {
                     1
                 };
-                matrix[i][j] = [
-                    matrix[i - 1][j] + 1,        // deletion
-                    matrix[i][j - 1] + 1,        // insertion
-                    matrix[i - 1][j - 1] + cost, // substitution
-                ]
-                .iter()
-                .min()
-                .copied()
-                .unwrap_or_else(|| {
-                    // This should never happen as we have a non-empty array
-                    // but provide a safe fallback
-                    usize::MAX
-                });
+                curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
             }
+            std::mem::swap(&mut prev, &mut curr);
         }
 
-        matrix[a_len][b_len]
+        prev[b_len]
     }
 
     // =========================================================================
