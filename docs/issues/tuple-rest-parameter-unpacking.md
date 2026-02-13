@@ -1,8 +1,18 @@
-# Issue: Missing Tuple Rest Parameter Unpacking
+# Issue: Tuple Rest Parameter Unpacking
 
 **Date**: 2026-02-13
-**Status**: Identified - Needs Implementation
-**Priority**: HIGH - Blocks ~200 conformance tests
+**Status**: ✅ IMPLEMENTED (as of recent commits)
+**Priority**: ~~HIGH~~ COMPLETE
+
+## Implementation Status
+
+Tuple rest parameter unpacking has been implemented in:
+1. **Function subtype checking** (`crates/tsz-solver/src/subtype_rules/functions.rs:297-309`)
+2. **Generic inference** (`crates/tsz-solver/src/operations.rs:2197-2208`)
+
+The helper function `unpack_tuple_rest_parameter` in `crates/tsz-solver/src/type_queries.rs:768` handles the unpacking.
+
+**Note**: The remaining failures in `genericFunctionInference1.ts` are due to **higher-order generic function inference** issues (see `generic-function-inference-pipe-pattern.md`), not tuple unpacking.
 
 ## Problem Statement
 
