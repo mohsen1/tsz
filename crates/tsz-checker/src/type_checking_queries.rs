@@ -62,14 +62,11 @@ impl<'a> CheckerState<'a> {
             let resolved = self.resolve_lazy_type(type_id);
 
             // Extract instance type from constructor type
-            if let Some(shape) =
-                tsz_solver::type_queries::get_callable_shape(self.ctx.types, resolved)
+            if let Some(construct_signatures) =
+                tsz_solver::type_queries::get_construct_signatures(self.ctx.types, resolved)
+                && let Some(first_sig) = construct_signatures.first()
             {
-                if !shape.construct_signatures.is_empty() {
-                    if let Some(first_sig) = shape.construct_signatures.first() {
-                        return first_sig.return_type;
-                    }
-                }
+                return first_sig.return_type;
             }
 
             return resolved;
