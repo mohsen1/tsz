@@ -1671,15 +1671,16 @@ impl<'a> CheckerState<'a> {
                 // Note: Freshness is tracked by the TypeId flags.
                 // Fresh vs non-fresh object types are interned distinctly.
 
-                if let Some(literal_type) =
-                    checker.literal_type_from_initializer(var_decl.initializer)
-                {
-                    if checker.is_const_variable_declaration(decl_idx) {
+                if checker.is_const_variable_declaration(decl_idx) {
+                    if let Some(literal_type) =
+                        checker.literal_type_from_initializer(var_decl.initializer)
+                    {
                         return literal_type;
                     }
-                    return checker.widen_literal_type(literal_type);
+                    return init_type;
                 }
-                init_type
+
+                checker.widen_initializer_type_for_mutable_binding(init_type)
             } else {
                 // For for-in/for-of loop variables, the element type has already been cached
                 // by assign_for_in_of_initializer_types. Use that instead of defaulting to any.

@@ -2483,7 +2483,7 @@ impl<'a> CheckerState<'a> {
                         // but preserves literal types for const variables
                         if !self.is_const_variable_declaration(value_decl) {
                             let widened_type =
-                                tsz_solver::widening::widen_type(self.ctx.types, inferred_type);
+                                self.widen_initializer_type_for_mutable_binding(inferred_type);
                             // When strictNullChecks is off, undefined and null widen to any
                             if !self.ctx.strict_null_checks()
                                 && (widened_type == TypeId::UNDEFINED
