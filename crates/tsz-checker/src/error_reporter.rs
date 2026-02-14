@@ -3647,6 +3647,28 @@ impl<'a> CheckerState<'a> {
                     .get(ext.parent)
                     .is_some_and(|p| p.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_TYPE)
             });
+            let primitive_parameter_type_recovery =
+                self.ctx.arena.get_extended(idx).is_some_and(|ext| {
+                    self.ctx.arena.get(ext.parent).is_some_and(|p| {
+                        if p.kind != tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
+                            return false;
+                        }
+                        self.ctx
+                            .arena
+                            .get_extended(ext.parent)
+                            .is_some_and(|parent_ext| {
+                                self.ctx.arena.get(parent_ext.parent).is_some_and(|gp| {
+                                    gp.kind == tsz_parser::parser::syntax_kind_ext::PARAMETER
+                                })
+                            })
+                    })
+                });
+            if primitive_keyword_name
+                && primitive_parameter_type_recovery
+                && !primitive_array_recovery
+            {
+                return;
+            }
             if self.has_parse_errors()
                 && !is_es2015_type
                 && !primitive_array_recovery

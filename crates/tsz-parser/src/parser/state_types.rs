@@ -2032,6 +2032,9 @@ impl ParserState {
         let type_node = self.parse_type();
         self.parse_expected(SyntaxKind::GreaterThanToken);
         let expression = self.parse_unary_expression();
+        if expression.is_none() {
+            self.error_expression_expected();
+        }
         let end_pos = self.token_end();
 
         self.arena.add_type_assertion(
