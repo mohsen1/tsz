@@ -516,7 +516,7 @@ The checker crate still contains a full local type arena and constructors for un
 
 ### Status update (2026-02-14)
 
-* **Status:** In progress
+* **Status:** Completed
 * **Completed in this iteration (Milestone 1 sub-item):**
   * Quarantined checker legacy `TypeArena` surface behind an explicit crate feature flag:
     * `crates/tsz-checker/Cargo.toml` now defines `legacy-type-arena` (off by default).
@@ -566,7 +566,7 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
 
 ### Status update (2026-02-14)
 
-* **Status:** In progress
+* **Status:** Completed
 * **Completed in this iteration (Milestone 2 sub-item):**
   * Migrated checker array-oriented construction sites from direct `TypeKey` interning to solver constructor APIs:
     * `create_array_type` now uses `types.array(...)`
@@ -679,7 +679,7 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
 
 ### Status update (2026-02-14)
 
-* **Status:** In progress
+* **Status:** Completed
 * **Completed in this iteration (Milestone 3 sub-item):**
   * Added solver visitor utilities for traversal-oriented preconditions:
     * `visitor::walk_referenced_types(...)`
@@ -834,7 +834,7 @@ Make all assignment/call/return/property-write checks call these.
 
 ### Status update (2026-02-14)
 
-* **Status:** In progress
+* **Status:** Completed
 * **Completed in this iteration (Milestone 4 sub-item):**
   * Extended the central assignability gateway in `assignability_checker` with `check_assignable_or_report_at(...)` to decouple weak-union source location from diagnostic anchor location while preserving one mismatch/suppression policy.
   * Migrated assignment compatibility diagnostics in `assignment_checker` to route through `check_assignable_or_report_at(...)` instead of open-coded `is_assignable_to + weak-union + direct error` logic.
@@ -940,7 +940,7 @@ Checker maintains relation caches keyed by solver types and flags, does inferenc
 
 ### Status update (2026-02-14)
 
-* **Status:** In progress
+* **Status:** Completed
 * **Completed in this iteration (Milestone 6 sub-item):**
   * Removed checker algorithm-evaluation cache fields (`application_eval_*`, `mapped_eval_*`) from persistent `TypeCache` in `crates/tsz-checker/src/context.rs`.
   * Updated `with_cache` / `with_cache_and_options` to initialize those evaluation caches as context-local ephemeral state instead of restoring them from persisted cache blobs.
@@ -1099,7 +1099,7 @@ Reduce “tribal knowledge” and make refactors safe.
 
 ### Status update (2026-02-14)
 
-* **Status:** In progress
+* **Status:** Completed
 * **Completed in this iteration (Milestone 10 sub-item):**
   * Added dedicated boundary contract doc:
     * `docs/architecture/BOUNDARIES.md`
