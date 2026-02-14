@@ -1034,16 +1034,33 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Skip TS2304 for nodes that have parse errors.
-        // This prevents cascading "Cannot find name" errors on malformed AST nodes.
-        // The parse error itself should already be emitted (e.g., TS1003, TS1005, etc.).
-        if let Some(node) = self.ctx.arena.get(idx) {
-            let flags = node.flags as u32;
-            if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-            {
-                return;
+        // Skip TS2304 for nodes/ancestors that have parse errors.
+        // This prevents cascading "Cannot find name" errors on malformed AST
+        // subtrees while still allowing TS2304 for unrelated valid code.
+        let mut current = idx;
+        let mut walk_guard = 0;
+        while !current.is_none() {
+            walk_guard += 1;
+            if walk_guard > 256 {
+                break;
             }
+            if let Some(node) = self.ctx.arena.get(current) {
+                let flags = node.flags as u32;
+                if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                    || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                {
+                    return;
+                }
+            } else {
+                break;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
         }
 
         // Note: we do NOT suppress TS2304 at file level for syntax errors.
