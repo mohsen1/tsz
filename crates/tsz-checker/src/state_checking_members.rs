@@ -917,6 +917,49 @@ impl<'a> CheckerState<'a> {
         Some((name, prop.name, type_id))
     }
 
+    /// Extract type info for a class accessor declaration.
+    /// For getters, use explicit return annotation if present, otherwise infer from body.
+    /// For setters, use the first parameter type annotation (or `any` if omitted).
+    fn get_class_accessor_type_info(
+        &mut self,
+        member_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex, TypeId, bool)> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+        if member_node.kind != syntax_kind_ext::GET_ACCESSOR
+            && member_node.kind != syntax_kind_ext::SET_ACCESSOR
+        {
+            return None;
+        }
+
+        let accessor = self.ctx.arena.get_accessor(member_node)?;
+        let name = self.get_member_name_text(accessor.name)?;
+        let is_static = self.has_static_modifier(&accessor.modifiers);
+
+        let type_id = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+            if !accessor.type_annotation.is_none() {
+                self.get_type_from_type_node(accessor.type_annotation)
+            } else if !accessor.body.is_none() {
+                self.infer_getter_return_type(accessor.body)
+            } else {
+                TypeId::ANY
+            }
+        } else if let Some(&first_param_idx) = accessor.parameters.nodes.first() {
+            if let Some(param) = self.ctx.arena.get_parameter_at(first_param_idx) {
+                if !param.type_annotation.is_none() {
+                    self.get_type_from_type_node(param.type_annotation)
+                } else {
+                    TypeId::ANY
+                }
+            } else {
+                TypeId::ANY
+            }
+        } else {
+            TypeId::ANY
+        };
+
+        Some((name, accessor.name, type_id, is_static))
+    }
+
     /// Check for duplicate property/method names in class members (TS2300, TS2393).
     /// TypeScript reports:
     /// - TS2300 "Duplicate identifier 'X'." for duplicate properties
@@ -1170,6 +1213,78 @@ impl<'a> CheckerState<'a> {
                 for &idx in accessor_indices {
                     self.report_duplicate_class_member_ts2300(idx);
                 }
+            }
+        }
+
+        // TS2717: If a property declaration comes after accessors with the same name,
+        // report incompatible types (e.g., get/set infer `number`, later field is `any`).
+        let mut seen_accessor_type_by_key: FxHashMap<String, TypeId> = FxHashMap::default();
+        for &member_idx in members {
+            if let Some((name, _name_node, accessor_type, is_static)) =
+                self.get_class_accessor_type_info(member_idx)
+            {
+                if self.type_contains_error(accessor_type) {
+                    continue;
+                }
+                let key = if is_static {
+                    format!("static:{}", name)
+                } else {
+                    name
+                };
+                seen_accessor_type_by_key
+                    .entry(key)
+                    .or_insert(accessor_type);
+                continue;
+            }
+
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            let Some(name) = self.get_member_name_text(prop.name) else {
+                continue;
+            };
+            let is_static = self.has_static_modifier(&prop.modifiers);
+            let key = if is_static {
+                format!("static:{}", name.clone())
+            } else {
+                name.clone()
+            };
+            let Some(&first_type) = seen_accessor_type_by_key.get(&key) else {
+                continue;
+            };
+            if self.type_contains_error(first_type) {
+                continue;
+            }
+            let current_type = if !prop.type_annotation.is_none() {
+                self.get_type_from_type_node(prop.type_annotation)
+            } else if !prop.initializer.is_none() {
+                self.get_type_of_node(prop.initializer)
+            } else {
+                TypeId::ANY
+            };
+            if self.type_contains_error(current_type) {
+                continue;
+            }
+            let is_incompatible = if first_type == TypeId::ANY || current_type == TypeId::ANY {
+                first_type != current_type
+            } else {
+                !(self.is_assignable_to(first_type, current_type)
+                    && self.is_assignable_to(current_type, first_type))
+            };
+            if is_incompatible {
+                let first_type_str = self.format_type(first_type);
+                let current_type_str = self.format_type(current_type);
+                self.error_at_node_msg(
+                    prop.name,
+                    diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                    &[&name, &first_type_str, &current_type_str],
+                );
             }
         }
     }
