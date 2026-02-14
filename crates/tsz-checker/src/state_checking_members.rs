@@ -3344,6 +3344,11 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.no_implicit_any() || has_type_annotation || has_contextual_return {
             return;
         }
+
+        // In checkJs mode, be conservative and skip implicit-any return diagnostics in JS files.
+        if self.is_js_file() {
+            return;
+        }
         if !self.should_report_implicit_any_return(return_type) {
             return;
         }
