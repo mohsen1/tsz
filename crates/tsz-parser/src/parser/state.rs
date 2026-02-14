@@ -716,7 +716,7 @@ impl ParserState {
 
     #[inline]
     fn is_hex_digit(byte: u8) -> bool {
-        matches!(byte, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
+        byte.is_ascii_hexdigit()
     }
 
     /// Parse regex unicode escape diagnostics for regex literals in /u or /v mode.
