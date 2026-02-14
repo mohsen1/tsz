@@ -40,6 +40,16 @@ pub struct IRPrinter<'a> {
 }
 
 impl<'a> IRPrinter<'a> {
+    fn should_indent_sequence_child(node: &IRNode) -> bool {
+        match node {
+            IRNode::NamespaceIIFE {
+                skip_sequence_indent,
+                ..
+            } => !skip_sequence_indent,
+            _ => true,
+        }
+    }
+
     /// Create a new IR printer
     pub fn new() -> Self {
         Self {
@@ -108,15 +118,7 @@ impl<'a> IRPrinter<'a> {
             for (i, child) in nodes.iter().enumerate() {
                 if i > 0 {
                     self.write_line();
-                    // Check if child wants to skip indentation (e.g., nested namespace IIFEs)
-                    let should_indent = match child {
-                        IRNode::NamespaceIIFE {
-                            skip_sequence_indent,
-                            ..
-                        } => !skip_sequence_indent,
-                        _ => true,
-                    };
-                    if should_indent {
+                    if Self::should_indent_sequence_child(child) {
                         self.write_indent();
                     }
                 }
@@ -861,7 +863,9 @@ impl<'a> IRPrinter<'a> {
 
                     if i < nodes.len() - 1 {
                         self.write_line();
-                        self.write_indent();
+                        if Self::should_indent_sequence_child(&nodes[i + 1]) {
+                            self.write_indent();
+                        }
                     }
                     i += 1;
                 }
@@ -1973,5 +1977,33 @@ mod tests {
 
         let str_quotes = IRNode::string("say \"hi\"");
         assert_eq!(IRPrinter::emit_to_string(&str_quotes), "\"say \\\"hi\\\"\"");
+    }
+
+    #[test]
+    fn test_nested_sequence_respects_namespace_skip_indent() {
+        let seq = IRNode::Sequence(vec![
+            IRNode::Raw("x;".to_string()),
+            IRNode::NamespaceIIFE {
+                name: "N".to_string(),
+                name_parts: vec!["N".to_string()],
+                body: vec![],
+                is_exported: false,
+                attach_to_exports: false,
+                should_declare_var: false,
+                parent_name: None,
+                param_name: None,
+                skip_sequence_indent: true,
+            },
+        ]);
+        let mut printer = IRPrinter::new();
+        printer.set_indent_level(1);
+        printer.emit(&IRNode::expr_stmt(seq));
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("x;\n(function (N)"),
+            "namespace IIFE should not be extra-indented inside nested Sequence. Got:\n{}",
+            output
+        );
     }
 }
