@@ -46,10 +46,7 @@ pub fn decode_source_text(bytes: &[u8]) -> DecodedSourceText {
     }
 }
 
-fn decode_utf16_with_endianness(
-    bytes: &[u8],
-    little_endian: bool,
-) -> Result<String, &'static str> {
+fn decode_utf16_with_endianness(bytes: &[u8], little_endian: bool) -> Result<String, &'static str> {
     if !bytes.len().is_multiple_of(2) {
         return Err("invalid UTF-16 byte length");
     }
@@ -75,7 +72,10 @@ mod tests {
     #[test]
     fn decodes_utf8_bom() {
         let bytes = [0xEF, 0xBB, 0xBF, b'a', b'=', b'1'];
-        assert_eq!(decode_source_text(&bytes), DecodedSourceText::Text("a=1".to_string()));
+        assert_eq!(
+            decode_source_text(&bytes),
+            DecodedSourceText::Text("a=1".to_string())
+        );
     }
 
     #[test]

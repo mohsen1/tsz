@@ -109,6 +109,14 @@ pub struct SymbolIndex {
 }
 
 impl SymbolIndex {
+    fn clone_set_to_vec(value: &FxHashSet<String>) -> Vec<String> {
+        let mut result = Vec::with_capacity(value.len());
+        for file in value {
+            result.push(file.clone());
+        }
+        result
+    }
+
     /// Create a new empty symbol index.
     pub fn new() -> Self {
         Self::default()
@@ -139,7 +147,7 @@ impl SymbolIndex {
     pub fn get_files_with_symbol(&self, name: &str) -> Vec<String> {
         self.name_to_files
             .get(name)
-            .map(|files| files.iter().cloned().collect())
+            .map(Self::clone_set_to_vec)
             .unwrap_or_default()
     }
 
@@ -150,7 +158,7 @@ impl SymbolIndex {
     pub fn get_importing_files(&self, module_path: &str) -> Vec<String> {
         self.importers
             .get(module_path)
-            .map(|files| files.iter().cloned().collect())
+            .map(Self::clone_set_to_vec)
             .unwrap_or_default()
     }
 
@@ -158,7 +166,7 @@ impl SymbolIndex {
     pub fn get_exports(&self, module_path: &str) -> Vec<String> {
         self.exports
             .get(module_path)
-            .map(|names| names.iter().cloned().collect())
+            .map(Self::clone_set_to_vec)
             .unwrap_or_default()
     }
 
@@ -175,7 +183,7 @@ impl SymbolIndex {
     pub fn get_files_with_heritage(&self, symbol_name: &str) -> Vec<String> {
         self.heritage_clauses
             .get(symbol_name)
-            .map(|files| files.iter().cloned().collect())
+            .map(Self::clone_set_to_vec)
             .unwrap_or_default()
     }
 
@@ -187,7 +195,7 @@ impl SymbolIndex {
     pub fn get_bases_for_class(&self, class_name: &str) -> Vec<String> {
         self.sub_to_bases
             .get(class_name)
-            .map(|bases| bases.iter().cloned().collect())
+            .map(Self::clone_set_to_vec)
             .unwrap_or_default()
     }
 

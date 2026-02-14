@@ -208,14 +208,7 @@ pub fn prepare_binary_test_dir(
             ])
         } else {
             serde_json::json!([
-                "*.ts",
-                "*.tsx",
-                "*.cts",
-                "*.mts",
-                "**/*.ts",
-                "**/*.tsx",
-                "**/*.cts",
-                "**/*.mts"
+                "*.ts", "*.tsx", "*.cts", "*.mts", "**/*.ts", "**/*.tsx", "**/*.cts", "**/*.mts"
             ])
         };
 

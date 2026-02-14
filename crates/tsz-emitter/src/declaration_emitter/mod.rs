@@ -3471,7 +3471,7 @@ impl<'a> DeclarationEmitter<'a> {
             let names: Vec<String> = self
                 .required_imports
                 .get(&module)
-                .map(|v| v.iter().cloned().collect())
+                .map(|v| v.to_vec())
                 .unwrap_or_default();
             for name in names {
                 self.resolve_import_name(&module, &name);
