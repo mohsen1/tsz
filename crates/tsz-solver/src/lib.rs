@@ -160,8 +160,8 @@ mod isomorphism_validation;
 #[path = "tests/type_queries_property_names_tests.rs"]
 mod type_queries_property_names_tests;
 #[cfg(test)]
-#[path = "tests/typekey_contract_tests.rs"]
-mod typekey_contract_tests;
+#[path = "tests/typedata_contract_tests.rs"]
+mod typedata_contract_tests;
 #[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 #[test]
-fn test_direct_typekey_construction_is_quarantined_to_intern() {
+fn test_direct_typedata_construction_is_quarantined_to_intern() {
     fn is_rs_source_file(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()) == Some("rs")
     }
