@@ -3817,7 +3817,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if first_member_without_initializer.len() > 1 {
-            for &member_idx in &first_member_without_initializer {
+            // The first declaration that omits an initializer is allowed;
+            // only subsequent ones get TS2432.
+            for &member_idx in &first_member_without_initializer[1..] {
                 self.error_at_node_msg(
                     member_idx,
                     diagnostic_codes::IN_AN_ENUM_WITH_MULTIPLE_DECLARATIONS_ONLY_ONE_DECLARATION_CAN_OMIT_AN_INITIALIZ,
