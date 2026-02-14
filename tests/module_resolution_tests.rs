@@ -11,8 +11,6 @@
 //! - Triple-slash reference directives: `/// <reference path="./module.ts" />`
 //! - AMD define: `define(["./module"], function(m) { ... })`
 
-#![allow(clippy::print_stderr)]
-
 use crate::binder::BinderState;
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
