@@ -737,7 +737,11 @@ impl<'a> CheckerState<'a> {
                 && let Some(body_node) = self.ctx.arena.get(body)
                 && body_node.kind != syntax_kind_ext::BLOCK
             {
-                let actual_return = self.get_type_of_node(body);
+                // In JS/checkJs, expression-bodied arrows can carry inline JSDoc casts
+                // (e.g. `/** @type {T} */(expr)`); use that annotated type when present.
+                let actual_return = self
+                    .jsdoc_type_annotation_for_node(body)
+                    .unwrap_or_else(|| self.get_type_of_node(body));
                 self.check_assignable_or_report(actual_return, jsdoc_expected_return, body);
             }
             // Skip body statement checking for function declarations.
