@@ -21,7 +21,7 @@ use crate::types::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
@@ -848,6 +848,22 @@ type EvalCacheKey = (TypeId, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelationCacheProbe {
+    Hit(bool),
+    MissNotCached,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RelationCacheStats {
+    pub subtype_hits: u64,
+    pub subtype_misses: u64,
+    pub subtype_entries: usize,
+    pub assignability_hits: u64,
+    pub assignability_misses: u64,
+    pub assignability_entries: usize,
+}
+
 /// Query database wrapper with basic caching.
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
@@ -866,6 +882,10 @@ pub struct QueryCache<'a> {
     /// Task #49: Canonical cache for O(1) structural identity checks.
     /// Maps TypeId -> canonical TypeId for structurally identical types.
     canonical_cache: RwLock<FxHashMap<TypeId, TypeId>>,
+    subtype_cache_hits: AtomicU64,
+    subtype_cache_misses: AtomicU64,
+    assignability_cache_hits: AtomicU64,
+    assignability_cache_misses: AtomicU64,
     no_unchecked_indexed_access: AtomicBool,
 }
 
@@ -881,6 +901,10 @@ impl<'a> QueryCache<'a> {
             property_cache: RwLock::new(FxHashMap::default()),
             variance_cache: RwLock::new(FxHashMap::default()),
             canonical_cache: RwLock::new(FxHashMap::default()),
+            subtype_cache_hits: AtomicU64::new(0),
+            subtype_cache_misses: AtomicU64::new(0),
+            assignability_cache_hits: AtomicU64::new(0),
+            assignability_cache_misses: AtomicU64::new(0),
             no_unchecked_indexed_access: AtomicBool::new(false),
         }
     }
@@ -918,6 +942,47 @@ impl<'a> QueryCache<'a> {
         match self.canonical_cache.write() {
             Ok(mut cache) => cache.clear(),
             Err(e) => e.into_inner().clear(),
+        }
+        self.reset_relation_cache_stats();
+    }
+
+    pub fn relation_cache_stats(&self) -> RelationCacheStats {
+        let subtype_entries = match self.subtype_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        };
+        let assignability_entries = match self.assignability_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        };
+        RelationCacheStats {
+            subtype_hits: self.subtype_cache_hits.load(Ordering::Relaxed),
+            subtype_misses: self.subtype_cache_misses.load(Ordering::Relaxed),
+            subtype_entries,
+            assignability_hits: self.assignability_cache_hits.load(Ordering::Relaxed),
+            assignability_misses: self.assignability_cache_misses.load(Ordering::Relaxed),
+            assignability_entries,
+        }
+    }
+
+    pub fn reset_relation_cache_stats(&self) {
+        self.subtype_cache_hits.store(0, Ordering::Relaxed);
+        self.subtype_cache_misses.store(0, Ordering::Relaxed);
+        self.assignability_cache_hits.store(0, Ordering::Relaxed);
+        self.assignability_cache_misses.store(0, Ordering::Relaxed);
+    }
+
+    pub fn probe_subtype_cache(&self, key: RelationCacheKey) -> RelationCacheProbe {
+        match self.lookup_subtype_cache(key) {
+            Some(result) => RelationCacheProbe::Hit(result),
+            None => RelationCacheProbe::MissNotCached,
+        }
+    }
+
+    pub fn probe_assignability_cache(&self, key: RelationCacheKey) -> RelationCacheProbe {
+        match self.lookup_assignability_cache(key) {
+            Some(result) => RelationCacheProbe::Hit(result),
+            None => RelationCacheProbe::MissNotCached,
         }
     }
 
@@ -1511,10 +1576,16 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
-        match self.subtype_cache.read() {
+        let result = match self.subtype_cache.read() {
             Ok(cache) => cache.get(&key).copied(),
             Err(e) => e.into_inner().get(&key).copied(),
+        };
+        if result.is_some() {
+            self.subtype_cache_hits.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.subtype_cache_misses.fetch_add(1, Ordering::Relaxed);
         }
+        result
     }
 
     fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
@@ -1529,10 +1600,18 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
-        match self.assignability_cache.read() {
+        let result = match self.assignability_cache.read() {
             Ok(cache) => cache.get(&key).copied(),
             Err(e) => e.into_inner().get(&key).copied(),
+        };
+        if result.is_some() {
+            self.assignability_cache_hits
+                .fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.assignability_cache_misses
+                .fetch_add(1, Ordering::Relaxed);
         }
+        result
     }
 
     fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {

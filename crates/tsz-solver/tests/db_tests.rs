@@ -1,6 +1,6 @@
 use crate::{
-    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, TupleElement, TypeData,
-    TypeDatabase, TypeId, TypeInterner, Visibility,
+    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, RelationCacheKey,
+    RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId, TypeInterner, Visibility,
 };
 
 impl<'a> QueryCache<'a> {
@@ -126,6 +126,27 @@ fn test_cache_poisoning_prevention() {
     // Check cache hit (no growth)
     assert_eq!(db.assignability_cache_len(), 1);
     assert_eq!(db.subtype_cache_len(), 1);
+}
+
+#[test]
+fn relation_cache_stats_track_hits_and_misses() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    db.reset_relation_cache_stats();
+
+    let key = RelationCacheKey::subtype(TypeId::STRING, TypeId::UNKNOWN, 0, 0);
+
+    assert_eq!(
+        db.probe_subtype_cache(key),
+        RelationCacheProbe::MissNotCached
+    );
+    assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
+    assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(true));
+
+    let stats = db.relation_cache_stats();
+    assert!(stats.subtype_hits >= 1);
+    assert!(stats.subtype_misses >= 1);
+    assert!(stats.subtype_entries >= 1);
 }
 
 /// Test that is_subtype_of and is_assignable_to both handle `any` correctly.
