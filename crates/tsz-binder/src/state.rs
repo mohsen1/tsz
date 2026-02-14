@@ -612,10 +612,10 @@ impl BinderState {
         switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     ) -> Self {
         // Find the unreachable flow node in the existing flow_nodes, or create a new one
-        let unreachable_flow = flow_nodes.find_unreachable().unwrap_or_else(|| {
+        let unreachable_flow = flow_nodes.find_unreachable().unwrap_or(
             // This shouldn't happen in practice since the binder always creates an unreachable flow
-            FlowNodeId::NONE
-        });
+            FlowNodeId::NONE,
+        );
 
         let mut binder = BinderState {
             options,
@@ -1873,9 +1873,7 @@ impl BinderState {
 
         let export_equals_sym_id = exports.get("export=")?;
 
-        let Some(export_equals_symbol) = self.symbols.get(export_equals_sym_id) else {
-            return None;
-        };
+        let export_equals_symbol = self.symbols.get(export_equals_sym_id)?;
 
         let mut target_names = Vec::new();
         if !export_equals_symbol.escaped_name.is_empty() {
@@ -1900,7 +1898,7 @@ impl BinderState {
 
         push_candidate(export_equals_sym_id);
         for target_name in &target_names {
-            for candidate_id in self.symbols.find_all_by_name(&target_name) {
+            for candidate_id in self.symbols.find_all_by_name(target_name) {
                 push_candidate(candidate_id);
             }
         }
@@ -2392,11 +2390,9 @@ impl BinderState {
                     if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first() {
                         if let Some(list_node) = arena.get(decl_list_idx) {
                             let flags = list_node.flags as u32;
-                            if (flags & node_flags::AWAIT_USING as u32)
-                                == node_flags::AWAIT_USING as u32
-                            {
+                            if (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING {
                                 self.file_features.set(FileFeatures::AWAIT_USING);
-                            } else if (flags & node_flags::USING as u32) != 0 {
+                            } else if (flags & node_flags::USING) != 0 {
                                 self.file_features.set(FileFeatures::USING);
                             }
                         }
