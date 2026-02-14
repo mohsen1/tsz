@@ -374,8 +374,9 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
     if !clause.name.is_none()
         && let Some(name) = get_identifier_text(arena, clause.name)
     {
-        // Use __importDefault helper for proper interop with CommonJS modules
-        bindings.push(format!("var {} = __importDefault({});", name, module_var));
+        // Match TypeScript default behavior without esModuleInterop:
+        // bind directly to the `.default` property.
+        bindings.push(format!("var {} = {}.default;", name, module_var));
     }
 
     // Named bindings: import { a, b as c } from "..." or import * as ns from "..."
