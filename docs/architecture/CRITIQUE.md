@@ -470,6 +470,7 @@ if __name__ == "__main__":
   * Added binder dependency-direction guardrail to `scripts/arch_guard.py` so CI fails if non-test binder code imports `tsz_solver::...`.
   * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` that recursively scans non-test solver source files and fails on parser/checker import patterns outside the `lower.rs` legacy quarantine.
   * Added a checker boundary guardrail in `scripts/check-checker-boundaries.sh` that fails on any non-test `tsz_solver::types::...` import path usage, forcing checker code onto public `tsz_solver::*` APIs only.
+  * Reduced one emitter→checker dependency edge by switching enum checker diagnostics in `crates/tsz-emitter/src/enums/checker.rs` from `tsz_checker::diagnostics::Diagnostic` to `tsz_common::diagnostics::Diagnostic`.
 * **Remaining for Milestone 0:**
   * Complete the `lower.rs` migration so solver has zero parser/checker crate imports.
   * Add/standardize architecture report generation in CI artifacts. **Completed in this iteration.**
