@@ -5,8 +5,6 @@
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
-use tsz::diagnostics::Diagnostic;
-use tsz::span::Span;
 
 /// Result of compiling a test file
 #[derive(Debug, Clone)]
@@ -318,50 +316,6 @@ fn parse_diagnostic_fingerprints_from_text(
     });
     fingerprints.dedup();
     fingerprints
-}
-
-fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
-
-    static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
-            .expect("valid regex")
-    });
-    static DIAG_NO_POS_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
-
-    let mut diagnostics = Vec::new();
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if let Some(caps) = DIAG_WITH_POS_RE.captures(line) {
-            if let Some(code) = caps
-                .name("code")
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-            {
-                let file = caps.name("file").map(|m| m.as_str()).unwrap_or_default();
-                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
-                diagnostics.push(Diagnostic::error(file, Span::dummy(), message, code));
-            }
-            continue;
-        }
-
-        if let Some(caps) = DIAG_NO_POS_RE.captures(line) {
-            if let Some(code) = caps
-                .name("code")
-                .and_then(|m| m.as_str().parse::<u32>().ok())
-            {
-                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
-                diagnostics.push(Diagnostic::error("", Span::dummy(), message, code));
-            }
-        }
-    }
-
-    diagnostics
 }
 
 fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {

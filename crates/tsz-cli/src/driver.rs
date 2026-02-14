@@ -121,21 +121,6 @@ struct BindCacheEntry {
 }
 
 impl CompilationCache {
-    pub(crate) fn invalidate_paths_with_dependents<I>(&mut self, paths: I)
-    where
-        I: IntoIterator<Item = PathBuf>,
-    {
-        let affected = self.collect_dependents(paths);
-        for path in affected {
-            self.type_caches.remove(&path);
-            self.bind_cache.remove(&path);
-            self.diagnostics.remove(&path);
-            self.export_hashes.remove(&path);
-            self.import_symbol_ids.remove(&path);
-            self.star_export_dependencies.remove(&path);
-        }
-    }
-
     pub(crate) fn invalidate_paths_with_dependents_symbols<I>(&mut self, paths: I)
     where
         I: IntoIterator<Item = PathBuf>,
@@ -214,34 +199,6 @@ impl CompilationCache {
         self.export_hashes.clear();
         self.import_symbol_ids.clear();
         self.star_export_dependencies.clear();
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.type_caches.len()
-    }
-
-    pub(crate) fn bind_len(&self) -> usize {
-        self.bind_cache.len()
-    }
-
-    pub(crate) fn diagnostics_len(&self) -> usize {
-        self.diagnostics.len()
-    }
-
-    pub(crate) fn export_hash(&self, path: &Path) -> Option<u64> {
-        self.export_hashes.get(path).copied()
-    }
-
-    pub(crate) fn symbol_cache_len(&self, path: &Path) -> Option<usize> {
-        self.type_caches
-            .get(path)
-            .map(|cache| cache.symbol_types.len())
-    }
-
-    pub(crate) fn node_cache_len(&self, path: &Path) -> Option<usize> {
-        self.type_caches
-            .get(path)
-            .map(|cache| cache.node_types.len())
     }
 
     pub(crate) fn update_dependencies(
@@ -1518,58 +1475,6 @@ fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
         "false" => Some(false),
         _ => None,
     }
-}
-
-/// Check if any source file has @noTypesAndSymbols: true comment
-pub(crate) fn sources_have_no_types_and_symbols(sources: &[SourceEntry]) -> bool {
-    sources.iter().any(source_has_no_types_and_symbols)
-}
-
-pub(crate) fn source_has_no_types_and_symbols(source: &SourceEntry) -> bool {
-    if let Some(text) = source.text.as_deref() {
-        return has_no_types_and_symbols_directive(text);
-    }
-    let Ok(text) = std::fs::read_to_string(&source.path) else {
-        return false;
-    };
-    has_no_types_and_symbols_directive(&text)
-}
-
-pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
-    // Parse @noTypesAndSymbols from source file comments (first 32 lines)
-    for line in source.lines().take(32) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let is_comment =
-            trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
-        if !is_comment {
-            break;
-        }
-
-        // Check for @noTypesAndSymbols: true pattern
-        let lower = trimmed.to_ascii_lowercase();
-        if let Some(pos) = lower.find("@notypesandsymbols") {
-            let after_key = &lower[pos + "@notypesandsymbols".len()..];
-            if let Some(colon_pos) = after_key.find(':') {
-                let value = after_key[colon_pos + 1..].trim();
-                let value_clean = if let Some(comma_pos) = value.find(',') {
-                    &value[..comma_pos]
-                } else if let Some(semicolon_pos) = value.find(';') {
-                    &value[..semicolon_pos]
-                } else {
-                    value
-                }
-                .trim();
-
-                if value_clean == "true" {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 struct SourceReadResult {
