@@ -1405,13 +1405,14 @@ impl<'a> CheckerState<'a> {
         // Follow re-export chains (wildcard and named re-exports)
         let mut visited = rustc_hash::FxHashSet::default();
         let result = self.resolve_export_in_file(target_file_idx, export_name, &mut visited);
-        if let Some(sym_id) = result {
+        if let Some((sym_id, actual_file_idx)) = result {
             self.ctx
                 .cross_file_symbol_targets
                 .borrow_mut()
-                .insert(sym_id, target_file_idx);
+                .insert(sym_id, actual_file_idx);
+            return Some(sym_id);
         }
-        result
+        None
     }
 
     fn resolve_export_from_table(
@@ -1491,12 +1492,15 @@ impl<'a> CheckerState<'a> {
 
     /// Follow re-export chains across binder boundaries to find an exported symbol.
     /// Returns the SymbolId if the export is found via named or wildcard re-exports.
+    /// Follow re-export chains across binder boundaries to find an exported symbol.
+    /// Returns `(SymbolId, file_idx)` where `file_idx` is the actual file that owns
+    /// the symbol, so callers can record the correct cross-file origin.
     fn resolve_export_in_file(
         &self,
         file_idx: usize,
         export_name: &str,
         visited: &mut rustc_hash::FxHashSet<usize>,
-    ) -> Option<tsz_binder::SymbolId> {
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
         if !visited.insert(file_idx) {
             return None; // Cycle detection
         }
@@ -1511,13 +1515,13 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports, export_name)
             {
-                return Some(sym_id);
+                return Some((sym_id, file_idx));
             }
         }
 
         // Check file_locals
         if let Some(sym_id) = target_binder.file_locals.get(export_name) {
-            return Some(sym_id);
+            return Some((sym_id, file_idx));
         }
 
         // Check named re-exports
@@ -1528,8 +1532,8 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
                 {
-                    if let Some(sym_id) = self.resolve_export_in_file(source_idx, name, visited) {
-                        return Some(sym_id);
+                    if let Some(result) = self.resolve_export_in_file(source_idx, name, visited) {
+                        return Some(result);
                     }
                 }
             }
@@ -1543,10 +1547,10 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
                 {
-                    if let Some(sym_id) =
+                    if let Some(result) =
                         self.resolve_export_in_file(source_idx, export_name, visited)
                     {
-                        return Some(sym_id);
+                        return Some(result);
                     }
                 }
             }
@@ -1767,7 +1771,7 @@ impl<'a> CheckerState<'a> {
                         .resolve_import_target_from_file(file_idx, source_module)
                     {
                         let mut inner_visited = visited.clone();
-                        if let Some(sym_id) =
+                        if let Some((sym_id, _actual_file_idx)) =
                             self.resolve_export_in_file(source_idx, name, &mut inner_visited)
                         {
                             result.set(exported_name.to_string(), sym_id);
