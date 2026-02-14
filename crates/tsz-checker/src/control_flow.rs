@@ -28,9 +28,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{BinaryExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    NarrowingContext, ParamInfo, QueryDatabase, TypeGuard, TypeId, TypePredicate,
-};
+use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeGuard, TypeId, TypePredicate};
 
 // =============================================================================
 // FlowGraph

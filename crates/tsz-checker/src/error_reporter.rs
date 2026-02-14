@@ -1653,6 +1653,47 @@ impl<'a> CheckerState<'a> {
     // Identifier Suggestion Helpers
     // =========================================================================
 
+    fn consider_identifier_suggestion(
+        name: &str,
+        candidate: &str,
+        name_len: usize,
+        maximum_length_difference: usize,
+        best_distance: &mut usize,
+        best_candidate: &mut Option<String>,
+    ) {
+        if candidate == name {
+            return;
+        }
+        let candidate_len = candidate.len();
+
+        // tsc: skip candidates whose length is too different
+        let len_diff = name_len.abs_diff(candidate_len);
+        if len_diff > maximum_length_difference {
+            return;
+        }
+
+        // tsc: for short names (<3), only suggest if differs by case
+        if name_len < 3 && candidate.to_lowercase() != name.to_lowercase() {
+            return;
+        }
+
+        // Case-insensitive exact match is distance 1
+        if candidate.to_lowercase() == name.to_lowercase() {
+            let distance = 1;
+            if distance < *best_distance {
+                *best_distance = distance;
+                *best_candidate = Some(candidate.to_string());
+            }
+            return;
+        }
+
+        let distance = Self::levenshtein_distance(name, candidate);
+        if distance < *best_distance {
+            *best_distance = distance;
+            *best_candidate = Some(candidate.to_string());
+        }
+    }
+
     /// Find the best spelling suggestion for a name, matching tsc's `getSpellingSuggestion`.
     /// Returns `Some(best_name)` if a close-enough match is found.
     pub(crate) fn find_similar_identifiers(
@@ -1678,36 +1719,36 @@ impl<'a> CheckerState<'a> {
         let mut best_candidate: Option<String> = None;
 
         for candidate in visible_names {
-            if candidate == name {
-                continue;
-            }
-            let candidate_len = candidate.len();
+            Self::consider_identifier_suggestion(
+                name,
+                &candidate,
+                name_len,
+                maximum_length_difference,
+                &mut best_distance,
+                &mut best_candidate,
+            );
+        }
 
-            // tsc: skip candidates whose length is too different
-            let len_diff = name_len.abs_diff(candidate_len);
-            if len_diff > maximum_length_difference {
-                continue;
-            }
-
-            // tsc: for short names (<3), only suggest if differs by case
-            if name_len < 3 && candidate.to_lowercase() != name.to_lowercase() {
-                continue;
-            }
-
-            // Case-insensitive exact match is distance 1
-            if candidate.to_lowercase() == name.to_lowercase() {
-                let distance = 1;
-                if distance < best_distance {
-                    best_distance = distance;
-                    best_candidate = Some(candidate);
+        // Fall back to lib globals for spelling suggestions when local scope
+        // candidates don't produce a close enough match.
+        if best_candidate.is_none() {
+            let lib_binders = self.get_lib_binders();
+            for lib_binder in &lib_binders {
+                for (candidate, sym_id) in lib_binder.file_locals.iter() {
+                    if lib_binder
+                        .get_symbol(*sym_id).is_none_or(|sym| sym.flags & tsz_binder::symbol_flags::VALUE == 0)
+                    {
+                        continue;
+                    }
+                    Self::consider_identifier_suggestion(
+                        name,
+                        candidate,
+                        name_len,
+                        maximum_length_difference,
+                        &mut best_distance,
+                        &mut best_candidate,
+                    );
                 }
-                continue;
-            }
-
-            let distance = Self::levenshtein_distance(name, &candidate);
-            if distance < best_distance {
-                best_distance = distance;
-                best_candidate = Some(candidate);
             }
         }
 
