@@ -126,6 +126,9 @@ CONF_TOTAL_FAILURES="$(read_key conformance_total_failures)"
 MODEL="${MODEL:-gpt-5.3-codex}"
 MODEL_BASE="$MODEL"
 CODEX_CLI_TIMEOUT="${CODEX_CLI_TIMEOUT:-120}"
+if ! [[ "$CODEX_CLI_TIMEOUT" =~ ^[0-9]+$ ]]; then
+  CODEX_CLI_TIMEOUT=120
+fi
 APPROVAL_MODE="${APPROVAL_MODE:-full-auto}"
 ASK_FOR_APPROVAL="${ASK_FOR_APPROVAL:-}"
 BYPASS="${BYPASS:-false}"
@@ -287,17 +290,41 @@ while true; do
     "${CMD[@]}" "$PROMPT_TEXT" >"$ITER_PIPE" 2>&1 &
   fi
   CODexLoopRun_PID=$!
+  last_output_ts="$(date +%s)"
+  progress_ts="$last_output_ts"
 
-  while IFS= read -r line <"$ITER_PIPE"; do
-    echo "$line" | tee -a "$LOG_FILE"
-    if [[ "$line" == *"You've hit your usage limit"* ]] \
-      || [[ "$line" == *"state db missing rollout path"* ]] \
-      || [[ "$line" == *"model_not_found"* ]] \
-      || [[ "$line" == *"The requested model"* && "$line" == *"does not exist"* ]]; then
-      TERMINAL_FAILURE_DETECTED="true"
-      break
+  exec 3<"$ITER_PIPE"
+  while true; do
+    if IFS= read -r -t 1 -u 3 line 2>/dev/null; then
+      echo "$line" | tee -a "$LOG_FILE"
+      last_output_ts="$(date +%s)"
+      progress_ts="$last_output_ts"
+      if [[ "$line" == *"You've hit your usage limit"* ]] \
+        || [[ "$line" == *"state db missing rollout path"* ]] \
+        || [[ "$line" == *"model_not_found"* ]] \
+        || [[ "$line" == *"The requested model"* && "$line" == *"does not exist"* ]]; then
+        TERMINAL_FAILURE_DETECTED="true"
+        break
+      fi
+    else
+      if ! kill -0 "$CODexLoopRun_PID" 2>/dev/null; then
+        break
+      fi
+      now_ts="$(date +%s)"
+      idle_seconds=$(( now_ts - last_output_ts ))
+      if (( idle_seconds >= CODEX_CLI_TIMEOUT )); then
+        TERMINAL_FAILURE_DETECTED="true"
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i codex idle timeout after ${idle_seconds}s; killing codex exec PID=$CODexLoopRun_PID" | tee -a "$LOG_FILE"
+        kill "$CODexLoopRun_PID" >/dev/null 2>&1 || true
+        break
+      fi
+      if (( now_ts - progress_ts >= 15 )); then
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i no output from codex for ${idle_seconds}s (PID=$CODexLoopRun_PID)" | tee -a "$LOG_FILE"
+        progress_ts="$now_ts"
+      fi
     fi
   done
+  exec 3<&-
 
   if [[ "$TERMINAL_FAILURE_DETECTED" == "true" ]]; then
     kill "$CODexLoopRun_PID" >/dev/null 2>&1 || true
