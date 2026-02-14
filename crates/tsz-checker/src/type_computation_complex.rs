@@ -8,6 +8,7 @@ use crate::query_boundaries::type_computation_complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_binder::SymbolId;
+use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
@@ -453,6 +454,21 @@ impl<'a> CheckerState<'a> {
                     let expected = expected_max.unwrap_or(expected_min);
                     self.error_argument_count_mismatch_at(expected, actual, idx);
                 }
+                TypeId::ERROR
+            }
+            CallResult::OverloadArgumentCountMismatch {
+                actual,
+                expected_low,
+                expected_high,
+            } => {
+                self.error_at_node(
+                    idx,
+                    &format!(
+                        "No overload expects {} arguments, but overloads do exist that expect either {} or {} arguments.",
+                        actual, expected_low, expected_high
+                    ),
+                    diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
+                );
                 TypeId::ERROR
             }
             CallResult::ArgumentTypeMismatch {
@@ -1498,6 +1514,21 @@ impl<'a> CheckerState<'a> {
                     let expected = expected_max.unwrap_or(expected_min);
                     self.error_argument_count_mismatch_at(expected, actual, call_idx);
                 }
+                TypeId::ERROR
+            }
+            CallResult::OverloadArgumentCountMismatch {
+                actual,
+                expected_low,
+                expected_high,
+            } => {
+                self.error_at_node(
+                    call_idx,
+                    &format!(
+                        "No overload expects {} arguments, but overloads do exist that expect either {} or {} arguments.",
+                        actual, expected_low, expected_high
+                    ),
+                    diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
+                );
                 TypeId::ERROR
             }
             CallResult::ArgumentTypeMismatch {

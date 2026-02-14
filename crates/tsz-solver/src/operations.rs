@@ -79,6 +79,14 @@ pub enum CallResult {
         actual: usize,
     },
 
+    /// Overloaded call with arity "gap": no overload matches this exact arity,
+    /// but overloads exist for two surrounding fixed arities (TS2575).
+    OverloadArgumentCountMismatch {
+        actual: usize,
+        expected_low: usize,
+        expected_high: usize,
+    },
+
     /// Argument type mismatch at specific position
     ArgumentTypeMismatch {
         index: usize,
@@ -3410,6 +3418,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut max_expected = 0;
         let mut any_has_rest = false;
         let actual_count = arg_types.len();
+        let mut exact_expected_counts = FxHashSet::default();
 
         for sig in &callable.call_signatures {
             // Convert CallSignature to FunctionShape
@@ -3449,6 +3458,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } => {
                     if expected_max.is_none() {
                         any_has_rest = true;
+                    } else if expected_min == expected_max.unwrap_or(expected_min) {
+                        exact_expected_counts.insert(expected_min);
                     }
                     let expected = expected_max.unwrap_or(expected_min);
                     min_expected = min_expected.min(expected_min);
@@ -3467,6 +3478,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // If all signatures failed due to argument count mismatch, report TS2554 instead of TS2769
         if all_arg_count_mismatches && !failures.is_empty() {
+            if !any_has_rest
+                && !exact_expected_counts.is_empty()
+                && !exact_expected_counts.contains(&actual_count)
+            {
+                let mut lower = None;
+                let mut upper = None;
+                for &count in &exact_expected_counts {
+                    if count < actual_count {
+                        lower = Some(lower.map_or(count, |prev: usize| prev.max(count)));
+                    } else if count > actual_count {
+                        upper = Some(upper.map_or(count, |prev: usize| prev.min(count)));
+                    }
+                }
+                if let (Some(expected_low), Some(expected_high)) = (lower, upper) {
+                    return CallResult::OverloadArgumentCountMismatch {
+                        actual: actual_count,
+                        expected_low,
+                        expected_high,
+                    };
+                }
+            }
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_expected,
                 expected_max: if any_has_rest {

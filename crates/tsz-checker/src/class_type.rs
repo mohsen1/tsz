@@ -442,6 +442,12 @@ impl<'a> CheckerState<'a> {
 
         // Convert methods to callable properties
         for (name, method) in methods {
+            // Keep existing field/accessor entries for duplicate names.
+            // Duplicate member diagnostics are handled separately (TS2300/TS2393),
+            // and preserving the non-method member avoids cascading TS2322 errors.
+            if properties.contains_key(&name) {
+                continue;
+            }
             let (signatures, optional) = if !method.overload_signatures.is_empty() {
                 (method.overload_signatures, method.overload_optional)
             } else {
