@@ -1965,12 +1965,11 @@ impl TypeInterner {
             // Check literal sets for discriminant-based reduction
             // { kind: "a" } & { kind: "b" } should be never
             // Also handles { kind: "a" } & { kind?: "b" } => never
-            if let Some(left_set) = self.literal_set_from_type(prop.type_id) {
-                if let Some(right_set) = self.literal_set_from_type(other.type_id) {
-                    if self.literal_sets_disjoint(&left_set, &right_set) {
-                        return true;
-                    }
-                }
+            if let Some(left_set) = self.literal_set_from_type(prop.type_id)
+                && let Some(right_set) = self.literal_set_from_type(other.type_id)
+                && self.literal_sets_disjoint(&left_set, &right_set)
+            {
+                return true;
             }
         }
 
@@ -2112,12 +2111,11 @@ impl TypeInterner {
             }
 
             // Otherwise, check literal-to-primitive compatibility
-            if let Some(lit_set) = self.literal_set_from_type(source) {
-                if let Some(target_class) = self.primitive_class_for(target) {
-                    if self.literal_domain_matches_primitive(lit_set.domain, target_class) {
-                        return true;
-                    }
-                }
+            if let Some(lit_set) = self.literal_set_from_type(source)
+                && let Some(target_class) = self.primitive_class_for(target)
+                && self.literal_domain_matches_primitive(lit_set.domain, target_class)
+            {
+                return true;
             }
         }
 
@@ -2722,10 +2720,10 @@ impl TypeInterner {
     /// Returns true if all type interpolations are string literals or unions of string literals.
     fn can_expand_template_literal(&self, spans: &[TemplateSpan]) -> bool {
         for span in spans {
-            if let TemplateSpan::Type(type_id) = span {
-                if self.template_span_cardinality(*type_id).is_none() {
-                    return false;
-                }
+            if let TemplateSpan::Type(type_id) = span
+                && self.template_span_cardinality(*type_id).is_none()
+            {
+                return false;
             }
         }
         true
@@ -2911,12 +2909,11 @@ impl TypeInterner {
                                 }
                                 TemplateSpan::Type(nested_type_id) => {
                                     // Flush pending text before adding the nested type
-                                    if let Some(text) = pending_text.take() {
-                                        if !text.is_empty() {
-                                            normalized.push(TemplateSpan::Text(
-                                                self.intern_string(&text),
-                                            ));
-                                        }
+                                    if let Some(text) = pending_text.take()
+                                        && !text.is_empty()
+                                    {
+                                        normalized
+                                            .push(TemplateSpan::Text(self.intern_string(&text)));
                                     }
                                     normalized.push(TemplateSpan::Type(*nested_type_id));
                                 }
@@ -2963,10 +2960,10 @@ impl TypeInterner {
                         if s.is_empty() {
                             // Skip this empty string literal
                             // Flush pending text first
-                            if let Some(text) = pending_text.take() {
-                                if !text.is_empty() {
-                                    normalized.push(TemplateSpan::Text(self.intern_string(&text)));
-                                }
+                            if let Some(text) = pending_text.take()
+                                && !text.is_empty()
+                            {
+                                normalized.push(TemplateSpan::Text(self.intern_string(&text)));
                             }
                             // Don't add the empty type span - continue to next span
                             continue;
@@ -2974,10 +2971,10 @@ impl TypeInterner {
                     }
 
                     // Flush any pending text before adding a type span
-                    if let Some(text) = pending_text.take() {
-                        if !text.is_empty() {
-                            normalized.push(TemplateSpan::Text(self.intern_string(&text)));
-                        }
+                    if let Some(text) = pending_text.take()
+                        && !text.is_empty()
+                    {
+                        normalized.push(TemplateSpan::Text(self.intern_string(&text)));
                     }
                     normalized.push(TemplateSpan::Type(*type_id));
                 }
@@ -2985,10 +2982,10 @@ impl TypeInterner {
         }
 
         // Flush any remaining pending text
-        if let Some(text) = pending_text {
-            if !text.is_empty() {
-                normalized.push(TemplateSpan::Text(self.intern_string(&text)));
-            }
+        if let Some(text) = pending_text
+            && !text.is_empty()
+        {
+            normalized.push(TemplateSpan::Text(self.intern_string(&text)));
         }
 
         // If no normalization occurred, return original to avoid unnecessary allocation
@@ -3006,20 +3003,20 @@ impl TypeInterner {
 
         // Never absorption: if any part is never, the whole type is never
         for span in &spans {
-            if let TemplateSpan::Type(type_id) = span {
-                if *type_id == TypeId::NEVER {
-                    return TypeId::NEVER;
-                }
+            if let TemplateSpan::Type(type_id) = span
+                && *type_id == TypeId::NEVER
+            {
+                return TypeId::NEVER;
             }
         }
 
         // Unknown and Any widening: if any part is unknown or any, the whole type is string
         // Note: string intrinsic does NOT widen (it's used for pattern matching)
         for span in &spans {
-            if let TemplateSpan::Type(type_id) = span {
-                if *type_id == TypeId::UNKNOWN || *type_id == TypeId::ANY {
-                    return TypeId::STRING;
-                }
+            if let TemplateSpan::Type(type_id) = span
+                && (*type_id == TypeId::UNKNOWN || *type_id == TypeId::ANY)
+            {
+                return TypeId::STRING;
             }
         }
 

@@ -188,12 +188,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(shape_id)
                 }
                 _ => None,
-            } {
-                if let Some(result) =
-                    self.eval_conditional_object_infer(cond, check_unwrapped, extends_shape_id)
-                {
-                    return result;
-                }
+            } && let Some(result) =
+                self.eval_conditional_object_infer(cond, check_unwrapped, extends_shape_id)
+            {
+                return result;
             }
 
             // Step 2: Check for naked type parameter
@@ -235,15 +233,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         if !checker.is_subtype_of(evaluated_constraint, extends_type) {
                             // Constraint doesn't satisfy the condition → false branch
                             // For tail-recursion, check if false branch is another conditional
-                            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                                if let Some(TypeData::Conditional(next_cond_id)) =
+                            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH
+                                && let Some(TypeData::Conditional(next_cond_id)) =
                                     self.interner().lookup(cond.false_type)
-                                {
-                                    let next_cond = self.interner().conditional_type(next_cond_id);
-                                    current_cond = (*next_cond).clone();
-                                    tail_recursion_count += 1;
-                                    continue;
-                                }
+                            {
+                                let next_cond = self.interner().conditional_type(next_cond_id);
+                                current_cond = (*next_cond).clone();
+                                tail_recursion_count += 1;
+                                continue;
                             }
                             return self.evaluate(cond.false_type);
                         }
@@ -263,15 +260,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         );
                         if !constraint_is_union || !cond.is_distributive {
                             // For tail-recursion on the true branch
-                            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                                if let Some(TypeData::Conditional(next_cond_id)) =
+                            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH
+                                && let Some(TypeData::Conditional(next_cond_id)) =
                                     self.interner().lookup(cond.true_type)
-                                {
-                                    let next_cond = self.interner().conditional_type(next_cond_id);
-                                    current_cond = (*next_cond).clone();
-                                    tail_recursion_count += 1;
-                                    continue;
-                                }
+                            {
+                                let next_cond = self.interner().conditional_type(next_cond_id);
+                                current_cond = (*next_cond).clone();
+                                tail_recursion_count += 1;
+                                continue;
                             }
                             return self.evaluate(cond.true_type);
                         }

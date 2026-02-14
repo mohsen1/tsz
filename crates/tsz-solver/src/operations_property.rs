@@ -361,25 +361,25 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         );
 
         // Try string index signature first (most common)
-        if resolver.has_index_signature(obj_type, IndexKind::String) {
-            if let Some(value_type) = resolver.resolve_string_index(obj_type) {
-                return Some(PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                });
-            }
+        if resolver.has_index_signature(obj_type, IndexKind::String)
+            && let Some(value_type) = resolver.resolve_string_index(obj_type)
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.add_undefined_if_unchecked(value_type),
+                write_type: None,
+                from_index_signature: true,
+            });
         }
 
         // Try numeric index signature if property name looks numeric
-        if resolver.is_numeric_index_name(prop_name) {
-            if let Some(value_type) = resolver.resolve_number_index(obj_type) {
-                return Some(PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                });
-            }
+        if resolver.is_numeric_index_name(prop_name)
+            && let Some(value_type) = resolver.resolve_number_index(obj_type)
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.add_undefined_if_unchecked(value_type),
+                write_type: None,
+                from_index_signature: true,
+            });
         }
 
         Some(PropertyAccessResult::PropertyNotFound {
@@ -437,14 +437,14 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
 
         // Check numeric index signature if property name looks numeric
         let resolver = IndexSignatureResolver::new(self.interner());
-        if resolver.is_numeric_index_name(prop_name) {
-            if let Some(ref idx) = shape.number_index {
-                return Some(PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(idx.value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                });
-            }
+        if resolver.is_numeric_index_name(prop_name)
+            && let Some(ref idx) = shape.number_index
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.add_undefined_if_unchecked(idx.value_type),
+                write_type: None,
+                from_index_signature: true,
+            });
         }
 
         // Reconstruct obj_type for PropertyNotFound result
@@ -610,25 +610,25 @@ impl<'a> PropertyAccessEvaluator<'a> {
         );
 
         // Try string index signature first (most common)
-        if resolver.has_index_signature(obj_type, IndexKind::String) {
-            if let Some(value_type) = resolver.resolve_string_index(obj_type) {
-                return Some(PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                });
-            }
+        if resolver.has_index_signature(obj_type, IndexKind::String)
+            && let Some(value_type) = resolver.resolve_string_index(obj_type)
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.add_undefined_if_unchecked(value_type),
+                write_type: None,
+                from_index_signature: true,
+            });
         }
 
         // Try numeric index signature if property name looks numeric
-        if resolver.is_numeric_index_name(prop_name) {
-            if let Some(value_type) = resolver.resolve_number_index(obj_type) {
-                return Some(PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                });
-            }
+        if resolver.is_numeric_index_name(prop_name)
+            && let Some(value_type) = resolver.resolve_number_index(obj_type)
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.add_undefined_if_unchecked(value_type),
+                write_type: None,
+                from_index_signature: true,
+            });
         }
 
         Some(PropertyAccessResult::PropertyNotFound {
@@ -684,14 +684,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Check numeric index signature if property name looks numeric
         let resolver = IndexSignatureResolver::new(self.interner());
-        if resolver.is_numeric_index_name(prop_name) {
-            if let Some(ref idx) = shape.number_index {
-                return Some(PropertyAccessResult::Success {
-                    type_id: self.add_undefined_if_unchecked(idx.value_type),
-                    write_type: None,
-                    from_index_signature: true,
-                });
-            }
+        if resolver.is_numeric_index_name(prop_name)
+            && let Some(ref idx) = shape.number_index
+        {
+            return Some(PropertyAccessResult::Success {
+                type_id: self.add_undefined_if_unchecked(idx.value_type),
+                write_type: None,
+                from_index_signature: true,
+            });
         }
 
         // Reconstruct obj_type for PropertyNotFound result
@@ -827,24 +827,24 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Before giving up, check union-level index signatures
             let resolver = IndexSignatureResolver::new(self.interner());
 
-            if resolver.has_index_signature(obj_type, IndexKind::String) {
-                if let Some(value_type) = resolver.resolve_string_index(obj_type) {
-                    return Some(PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(value_type),
-                        write_type: None,
-                        from_index_signature: true,
-                    });
-                }
+            if resolver.has_index_signature(obj_type, IndexKind::String)
+                && let Some(value_type) = resolver.resolve_string_index(obj_type)
+            {
+                return Some(PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(value_type),
+                    write_type: None,
+                    from_index_signature: true,
+                });
             }
 
-            if resolver.is_numeric_index_name(prop_name) {
-                if let Some(value_type) = resolver.resolve_number_index(obj_type) {
-                    return Some(PropertyAccessResult::Success {
-                        type_id: self.add_undefined_if_unchecked(value_type),
-                        write_type: None,
-                        from_index_signature: true,
-                    });
-                }
+            if resolver.is_numeric_index_name(prop_name)
+                && let Some(value_type) = resolver.resolve_number_index(obj_type)
+            {
+                return Some(PropertyAccessResult::Success {
+                    type_id: self.add_undefined_if_unchecked(value_type),
+                    write_type: None,
+                    from_index_signature: true,
+                });
             }
 
             return Some(PropertyAccessResult::PropertyNotFound {
@@ -1343,25 +1343,25 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let resolver = IndexSignatureResolver::new(self.interner());
 
                 // Try string index signature first (most common)
-                if resolver.has_index_signature(obj_type, IndexKind::String) {
-                    if let Some(value_type) = resolver.resolve_string_index(obj_type) {
-                        return PropertyAccessResult::Success {
-                            type_id: self.add_undefined_if_unchecked(value_type),
-                            write_type: None,
-                            from_index_signature: true,
-                        };
-                    }
+                if resolver.has_index_signature(obj_type, IndexKind::String)
+                    && let Some(value_type) = resolver.resolve_string_index(obj_type)
+                {
+                    return PropertyAccessResult::Success {
+                        type_id: self.add_undefined_if_unchecked(value_type),
+                        write_type: None,
+                        from_index_signature: true,
+                    };
                 }
 
                 // Try numeric index signature if property name looks numeric
-                if resolver.is_numeric_index_name(prop_name) {
-                    if let Some(value_type) = resolver.resolve_number_index(obj_type) {
-                        return PropertyAccessResult::Success {
-                            type_id: self.add_undefined_if_unchecked(value_type),
-                            write_type: None,
-                            from_index_signature: true,
-                        };
-                    }
+                if resolver.is_numeric_index_name(prop_name)
+                    && let Some(value_type) = resolver.resolve_number_index(obj_type)
+                {
+                    return PropertyAccessResult::Success {
+                        type_id: self.add_undefined_if_unchecked(value_type),
+                        write_type: None,
+                        from_index_signature: true,
+                    };
                 }
 
                 PropertyAccessResult::PropertyNotFound {
@@ -1400,14 +1400,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Check numeric index signature if property name looks numeric
                 use crate::index_signatures::IndexSignatureResolver;
                 let resolver = IndexSignatureResolver::new(self.interner());
-                if resolver.is_numeric_index_name(prop_name) {
-                    if let Some(ref idx) = shape.number_index {
-                        return PropertyAccessResult::Success {
-                            type_id: self.add_undefined_if_unchecked(idx.value_type),
-                            write_type: None,
-                            from_index_signature: true,
-                        };
-                    }
+                if resolver.is_numeric_index_name(prop_name)
+                    && let Some(ref idx) = shape.number_index
+                {
+                    return PropertyAccessResult::Success {
+                        type_id: self.add_undefined_if_unchecked(idx.value_type),
+                        write_type: None,
+                        from_index_signature: true,
+                    };
                 }
 
                 PropertyAccessResult::PropertyNotFound {
@@ -1508,14 +1508,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                     // Check string index signature on all members
                     for &member in members.iter() {
-                        if resolver.has_index_signature(member, IndexKind::String) {
-                            if let Some(value_type) = resolver.resolve_string_index(member) {
-                                return PropertyAccessResult::Success {
-                                    type_id: self.add_undefined_if_unchecked(value_type),
-                                    write_type: None,
-                                    from_index_signature: true,
-                                };
-                            }
+                        if resolver.has_index_signature(member, IndexKind::String)
+                            && let Some(value_type) = resolver.resolve_string_index(member)
+                        {
+                            return PropertyAccessResult::Success {
+                                type_id: self.add_undefined_if_unchecked(value_type),
+                                write_type: None,
+                                from_index_signature: true,
+                            };
                         }
                     }
 
@@ -2266,19 +2266,19 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Check numeric index signature for numeric property names
                 use crate::index_signatures::IndexSignatureResolver;
                 let resolver = IndexSignatureResolver::new(self.interner());
-                if resolver.is_numeric_index_name(prop_name) {
-                    if let Some(ref idx) = shape.number_index {
-                        let substitution =
-                            TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
-                        let instantiated_value =
-                            instantiate_type(self.interner(), idx.value_type, &substitution);
+                if resolver.is_numeric_index_name(prop_name)
+                    && let Some(ref idx) = shape.number_index
+                {
+                    let substitution =
+                        TypeSubstitution::from_args(self.interner(), &type_params, &app.args);
+                    let instantiated_value =
+                        instantiate_type(self.interner(), idx.value_type, &substitution);
 
-                        return PropertyAccessResult::Success {
-                            type_id: self.add_undefined_if_unchecked(instantiated_value),
-                            write_type: None,
-                            from_index_signature: true,
-                        };
-                    }
+                    return PropertyAccessResult::Success {
+                        type_id: self.add_undefined_if_unchecked(instantiated_value),
+                        write_type: None,
+                        from_index_signature: true,
+                    };
                 }
 
                 // Property not found

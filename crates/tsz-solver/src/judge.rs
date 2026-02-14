@@ -447,12 +447,11 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         // Try to get type params from Lazy - use DefId directly
-        if let TypeData::Lazy(def_id) = &key {
-            if let Some(params) = self.env.get_def_params(*def_id) {
-                if let Some(resolved) = self.env.get_def(*def_id) {
-                    return instantiate_generic(self.db, resolved, params, args);
-                }
-            }
+        if let TypeData::Lazy(def_id) = &key
+            && let Some(params) = self.env.get_def_params(*def_id)
+            && let Some(resolved) = self.env.get_def(*def_id)
+        {
+            return instantiate_generic(self.db, resolved, params, args);
         }
 
         // Fallback: can't instantiate

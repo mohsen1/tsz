@@ -1269,10 +1269,10 @@ pub fn process_template_escape_sequences(input: &str) -> String {
                             }
                             code_str.push(nc);
                         }
-                        if let Ok(code) = u32::from_str_radix(&code_str, 16) {
-                            if let Some(c) = char::from_u32(code) {
-                                result.push(c);
-                            }
+                        if let Ok(code) = u32::from_str_radix(&code_str, 16)
+                            && let Some(c) = char::from_u32(code)
+                        {
+                            result.push(c);
                         }
                     } else {
                         // \uXXXX - exactly 4 hex digits
@@ -1282,10 +1282,10 @@ pub fn process_template_escape_sequences(input: &str) -> String {
                                 code_str.push(nc);
                             }
                         }
-                        if let Ok(code) = u16::from_str_radix(&code_str, 16) {
-                            if let Some(c) = char::from_u32(code as u32) {
-                                result.push(c);
-                            }
+                        if let Ok(code) = u16::from_str_radix(&code_str, 16)
+                            && let Some(c) = char::from_u32(code as u32)
+                        {
+                            result.push(c);
                         }
                     }
                 }

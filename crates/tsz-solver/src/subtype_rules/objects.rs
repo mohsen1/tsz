@@ -108,16 +108,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Fast path: Nominal inheritance check for class instances
         // If both source and target are class instances with symbols,
         // check if source is derived from target (O(1) lookup)
-        if let (Some(source_sym), Some(target_sym)) = (source.symbol, target.symbol) {
-            if let Some(graph) = self.inheritance_graph {
-                // Convert SymbolRef to SymbolId for InheritanceGraph
-                // Both types wrap u32, so we extract the inner value
-                use tsz_binder::SymbolId;
-                let source_id = SymbolId(source_sym.0);
-                let target_id = SymbolId(target_sym.0);
-                if graph.is_derived_from(source_id, target_id) {
-                    return SubtypeResult::True;
-                }
+        if let (Some(source_sym), Some(target_sym)) = (source.symbol, target.symbol)
+            && let Some(graph) = self.inheritance_graph
+        {
+            // Convert SymbolRef to SymbolId for InheritanceGraph
+            // Both types wrap u32, so we extract the inner value
+            use tsz_binder::SymbolId;
+            let source_id = SymbolId(source_sym.0);
+            let target_id = SymbolId(target_sym.0);
+            if graph.is_derived_from(source_id, target_id) {
+                return SubtypeResult::True;
             }
         }
 
@@ -304,30 +304,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if target.visibility != Visibility::Public {
             if source.parent_id != target.parent_id {
                 // Trace: Property nominal mismatch
-                if let Some(tracer) = &mut self.tracer {
-                    if !tracer.on_mismatch_dyn(
+                if let Some(tracer) = &mut self.tracer
+                    && !tracer.on_mismatch_dyn(
                         crate::diagnostics::SubtypeFailureReason::PropertyNominalMismatch {
                             property_name: source.name,
                         },
-                    ) {
-                        return SubtypeResult::False;
-                    }
+                    )
+                {
+                    return SubtypeResult::False;
                 }
                 return SubtypeResult::False;
             }
         } else if source.visibility != Visibility::Public {
             // Cannot assign private/protected source to public target
             // Trace: Property visibility mismatch
-            if let Some(tracer) = &mut self.tracer {
-                if !tracer.on_mismatch_dyn(
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(
                     crate::diagnostics::SubtypeFailureReason::PropertyVisibilityMismatch {
                         property_name: source.name,
                         source_visibility: source.visibility,
                         target_visibility: target.visibility,
                     },
-                ) {
-                    return SubtypeResult::False;
-                }
+                )
+            {
+                return SubtypeResult::False;
             }
             return SubtypeResult::False;
         }
@@ -336,14 +336,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Optional in source can't satisfy required in target
         if source.optional && !target.optional {
             // Trace: Optional property cannot satisfy required property
-            if let Some(tracer) = &mut self.tracer {
-                if !tracer.on_mismatch_dyn(
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(
                     crate::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
                         property_name: source.name,
                     },
-                ) {
-                    return SubtypeResult::False;
-                }
+                )
+            {
+                return SubtypeResult::False;
             }
             return SubtypeResult::False;
         }

@@ -113,10 +113,10 @@ impl InheritanceGraph {
         self.ensure_transitive_closure(child);
 
         let nodes = self.nodes.borrow();
-        if let Some(node) = nodes.get(&child) {
-            if let Some(bits) = &node.ancestors_bitset {
-                return bits.contains(ancestor.0 as usize);
-            }
+        if let Some(node) = nodes.get(&child)
+            && let Some(bits) = &node.ancestors_bitset
+        {
+            return bits.contains(ancestor.0 as usize);
         }
 
         false
@@ -130,10 +130,10 @@ impl InheritanceGraph {
         self.ensure_mro(symbol_id);
 
         let nodes = self.nodes.borrow();
-        if let Some(node) = nodes.get(&symbol_id) {
-            if let Some(mro) = &node.mro {
-                return mro.clone();
-            }
+        if let Some(node) = nodes.get(&symbol_id)
+            && let Some(mro) = &node.mro
+        {
+            return mro.clone();
         }
 
         vec![symbol_id] // Fallback: just the symbol itself
@@ -239,10 +239,10 @@ impl InheritanceGraph {
         }
 
         // If already computed, we are good
-        if let Some(node) = nodes.get(&current) {
-            if node.ancestors_bitset.is_some() {
-                return;
-            }
+        if let Some(node) = nodes.get(&current)
+            && node.ancestors_bitset.is_some()
+        {
+            return;
         }
 
         path.insert(current);
@@ -264,10 +264,10 @@ impl InheritanceGraph {
             my_bits.insert(parent.0 as usize);
 
             // Add parent's ancestors
-            if let Some(parent_node) = nodes.get(&parent) {
-                if let Some(parent_bits) = &parent_node.ancestors_bitset {
-                    my_bits.union_with(parent_bits);
-                }
+            if let Some(parent_node) = nodes.get(&parent)
+                && let Some(parent_bits) = &parent_node.ancestors_bitset
+            {
+                my_bits.union_with(parent_bits);
             }
         }
 

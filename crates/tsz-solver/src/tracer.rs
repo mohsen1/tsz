@@ -540,18 +540,18 @@ impl<'a> TracerSubtypeChecker<'a> {
 
         // Check return type (covariant)
         // Special case: void return type accepts any return
-        if target_func.return_type != TypeId::VOID {
-            if !self.check_subtype_with_tracer(
+        if target_func.return_type != TypeId::VOID
+            && !self.check_subtype_with_tracer(
                 source_func.return_type,
                 target_func.return_type,
                 tracer,
-            ) {
-                return tracer.on_mismatch(|| SubtypeFailureReason::ReturnTypeMismatch {
-                    source_return: source_func.return_type,
-                    target_return: target_func.return_type,
-                    nested_reason: None,
-                });
-            }
+            )
+        {
+            return tracer.on_mismatch(|| SubtypeFailureReason::ReturnTypeMismatch {
+                source_return: source_func.return_type,
+                target_return: target_func.return_type,
+                nested_reason: None,
+            });
         }
 
         true
@@ -723,20 +723,15 @@ impl<'a> TracerSubtypeChecker<'a> {
         }
 
         // Check number index signature compatibility
-        if let Some(ref target_idx) = target_shape.number_index {
-            if let Some(ref source_idx) = source_shape.number_index {
-                if !self.check_subtype_with_tracer(
-                    source_idx.value_type,
-                    target_idx.value_type,
-                    tracer,
-                ) {
-                    return tracer.on_mismatch(|| SubtypeFailureReason::IndexSignatureMismatch {
-                        index_kind: "number",
-                        source_value_type: source_idx.value_type,
-                        target_value_type: target_idx.value_type,
-                    });
-                }
-            }
+        if let Some(ref target_idx) = target_shape.number_index
+            && let Some(ref source_idx) = source_shape.number_index
+            && !self.check_subtype_with_tracer(source_idx.value_type, target_idx.value_type, tracer)
+        {
+            return tracer.on_mismatch(|| SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind: "number",
+                source_value_type: source_idx.value_type,
+                target_value_type: target_idx.value_type,
+            });
         }
 
         true

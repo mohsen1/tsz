@@ -377,10 +377,10 @@ where
             if let Some(this_type) = sig.this_type {
                 f(this_type);
             }
-            if let Some(ref type_predicate) = sig.type_predicate {
-                if let Some(type_id) = type_predicate.type_id {
-                    f(type_id);
-                }
+            if let Some(ref type_predicate) = sig.type_predicate
+                && let Some(type_id) = type_predicate.type_id
+            {
+                f(type_id);
             }
             for param in &sig.params {
                 f(param.type_id);
@@ -403,10 +403,10 @@ where
                 if let Some(this_type) = sig.this_type {
                     f(this_type);
                 }
-                if let Some(ref type_predicate) = sig.type_predicate {
-                    if let Some(type_id) = type_predicate.type_id {
-                        f(type_id);
-                    }
+                if let Some(ref type_predicate) = sig.type_predicate
+                    && let Some(type_id) = type_predicate.type_id
+                {
+                    f(type_id);
                 }
                 for param in &sig.params {
                     f(param.type_id);
@@ -425,10 +425,10 @@ where
                 if let Some(this_type) = sig.this_type {
                     f(this_type);
                 }
-                if let Some(ref type_predicate) = sig.type_predicate {
-                    if let Some(type_id) = type_predicate.type_id {
-                        f(type_id);
-                    }
+                if let Some(ref type_predicate) = sig.type_predicate
+                    && let Some(type_id) = type_predicate.type_id
+                {
+                    f(type_id);
                 }
                 for param in &sig.params {
                     f(param.type_id);
@@ -569,10 +569,10 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     let mut seen = FxHashSet::default();
 
     walk_referenced_types(types, root, |type_id| {
-        if let Some(TypeData::Lazy(def_id)) = types.lookup(type_id) {
-            if seen.insert(def_id) {
-                out.push(def_id);
-            }
+        if let Some(TypeData::Lazy(def_id)) = types.lookup(type_id)
+            && seen.insert(def_id)
+        {
+            out.push(def_id);
         }
     });
 
@@ -585,10 +585,10 @@ pub fn collect_enum_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     let mut seen = FxHashSet::default();
 
     walk_referenced_types(types, root, |type_id| {
-        if let Some(TypeData::Enum(def_id, _)) = types.lookup(type_id) {
-            if seen.insert(def_id) {
-                out.push(def_id);
-            }
+        if let Some(TypeData::Enum(def_id, _)) = types.lookup(type_id)
+            && seen.insert(def_id)
+        {
+            out.push(def_id);
         }
     });
 
@@ -601,10 +601,10 @@ pub fn collect_type_queries(types: &dyn TypeDatabase, root: TypeId) -> Vec<Symbo
     let mut seen = FxHashSet::default();
 
     walk_referenced_types(types, root, |type_id| {
-        if let Some(TypeData::TypeQuery(symbol_ref)) = types.lookup(type_id) {
-            if seen.insert(symbol_ref) {
-                out.push(symbol_ref);
-            }
+        if let Some(TypeData::TypeQuery(symbol_ref)) = types.lookup(type_id)
+            && seen.insert(symbol_ref)
+        {
+            out.push(symbol_ref);
         }
     });
 
@@ -1588,10 +1588,10 @@ impl<'a> RecursiveTypeCollector<'a> {
                 if let Some(this_type) = shape.this_type {
                     self.visit(this_type);
                 }
-                if let Some(ref type_predicate) = shape.type_predicate {
-                    if let Some(type_id) = type_predicate.type_id {
-                        self.visit(type_id);
-                    }
+                if let Some(ref type_predicate) = shape.type_predicate
+                    && let Some(type_id) = type_predicate.type_id
+                {
+                    self.visit(type_id);
                 }
                 for type_param in shape.type_params.iter() {
                     if let Some(constraint) = type_param.constraint {
@@ -1612,10 +1612,10 @@ impl<'a> RecursiveTypeCollector<'a> {
                     if let Some(this_type) = sig.this_type {
                         self.visit(this_type);
                     }
-                    if let Some(ref type_predicate) = sig.type_predicate {
-                        if let Some(type_id) = type_predicate.type_id {
-                            self.visit(type_id);
-                        }
+                    if let Some(ref type_predicate) = sig.type_predicate
+                        && let Some(type_id) = type_predicate.type_id
+                    {
+                        self.visit(type_id);
                     }
                     for type_param in sig.type_params.iter() {
                         if let Some(constraint) = type_param.constraint {
@@ -1634,10 +1634,10 @@ impl<'a> RecursiveTypeCollector<'a> {
                     if let Some(this_type) = sig.this_type {
                         self.visit(this_type);
                     }
-                    if let Some(ref type_predicate) = sig.type_predicate {
-                        if let Some(type_id) = type_predicate.type_id {
-                            self.visit(type_id);
-                        }
+                    if let Some(ref type_predicate) = sig.type_predicate
+                        && let Some(type_id) = type_predicate.type_id
+                    {
+                        self.visit(type_id);
                     }
                     for type_param in sig.type_params.iter() {
                         if let Some(constraint) = type_param.constraint {

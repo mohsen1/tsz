@@ -241,27 +241,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Find the next text span to use as an anchor for optimization
-        if let Some(next_text_pos) = self.find_next_text_span(spans, span_idx + 1) {
-            if let TemplateSpan::Text(text) = &spans[next_text_pos] {
-                let text_str = self.interner.resolve_atom(*text);
-                // Optimization: only try positions where the next text could match
-                for match_pos in remaining.match_indices(text_str.as_str()) {
-                    // Try matching from this position
-                    if self.match_template_literal_recursive(
-                        &remaining[match_pos.0..],
-                        spans,
-                        span_idx + 1,
-                    ) {
-                        return true;
-                    }
-                }
-                // Also try if the pattern can match with empty wildcard
-                // (in case the next span is also a type that could consume the text)
-                if self.match_template_literal_recursive(remaining, spans, span_idx + 1) {
+        if let Some(next_text_pos) = self.find_next_text_span(spans, span_idx + 1)
+            && let TemplateSpan::Text(text) = &spans[next_text_pos]
+        {
+            let text_str = self.interner.resolve_atom(*text);
+            // Optimization: only try positions where the next text could match
+            for match_pos in remaining.match_indices(text_str.as_str()) {
+                // Try matching from this position
+                if self.match_template_literal_recursive(
+                    &remaining[match_pos.0..],
+                    spans,
+                    span_idx + 1,
+                ) {
                     return true;
                 }
-                return false;
             }
+            // Also try if the pattern can match with empty wildcard
+            // (in case the next span is also a type that could consume the text)
+            if self.match_template_literal_recursive(remaining, spans, span_idx + 1) {
+                return true;
+            }
+            return false;
         }
 
         // No optimization available, try all possible lengths
@@ -310,10 +310,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Try all valid number lengths from longest to shortest
         for len in (1..=num_len).rev() {
             // Verify this is a valid number
-            if is_valid_number(&remaining[..len]) {
-                if self.match_template_literal_recursive(&remaining[len..], spans, span_idx + 1) {
-                    return true;
-                }
+            if is_valid_number(&remaining[..len])
+                && self.match_template_literal_recursive(&remaining[len..], spans, span_idx + 1)
+            {
+                return true;
             }
         }
 
@@ -328,16 +328,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         span_idx: usize,
     ) -> bool {
         // Try "true"
-        if remaining.starts_with("true") {
-            if self.match_template_literal_recursive(&remaining[4..], spans, span_idx + 1) {
-                return true;
-            }
+        if remaining.starts_with("true")
+            && self.match_template_literal_recursive(&remaining[4..], spans, span_idx + 1)
+        {
+            return true;
         }
         // Try "false"
-        if remaining.starts_with("false") {
-            if self.match_template_literal_recursive(&remaining[5..], spans, span_idx + 1) {
-                return true;
-            }
+        if remaining.starts_with("false")
+            && self.match_template_literal_recursive(&remaining[5..], spans, span_idx + 1)
+        {
+            return true;
         }
         false
     }
@@ -528,12 +528,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ti: usize,
     ) -> bool {
         // Skip past exhausted source text spans
-        if si < source.len() {
-            if let ResolvedSpan::Text(ref text) = source[si] {
-                if s_off >= text.len() {
-                    return self.match_tt_recursive(source, si + 1, 0, target, ti);
-                }
-            }
+        if si < source.len()
+            && let ResolvedSpan::Text(ref text) = source[si]
+            && s_off >= text.len()
+        {
+            return self.match_tt_recursive(source, si + 1, 0, target, ti);
         }
 
         let src_done = si >= source.len();
@@ -591,10 +590,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                         // Option 2: if target is string, it can absorb this source type
                         // AND continue consuming more source spans
-                        if intrinsic_kind(self.interner, t_type) == Some(IntrinsicKind::String) {
-                            if self.match_tt_string_consume_more(source, si + 1, 0, target, ti) {
-                                return true;
-                            }
+                        if intrinsic_kind(self.interner, t_type) == Some(IntrinsicKind::String)
+                            && self.match_tt_string_consume_more(source, si + 1, 0, target, ti)
+                        {
+                            return true;
                         }
                         false
                     }
@@ -681,24 +680,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 IntrinsicKind::Number => {
                     let num_len = find_number_length(remaining);
                     for len in (1..=num_len).rev() {
-                        if is_valid_number(&remaining[..len]) {
-                            if self.match_tt_recursive(source, si, s_off + len, target, ti + 1) {
-                                return true;
-                            }
+                        if is_valid_number(&remaining[..len])
+                            && self.match_tt_recursive(source, si, s_off + len, target, ti + 1)
+                        {
+                            return true;
                         }
                     }
                     false
                 }
                 IntrinsicKind::Boolean => {
-                    if remaining.starts_with("true") {
-                        if self.match_tt_recursive(source, si, s_off + 4, target, ti + 1) {
-                            return true;
-                        }
+                    if remaining.starts_with("true")
+                        && self.match_tt_recursive(source, si, s_off + 4, target, ti + 1)
+                    {
+                        return true;
                     }
-                    if remaining.starts_with("false") {
-                        if self.match_tt_recursive(source, si, s_off + 5, target, ti + 1) {
-                            return true;
-                        }
+                    if remaining.starts_with("false")
+                        && self.match_tt_recursive(source, si, s_off + 5, target, ti + 1)
+                    {
+                        return true;
                     }
                     false
                 }
@@ -823,42 +822,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         IntrinsicKind::Number => {
                             let num_len = find_number_length(text);
                             for len in (1..=num_len).rev() {
-                                if is_valid_number(&text[..len]) {
-                                    if self.match_tt_virtual_text(
+                                if is_valid_number(&text[..len])
+                                    && self.match_tt_virtual_text(
                                         &text[len..],
                                         source,
                                         next_si,
                                         target,
                                         ti + 1,
-                                    ) {
-                                        return true;
-                                    }
+                                    )
+                                {
+                                    return true;
                                 }
                             }
                             false
                         }
                         IntrinsicKind::Boolean => {
-                            if text.starts_with("true") {
-                                if self.match_tt_virtual_text(
+                            if text.starts_with("true")
+                                && self.match_tt_virtual_text(
                                     &text[4..],
                                     source,
                                     next_si,
                                     target,
                                     ti + 1,
-                                ) {
-                                    return true;
-                                }
+                                )
+                            {
+                                return true;
                             }
-                            if text.starts_with("false") {
-                                if self.match_tt_virtual_text(
+                            if text.starts_with("false")
+                                && self.match_tt_virtual_text(
                                     &text[5..],
                                     source,
                                     next_si,
                                     target,
                                     ti + 1,
-                                ) {
-                                    return true;
-                                }
+                                )
+                            {
+                                return true;
                             }
                             false
                         }
