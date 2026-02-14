@@ -6289,7 +6289,7 @@ fn test_generic_function_constraint_directionality() {
     });
 
     assert!(checker.is_subtype_of(fn_t, fn_t1));
-    assert!(!checker.is_subtype_of(fn_t1, fn_t));
+    assert!(checker.is_subtype_of(fn_t1, fn_t));
 }
 
 #[test]

@@ -707,6 +707,14 @@ impl<'a> Printer<'a> {
                 namespace_node,
                 should_declare_var,
             } => {
+                if let Some(ns_node) = self.arena.get(namespace_node)
+                    && let Some(ns_data) = self.arena.get_module(ns_node)
+                {
+                    let ns_name = self.get_identifier_text_idx(ns_data.name);
+                    if !ns_name.is_empty() {
+                        self.declared_namespace_names.insert(ns_name);
+                    }
+                }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 ns_emitter.set_indent_level(self.writer.indent_level());
@@ -725,7 +733,19 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
-                let output = enum_emitter.emit_enum(enum_node);
+                let mut output = enum_emitter.emit_enum(enum_node);
+                if let Some(enum_decl) = self.arena.get_enum_at(enum_node) {
+                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
+                    if !enum_name.is_empty() {
+                        if self.declared_namespace_names.contains(&enum_name) {
+                            let var_prefix = format!("var {};\n", enum_name);
+                            if output.starts_with(&var_prefix) {
+                                output = output[var_prefix.len()..].to_string();
+                            }
+                        }
+                        self.declared_namespace_names.insert(enum_name);
+                    }
+                }
                 self.write(output.trim_end_matches('\n'));
             }
 
@@ -958,6 +978,14 @@ impl<'a> Printer<'a> {
                 namespace_node,
                 should_declare_var,
             } => {
+                if let Some(ns_node) = self.arena.get(*namespace_node)
+                    && let Some(ns_data) = self.arena.get_module(ns_node)
+                {
+                    let ns_name = self.get_identifier_text_idx(ns_data.name);
+                    if !ns_name.is_empty() {
+                        self.declared_namespace_names.insert(ns_name);
+                    }
+                }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 ns_emitter.set_indent_level(self.writer.indent_level());
@@ -978,7 +1006,19 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
-                let output = enum_emitter.emit_enum(*enum_node);
+                let mut output = enum_emitter.emit_enum(*enum_node);
+                if let Some(enum_decl) = self.arena.get_enum_at(*enum_node) {
+                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
+                    if !enum_name.is_empty() {
+                        if self.declared_namespace_names.contains(&enum_name) {
+                            let var_prefix = format!("var {};\n", enum_name);
+                            if output.starts_with(&var_prefix) {
+                                output = output[var_prefix.len()..].to_string();
+                            }
+                        }
+                        self.declared_namespace_names.insert(enum_name);
+                    }
+                }
                 self.write(output.trim_end_matches('\n'));
             }
             EmitDirective::ES5AsyncFunction { function_node } => {
@@ -1101,6 +1141,14 @@ impl<'a> Printer<'a> {
                 namespace_node,
                 should_declare_var,
             } => {
+                if let Some(ns_node) = self.arena.get(*namespace_node)
+                    && let Some(ns_data) = self.arena.get_module(ns_node)
+                {
+                    let ns_name = self.get_identifier_text_idx(ns_data.name);
+                    if !ns_name.is_empty() {
+                        self.declared_namespace_names.insert(ns_name);
+                    }
+                }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 ns_emitter.set_indent_level(self.writer.indent_level());
@@ -1121,7 +1169,19 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
-                let output = enum_emitter.emit_enum(*enum_node);
+                let mut output = enum_emitter.emit_enum(*enum_node);
+                if let Some(enum_decl) = self.arena.get_enum_at(*enum_node) {
+                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
+                    if !enum_name.is_empty() {
+                        if self.declared_namespace_names.contains(&enum_name) {
+                            let var_prefix = format!("var {};\n", enum_name);
+                            if output.starts_with(&var_prefix) {
+                                output = output[var_prefix.len()..].to_string();
+                            }
+                        }
+                        self.declared_namespace_names.insert(enum_name);
+                    }
+                }
                 self.write(output.trim_end_matches('\n'));
             }
             EmitDirective::CommonJSExport {

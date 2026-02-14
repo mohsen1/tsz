@@ -594,8 +594,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Generic source vs generic target (same arity): normalize both signatures to source
         // type parameter identities so alpha-equivalent signatures compare structurally.
-        // Also enforce TypeScript's generic constraint directionality:
-        // for source <: target, each target constraint must be assignable to source constraint.
+        //
+        // Constraint compatibility mostly follows target_constraint <: source_constraint for
+        // source <: target. However, when both constraints are free type parameters from an
+        // enclosing generic context, TypeScript accepts either related direction.
         if !source_instantiated.type_params.is_empty()
             && source_instantiated.type_params.len() == target_instantiated.type_params.len()
             && !target_instantiated.type_params.is_empty()
@@ -627,10 +629,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     })
                     .unwrap_or(TypeId::UNKNOWN);
 
-                if !self
+                let constraints_compatible = self
                     .check_subtype(target_constraint, source_constraint)
                     .is_true()
-                {
+                    || (matches!(
+                        self.interner.lookup(source_constraint),
+                        Some(TypeKey::TypeParameter(_))
+                    ) && matches!(
+                        self.interner.lookup(target_constraint),
+                        Some(TypeKey::TypeParameter(_))
+                    ) && self
+                        .check_subtype(source_constraint, target_constraint)
+                        .is_true());
+                if !constraints_compatible {
                     return SubtypeResult::False;
                 }
             }
