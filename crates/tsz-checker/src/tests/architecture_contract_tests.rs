@@ -1,5 +1,6 @@
 use crate::context::{CheckerContext, CheckerOptions};
 use std::fs;
+use std::path::Path;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::{
@@ -316,5 +317,58 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     assert!(
         !type_computation_complex_src.contains("intern(tsz_solver::TypeKey::TypeParameter("),
         "type_computation_complex should use solver type_param constructor API, not direct TypeKey::TypeParameter interning"
+    );
+}
+
+#[test]
+fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
+    fn is_rs_source_file(path: &Path) -> bool {
+        path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+    }
+
+    fn has_forbidden_typekey_pattern(line: &str) -> bool {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            return false;
+        }
+
+        line.contains("use tsz_solver::TypeKey")
+            || line.contains("use ") && line.contains("TypeKey")
+            || line.contains("intern(TypeKey::")
+            || line.contains("intern(tsz_solver::TypeKey::")
+    }
+
+    let src_dir = Path::new("src");
+    let entries = fs::read_dir(src_dir).expect("failed to read checker src directory");
+
+    let mut violations = Vec::new();
+    for entry in entries {
+        let entry = entry.expect("failed to read checker src directory entry");
+        let path = entry.path();
+        if !is_rs_source_file(&path) {
+            continue;
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("checker source filename should be valid UTF-8");
+        if file_name == "lib.rs" {
+            continue;
+        }
+
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_index, line) in source.lines().enumerate() {
+            if has_forbidden_typekey_pattern(line) {
+                violations.push(format!("{}:{}", path.display(), line_index + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "checker source files must not import TypeKey or intern TypeKey directly; violations: {}",
+        violations.join(", ")
     );
 }

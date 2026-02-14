@@ -507,9 +507,12 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Migrated `type_computation_complex::resolve_type_param_for_construct` away from direct `intern(tsz_solver::TypeKey::TypeParameter(...))` to solver constructor API (`types.type_param(...)`).
   * Extended checker architecture guard coverage so `type_computation_complex` is explicitly checked for `TypeKey::TypeParameter` regression on this path.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Added a generalized checker architecture guard test that scans checker source files for direct `TypeKey` imports and direct `intern(TypeKey::...)` usage patterns.
+  * This moves Milestone 2 from path-by-path spot checks to a broad enforcement gate for checker-side `TypeKey` leakage.
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
-  * Add CI guard that fails on checker `TypeKey` imports/usages.
+  * Wire this checker `TypeKey` guard into top-level CI architecture checks.
 
 ---
 
