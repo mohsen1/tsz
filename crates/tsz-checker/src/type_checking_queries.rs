@@ -1811,6 +1811,7 @@ impl<'a> CheckerState<'a> {
                 .get_accessor(node)
                 .map(|accessor| self.has_static_modifier(&accessor.modifiers))
                 .unwrap_or(false),
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => true,
             _ => false,
         }
     }
