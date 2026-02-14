@@ -13,17 +13,18 @@
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::query_boundaries::assignability::{
-    AssignabilityEvalKind, ExcessPropertiesKind, TypeTraversalKind,
-    analyze_assignability_failure_with_context, are_types_overlapping_with_env,
-    classify_for_assignability_eval, classify_for_excess_properties, classify_for_traversal,
-    is_callable_type, object_shape_for_type,
+    AssignabilityEvalKind, ExcessPropertiesKind, analyze_assignability_failure_with_context,
+    are_types_overlapping_with_env, classify_for_assignability_eval,
+    classify_for_excess_properties, is_callable_type, object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
+use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::types::RelationCacheKey;
+use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 
 // =============================================================================
 // Assignability Checking Methods
@@ -51,165 +52,33 @@ impl<'a> CheckerState<'a> {
     /// can check assignability against the intersection, we need to ensure A and B
     /// are resolved and in type_env so the subtype checker can resolve them.
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
-        let mut visited = rustc_hash::FxHashSet::default();
-        self.ensure_refs_resolved_inner(type_id, &mut visited);
-    }
+        let mut visited_types = FxHashSet::default();
+        let mut visited_def_ids = FxHashSet::default();
+        let mut worklist = vec![type_id];
 
-    fn ensure_refs_resolved_inner(
-        &mut self,
-        type_id: TypeId,
-        visited: &mut rustc_hash::FxHashSet<TypeId>,
-    ) {
-        // Cycle detection: skip types already visited to prevent infinite
-        // recursion on self-referencing types (e.g., LinkedList<T>).
-        if !visited.insert(type_id) {
-            return;
-        }
+        while let Some(current) = worklist.pop() {
+            if !visited_types.insert(current) {
+                continue;
+            }
 
-        // Classify the type to determine how to traverse it
-        let traversal_kind = classify_for_traversal(self.ctx.types, type_id);
+            for symbol_ref in collect_type_queries(self.ctx.types, current) {
+                let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+                let _ = self.get_type_of_symbol(sym_id);
+            }
 
-        match traversal_kind {
-            // 1. Handle the specific "WHERE" logic (Lazy resolution)
-            TypeTraversalKind::Lazy(def_id) => {
+            for def_id in collect_lazy_def_ids(self.ctx.types, current) {
+                if !visited_def_ids.insert(def_id) {
+                    continue;
+                }
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     let result = self.get_type_of_symbol(sym_id);
-                    // Explicitly insert the DefId→TypeId mapping into type_env.
-                    // get_type_of_symbol may return a cached result, skipping the
-                    // insert_def code path. We must ensure the mapping exists so
-                    // the SubtypeChecker's TypeEnvironment resolver can resolve
-                    // Lazy(DefId) types during assignability checks.
                     if result != TypeId::ERROR && result != TypeId::ANY {
                         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
                             env.insert_def(def_id, result);
                         }
-                        // Recurse into the resolved type to ensure nested Lazy types
-                        // are also resolved.
-                        self.ensure_refs_resolved_inner(result, visited);
+                        worklist.push(result);
                     }
                 }
-                return; // Lazy is a leaf in terms of children, the resolved type is handled above
-            }
-
-            // 2. Handle TypeQuery (value-space references)
-            TypeTraversalKind::TypeQuery(symbol_ref) => {
-                let sym_id = tsz_binder::SymbolId(symbol_ref.0);
-                let _ = self.get_type_of_symbol(sym_id);
-                return;
-            }
-
-            // 3. Handle structured types - delegate the "WHAT" (traversal) to the Solver
-            TypeTraversalKind::Application { base, args, .. } => {
-                // Recurse into base type and arguments
-                self.ensure_refs_resolved_inner(base, visited);
-                for arg in args {
-                    self.ensure_refs_resolved_inner(arg, visited);
-                }
-            }
-            TypeTraversalKind::Members(members) => {
-                for member in members {
-                    self.ensure_refs_resolved_inner(member, visited);
-                }
-            }
-            TypeTraversalKind::Function(shape_id) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                for param in &shape.params {
-                    self.ensure_refs_resolved_inner(param.type_id, visited);
-                }
-                self.ensure_refs_resolved_inner(shape.return_type, visited);
-            }
-            TypeTraversalKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                // Handle call signatures
-                for sig in &shape.call_signatures {
-                    for param in &sig.params {
-                        self.ensure_refs_resolved_inner(param.type_id, visited);
-                    }
-                    if let Some(this_type) = sig.this_type {
-                        self.ensure_refs_resolved_inner(this_type, visited);
-                    }
-                    self.ensure_refs_resolved_inner(sig.return_type, visited);
-                }
-                // Handle construct signatures
-                for sig in &shape.construct_signatures {
-                    for param in &sig.params {
-                        self.ensure_refs_resolved_inner(param.type_id, visited);
-                    }
-                    if let Some(this_type) = sig.this_type {
-                        self.ensure_refs_resolved_inner(this_type, visited);
-                    }
-                    self.ensure_refs_resolved_inner(sig.return_type, visited);
-                }
-                // Handle properties
-                for prop in &shape.properties {
-                    self.ensure_refs_resolved_inner(prop.type_id, visited);
-                }
-            }
-            TypeTraversalKind::Object(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                for prop in &shape.properties {
-                    self.ensure_refs_resolved_inner(prop.type_id, visited);
-                }
-            }
-            TypeTraversalKind::Array(elem) => {
-                self.ensure_refs_resolved_inner(elem, visited);
-            }
-            TypeTraversalKind::Tuple(list_id) => {
-                let list = self.ctx.types.tuple_list(list_id);
-                for elem in list.iter() {
-                    self.ensure_refs_resolved_inner(elem.type_id, visited);
-                }
-            }
-            TypeTraversalKind::Conditional(cond_id) => {
-                let cond = self.ctx.types.conditional_type(cond_id);
-                self.ensure_refs_resolved_inner(cond.check_type, visited);
-                self.ensure_refs_resolved_inner(cond.extends_type, visited);
-                self.ensure_refs_resolved_inner(cond.true_type, visited);
-                self.ensure_refs_resolved_inner(cond.false_type, visited);
-            }
-            TypeTraversalKind::Mapped(mapped_id) => {
-                let mapped = self.ctx.types.mapped_type(mapped_id);
-                self.ensure_refs_resolved_inner(mapped.constraint, visited);
-                self.ensure_refs_resolved_inner(mapped.template, visited);
-                if let Some(name_type) = mapped.name_type {
-                    self.ensure_refs_resolved_inner(name_type, visited);
-                }
-            }
-            TypeTraversalKind::TypeParameter {
-                constraint,
-                default,
-            } => {
-                if let Some(c) = constraint {
-                    self.ensure_refs_resolved_inner(c, visited);
-                }
-                if let Some(d) = default {
-                    self.ensure_refs_resolved_inner(d, visited);
-                }
-            }
-            TypeTraversalKind::Readonly(inner) => {
-                self.ensure_refs_resolved_inner(inner, visited);
-            }
-            TypeTraversalKind::TemplateLiteral(types) => {
-                for t in types {
-                    self.ensure_refs_resolved_inner(t, visited);
-                }
-            }
-            TypeTraversalKind::StringIntrinsic(inner) => {
-                self.ensure_refs_resolved_inner(inner, visited);
-            }
-            TypeTraversalKind::IndexAccess { object, index } => {
-                self.ensure_refs_resolved_inner(object, visited);
-                self.ensure_refs_resolved_inner(index, visited);
-            }
-            TypeTraversalKind::KeyOf(inner) => {
-                self.ensure_refs_resolved_inner(inner, visited);
-            }
-            TypeTraversalKind::SymbolRef(symbol_ref) => {
-                let sym_id = tsz_binder::SymbolId(symbol_ref.0);
-                let _ = self.get_type_of_symbol(sym_id);
-            }
-            TypeTraversalKind::Terminal => {
-                // No further traversal needed
             }
         }
     }

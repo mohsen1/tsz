@@ -284,4 +284,15 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !function_type_src.contains("intern(TypeKey::TypeParameter("),
         "function_type should use solver type_param constructor API, not TypeKey::TypeParameter"
     );
+
+    let assignability_checker_src = fs::read_to_string("src/assignability_checker.rs")
+        .expect("failed to read src/assignability_checker.rs for architecture guard");
+    assert!(
+        !assignability_checker_src.contains("TypeTraversalKind::"),
+        "assignability_checker should not implement solver type-graph traversal branches directly"
+    );
+    assert!(
+        !assignability_checker_src.contains("classify_for_traversal("),
+        "assignability_checker should use solver visitor helpers instead of traversal classification"
+    );
 }

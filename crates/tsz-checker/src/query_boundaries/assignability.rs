@@ -1,12 +1,6 @@
 use tsz_solver::{ObjectShape, SubtypeFailureReason, TypeDatabase, TypeId};
 
-pub(crate) use tsz_solver::type_queries::{
-    AssignabilityEvalKind, ExcessPropertiesKind, TypeTraversalKind,
-};
-
-pub(crate) fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTraversalKind {
-    tsz_solver::type_queries::classify_for_traversal(db, type_id)
-}
+pub(crate) use tsz_solver::type_queries::{AssignabilityEvalKind, ExcessPropertiesKind};
 
 pub(crate) fn classify_for_assignability_eval(
     db: &dyn TypeDatabase,

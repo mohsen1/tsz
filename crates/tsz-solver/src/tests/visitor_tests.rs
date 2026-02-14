@@ -786,3 +786,35 @@ fn test_meta_type_predicates() {
     assert!(is_template_literal_type(&interner, template));
     assert!(!is_index_access_type(&interner, TypeId::STRING));
 }
+
+#[test]
+fn test_collect_lazy_def_ids_transitive_and_unique() {
+    let interner = TypeInterner::new();
+    let d1 = DefId(1);
+    let d2 = DefId(2);
+    let lazy1 = interner.lazy(d1);
+    let lazy2 = interner.lazy(d2);
+
+    // Include duplicate references to verify uniqueness.
+    let root = interner.union(vec![lazy1, lazy2, lazy1]);
+    let mut defs = collect_lazy_def_ids(&interner, root);
+    defs.sort_by_key(|d| d.0);
+
+    assert_eq!(defs, vec![d1, d2]);
+}
+
+#[test]
+fn test_collect_type_queries_transitive_and_unique() {
+    let interner = TypeInterner::new();
+    let s1 = SymbolRef(11);
+    let s2 = SymbolRef(22);
+
+    let q1 = interner.type_query(s1);
+    let q2 = interner.type_query(s2);
+    let root = interner.intersection(vec![q1, q2, q1]);
+
+    let mut symbols = collect_type_queries(&interner, root);
+    symbols.sort_by_key(|s| s.0);
+
+    assert_eq!(symbols, vec![s1, s2]);
+}
