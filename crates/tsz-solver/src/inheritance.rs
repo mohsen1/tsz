@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use tsz_binder::SymbolId;
 
 /// Represents a node in the inheritance graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct ClassNode {
     /// Direct parents (extends and implements)
     parents: Vec<SymbolId>,
@@ -22,17 +22,6 @@ struct ClassNode {
     ancestors_bitset: Option<FixedBitSet>,
     /// Cached Method Resolution Order (linearized ancestors)
     mro: Option<Vec<SymbolId>>,
-}
-
-impl Default for ClassNode {
-    fn default() -> Self {
-        Self {
-            parents: Vec::new(),
-            children: Vec::new(),
-            ancestors_bitset: None,
-            mro: None,
-        }
-    }
 }
 
 pub struct InheritanceGraph {
