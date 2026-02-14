@@ -532,6 +532,44 @@ impl<'a> CheckerState<'a> {
                         crate::types::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
                     );
                 }
+                // TS2790: In strictNullChecks, delete is only allowed for optional properties.
+                // With exactOptionalPropertyTypes disabled, properties whose declared type
+                // includes `undefined` are also treated as deletable.
+                if self.ctx.compiler_options.strict_null_checks
+                    && let Some(operand_node) = self.ctx.arena.get(unary.operand)
+                    && operand_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.ctx.arena.get_access_expr(operand_node)
+                {
+                    use tsz_solver::operations_property::PropertyAccessResult;
+                    let prop_name = self
+                        .ctx
+                        .arena
+                        .get_identifier_at(access.name_or_argument)
+                        .map(|ident| ident.escaped_text.clone())
+                        .or_else(|| self.get_literal_string_from_node(access.name_or_argument));
+                    if let Some(prop_name) = prop_name {
+                        let object_type = self.get_type_of_node(access.expression);
+                        if object_type != TypeId::ANY
+                            && object_type != TypeId::UNKNOWN
+                            && object_type != TypeId::ERROR
+                            && object_type != TypeId::NEVER
+                            && let PropertyAccessResult::Success { type_id, .. } =
+                                self.resolve_property_access_with_env(object_type, &prop_name)
+                        {
+                            let is_optional = self.is_property_optional(object_type, &prop_name);
+                            let optional_via_undefined =
+                                !self.ctx.compiler_options.exact_optional_property_types
+                                    && self.type_includes_undefined(type_id);
+                            if !is_optional && !optional_via_undefined {
+                                self.error_at_node(
+                                    idx,
+                                    crate::types::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
+                                    crate::types::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
+                                );
+                            }
+                        }
+                    }
+                }
 
                 TypeId::BOOLEAN
             }
