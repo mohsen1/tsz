@@ -1,5 +1,3 @@
-#![allow(clippy::print_stderr)]
-
 use anyhow::{Context, Result};
 use clap::Parser;
 use rustc_hash::FxHashMap;
@@ -24,7 +22,7 @@ fn main() -> Result<()> {
         .stack_size(8 * 1024 * 1024)
         .build_global()
     {
-        eprintln!("Warning: Could not configure rayon thread pool: {e}");
+        println!("Warning: Could not configure rayon thread pool: {e}");
     }
 
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
@@ -99,7 +97,7 @@ fn actual_main() -> Result<()> {
     // Handle --generateCpuProfile: this is a V8-specific feature not applicable to a native
     // Rust compiler. The flag is accepted for CLI compatibility with tsc but has no effect.
     if let Some(ref _profile_path) = args.generate_cpu_profile {
-        eprintln!(
+        println!(
             "The --generateCpuProfile flag is a V8/Node.js feature and is not applicable to tsz (a native Rust compiler). The flag is accepted for compatibility but has no effect."
         );
     }
@@ -148,9 +146,9 @@ fn actual_main() -> Result<()> {
         };
 
         if let Err(e) = tracer.write_to_file(&trace_file) {
-            eprintln!("Warning: Failed to write trace file: {e}");
+            println!("Warning: Failed to write trace file: {e}");
         } else {
-            eprintln!("Trace written to: {}", trace_file.display());
+            println!("Trace written to: {}", trace_file.display());
         }
     }
 
@@ -200,7 +198,7 @@ fn actual_main() -> Result<()> {
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
             // Use eprint (not eprintln) because render() already includes all newlines
-            eprint!("{output}");
+            print!("{output}");
         }
     }
 
@@ -417,7 +415,7 @@ fn get_memory_usage_kb() -> u64 {
 fn handle_init(_args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let tsconfig_path = cwd.join("tsconfig.json");
     if tsconfig_path.exists() {
-        eprintln!(
+        println!(
             "A tsconfig.json file is already defined at: {}",
             tsconfig_path.display()
         );
@@ -816,7 +814,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let graph = match ProjectReferenceGraph::load(root_config_path) {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("Warning: Could not load project references: {e}");
+            println!("Warning: Could not load project references: {e}");
             // Fall back to single project build
             return handle_build_single_project(args, cwd, root_config_path);
         }
@@ -831,7 +829,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     let build_order: Vec<tsz_cli::project_refs::ProjectId> = match graph.build_order() {
         Ok(order) => order,
         Err(e) => {
-            eprintln!("Error: {e}");
+            println!("Error: {e}");
             std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
         }
     };
@@ -899,13 +897,13 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
             if !result.diagnostics.is_empty() {
                 let output = reporter.render(&result.diagnostics);
                 if !output.is_empty() {
-                    eprint!("{output}");
+                    print!("{output}");
                 }
             }
 
             // Stop on first error if --stopBuildOnErrors is set
             if args.stop_build_on_errors {
-                eprintln!(
+                println!(
                     "\nBuild stopped due to errors in {}",
                     project.config_path.display()
                 );
@@ -1015,7 +1013,7 @@ fn handle_build_single_project(
         let mut reporter = Reporter::new(pretty);
         let output = reporter.render(&result.diagnostics);
         if !output.is_empty() {
-            eprint!("{output}");
+            print!("{output}");
         }
     }
 
