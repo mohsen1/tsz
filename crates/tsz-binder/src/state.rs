@@ -55,7 +55,7 @@ impl FileFeatures {
 }
 
 /// Configuration options for the binder.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BinderOptions {
     /// ECMAScript target version.
     /// This affects language-specific behaviors like block-scoped function hoisting.
@@ -63,15 +63,6 @@ pub struct BinderOptions {
     /// When true, parse in strict mode and emit "use strict" for each source file.
     /// This mirrors the `--alwaysStrict` compiler option.
     pub always_strict: bool,
-}
-
-impl Default for BinderOptions {
-    fn default() -> Self {
-        BinderOptions {
-            target: ScriptTarget::default(),
-            always_strict: false,
-        }
-    }
 }
 
 /// Lib file context for global type resolution.

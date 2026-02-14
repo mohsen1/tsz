@@ -1041,7 +1041,7 @@ impl CallSignature {
 /// NOTE: The `symbol` field affects BOTH Hash and PartialEq for nominal discrimination.
 /// This ensures that different classes get different TypeIds in the interner.
 /// Structural subtyping is computed explicitly in the Solver, not via PartialEq.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CallableShape {
     /// Call signatures (order matters for overload resolution)
     pub call_signatures: Vec<CallSignature>,
@@ -1082,19 +1082,6 @@ impl std::hash::Hash for CallableShape {
         self.string_index.hash(state);
         self.number_index.hash(state);
         self.symbol.hash(state);
-    }
-}
-
-impl Default for CallableShape {
-    fn default() -> Self {
-        Self {
-            call_signatures: Vec::new(),
-            construct_signatures: Vec::new(),
-            properties: Vec::new(),
-            string_index: None,
-            number_index: None,
-            symbol: None,
-        }
     }
 }
 
