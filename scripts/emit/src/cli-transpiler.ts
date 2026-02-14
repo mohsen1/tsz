@@ -129,6 +129,10 @@ export class CliTranspiler {
     const extMatch = sourceFileName?.match(/\.(ts|tsx|mts|cts)$/);
     const inputExt = extMatch ? extMatch[0] : '.ts';
     const inputFile = path.join(this.tempDir, `${testName}${inputExt}`);
+    const sourceStem = inputFile.replace(/\.(ts|tsx|mts|cts)$/, '');
+    const jsExt = inputExt === '.tsx' ? '.jsx' : inputExt === '.mts' ? '.mjs' : inputExt === '.cts' ? '.cjs' : '.js';
+    const jsFile = `${sourceStem}${jsExt}`;
+    const dtsFile = `${sourceStem}.d.ts`;
 
     try {
       fs.writeFileSync(inputFile, source, 'utf-8');
@@ -177,23 +181,27 @@ export class CliTranspiler {
           declaration &&
           (errorMsg.includes('TS2307') || errorMsg.includes('TS2304'));
         if (!shouldRetryDeclarationFastPath) {
-          throw e;
+          // Match tsc behavior: diagnostics can still produce outputs (exit code 2).
+          // For JS-only emit mode, continue if JS output was generated.
+          if (!declaration && fs.existsSync(jsFile)) {
+            // continue
+          } else if (declaration && fs.existsSync(dtsFile)) {
+            // declaration emit produced output despite diagnostics
+          } else {
+            throw e;
+          }
+        } else {
+          const retryArgs = ['--declaration', '--noCheck', '--noLib'];
+          if (alwaysStrict) retryArgs.push('--alwaysStrict', 'true');
+          if (sourceMap) retryArgs.push('--sourceMap');
+          if (downlevelIteration) retryArgs.push('--downlevelIteration');
+          if (noEmitHelpers) retryArgs.push('--noEmitHelpers');
+          retryArgs.push(...trailingArgs);
+          await runWithArgs(retryArgs);
         }
-        const retryArgs = ['--declaration', '--noCheck', '--noLib'];
-        if (alwaysStrict) retryArgs.push('--alwaysStrict', 'true');
-        if (sourceMap) retryArgs.push('--sourceMap');
-        if (downlevelIteration) retryArgs.push('--downlevelIteration');
-        if (noEmitHelpers) retryArgs.push('--noEmitHelpers');
-        retryArgs.push(...trailingArgs);
-        await runWithArgs(retryArgs);
       }
 
       // Read output files
-      const sourceStem = inputFile.replace(/\.(ts|tsx|mts|cts)$/, '');
-      const jsExt = inputExt === '.tsx' ? '.jsx' : inputExt === '.mts' ? '.mjs' : inputExt === '.cts' ? '.cjs' : '.js';
-      const jsFile = `${sourceStem}${jsExt}`;
-      const dtsFile = `${sourceStem}.d.ts`;
-
       let js = '';
       let dts: string | null = null;
 

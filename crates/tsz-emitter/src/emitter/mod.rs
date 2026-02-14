@@ -2262,6 +2262,16 @@ impl<'a> Printer<'a> {
                 if is_erased {
                     // Skip erased declarations. Their leading comments were already
                     // filtered out of all_comments during initialization.
+                    // Also defensively consume any remaining leading comments for this
+                    // erased statement so they are not attached to the next emitted node.
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        if c_end <= actual_start {
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
                     continue;
                 }
 
