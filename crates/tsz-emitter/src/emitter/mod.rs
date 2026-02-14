@@ -855,7 +855,10 @@ impl<'a> Printer<'a> {
                 if let Some(literal_node) = self.arena.get(object_literal)
                     && let Some(literal) = self.arena.get_literal_expr(literal_node)
                 {
-                    self.emit_object_literal_es5(&literal.elements.nodes);
+                    self.emit_object_literal_es5(
+                        &literal.elements.nodes,
+                        Some((node.pos, node.end)),
+                    );
                     return;
                 }
 
@@ -1271,7 +1274,10 @@ impl<'a> Printer<'a> {
                 if let Some(literal_node) = self.arena.get(*object_literal)
                     && let Some(literal) = self.arena.get_literal_expr(literal_node)
                 {
-                    self.emit_object_literal_es5(&literal.elements.nodes);
+                    self.emit_object_literal_es5(
+                        &literal.elements.nodes,
+                        Some((node.pos, node.end)),
+                    );
                     return;
                 }
 
