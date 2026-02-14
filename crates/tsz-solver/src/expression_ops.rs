@@ -326,7 +326,7 @@ fn common_parent_enum_type<R: TypeResolver>(
     let parent_def = parent_def?;
     resolver
         .resolve_lazy(parent_def, interner)
-        .or_else(|| Some(interner.intern(TypeKey::Lazy(parent_def))))
+        .or_else(|| Some(interner.lazy(parent_def)))
 }
 
 // =============================================================================
