@@ -473,6 +473,15 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
   * Added focused regression tests:
     * architecture guard assertions for `type_node` and `jsx_checker` to prevent direct `TypeKey` usage on these paths
     * solver interner test covering `keyof` and `index_access` constructor behavior
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Added solver-owned safe constructor for type parameters (`types.type_param(...)`) and reused `types.lazy(...)` constructor APIs in checker paths.
+  * Migrated remaining direct checker interning in this slice:
+    * `context::create_lazy_type_ref` now uses `types.lazy(...)`
+    * `state_type_resolution` default generic argument application now uses `types.lazy(...)`
+    * `type_checking_queries` now uses `types.lazy(...)` and `types.type_param(...)` instead of direct `TypeKey` interning
+  * Added focused regression tests:
+    * architecture guard assertions for `context`, `state_type_resolution`, and `type_checking_queries` to prevent direct `TypeKey::Lazy`/`TypeKey::TypeParameter` interning in these helpers
+    * solver interner test covering `lazy` and `type_param` constructor behavior
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
   * Add CI guard that fails on checker `TypeKey` imports/usages.

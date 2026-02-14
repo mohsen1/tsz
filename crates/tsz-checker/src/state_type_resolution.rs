@@ -618,8 +618,7 @@ impl<'a> CheckerState<'a> {
                             // This is critical for cross-file generic constraints like
                             // `TBase extends Constructor` where Constructor<T = {}>.
                             let _ = self.get_type_of_symbol(sym_id);
-                            let base_type_id =
-                                self.ctx.types.intern(tsz_solver::TypeKey::Lazy(def_id));
+                            let base_type_id = self.ctx.types.lazy(def_id);
                             return self.ctx.types.application(base_type_id, default_args);
                         }
                     }
