@@ -7,8 +7,6 @@
 //!   cargo run --bin audit_unsoundness -- --missing
 //!   cargo run --bin audit_unsoundness -- --phase 1
 
-#![allow(clippy::print_stderr)]
-
 use std::env;
 use std::process;
 use tsz_solver::unsoundness_audit::{ImplementationPhase, ImplementationStatus, UnsoundnessAudit};
@@ -64,13 +62,13 @@ fn main() {
         }
         "--phase" => {
             if args.len() < 3 {
-                eprintln!("Error: --phase requires a phase number (1-4)");
+                println!("Error: --phase requires a phase number (1-4)");
                 process::exit(1);
             }
             let phase_num = match args[2].parse::<u8>() {
                 Ok(n) if (1..=4).contains(&n) => n,
                 _ => {
-                    eprintln!("Error: Phase must be between 1 and 4");
+                    println!("Error: Phase must be between 1 and 4");
                     process::exit(1);
                 }
             };
@@ -108,7 +106,7 @@ fn main() {
         }
         "--status" => {
             if args.len() < 3 {
-                eprintln!("Error: --status requires a status (full, partial, missing, blocked)");
+                println!("Error: --status requires a status (full, partial, missing, blocked)");
                 process::exit(1);
             }
 
@@ -118,7 +116,7 @@ fn main() {
                 "missing" => ImplementationStatus::NotImplemented,
                 "blocked" => ImplementationStatus::Blocked,
                 _ => {
-                    eprintln!("Error: Status must be one of: full, partial, missing, blocked");
+                    println!("Error: Status must be one of: full, partial, missing, blocked");
                     process::exit(1);
                 }
             };
@@ -157,7 +155,7 @@ fn main() {
             print_usage();
         }
         _ => {
-            eprintln!("Unknown option: {}", args[1]);
+            println!("Unknown option: {}", args[1]);
             println!();
             print_usage();
             process::exit(1);
