@@ -362,8 +362,7 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Now get the property type from the object
-                if let Some(TypeKey::Object(shape_id)) = self.ctx.types.lookup(obj_type) {
-                    let shape = self.ctx.types.object_shape(shape_id);
+                if let Some(shape) = query::object_shape(self.ctx.types, obj_type) {
                     // Look for the property by name (key_name is already an Atom)
                     if let Some(prop) = shape.properties.iter().find(|p| p.name == key_name) {
                         prop.type_id
@@ -436,15 +435,12 @@ impl<'a> CheckerState<'a> {
                     // for the same symbol. Even though the TypeId might be different (due to fresh interning),
                     // the DefId should be the same. This detects the cycle and breaks infinite recursion.
                     // This happens in cases like: class C { static { C.#x; } static #x = 123; }
-                    let resolved_def_id = self.ctx.types.lookup(resolved).and_then(|k| match k {
-                        TypeKey::Lazy(d) => Some(d),
-                        _ => None,
-                    });
+                    let resolved_def_id = query::lazy_def_id(self.ctx.types, resolved);
                     if resolved_def_id == Some(def_id) {
                         return type_id;
                     }
                     // Recursively resolve if still Lazy (handles Lazy chains)
-                    if let Some(TypeKey::Lazy(_)) = self.ctx.types.lookup(resolved) {
+                    if query::lazy_def_id(self.ctx.types, resolved).is_some() {
                         self.evaluate_type_with_resolution(resolved)
                     } else {
                         // Further evaluate compound types (IndexAccess, KeyOf, Mapped, etc.)
