@@ -121,10 +121,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 yield_expr.expression
             };
 
+            self.checker.ensure_relation_input_ready(yielded_type);
             self.checker
-                .ensure_application_symbols_resolved(yielded_type);
-            self.checker
-                .ensure_application_symbols_resolved(expected_yield_type);
+                .ensure_relation_input_ready(expected_yield_type);
 
             let resolved_expected_yield_type = self.checker.resolve_lazy_type(expected_yield_type);
 
@@ -483,9 +482,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         } else if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // `satisfies` keeps the expression type at runtime, but checks assignability.
                             // This is different from `as` which coerces the type.
-                            self.checker.ensure_application_symbols_resolved(expr_type);
+                            self.checker.ensure_relation_input_ready(expr_type);
                             self.checker
-                                .ensure_application_symbols_resolved(asserted_type);
+                                .ensure_relation_input_ready(asserted_type);
                             if !self.checker.type_contains_error(asserted_type)
                             {
                                 let _ = self.checker.check_assignable_or_report(
@@ -498,9 +497,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         } else {
                             // `expr as T` / `<T>expr` yields `T`.
                             // TS2352: Check if conversion may be a mistake (types don't sufficiently overlap)
-                            self.checker.ensure_application_symbols_resolved(expr_type);
+                            self.checker.ensure_relation_input_ready(expr_type);
                             self.checker
-                                .ensure_application_symbols_resolved(asserted_type);
+                                .ensure_relation_input_ready(asserted_type);
 
                             // Don't check if either type is error, any, unknown, or never.
                             // TS also skips this warning for unconcretized type-parameter
