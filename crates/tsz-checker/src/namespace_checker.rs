@@ -88,8 +88,11 @@ impl<'a> CheckerState<'a> {
             let name_atom = self.ctx.types.intern_string(name);
 
             // Check for duplicate identifiers (TS2300)
-            // When a class static member and namespace export share the same name
-            if props.contains_key(&name_atom) {
+            // When a class static member and namespace export share the same name.
+            // Classes also have an implicit static `prototype` property, even when it's
+            // not materialized in the constructor shape.
+            let is_implicit_class_prototype = name == "prototype";
+            if props.contains_key(&name_atom) || is_implicit_class_prototype {
                 // Get the namespace export symbol to report error at its location
                 if let Some(export_symbol) = self.ctx.binder.get_symbol(*member_id) {
                     let error_node = export_symbol.value_declaration;
