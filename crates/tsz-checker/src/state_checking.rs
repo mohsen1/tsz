@@ -2917,7 +2917,12 @@ impl<'a> CheckerState<'a> {
     ///
     /// Includes:
     /// - `import * as ns from "mod"`
-    /// - `import ns = require("mod")`
+    ///
+    /// Note: `import ns = require("mod")` is intentionally excluded here.
+    /// Unlike ES namespace imports, import-equals aliases can observe mutable
+    /// augmented exports (e.g. `declare module "m" { let x: number }`), so
+    /// property writes should be validated against property readonly metadata
+    /// instead of being blanket-rejected as TS2540.
     fn is_namespace_import_binding(&self, object_expr: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
 
@@ -2937,9 +2942,6 @@ impl<'a> CheckerState<'a> {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 return false;
             };
-            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                return true;
-            }
             if decl_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
                 return true;
             }
