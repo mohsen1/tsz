@@ -21,6 +21,15 @@ To keep this actionable, treat each major heading below as a checkpoint you can 
 - [ ] E) Move `Lazy(DefId)`-resolution and type-shape preconditions into solver visitors.
 - [ ] F) Add query-level cache/invalidations and connect checker to the query outputs.
 
+## Evidence required per tracker step
+
+- A: automated boundary scan and a failing/fixed sample proving forbidden imports are blocked.
+- B: zero references to checker-local semantic `TypeArena` constructors in `crates/tsz-checker`.
+- C: checker no longer imports/constructs solver `TypeKey` internals directly.
+- D: one code path for each assignability diagnostic family (`TS2322`, `TS2345`, `TS2416`) in checklist + corresponding code location.
+- E: no remaining checker-level type-shape recursion for `Lazy(DefId)` discovery.
+- F: checker caches only `node/symbol/flow/diagnostic` entries; solver owns algorithmic type caches.
+
 ## 1) Make “Solver-first” real by eliminating the second type system
 
 Right now the checker crate still ships a **full parallel type representation** (`TypeArena`, its own `TypeId`, and a big `Type` enum + flags) that sits beside the solver’s `TypeId/TypeKey` world. That’s a structural violation of “single source of truth” and a long‑term maintenance trap because it guarantees drift, duplicate bugs, and confusion about which `TypeId` you’re holding. 
