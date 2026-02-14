@@ -222,8 +222,8 @@ pub fn get_jsdoc_content(comment: &CommentRange, source: &str) -> String {
             .lines()
             .map(|line| {
                 let trimmed = line.trim_start();
-                if trimmed.starts_with('*') {
-                    trimmed[1..].trim_start()
+                if let Some(stripped) = trimmed.strip_prefix('*') {
+                    stripped.trim_start()
                 } else {
                     trimmed
                 }
