@@ -126,6 +126,9 @@ mod string_literal_arithmetic_tests;
 #[path = "../tests/symbol_resolver_stability_tests.rs"]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
+#[path = "../tests/ts2322_mode_routing_matrix.rs"]
+mod ts2322_mode_routing_matrix;
+#[cfg(test)]
 #[path = "../tests/ts2322_tests.rs"]
 mod ts2322_tests;
 #[cfg(test)]
