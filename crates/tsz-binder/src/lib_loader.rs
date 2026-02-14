@@ -306,6 +306,10 @@ const ES2015_PLUS_TYPES: &[&str] = &[
 
 /// Check if a type name is an ES2015+ feature that requires specific lib support.
 pub fn is_es2015_plus_type(name: &str) -> bool {
+    // PromiseLike should follow regular unresolved-name behavior (TS2304) in noLib tests.
+    if name == "PromiseLike" {
+        return false;
+    }
     ES2015_PLUS_TYPES.contains(&name)
 }
 

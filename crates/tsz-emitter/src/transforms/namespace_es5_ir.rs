@@ -668,7 +668,6 @@ impl<'a> NamespaceES5Transformer<'a> {
                         || matches!(export_clause_kind, Some(k) if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::MODULE_DECLARATION);
                     let trailing =
                         self.extract_trailing_comment_in_stmt(stmt_node.pos, stmt_node.end);
-
                     let mut ir = ir;
                     let mut trailing_attached_in_sequence = false;
                     // For exported function declarations inside namespaces, attach trailing
@@ -681,7 +680,6 @@ impl<'a> NamespaceES5Transformer<'a> {
                         items.insert(1, IRNode::TrailingComment(comment_text));
                         trailing_attached_in_sequence = true;
                     }
-
                     result.push(ir);
                     if !skip
                         && !trailing_attached_in_sequence

@@ -37,6 +37,8 @@ pub struct IRPrinter<'a> {
     source_text: Option<&'a str>,
     /// Optional transform directives for ASTRef nodes
     transforms: Option<TransformContext>,
+    /// Avoid duplicate trailing comments when a sequence explicitly carries one.
+    suppress_function_trailing_extraction: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -91,6 +93,7 @@ impl<'a> IRPrinter<'a> {
             arena: None,
             source_text: None,
             transforms: None,
+            suppress_function_trailing_extraction: false,
         }
     }
 
@@ -103,6 +106,7 @@ impl<'a> IRPrinter<'a> {
             arena: Some(arena),
             source_text: None,
             transforms: None,
+            suppress_function_trailing_extraction: false,
         }
     }
 
@@ -115,6 +119,7 @@ impl<'a> IRPrinter<'a> {
             arena: Some(arena),
             source_text: Some(source_text),
             transforms: None,
+            suppress_function_trailing_extraction: false,
         }
     }
 
@@ -154,7 +159,13 @@ impl<'a> IRPrinter<'a> {
                         self.write_indent();
                     }
                 }
+                let suppress_for_this_node = i + 1 < nodes.len()
+                    && matches!(child, IRNode::FunctionDecl { .. })
+                    && matches!(&nodes[i + 1], IRNode::TrailingComment(_));
+                let prev_suppress = self.suppress_function_trailing_extraction;
+                self.suppress_function_trailing_extraction = suppress_for_this_node;
                 self.emit_node(child);
+                self.suppress_function_trailing_extraction = prev_suppress;
             }
         } else {
             self.emit_node(node);
@@ -562,7 +573,9 @@ impl<'a> IRPrinter<'a> {
                 self.emit_parameters(parameters);
                 self.write(") ");
                 self.emit_function_body_with_defaults(parameters, body, *body_source_range);
-                if let Some(comment) = self.extract_trailing_comment_from_function(node) {
+                if !self.suppress_function_trailing_extraction
+                    && let Some(comment) = self.extract_trailing_comment_from_function(node)
+                {
                     self.write(" ");
                     self.write(&comment);
                 }
@@ -904,7 +917,13 @@ impl<'a> IRPrinter<'a> {
                         continue;
                     }
 
+                    let suppress_for_this_node = i + 1 < nodes.len()
+                        && matches!(&nodes[i], IRNode::FunctionDecl { .. })
+                        && matches!(&nodes[i + 1], IRNode::TrailingComment(_));
+                    let prev_suppress = self.suppress_function_trailing_extraction;
+                    self.suppress_function_trailing_extraction = suppress_for_this_node;
                     self.emit_node(&nodes[i]);
+                    self.suppress_function_trailing_extraction = prev_suppress;
                     if i + 1 < nodes.len()
                         && let IRNode::TrailingComment(text) = &nodes[i + 1]
                     {
@@ -1268,7 +1287,13 @@ impl<'a> IRPrinter<'a> {
                     continue;
                 }
                 self.write_indent();
+                let suppress_for_this_node = i + 1 < body.len()
+                    && matches!(&body[i], IRNode::FunctionDecl { .. })
+                    && matches!(&body[i + 1], IRNode::TrailingComment(_));
+                let prev_suppress = self.suppress_function_trailing_extraction;
+                self.suppress_function_trailing_extraction = suppress_for_this_node;
                 self.emit_node(&body[i]);
+                self.suppress_function_trailing_extraction = prev_suppress;
                 // Peek ahead for trailing comment
                 if i + 1 < body.len() {
                     if let IRNode::TrailingComment(text) = &body[i + 1] {
