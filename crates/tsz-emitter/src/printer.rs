@@ -32,8 +32,8 @@ use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions, Scri
 use crate::lowering_pass::LoweringPass;
 use crate::transform_context::TransformContext;
 use std::io::{self, Write};
-use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 
 // =============================================================================
 // Print Options

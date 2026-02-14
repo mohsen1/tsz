@@ -31,7 +31,7 @@
 
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::node::NodeArena;
-use tsz_parser::parser::{syntax_kind_ext, NodeIndex, NodeList};
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 // Re-export from shared utilities to avoid duplication

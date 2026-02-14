@@ -1,4 +1,3 @@
-
 use super::*;
 use tsz_parser::parser::ParserState;
 use tsz_parser::parser::state::{CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR};

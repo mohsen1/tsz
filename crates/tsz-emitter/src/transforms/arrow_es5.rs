@@ -35,8 +35,8 @@
 //! as a shared utility to avoid circular dependencies. This module re-exports it
 //! for backward compatibility.
 
-use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 
 // Re-export from shared utilities to avoid duplication
 //
