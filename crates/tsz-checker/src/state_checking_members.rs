@@ -4745,6 +4745,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
         if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
+            if export_decl.is_default_export && self.is_inside_namespace_declaration(export_idx) {
+                self.error_at_node(
+                    export_idx,
+                    crate::types::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                    crate::types::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                );
+            }
+
             // TS1194: `export { ... }` / `export ... from` forms are not valid inside namespaces.
             let is_reexport_syntax = !export_decl.module_specifier.is_none()
                 || self
