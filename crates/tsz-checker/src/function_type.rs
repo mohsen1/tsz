@@ -455,6 +455,11 @@ impl<'a> CheckerState<'a> {
                     } else {
                         async_node_idx
                     };
+                    self.error_at_node_msg(
+                        diagnostic_node,
+                        diagnostic_codes::CANNOT_FIND_GLOBAL_VALUE,
+                        &["Promise"],
+                    );
                     self.error_at_node(
                         diagnostic_node,
                         diagnostic_messages::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
