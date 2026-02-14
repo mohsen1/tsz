@@ -3,8 +3,6 @@
 //! Test ASI (Automatic Semicolon Insertion) behavior against JavaScript/TypeScript spec.
 //! Focus on TS1005 (token expected) and TS1109 (expression expected) error codes.
 
-#![allow(clippy::print_stderr)]
-
 use crate::checker::diagnostics::diagnostic_codes;
 use crate::parser::ParserState;
 
@@ -338,17 +336,17 @@ async function foo(): Promise<void> {
     parser.parse_source_file();
     let func_diagnostics = parser.get_diagnostics();
 
-    eprintln!("Arrow function diagnostics:");
+    println!("Arrow function diagnostics:");
     for diag in arrow_diagnostics.iter() {
-        eprintln!(
+        println!(
             "  Code: {}, Message: {}, Start: {}",
             diag.code, diag.message, diag.start
         );
     }
 
-    eprintln!("Function declaration diagnostics:");
+    println!("Function declaration diagnostics:");
     for diag in func_diagnostics.iter() {
-        eprintln!(
+        println!(
             "  Code: {}, Message: {}, Start: {}",
             diag.code, diag.message, diag.start
         );
@@ -382,17 +380,17 @@ function test() {
     parser.parse_source_file();
     let return_diagnostics = parser.get_diagnostics();
 
-    eprintln!("Throw with line break diagnostics:");
+    println!("Throw with line break diagnostics:");
     for diag in throw_diagnostics.iter() {
-        eprintln!(
+        println!(
             "  Code: {}, Message: {}, Start: {}",
             diag.code, diag.message, diag.start
         );
     }
 
-    eprintln!("Return with line break diagnostics:");
+    println!("Return with line break diagnostics:");
     for diag in return_diagnostics.iter() {
-        eprintln!(
+        println!(
             "  Code: {}, Message: {}, Start: {}",
             diag.code, diag.message, diag.start
         );
@@ -416,9 +414,9 @@ fn test_yield_ts1109() {
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
 
-    eprintln!("Yield diagnostics:");
+    println!("Yield diagnostics:");
     for diag in diagnostics.iter() {
-        eprintln!(
+        println!(
             "  Code: {}, Message: {}, Start: {}",
             diag.code, diag.message, diag.start
         );
@@ -454,17 +452,17 @@ let val = arr
     parser.parse_source_file();
     let array_diagnostics = parser.get_diagnostics();
 
-    eprintln!("Postfix increment diagnostics:");
+    println!("Postfix increment diagnostics:");
     for diag in postfix_diagnostics.iter() {
-        eprintln!(
+        println!(
             "  Code: {}, Message: {}, Start: {}",
             diag.code, diag.message, diag.start
         );
     }
 
-    eprintln!("Array access diagnostics:");
+    println!("Array access diagnostics:");
     for diag in array_diagnostics.iter() {
-        eprintln!(
+        println!(
             "  Code: {}, Message: {}, Start: {}",
             diag.code, diag.message, diag.start
         );
@@ -489,10 +487,10 @@ var foo = async (): Promise<void> => {
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
-    eprintln!("=== EXACT FILE CONTENT TEST ===");
-    eprintln!("Total diagnostics: {}", diagnostics.len());
+    println!("=== EXACT FILE CONTENT TEST ===");
+    println!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!(
+        println!(
             "  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
             i, diag.code, diag.message, diag.start, diag.length
         );
@@ -507,8 +505,8 @@ var foo = async (): Promise<void> => {
         .filter(|d| d.code == diagnostic_codes::EXPECTED)
         .count();
 
-    eprintln!("TS1109 count: {}", ts1109_count);
-    eprintln!("TS1005 count: {}", ts1005_count);
+    println!("TS1109 count: {}", ts1109_count);
+    println!("TS1005 count: {}", ts1005_count);
 }
 
 /// Test incomplete expression patterns that should emit TS1109
@@ -526,10 +524,10 @@ fn test_incomplete_expressions_ts1109() {
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
-    eprintln!("=== INCOMPLETE EXPRESSIONS TEST ===");
-    eprintln!("Total diagnostics: {}", diagnostics.len());
+    println!("=== INCOMPLETE EXPRESSIONS TEST ===");
+    println!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!(
+        println!(
             "  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
             i, diag.code, diag.message, diag.start, diag.length
         );
@@ -539,7 +537,7 @@ fn test_incomplete_expressions_ts1109() {
         .iter()
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
-    eprintln!("TS1109 count: {}", ts1109_count);
+    println!("TS1109 count: {}", ts1109_count);
 }
 
 /// Test new expression without identifier
@@ -551,10 +549,10 @@ fn test_new_missing_identifier_ts1109() {
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
-    eprintln!("=== NEW MISSING IDENTIFIER TEST ===");
-    eprintln!("Total diagnostics: {}", diagnostics.len());
+    println!("=== NEW MISSING IDENTIFIER TEST ===");
+    println!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!(
+        println!(
             "  [{}] Code: {}, Message: \"{}\" Start: {}, Length: {}",
             i, diag.code, diag.message, diag.start, diag.length
         );
@@ -564,7 +562,7 @@ fn test_new_missing_identifier_ts1109() {
         .iter()
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
-    eprintln!("TS1109 count: {}", ts1109_count);
+    println!("TS1109 count: {}", ts1109_count);
 
     // Should have exactly 1 TS1109 error
     assert!(
@@ -597,19 +595,19 @@ fn test_await_yield_missing_value_ts1109() {
     parser.parse_source_file();
     let yield_star_diagnostics = parser.get_diagnostics();
 
-    eprintln!("=== AWAIT/YIELD* MISSING VALUE TEST ===");
+    println!("=== AWAIT/YIELD* MISSING VALUE TEST ===");
 
-    eprintln!("Await missing value diagnostics:");
+    println!("Await missing value diagnostics:");
     for (i, diag) in await_diagnostics.iter().enumerate() {
-        eprintln!(
+        println!(
             "  [{}] Code: {}, Message: \"{}\"",
             i, diag.code, diag.message
         );
     }
 
-    eprintln!("Yield* missing value diagnostics:");
+    println!("Yield* missing value diagnostics:");
     for (i, diag) in yield_star_diagnostics.iter().enumerate() {
-        eprintln!(
+        println!(
             "  [{}] Code: {}, Message: \"{}\"",
             i, diag.code, diag.message
         );
@@ -624,8 +622,8 @@ fn test_await_yield_missing_value_ts1109() {
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
 
-    eprintln!("Await TS1109 count: {}", await_ts1109);
-    eprintln!("Yield* TS1109 count: {}", yield_star_ts1109);
+    println!("Await TS1109 count: {}", await_ts1109);
+    println!("Yield* TS1109 count: {}", yield_star_ts1109);
 }
 
 /// Debug await semicolon specifically
@@ -639,10 +637,10 @@ fn debug_await_semicolon() {
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
-    eprintln!("=== AWAIT SEMICOLON DEBUG ===");
-    eprintln!("Total diagnostics: {}", diagnostics.len());
+    println!("=== AWAIT SEMICOLON DEBUG ===");
+    println!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!(
+        println!(
             "  [{}] Code: {}, Message: \"{}\" Start: {}",
             i, diag.code, diag.message, diag.start
         );
@@ -659,10 +657,10 @@ fn test_await_parameter_default_ts1109() {
     parser.parse_source_file();
     let diagnostics = parser.get_diagnostics();
 
-    eprintln!("=== AWAIT PARAMETER DEFAULT TEST ===");
-    eprintln!("Total diagnostics: {}", diagnostics.len());
+    println!("=== AWAIT PARAMETER DEFAULT TEST ===");
+    println!("Total diagnostics: {}", diagnostics.len());
     for (i, diag) in diagnostics.iter().enumerate() {
-        eprintln!(
+        println!(
             "  [{}] Code: {}, Message: \"{}\" Start: {}",
             i, diag.code, diag.message, diag.start
         );
@@ -672,5 +670,5 @@ fn test_await_parameter_default_ts1109() {
         .iter()
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
-    eprintln!("TS1109 count: {}", ts1109_count);
+    println!("TS1109 count: {}", ts1109_count);
 }
