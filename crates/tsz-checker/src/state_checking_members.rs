@@ -4049,6 +4049,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             }
         }
 
+        // Extract JSDoc for function declarations to suppress TS7006/TS7010 in JS files
+        let func_decl_jsdoc = self.get_jsdoc_for_function(func_idx);
+
         for &param_idx in &func.parameters.nodes {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -4056,7 +4059,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let Some(param) = self.ctx.arena.get_parameter(param_node) else {
                 continue;
             };
-            self.maybe_report_implicit_any_parameter(param, false);
+            // Check if JSDoc provides a @param type for this parameter
+            let has_jsdoc_param = if param.type_annotation.is_none() {
+                if let Some(ref jsdoc) = func_decl_jsdoc {
+                    let pname = self.parameter_name_for_error(param.name);
+                    Self::jsdoc_has_param_type(jsdoc, &pname)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            self.maybe_report_implicit_any_parameter(param, has_jsdoc_param);
         }
 
         // Check function body if present
@@ -4127,7 +4141,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // type cannot be inferred (e.g., is 'any' or only returns undefined)
             // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
             // maybe_report_implicit_any_return handles the noImplicitAny check internally
-            if !func.is_async {
+            //
+            // JSDoc type annotations suppress TS7010 in JS files.
+            // When a function has any JSDoc type info (@param, @returns, @template),
+            // tsc considers it as having explicit types and doesn't emit TS7010.
+            let has_jsdoc_return = func_decl_jsdoc
+                .as_ref()
+                .is_some_and(|j| Self::jsdoc_has_type_annotations(j));
+            if !func.is_async && !has_jsdoc_return {
                 let func_name = self.get_function_name_from_node(func_idx);
                 let name_node = if !func.name.is_none() {
                     Some(func.name)
@@ -4678,15 +4699,44 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_declaration_in_statement_position(&mut self, stmt_idx: NodeIndex) {
+        use tsz_parser::parser::node_flags;
+
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };
 
         // TS1156: '{0}' declarations can only be declared inside a block.
-        // This fires when an interface or type alias declaration appears as
+        // This fires when a const/let/interface/type declaration appears as
         // the body of a control flow statement (if/while/for) without braces.
         let decl_kind = match node.kind {
             syntax_kind_ext::INTERFACE_DECLARATION => Some("interface"),
+            syntax_kind_ext::VARIABLE_STATEMENT => {
+                // Check the VariableDeclarationList for const/let flags
+                if let Some(var_data) = self.ctx.arena.get_variable(node) {
+                    let list_idx = var_data
+                        .declarations
+                        .nodes
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE);
+                    if let Some(list_node) = self.ctx.arena.get(list_idx) {
+                        let flags = list_node.flags as u32;
+                        if flags & node_flags::CONST != 0 {
+                            Some("const")
+                        } else if flags & node_flags::LET != 0 {
+                            Some("let")
+                        } else if flags & node_flags::USING != 0 {
+                            Some("using")
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
             _ => None,
         };
 
