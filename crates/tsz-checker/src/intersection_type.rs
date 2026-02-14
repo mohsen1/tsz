@@ -122,6 +122,7 @@ impl<'a> CheckerState<'a> {
         F: Fn(TypeId) -> bool,
     {
         if let Some(members) = query::intersection_members(self.ctx.types, intersection_type) {
+            let factory = self.ctx.types.factory();
             let filtered: Vec<TypeId> =
                 members.iter().filter(|&&m| predicate(m)).copied().collect();
 
@@ -130,7 +131,7 @@ impl<'a> CheckerState<'a> {
             } else if filtered.len() == 1 {
                 filtered[0]
             } else {
-                self.ctx.types.intersection(filtered)
+                factory.intersection(filtered)
             }
         } else {
             intersection_type
@@ -173,7 +174,8 @@ impl<'a> CheckerState<'a> {
             } else if simplified.len() == 1 {
                 simplified[0]
             } else {
-                self.ctx.types.intersection(simplified)
+                let factory = self.ctx.types.factory();
+                factory.intersection(simplified)
             }
         } else {
             intersection_type
@@ -205,7 +207,8 @@ impl<'a> CheckerState<'a> {
         if members.len() == 1 {
             members[0]
         } else {
-            self.ctx.types.intersection(members)
+            let factory = self.ctx.types.factory();
+            factory.intersection(members)
         }
     }
 }
