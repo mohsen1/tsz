@@ -855,3 +855,40 @@ arr.hasOwnProperty("length");
         ts2339_count
     );
 }
+
+#[test]
+fn test_shorthand_property_missing_value_emits_ts18004() {
+    let source = r#"
+const make = () => {
+    return { arguments };
+};
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts18004_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18004)
+        .count();
+    assert!(
+        ts18004_count >= 1,
+        "Expected TS18004 for missing shorthand property value, got diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
+}
