@@ -419,10 +419,8 @@ impl<'a> CheckerState<'a> {
             None, // No skipping needed for constructor calls
         );
 
-        self.ensure_application_symbols_resolved(constructor_type);
-        for &arg_type in &arg_types {
-            self.ensure_application_symbols_resolved(arg_type);
-        }
+        self.ensure_relation_input_ready(constructor_type);
+        self.ensure_relation_inputs_ready(&arg_types);
 
         // Delegate to Solver for constructor resolution
         let result = {
@@ -1454,10 +1452,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Delegate the call resolution to solver boundary helpers.
-        self.ensure_application_symbols_resolved(callee_type_for_resolution);
-        for &arg_type in &arg_types {
-            self.ensure_application_symbols_resolved(arg_type);
-        }
+        self.ensure_relation_input_ready(callee_type_for_resolution);
+        self.ensure_relation_inputs_ready(&arg_types);
 
         // Evaluate application types to resolve Ref bases to actual Callable types
         // This is needed for cases like `GenericCallable<string>` where the type is
