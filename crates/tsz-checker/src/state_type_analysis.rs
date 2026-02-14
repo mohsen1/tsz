@@ -1945,8 +1945,6 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         value_decl: NodeIndex,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        use tsz_solver::TypeKey;
-
         // Get the member's DefId for nominal typing
         let member_def_id = self.ctx.get_or_create_def_id(sym_id);
 
@@ -1962,12 +1960,9 @@ impl<'a> CheckerState<'a> {
         // Get the literal type from the initializer
         let literal_type = self.enum_member_type_from_decl(value_decl);
 
-        // Wrap in TypeKey::Enum for nominal identity
+        // Wrap in nominal enum type for identity
         // This ensures E.A is not assignable to E.B (different DefIds)
-        let enum_type = self
-            .ctx
-            .types
-            .intern(TypeKey::Enum(member_def_id, literal_type));
+        let enum_type = self.ctx.types.enum_type(member_def_id, literal_type);
         (enum_type, Vec::new())
     }
 
@@ -1979,11 +1974,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        use tsz_solver::TypeKey;
-
         // Create DefId and use Lazy type
         let def_id = self.ctx.get_or_create_def_id(sym_id);
-        (self.ctx.types.intern(TypeKey::Lazy(def_id)), Vec::new())
+        (self.ctx.types.lazy(def_id), Vec::new())
     }
 
     /// Compute type of a symbol (internal, not cached).
@@ -2052,8 +2045,6 @@ impl<'a> CheckerState<'a> {
         // enum-namespace merges have both ENUM and NAMESPACE_MODULE flags. We want to
         // handle them as enums (returning TypeKey::Enum) rather than as namespaces (returning Lazy).
         if flags & symbol_flags::ENUM != 0 {
-            use tsz_solver::TypeKey;
-
             // Create DefId first
             let def_id = self.ctx.get_or_create_def_id(sym_id);
 
@@ -2092,10 +2083,8 @@ impl<'a> CheckerState<'a> {
                                     .and_then(|exports| exports.get(&member_name))
                             {
                                 let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
-                                let member_enum_type = self
-                                    .ctx
-                                    .types
-                                    .intern(TypeKey::Enum(member_def_id, member_type));
+                                let member_enum_type =
+                                    self.ctx.types.enum_type(member_def_id, member_type);
                                 self.ctx
                                     .symbol_types
                                     .insert(member_sym_id, member_enum_type);
@@ -2138,10 +2127,7 @@ impl<'a> CheckerState<'a> {
             // - Enum(def_id, structural_type) preserves both:
             //   1. DefId for nominal identity (E1 != E2)
             //   2. structural_type for assignability to primitives (E1 <: number)
-            let enum_type = self
-                .ctx
-                .types
-                .intern(TypeKey::Enum(def_id, structural_type));
+            let enum_type = self.ctx.types.enum_type(def_id, structural_type);
 
             // CRITICAL: Merge namespace exports for enum+namespace merging
             // When an enum and namespace with the same name are merged, the namespace's

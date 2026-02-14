@@ -496,6 +496,14 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Migrated `function_type::push_enclosing_type_parameters` away from direct `intern(TypeKey::TypeParameter(...))` to solver constructor API (`types.type_param(...)`).
   * Extended checker architecture guard coverage so `function_type` is explicitly checked for `TypeKey::TypeParameter` regression on this path.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Added solver-owned safe constructor for nominal enum types (`types.enum_type(def_id, structural_type)`).
+  * Migrated checker enum/lazy/literal construction paths away from direct interning in this slice:
+    * `state_type_analysis` now uses `types.enum_type(...)` for enum/member nominal types and `types.lazy(...)` for namespace lazy references.
+    * `state_type_environment` now uses `types.enum_type(...)` for enum object-member properties and `types.literal_string_atom(...)` for mapped-key literal substitution.
+  * Extended focused regression tests:
+    * checker architecture guard assertions for `state_type_analysis` and `state_type_environment` to prevent direct `TypeKey::Enum`/`TypeKey::Literal` interning regressions.
+    * solver interner coverage for `enum_type` constructor behavior.
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
   * Add CI guard that fails on checker `TypeKey` imports/usages.

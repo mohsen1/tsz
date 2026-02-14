@@ -10,9 +10,9 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 use tsz_solver::types::Visibility;
 use tsz_solver::visitor::lazy_def_id;
-use tsz_solver::{TypeId, TypeKey};
 
 impl<'a> CheckerState<'a> {
     /// Get type of object literal.
@@ -65,7 +65,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let name_atom = self.ctx.types.intern_string(&name);
 
-                // Fix: Create TypeKey::Enum(member_def_id, literal_type) for each member
+                // Fix: Create nominal enum member types for each member
                 // This preserves nominal identity so E.A is not assignable to E.B
                 let member_sym_id = self
                     .ctx
@@ -81,10 +81,7 @@ impl<'a> CheckerState<'a> {
                     .copied()
                     .expect("Enum member must have a DefId");
                 let literal_type = self.enum_member_type_from_decl(member_idx);
-                let specific_member_type = self
-                    .ctx
-                    .types
-                    .intern(TypeKey::Enum(member_def_id, literal_type));
+                let specific_member_type = self.ctx.types.enum_type(member_def_id, literal_type);
 
                 props.entry(name_atom).or_insert(PropertyInfo {
                     name: name_atom,
@@ -307,7 +304,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         mapped_id: tsz_solver::MappedTypeId,
     ) -> TypeId {
-        use tsz_solver::{LiteralValue, PropertyInfo, TypeKey, TypeSubstitution, instantiate_type};
+        use tsz_solver::{PropertyInfo, TypeSubstitution, instantiate_type};
 
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
@@ -325,10 +322,7 @@ impl<'a> CheckerState<'a> {
         let mut properties = Vec::new();
         for key_name in string_keys {
             // Create the key literal type
-            let key_literal = self
-                .ctx
-                .types
-                .intern(TypeKey::Literal(LiteralValue::String(key_name)));
+            let key_literal = self.ctx.types.literal_string_atom(key_name);
 
             // Substitute the type parameter with the key
             let mut subst = TypeSubstitution::new();
