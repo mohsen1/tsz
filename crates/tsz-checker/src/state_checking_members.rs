@@ -13,10 +13,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
 impl<'a> CheckerState<'a> {
-    fn property_assigned_in_enclosing_class_constructor(
-        &mut self,
-        prop_name: NodeIndex,
-    ) -> bool {
+    fn property_assigned_in_enclosing_class_constructor(&mut self, prop_name: NodeIndex) -> bool {
         let Some(key) = self.property_key_from_name(prop_name) else {
             return false;
         };

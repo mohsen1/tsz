@@ -1867,10 +1867,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Suppress cascaded TS2339 from failed generic overload inference where the
-        // receiver is still a union involving unresolved type parameters (e.g. reduce callbacks).
-        if prop_name == "concat"
-            && type_queries::is_union_type(self.ctx.types, type_id)
+        // Suppress cascaded TS2339 from failed generic inference when the receiver
+        // remains a union that still contains unresolved type parameters.
+        // This keeps follow-on property errors from obscuring the primary root cause
+        // (typically assignability/inference diagnostics).
+        if type_queries::is_union_type(self.ctx.types, type_id)
             && type_queries::contains_type_parameters_db(self.ctx.types, type_id)
         {
             return;
@@ -2052,12 +2053,12 @@ impl<'a> CheckerState<'a> {
             let Some(&type_idx) = clause.types.nodes.first() else {
                 continue;
             };
-            let expr_idx = if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args_at(type_idx)
-            {
-                expr_type_args.expression
-            } else {
-                type_idx
-            };
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args_at(type_idx) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
             if self.get_type_of_node(expr_idx) == TypeId::ANY {
                 return true;
             }
@@ -2097,26 +2098,32 @@ impl<'a> CheckerState<'a> {
                     || k == syntax_kind_ext::FUNCTION_EXPRESSION
                     || k == syntax_kind_ext::ARROW_FUNCTION =>
                 {
-                    self.ctx.arena.get_function(parent_node).is_some_and(|func| {
-                        func.parameters.nodes.iter().any(|&param_idx| {
-                            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                                return false;
-                            };
-                            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                                return false;
-                            };
-                            let Some(name_node) = self.ctx.arena.get(param.name) else {
-                                return false;
-                            };
-                            self.ctx
-                                .arena
-                                .get_identifier(name_node)
-                                .is_some_and(|id| id.escaped_text == name)
+                    self.ctx
+                        .arena
+                        .get_function(parent_node)
+                        .is_some_and(|func| {
+                            func.parameters.nodes.iter().any(|&param_idx| {
+                                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                    return false;
+                                };
+                                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                    return false;
+                                };
+                                let Some(name_node) = self.ctx.arena.get(param.name) else {
+                                    return false;
+                                };
+                                self.ctx
+                                    .arena
+                                    .get_identifier(name_node)
+                                    .is_some_and(|id| id.escaped_text == name)
+                            })
                         })
-                    })
                 }
-                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    self.ctx.arena.get_method_decl(parent_node).is_some_and(|method| {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(parent_node)
+                    .is_some_and(|method| {
                         method.parameters.nodes.iter().any(|&param_idx| {
                             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                                 return false;
@@ -2132,10 +2139,12 @@ impl<'a> CheckerState<'a> {
                                 .get_identifier(name_node)
                                 .is_some_and(|id| id.escaped_text == name)
                         })
-                    })
-                }
-                k if k == syntax_kind_ext::CONSTRUCTOR => {
-                    self.ctx.arena.get_constructor(parent_node).is_some_and(|ctor| {
+                    }),
+                k if k == syntax_kind_ext::CONSTRUCTOR => self
+                    .ctx
+                    .arena
+                    .get_constructor(parent_node)
+                    .is_some_and(|ctor| {
                         ctor.parameters.nodes.iter().any(|&param_idx| {
                             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                                 return false;
@@ -2151,8 +2160,7 @@ impl<'a> CheckerState<'a> {
                                 .get_identifier(name_node)
                                 .is_some_and(|id| id.escaped_text == name)
                         })
-                    })
-                }
+                    }),
                 _ => false,
             };
 
