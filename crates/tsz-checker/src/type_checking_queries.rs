@@ -1066,14 +1066,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// # Arguments
     /// * `idx` - The node index of the expression
-    pub(crate) fn report_never_type_usage(&mut self, idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
-
-        self.error_at_node(
-            idx,
-            "The value 'never' cannot be used here.",
-            diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-        );
+    pub(crate) fn report_never_type_usage(&mut self, _idx: NodeIndex) {
+        // `never` often appears as a cascading intermediate type in unresolved/error paths.
+        // Emitting TS18050 here creates false positives in conformance cases where tsc
+        // reports no additional diagnostic.
     }
 
     // =========================================================================
