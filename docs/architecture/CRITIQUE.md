@@ -474,6 +474,9 @@ if __name__ == "__main__":
   * Reduced one emitter→checker dependency edge by switching enum checker diagnostics in `crates/tsz-emitter/src/enums/checker.rs` from `tsz_checker::diagnostics::Diagnostic` to `tsz_common::diagnostics::Diagnostic`.
   * Removed remaining non-test emitter imports of checker `TypeCache` by introducing emitter-local `TypeCacheView` and migrating usage-analyzer/type-printer consumers onto that local view type.
   * Removed direct checker crate dependency from `crates/tsz-emitter/Cargo.toml` after emitter-side migration to `TypeCacheView`.
+  * Added manifest-level dependency guardrails in `scripts/arch_guard.py`:
+    * fail if `crates/tsz-emitter/Cargo.toml` reintroduces `tsz-checker`
+    * fail if `crates/tsz-binder/Cargo.toml` introduces `tsz-solver`
 * **Remaining for Milestone 0:**
   * Complete the `lower.rs` migration so solver has zero parser/checker crate imports.
   * Add/standardize architecture report generation in CI artifacts. **Completed in this iteration.**
