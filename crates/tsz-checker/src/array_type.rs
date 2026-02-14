@@ -12,8 +12,8 @@
 //! This module extends CheckerState with utilities for array type
 //! operations, providing cleaner APIs for array type checking.
 
+use crate::query_boundaries::array_type as query;
 use crate::state::CheckerState;
-use tsz_solver::type_queries;
 use tsz_solver::{TypeId, TypeKey};
 
 // =============================================================================
@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for `T[]` types.
     pub fn is_mutable_array_type(&self, type_id: TypeId) -> bool {
-        type_queries::is_array_type(self.ctx.types, type_id)
+        query::is_array_type(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -41,7 +41,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the element type if this is an array type,
     /// or the provided fallback type otherwise.
     pub fn get_array_element_type_or(&self, type_id: TypeId, fallback: TypeId) -> TypeId {
-        type_queries::get_array_element_type(self.ctx.types, type_id).unwrap_or(fallback)
+        query::array_element_type(self.ctx.types, type_id).unwrap_or(fallback)
     }
 
     // =========================================================================
@@ -53,12 +53,12 @@ impl<'a> CheckerState<'a> {
     /// Returns true if both are arrays and their element types are compatible.
     pub fn array_types_compatible(&mut self, array1: TypeId, array2: TypeId) -> bool {
         // Both must be arrays
-        let elem1 = match type_queries::get_array_element_type(self.ctx.types, array1) {
+        let elem1 = match query::array_element_type(self.ctx.types, array1) {
             Some(e) => e,
             None => return false,
         };
 
-        let elem2 = match type_queries::get_array_element_type(self.ctx.types, array2) {
+        let elem2 = match query::array_element_type(self.ctx.types, array2) {
             Some(e) => e,
             None => return false,
         };
@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the array element type is a primitive type.
     pub fn is_primitive_array(&self, type_id: TypeId) -> bool {
-        type_queries::get_array_element_type(self.ctx.types, type_id)
+        query::array_element_type(self.ctx.types, type_id)
             .map(|element_type| self.is_primitive_type(element_type))
             .unwrap_or(false)
     }
@@ -106,7 +106,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the array element type is a literal type.
     pub fn is_literal_array(&self, type_id: TypeId) -> bool {
-        type_queries::get_array_element_type(self.ctx.types, type_id)
+        query::array_element_type(self.ctx.types, type_id)
             .map(|element_type| self.is_literal_type(element_type))
             .unwrap_or(false)
     }
@@ -115,8 +115,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the array element type is a union type.
     pub fn is_union_array(&self, type_id: TypeId) -> bool {
-        type_queries::get_array_element_type(self.ctx.types, type_id)
-            .map(|element_type| type_queries::is_union_type(self.ctx.types, element_type))
+        query::array_element_type(self.ctx.types, type_id)
+            .map(|element_type| query::is_union_type(self.ctx.types, element_type))
             .unwrap_or(false)
     }
 
@@ -124,8 +124,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns false if the element type is a union or tuple type.
     pub fn is_homogeneous_array(&self, type_id: TypeId) -> bool {
-        type_queries::get_array_element_type(self.ctx.types, type_id)
-            .map(|element_type| !type_queries::is_union_type(self.ctx.types, element_type))
+        query::array_element_type(self.ctx.types, type_id)
+            .map(|element_type| !query::is_union_type(self.ctx.types, element_type))
             .unwrap_or(false)
     }
 
@@ -134,7 +134,7 @@ impl<'a> CheckerState<'a> {
     /// Returns Some(element_type) if the array has a single element type,
     /// or None if it's a union array or not an array.
     pub fn get_homogeneous_element_type(&self, type_id: TypeId) -> Option<TypeId> {
-        type_queries::get_array_element_type(self.ctx.types, type_id)
-            .filter(|&element_type| !type_queries::is_union_type(self.ctx.types, element_type))
+        query::array_element_type(self.ctx.types, type_id)
+            .filter(|&element_type| !query::is_union_type(self.ctx.types, element_type))
     }
 }

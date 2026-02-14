@@ -12,9 +12,9 @@
 //! This module extends CheckerState with utilities for intersection type
 //! operations, providing cleaner APIs for intersection type checking.
 
+use crate::query_boundaries::intersection_type as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries;
 
 // =============================================================================
 // Intersection Type Utilities
@@ -30,14 +30,14 @@ impl<'a> CheckerState<'a> {
     /// Returns a vector of TypeIds representing all members of the intersection.
     /// Returns an empty vec if the type is not an intersection.
     pub fn get_intersection_members(&self, type_id: TypeId) -> Vec<TypeId> {
-        type_queries::get_intersection_members(self.ctx.types, type_id).unwrap_or_default()
+        query::intersection_members(self.ctx.types, type_id).unwrap_or_default()
     }
 
     /// Get the number of members in an intersection type.
     ///
     /// Returns 0 if the type is not an intersection.
     pub fn intersection_member_count(&self, type_id: TypeId) -> usize {
-        type_queries::get_intersection_members(self.ctx.types, type_id)
+        query::intersection_members(self.ctx.types, type_id)
             .map(|members| members.len())
             .unwrap_or(0)
     }
@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the given member type is in the intersection.
     pub fn intersection_contains(&self, intersection_type: TypeId, member: TypeId) -> bool {
-        type_queries::get_intersection_members(self.ctx.types, intersection_type)
+        query::intersection_members(self.ctx.types, intersection_type)
             .map(|members| members.contains(&member))
             .unwrap_or(false)
     }
@@ -59,7 +59,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if all intersection members are object types.
     pub fn is_object_intersection(&self, type_id: TypeId) -> bool {
-        type_queries::get_intersection_members(self.ctx.types, type_id)
+        query::intersection_members(self.ctx.types, type_id)
             .map(|members| members.iter().all(|&m| self.is_object_type(m)))
             .unwrap_or(false)
     }
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if any member has call signatures.
     pub fn intersection_has_callable(&self, type_id: TypeId) -> bool {
-        type_queries::get_intersection_members(self.ctx.types, type_id)
+        query::intersection_members(self.ctx.types, type_id)
             .map(|members| members.iter().any(|&m| self.has_call_signature(m)))
             .unwrap_or(false)
     }
@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         intersection_type: TypeId,
     ) -> bool {
-        type_queries::get_intersection_members(self.ctx.types, intersection_type)
+        query::intersection_members(self.ctx.types, intersection_type)
             .map(|members| {
                 members
                     .iter()
@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the member that is most restrictive (has the most specific type).
     /// For simple cases, this might be the first non-primitive object type.
     pub fn get_most_restrictive_intersection_member(&self, type_id: TypeId) -> Option<TypeId> {
-        type_queries::get_intersection_members(self.ctx.types, type_id).and_then(|members| {
+        query::intersection_members(self.ctx.types, type_id).and_then(|members| {
             // Prefer object types over primitives
             members
                 .iter()
@@ -121,9 +121,7 @@ impl<'a> CheckerState<'a> {
     where
         F: Fn(TypeId) -> bool,
     {
-        if let Some(members) =
-            type_queries::get_intersection_members(self.ctx.types, intersection_type)
-        {
+        if let Some(members) = query::intersection_members(self.ctx.types, intersection_type) {
             let filtered: Vec<TypeId> =
                 members.iter().filter(|&&m| predicate(m)).copied().collect();
 
@@ -156,9 +154,7 @@ impl<'a> CheckerState<'a> {
     /// Removes members that are supertypes of other members in the intersection.
     /// For example, `A & B` where `A extends B` simplifies to just `A`.
     pub fn simplify_intersection(&mut self, intersection_type: TypeId) -> TypeId {
-        if let Some(members) =
-            type_queries::get_intersection_members(self.ctx.types, intersection_type)
-        {
+        if let Some(members) = query::intersection_members(self.ctx.types, intersection_type) {
             let mut simplified = Vec::new();
 
             for &member in members.iter() {
@@ -192,14 +188,14 @@ impl<'a> CheckerState<'a> {
         let mut members = Vec::new();
 
         // Add members from type1 if it's an intersection
-        if let Some(type1_members) = type_queries::get_intersection_members(self.ctx.types, type1) {
+        if let Some(type1_members) = query::intersection_members(self.ctx.types, type1) {
             members.extend(type1_members.iter().copied());
         } else {
             members.push(type1);
         }
 
         // Add members from type2 if it's an intersection
-        if let Some(type2_members) = type_queries::get_intersection_members(self.ctx.types, type2) {
+        if let Some(type2_members) = query::intersection_members(self.ctx.types, type2) {
             members.extend(type2_members.iter().copied());
         } else {
             members.push(type2);
