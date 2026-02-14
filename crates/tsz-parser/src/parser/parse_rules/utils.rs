@@ -346,13 +346,15 @@ pub fn look_ahead_is_module_declaration(
 }
 
 /// Look ahead to check if "type" starts a type alias declaration.
+/// Matches tsc's `nextTokenIsIdentifierOnSameLine`: accepts both `Identifier`
+/// and contextual keywords (e.g. `type type = ...` where `type` is the name).
+/// This is needed because the scanner returns keyword SyntaxKind for identifiers
+/// that happen to match keyword text (including via unicode escapes).
 pub fn look_ahead_is_type_alias_declaration(
     scanner: &mut ScannerState,
     current_token: SyntaxKind,
 ) -> bool {
-    look_ahead_is(scanner, current_token, |token| {
-        token == SyntaxKind::Identifier
-    })
+    look_ahead_is(scanner, current_token, is_identifier_or_keyword)
 }
 
 /// Look ahead to check if we have "const enum".
