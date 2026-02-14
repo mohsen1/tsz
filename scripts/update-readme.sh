@@ -13,7 +13,7 @@
 #   ./scripts/update-readme.sh --emit-max=500     # Limit emit tests
 #
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -67,7 +67,8 @@ cd "$ROOT_DIR"
 generate_bar() {
     local percent=$1
     local width=${2:-15}
-    local filled=$(echo "$percent * $width / 100" | bc)
+    local filled
+    filled=$(awk -v p="$percent" -v w="$width" 'BEGIN{ printf "%d", (p*w/100) }')
     local empty=$((width - filled))
     local bar=""
     for ((i=0; i<filled; i++)); do bar+="█"; done
@@ -80,26 +81,36 @@ format_num() {
     printf "%'d" "$1" 2>/dev/null || echo "$1"
 }
 
-# Update a section in README between markers
+# Update a section in README between markers (inclusive)
 # update_section <start_marker> <end_marker> <new_content>
 update_section() {
     local start_marker="$1"
     local end_marker="$2"
     local new_content="$3"
-    local tmpfile=$(mktemp)
-    local content_file=$(mktemp)
 
-    # Write content to temp file
-    printf "%s\n" "$new_content" > "$content_file"
+    local tmpfile
+    tmpfile=$(mktemp)
 
-    awk -v start="$start_marker" -v end="$end_marker" '
-        BEGIN { skip = 0 }
-        $0 ~ start { print; skip = 1; next }
-        $0 ~ end { skip = 0; getline; print ""; while ((getline line < "'"$content_file"'") > 0) print line; close("'$"$content_file"'"); next }
-        !skip { print }
+    awk -v start="$start_marker" -v end="$end_marker" -v content="$new_content" '
+        BEGIN { in_block = 0 }
+        {
+            if ($0 ~ start) {
+                print $0
+                print content
+                in_block = 1
+                next
+            }
+            if ($0 ~ end) {
+                in_block = 0
+                print $0
+                next
+            }
+            if (!in_block) {
+                print $0
+            }
+        }
     ' "$README" > "$tmpfile"
 
-    rm "$content_file"
     mv "$tmpfile" "$README"
 }
 
@@ -140,14 +151,11 @@ if [ "$RUN_CONFORMANCE" = true ]; then
 
     # Parse new format: "FINAL RESULTS: N/N passed (N%)"
     if echo "$OUTPUT" | grep -q "FINAL RESULTS:"; then
-        # Strip ANSI color codes before parsing
         RESULTS_LINE=$(echo "$OUTPUT" | grep "FINAL RESULTS:" | head -1 | sed 's/\x1b\[[0-9;]*m//g')
-        # Format: "FINAL RESULTS: 568/1200 passed (47.3%)"
         CONF_PASSED=$(echo "$RESULTS_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+).*/\1/')
         CONF_TOTAL=$(echo "$RESULTS_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+).*/\2/')
         CONF_PASS_RATE=$(echo "$RESULTS_LINE" | sed -E 's/.*\(([0-9.]+)%\).*/\1/')
 
-        # Validate parsed values are numbers
         if ! [[ "$CONF_PASS_RATE" =~ ^[0-9]+\.?[0-9]*$ ]] || ! [[ "$CONF_PASSED" =~ ^[0-9]+$ ]] || ! [[ "$CONF_TOTAL" =~ ^[0-9]+$ ]]; then
             echo "Failed to parse conformance test output (invalid values: rate=$CONF_PASS_RATE, passed=$CONF_PASSED, total=$CONF_TOTAL)"
             if [ "$RUN_FOURSLASH" = false ]; then
@@ -157,23 +165,20 @@ if [ "$RUN_CONFORMANCE" = true ]; then
             echo ""
             echo "Conformance: $CONF_PASSED/$CONF_TOTAL tests passed ($CONF_PASS_RATE%)"
 
-            # Parse time from output: "Time: 14.7s"
             TIME_LINE=$(echo "$OUTPUT" | grep "Time:" | head -1 | sed 's/\x1b\[[0-9;]*m//g')
             CONF_TIME=$(echo "$TIME_LINE" | sed -E 's/.*Time:[[:space:]]*([0-9.]+)s.*/\1/')
-            
-            # Calculate tests/sec
-            if [[ "$CONF_TIME" =~ ^[0-9.]+$ ]] && [ "$(echo "$CONF_TIME > 0" | bc)" -eq 1 ]; then
-                TESTS_PER_SEC=$(echo "scale=0; $CONF_TOTAL / $CONF_TIME" | bc)
+
+            if [[ "$CONF_TIME" =~ ^[0-9.]+$ ]] && awk -v t="$CONF_TIME" 'BEGIN{exit !(t>0)}'; then
+                TESTS_PER_SEC=$(awk -v total="$CONF_TOTAL" -v t="$CONF_TIME" 'BEGIN{printf "%d", total/t}')
             else
                 TESTS_PER_SEC="N/A"
                 CONF_TIME="N/A"
             fi
 
-            # Generate progress bar and update README
             BAR=$(generate_bar "$CONF_PASS_RATE")
             PASSED_FMT=$(format_num "$CONF_PASSED")
             TOTAL_FMT=$(format_num "$CONF_TOTAL")
-            
+
             CONF_CONTENT="\`\`\`
 Progress: [$BAR] ${CONF_PASS_RATE}% ($PASSED_FMT / $TOTAL_FMT tests)
 Performance: $TESTS_PER_SEC tests/sec (${CONF_TIME}s for full suite)
@@ -216,11 +221,9 @@ if [ "$RUN_FOURSLASH" = true ]; then
     FS_OUTPUT=$(./scripts/run-fourslash.sh --skip-build $FOURSLASH_MAX 2>&1) || true
     echo "$FS_OUTPUT"
 
-    # Parse: "Results: N passed, N failed out of N (Ns)"
     if echo "$FS_OUTPUT" | grep -q "^Results:"; then
         FS_PASSED=$(echo "$FS_OUTPUT" | grep "^Results:" | tail -1 | sed -E 's/Results:[[:space:]]*([0-9]+) passed.*/\1/')
         FS_RAN=$(echo "$FS_OUTPUT" | grep "^Results:" | tail -1 | sed -E 's/.*out of ([0-9]+).*/\1/')
-        # Use total available if reported, otherwise use tests run
         if echo "$FS_OUTPUT" | grep -q "total available"; then
             FS_TOTAL=$(echo "$FS_OUTPUT" | grep "total available" | tail -1 | sed -E 's/.*([0-9]+) total available.*/\1/')
         else
@@ -231,11 +234,10 @@ if [ "$RUN_FOURSLASH" = true ]; then
         echo ""
         echo "Fourslash: $FS_PASSED/$FS_TOTAL tests ($FS_PASS_RATE%)"
 
-        # Generate progress bar and update README
         BAR=$(generate_bar "$FS_PASS_RATE" 20)
         PASSED_FMT=$(format_num "$FS_PASSED")
         TOTAL_FMT=$(format_num "$FS_TOTAL")
-        
+
         FS_CONTENT="\`\`\`
 Progress: [$BAR] ${FS_PASS_RATE}% ($PASSED_FMT / $TOTAL_FMT tests)
 \`\`\`"
@@ -257,14 +259,11 @@ if [ "$RUN_EMIT" = true ]; then
     echo "============================================================"
     echo ""
 
-    # Run JS emit tests
     echo "Running JavaScript emit tests..."
     EMIT_JS_OUTPUT=$(./scripts/emit/run.sh $EMIT_MAX --js-only 2>&1) || true
     echo "$EMIT_JS_OUTPUT"
 
-    # Parse JS results: "Pass Rate: N% (N/N)"
     if echo "$EMIT_JS_OUTPUT" | grep -q "Pass Rate:"; then
-        # Strip ANSI color codes before parsing
         JS_RESULTS=$(echo "$EMIT_JS_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep "Pass Rate:" | head -1)
         EMIT_JS_PASSED=$(echo "$JS_RESULTS" | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\1/')
         EMIT_JS_TOTAL=$(echo "$JS_RESULTS" | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\2/')
@@ -280,14 +279,11 @@ if [ "$RUN_EMIT" = true ]; then
 
     echo ""
 
-    # Run DTS emit tests
     echo "Running Declaration emit tests..."
     EMIT_DTS_OUTPUT=$(./scripts/emit/run.sh $EMIT_MAX --dts-only 2>&1) || true
     echo "$EMIT_DTS_OUTPUT"
 
-    # Parse DTS results: "Pass Rate: N% (N/N)"
     if echo "$EMIT_DTS_OUTPUT" | grep -q "Pass Rate:"; then
-        # Strip ANSI color codes before parsing
         DTS_RESULTS=$(echo "$EMIT_DTS_OUTPUT" | sed 's/\x1b\[[0-9;]*m//g' | grep "Pass Rate:" | head -1)
         EMIT_DTS_PASSED=$(echo "$DTS_RESULTS" | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\1/')
         EMIT_DTS_TOTAL=$(echo "$DTS_RESULTS" | sed -E 's/.*\(([0-9]+)\/([0-9]+)\).*/\2/')
@@ -301,16 +297,15 @@ if [ "$RUN_EMIT" = true ]; then
         EMIT_DTS_RATE="0.0"
     fi
 
-    # Generate progress bars and update README
     if [ -n "$EMIT_JS_RATE" ] && [ -n "$EMIT_DTS_RATE" ]; then
         JS_BAR=$(generate_bar "$EMIT_JS_RATE" 20)
         JS_PASSED_FMT=$(format_num "$EMIT_JS_PASSED")
         JS_TOTAL_FMT=$(format_num "$EMIT_JS_TOTAL")
-        
+
         DTS_BAR=$(generate_bar "$EMIT_DTS_RATE" 20)
         DTS_PASSED_FMT=$(format_num "$EMIT_DTS_PASSED")
         DTS_TOTAL_FMT=$(format_num "$EMIT_DTS_TOTAL")
-        
+
         EMIT_CONTENT="\`\`\`
 JavaScript:  [$JS_BAR] ${EMIT_JS_RATE}% ($JS_PASSED_FMT / $JS_TOTAL_FMT tests)
 Declaration: [$DTS_BAR] ${EMIT_DTS_RATE}% ($DTS_PASSED_FMT / $DTS_TOTAL_FMT tests)
@@ -328,7 +323,6 @@ else
     echo "README.md updated"
 
     if [ "$COMMIT" = true ]; then
-        # Build commit message
         MSG="docs: update README progress"
         DETAILS=""
         if [ -n "$CONF_PASSED" ]; then
