@@ -55,8 +55,8 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: docs: automated README metrics update
-          title: docs: automated README metrics update
+          commit-message: "docs: automated README metrics update"
+          title: "docs: automated README metrics update"
           body: |
             Automated update of README metrics (conformance / fourslash / emit).
 
