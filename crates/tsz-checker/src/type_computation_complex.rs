@@ -1303,17 +1303,34 @@ impl<'a> CheckerState<'a> {
                         evaluator.compute_contextual_types(&shape, &round1_arg_types)
                     };
 
+                    // === Pre-evaluate instantiated parameter types ===
+                    // After instantiation with Round 1 substitution, parameter types may
+                    // contain unevaluated IndexAccess/KeyOf over Lazy(DefId) references
+                    // (e.g., OptionsForKey[K] → OptionsForKey["a"]). The QueryCache's
+                    // evaluate_type uses NoopResolver which can't resolve Lazy types.
+                    // Use evaluate_type_with_env which resolves Lazy types via the
+                    // TypeEnvironment before evaluation.
+                    let arg_count = args.len();
+                    let mut round2_contextual_types: Vec<Option<TypeId>> =
+                        Vec::with_capacity(arg_count);
+                    for i in 0..arg_count {
+                        let ctx_type = if let Some(param_type) =
+                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                        {
+                            let instantiated =
+                                instantiate_type(self.ctx.types, param_type, &substitution);
+                            Some(self.evaluate_type_with_env(instantiated))
+                        } else {
+                            None
+                        };
+                        round2_contextual_types.push(ctx_type);
+                    }
+
                     // === Round 2: Collect ALL argument types with contextual typing ===
                     // Now that type parameters are partially inferred, lambdas get proper contextual types.
                     self.collect_call_argument_types_with_context(
                         args,
-                        |i, arg_count| {
-                            let param_type =
-                                ctx_helper.get_parameter_type_for_call(i, arg_count)?;
-                            // Instantiate parameter type with Round 1 substitution.
-                            // This gives lambdas their contextual types (e.g., `(x: number) => U`).
-                            Some(instantiate_type(self.ctx.types, param_type, &substitution))
-                        },
+                        |i, _arg_count| round2_contextual_types[i],
                         check_excess_properties,
                         None, // Don't skip anything in Round 2 - check all args with inferred context
                     )
