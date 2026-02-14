@@ -5,11 +5,11 @@
 
 #![allow(clippy::print_stderr)]
 
-use tsz_binder::{symbol_flags, SymbolArena, SymbolId};
+use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
 use tsz_checker::TypeCache;
 use tsz_common::interner::Atom;
-use tsz_solver::types::{TypeId, TypeKey};
 use tsz_solver::TypeInterner;
+use tsz_solver::types::{TypeId, TypeKey};
 
 /// Prints types as TypeScript syntax for declaration emit.
 ///

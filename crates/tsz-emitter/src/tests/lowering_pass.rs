@@ -1,6 +1,6 @@
 use super::*;
-use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::ParserState;
+use tsz_parser::parser::node::NodeArena;
 
 fn parse(source: &str) -> (NodeArena, NodeIndex) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
