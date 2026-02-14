@@ -44,6 +44,12 @@ CHECKS = [
         re.compile(r"\btsz_parser::\b|\btsz_checker::\b"),
         {"exclude_files": {"crates/tsz-solver/src/lower.rs"}},
     ),
+    (
+        "Solver TypeKey construction must stay in interner",
+        ROOT / "crates" / "tsz-solver",
+        re.compile(r"\.intern\(TypeKey::"),
+        {"exclude_files": {"crates/tsz-solver/src/intern.rs"}, "exclude_dirs": {"tests"}},
+    ),
 ]
 
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
