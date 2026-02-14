@@ -1860,7 +1860,7 @@ impl<'a> CheckerState<'a> {
                             // Method overload signature - check for implementation
                             let method_name = self.get_method_name_from_node(member_idx);
                             if let Some(name) = method_name {
-                                let (has_impl, impl_name) =
+                                let (has_impl, impl_name, impl_idx) =
                                     self.find_method_impl(members, i + 1, &name);
                                 if !has_impl {
                                     self.error_at_node(
@@ -1871,15 +1871,20 @@ impl<'a> CheckerState<'a> {
                                 } else if let Some(actual_name) = impl_name
                                     && actual_name != name
                                 {
-                                    // Implementation has wrong name
-                                    self.error_at_node(
-                                        members[i + 1],
-                                        &format!(
-                                            "Function implementation name must be '{}'.",
-                                            name
-                                        ),
-                                        diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
-                                    );
+                                    // Implementation has wrong name — report at the
+                                    // implementation node, and only on the last overload
+                                    // (the one immediately preceding the implementation).
+                                    let impl_member_idx = impl_idx.unwrap_or(i + 1);
+                                    if impl_member_idx == i + 1 {
+                                        self.error_at_node(
+                                            members[impl_member_idx],
+                                            &format!(
+                                                "Function implementation name must be '{}'.",
+                                                name
+                                            ),
+                                            diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
+                                        );
+                                    }
                                 }
                             }
                         }

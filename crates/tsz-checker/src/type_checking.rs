@@ -4633,7 +4633,7 @@ impl<'a> CheckerState<'a> {
         members: &[NodeIndex],
         start: usize,
         name: &str,
-    ) -> (bool, Option<String>) {
+    ) -> (bool, Option<String>, Option<usize>) {
         for i in start..members.len() {
             let member_idx = members[i];
             let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -4646,23 +4646,23 @@ impl<'a> CheckerState<'a> {
                     if member_name.as_deref() != Some(name) {
                         if method.body.is_some() {
                             // Different name but has body - wrong-named implementation (TS2389)
-                            return (true, member_name);
+                            return (true, member_name, Some(i));
                         }
                         // Different name, no body - no implementation found
-                        return (false, None);
+                        return (false, None, None);
                     }
                     if !method.body.is_none() {
                         // Found the implementation with matching name
-                        return (true, member_name);
+                        return (true, member_name, Some(i));
                     }
                     // Same name but no body - another overload signature, keep looking
                 }
             } else {
                 // Non-method member encountered - no implementation found
-                return (false, None);
+                return (false, None, None);
             }
         }
-        (false, None)
+        (false, None, None)
     }
 
     /// Find the first return statement with an expression in a function body.
