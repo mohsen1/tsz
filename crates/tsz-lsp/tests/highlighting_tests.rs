@@ -696,7 +696,7 @@ fn test_highlight_while_keyword() {
     );
     let highlights = highlights.unwrap();
     assert!(
-        highlights.len() >= 1,
+        !highlights.is_empty(),
         "Should have at least 1 highlight for 'while'"
     );
 }
@@ -804,7 +804,7 @@ fn test_highlight_return_keyword() {
     assert!(highlights.is_some(), "Should find highlight for 'return'");
     let highlights = highlights.unwrap();
     assert!(
-        highlights.len() >= 1,
+        !highlights.is_empty(),
         "Should have at least 1 highlight for 'return'"
     );
 }

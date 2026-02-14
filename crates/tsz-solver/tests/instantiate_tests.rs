@@ -979,7 +979,7 @@ fn test_instantiate_template_literal_with_number_literal() {
         Some(TypeData::TemplateLiteral(spans_id)) => {
             let spans = interner.template_list(spans_id);
             // Should have the number literal substituted
-            assert!(spans.len() >= 1);
+            assert!(!spans.is_empty());
         }
         _ => {
             // Both outcomes are acceptable depending on evaluation behavior
