@@ -1131,7 +1131,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::VOID;
         }
 
-        if saw_empty {
+        if saw_empty || self.function_body_falls_through(body_idx) {
             return_types.push(TypeId::VOID);
         }
 
