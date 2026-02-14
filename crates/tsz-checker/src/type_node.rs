@@ -369,6 +369,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
+        let factory = self.ctx.types.factory();
 
         // UnionType uses CompositeTypeData which has a types list
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
@@ -385,7 +386,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return member_types[0];
             }
 
-            return self.ctx.types.union(member_types);
+            return factory.union(member_types);
         }
 
         TypeId::ERROR
@@ -403,6 +404,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
+        let factory = self.ctx.types.factory();
 
         // IntersectionType uses CompositeTypeData which has a types list
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
@@ -419,7 +421,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return member_types[0];
             }
 
-            return self.ctx.types.intersection(member_types);
+            return factory.intersection(member_types);
         }
 
         TypeId::ERROR
@@ -432,10 +434,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
+        let factory = self.ctx.types.factory();
 
         if let Some(array_type) = self.ctx.arena.get_array_type(node) {
             let elem_type = self.check(array_type.element_type);
-            return self.ctx.types.array(elem_type);
+            return factory.array(elem_type);
         }
 
         TypeId::ERROR
@@ -454,6 +457,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
+        let factory = self.ctx.types.factory();
 
         if let Some(tuple_type) = self.ctx.arena.get_tuple_type(node) {
             let mut elements = Vec::new();
@@ -503,7 +507,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            return self.ctx.types.tuple(elements);
+            return factory.tuple(elements);
         }
 
         TypeId::ERROR
@@ -520,6 +524,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// - `unique symbol` - Special marker for unique symbols
     fn get_type_from_type_operator(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_scanner::SyntaxKind;
+        let factory = self.ctx.types.factory();
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -531,12 +536,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle readonly operator
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
-                return self.ctx.types.readonly_type(inner_type);
+                return factory.readonly_type(inner_type);
             }
 
             // Handle keyof operator
             if operator == SyntaxKind::KeyOfKeyword as u16 {
-                return self.ctx.types.keyof(inner_type);
+                return factory.keyof(inner_type);
             }
 
             // Handle unique operator
@@ -562,6 +567,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
+        let factory = self.ctx.types.factory();
 
         if let Some(indexed_access) = self.ctx.arena.get_indexed_access_type(node) {
             let object_type = self.check(indexed_access.object_type);
@@ -579,7 +585,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            self.ctx.types.index_access(object_type, index_type)
+            factory.index_access(object_type, index_type)
         } else {
             TypeId::ERROR
         }
@@ -935,7 +941,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 is_constructor: false,
                                 is_method: true,
                             };
-                            let method_type = self.ctx.types.function(shape);
+                            let factory = self.ctx.types.factory();
+                            let method_type = factory.function(shape);
                             properties.push(PropertyInfo {
                                 name: name_atom,
                                 type_id: method_type,
@@ -1087,7 +1094,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-            return self.ctx.types.callable(CallableShape {
+            let factory = self.ctx.types.factory();
+
+            return factory.callable(CallableShape {
                 call_signatures,
                 construct_signatures,
                 properties,
@@ -1098,7 +1107,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         if string_index.is_some() || number_index.is_some() {
-            return self.ctx.types.object_with_index(ObjectShape {
+            let factory = self.ctx.types.factory();
+
+            return factory.object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties,
                 string_index,
@@ -1107,7 +1118,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             });
         }
 
-        self.ctx.types.object(properties)
+        let factory = self.ctx.types.factory();
+        factory.object(properties)
     }
 
     // =========================================================================
@@ -1328,7 +1340,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     && type_id != TypeId::ERROR
                     && type_id != TypeId::UNDEFINED
                 {
-                    self.ctx.types.union2(type_id, TypeId::UNDEFINED)
+                    let factory = self.ctx.types.factory();
+                    factory.union2(type_id, TypeId::UNDEFINED)
                 } else {
                     type_id
                 };
