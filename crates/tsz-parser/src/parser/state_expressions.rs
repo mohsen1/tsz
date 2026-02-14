@@ -2593,9 +2593,13 @@ impl ParserState {
 
             // Try to parse comma separator
             if !self.parse_optional(SyntaxKind::CommaToken) {
-                // Missing comma - check if next token looks like another property
-                // If so, emit error and continue parsing (better recovery)
-                if self.is_property_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
+                // Semicolons in object literals are a common mistake (`;` instead of `,`).
+                // Treat them as comma separators with an error for better recovery.
+                if self.is_token(SyntaxKind::SemicolonToken) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    self.next_token(); // skip the semicolon, continue parsing
+                } else if self.is_property_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
                     // We have a property-like token but no comma - likely missing comma
                     // Emit the comma error and continue parsing for better recovery
                     // This handles cases like: {a: 1 b: 2} instead of {a: 1, b: 2}
