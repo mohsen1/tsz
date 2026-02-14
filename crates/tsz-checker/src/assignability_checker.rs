@@ -94,24 +94,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Memoized wrapper around `contains_infer_types` for assignability hot paths.
+    /// Wrapper around solver `contains_infer_types` for assignability cache policy.
     pub(crate) fn contains_infer_types_cached(&mut self, type_id: TypeId) -> bool {
         use tsz_solver::visitor::contains_infer_types;
-
-        if self.ctx.contains_infer_types_true.contains(&type_id) {
-            return true;
-        }
-        if self.ctx.contains_infer_types_false.contains(&type_id) {
-            return false;
-        }
-
-        let has_infer = contains_infer_types(self.ctx.types, type_id);
-        if has_infer {
-            self.ctx.contains_infer_types_true.insert(type_id);
-        } else {
-            self.ctx.contains_infer_types_false.insert(type_id);
-        }
-        has_infer
+        contains_infer_types(self.ctx.types, type_id)
     }
 
     // =========================================================================
