@@ -281,6 +281,7 @@ impl<'a> CheckerState<'a> {
     /// Internal helper that uses the solver's classification enum to compute element type.
     /// The depth parameter prevents infinite loops from circular readonly types.
     fn for_of_element_type_classified(&mut self, type_id: TypeId, depth: usize) -> TypeId {
+        let factory = self.ctx.types.factory();
         if depth > 100 {
             return TypeId::ANY;
         }
@@ -299,7 +300,7 @@ impl<'a> CheckerState<'a> {
                 } else if member_types.len() == 1 {
                     member_types.pop().unwrap_or(TypeId::ANY)
                 } else {
-                    self.ctx.types.union(member_types)
+                    factory.union(member_types)
                 }
             }
             ForOfElementKind::Union(members) => {
@@ -307,7 +308,7 @@ impl<'a> CheckerState<'a> {
                 for member in members {
                     element_types.push(self.for_of_element_type_classified(member, depth + 1));
                 }
-                self.ctx.types.union(element_types)
+                factory.union(element_types)
             }
             ForOfElementKind::Readonly(inner) => {
                 // Unwrap readonly wrapper and compute element type for inner
