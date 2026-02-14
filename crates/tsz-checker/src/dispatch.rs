@@ -103,6 +103,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     .checker
                     .type_includes_undefined(resolved_expected_yield_type);
 
+            // TS delegates nuanced `yield*` compatibility through iterator protocols.
+            // Avoid direct TS2322 checks here to prevent false positives.
+            if yield_expr.asterisk_token {
+                return TypeId::ANY;
+            }
+
             if bare_yield_requires_error {
                 self.checker.error_type_not_assignable_with_reason_at(
                     yielded_type,
