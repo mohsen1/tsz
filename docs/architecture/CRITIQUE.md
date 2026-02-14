@@ -1108,6 +1108,12 @@ Reduce “tribal knowledge” and make refactors safe.
   * Wired architecture report artifact generation into `scripts/check-checker-boundaries.sh`:
     * emits `artifacts/architecture/arch_guard_report.json` on each run.
 
+### Final closure note (2026-02-14)
+
+* Proposal implementation status is complete across roadmap milestones.
+* `TypeKey` is crate-private in solver and boundary callsites were migrated to query/visitor APIs.
+* Architecture guardrails were extended to prevent cross-layer regressions.
+
 ---
 
 ## “First 5 PRs” (a concrete jumpstart sequence)
