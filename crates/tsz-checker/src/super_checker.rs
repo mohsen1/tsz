@@ -1140,8 +1140,7 @@ impl<'a> CheckerState<'a> {
         // TS17011: super property access before super() call in derived constructors.
         if is_super_property_access
             && self.is_in_constructor(idx)
-            && (self.is_super_property_before_super_call_in_constructor(idx)
-                || self.is_super_property_in_super_call_arguments(idx))
+            && self.is_super_property_before_super_call_in_constructor(idx)
         {
             self.error_at_node(
                 idx,
