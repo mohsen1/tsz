@@ -1411,6 +1411,7 @@ impl<'a> CheckerState<'a> {
                                     base_constructor_type,
                                     &class_type_params,
                                     instance_type,
+                                    None,
                                 );
                         }
                         break;
@@ -1470,6 +1471,7 @@ impl<'a> CheckerState<'a> {
                             base_constructor_type,
                             &class_type_params,
                             instance_type,
+                            None,
                         );
                     }
                     break;
@@ -1662,6 +1664,7 @@ impl<'a> CheckerState<'a> {
         constructor_type: TypeId,
         class_type_params: &[TypeParamInfo],
         instance_type: TypeId,
+        inherited_substitution: Option<&TypeSubstitution>,
     ) -> Option<Vec<CallSignature>> {
         let signatures = construct_signatures_for_type(self.ctx.types, constructor_type)?;
         if signatures.is_empty() {
@@ -1671,13 +1674,31 @@ impl<'a> CheckerState<'a> {
         Some(
             signatures
                 .iter()
-                .map(|sig| CallSignature {
-                    type_params: class_type_params.to_vec(),
-                    params: sig.params.clone(),
-                    this_type: sig.this_type,
-                    return_type: instance_type,
-                    type_predicate: sig.type_predicate.clone(),
-                    is_method: sig.is_method,
+                .map(|sig| {
+                    let params = if let Some(subst) = inherited_substitution {
+                        sig.params
+                            .iter()
+                            .map(|param| {
+                                let mut p = param.clone();
+                                p.type_id = instantiate_type(self.ctx.types, p.type_id, subst);
+                                p
+                            })
+                            .collect()
+                    } else {
+                        sig.params.clone()
+                    };
+                    let this_type = sig.this_type.map(|t| {
+                        inherited_substitution
+                            .map_or(t, |subst| instantiate_type(self.ctx.types, t, subst))
+                    });
+                    CallSignature {
+                        type_params: class_type_params.to_vec(),
+                        params,
+                        this_type,
+                        return_type: instance_type,
+                        type_predicate: sig.type_predicate.clone(),
+                        is_method: sig.is_method,
+                    }
                 })
                 .collect(),
         )
