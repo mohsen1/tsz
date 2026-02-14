@@ -190,3 +190,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 178: migrated type-environment/property-access precondition setup in `crates/tsz-checker/src/state_type_environment.rs` from direct `ensure_application_symbols_resolved(...)` calls to `ensure_relation_input_ready(...)`.
 - [x] Migration action 179: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to ensure `state_type_environment` routes relation precondition setup through centralized helpers.
 - [x] Migration action 180: added binder dependency-direction freeze guardrail in `scripts/arch_guard.py` to fail on non-test `tsz-binder` imports of `tsz_solver::...`.
+- [x] Migration action 181: reduced one emitter→checker dependency edge by switching `crates/tsz-emitter/src/enums/checker.rs` to `tsz_common::diagnostics::Diagnostic` instead of `tsz_checker::diagnostics::Diagnostic`.

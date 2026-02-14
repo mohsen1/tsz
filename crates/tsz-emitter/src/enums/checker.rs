@@ -16,7 +16,7 @@
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::symbol_flags;
-use tsz_checker::diagnostics::Diagnostic;
+use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
