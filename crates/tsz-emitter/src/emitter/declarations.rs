@@ -462,16 +462,24 @@ impl<'a> Printer<'a> {
                 if let Some(source_text) = self.source_text_for_map() {
                     printer.set_source_text(source_text);
                 }
-                self.write(&printer.emit(&ir));
+                let enum_name = if !enum_decl.name.is_none() {
+                    self.get_identifier_text_idx(enum_decl.name)
+                } else {
+                    String::new()
+                };
 
-                // Track enum name to prevent duplicate var declarations for merged namespaces.
-                // Enums always emit `var name;` so if a namespace merges with this enum,
-                // the namespace shouldn't emit another var declaration.
-                if !enum_decl.name.is_none() {
-                    let enum_name = self.get_identifier_text_idx(enum_decl.name);
-                    if !enum_name.is_empty() {
-                        self.declared_namespace_names.insert(enum_name);
+                let mut output = printer.emit(&ir).to_string();
+                if !enum_name.is_empty() && self.declared_namespace_names.contains(&enum_name) {
+                    let var_prefix = format!("var {};\n", enum_name);
+                    if output.starts_with(&var_prefix) {
+                        output = output[var_prefix.len()..].to_string();
                     }
+                }
+                self.write(&output);
+
+                // Track enum name for subsequent namespace/enum merges.
+                if !enum_name.is_empty() {
+                    self.declared_namespace_names.insert(enum_name);
                 }
                 return;
             }
@@ -588,6 +596,10 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             use crate::transforms::NamespaceES5Emitter;
             let mut es5_emitter = NamespaceES5Emitter::new(self.arena);
+            let ns_name = self.get_identifier_text_idx(module.name);
+            if !ns_name.is_empty() {
+                self.declared_namespace_names.insert(ns_name);
+            }
 
             // Set IRPrinter indent to 0 because we'll handle base indentation through
             // the writer when writing each line. This prevents double-indentation for
