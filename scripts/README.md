@@ -36,6 +36,7 @@ node scripts/help.mjs
 | `scripts/run-single-test.mjs` | Debug single file (host) |
 | `scripts/validate-wasm.mjs` | Validate WASM loads |
 | `scripts/help.mjs` | Show all commands |
+| `scripts/arch_guard.py` | Run architecture boundary checks used by CI |
 
 ## Resource Protection
 
