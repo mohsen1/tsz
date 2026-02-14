@@ -465,6 +465,14 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
     * `create_array_type` now uses `types.array(...)`
     * `ReadonlyArray<T>` construction paths now use `types.readonly_type(types.array(...))`
   * Added an architecture regression test that guards these array helper paths against direct `TypeKey` interning.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Added solver-owned safe constructors for `keyof` and indexed access (`types.keyof(...)`, `types.index_access(...)`).
+  * Migrated checker type-node and JSX intrinsic-element indexed access paths away from direct `TypeKey` interning:
+    * `type_node` now uses `types.readonly_type(...)`, `types.keyof(...)`, and `types.index_access(...)`
+    * `jsx_checker` now uses `types.index_access(...)`
+  * Added focused regression tests:
+    * architecture guard assertions for `type_node` and `jsx_checker` to prevent direct `TypeKey` usage on these paths
+    * solver interner test covering `keyof` and `index_access` constructor behavior
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
   * Add CI guard that fails on checker `TypeKey` imports/usages.

@@ -2542,6 +2542,16 @@ impl TypeInterner {
         self.intern(TypeKey::ReadonlyType(inner))
     }
 
+    /// Wrap a type in a KeyOf marker.
+    pub fn keyof(&self, inner: TypeId) -> TypeId {
+        self.intern(TypeKey::KeyOf(inner))
+    }
+
+    /// Build an indexed access type (`T[K]`).
+    pub fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.intern(TypeKey::IndexAccess(object_type, index_type))
+    }
+
     /// Intern an object type with properties.
     pub fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.object_with_flags(properties, ObjectFlags::empty())

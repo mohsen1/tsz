@@ -531,19 +531,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle readonly operator
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
-                // Wrap the inner type in ReadonlyType
-                return self
-                    .ctx
-                    .types
-                    .intern(tsz_solver::TypeKey::ReadonlyType(inner_type));
+                return self.ctx.types.readonly_type(inner_type);
             }
 
             // Handle keyof operator
             if operator == SyntaxKind::KeyOfKeyword as u16 {
-                return self
-                    .ctx
-                    .types
-                    .intern(tsz_solver::TypeKey::KeyOf(inner_type));
+                return self.ctx.types.keyof(inner_type);
             }
 
             // Handle unique operator
@@ -586,9 +579,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            self.ctx
-                .types
-                .intern(tsz_solver::TypeKey::IndexAccess(object_type, index_type))
+            self.ctx.types.index_access(object_type, index_type)
         } else {
             TypeId::ERROR
         }

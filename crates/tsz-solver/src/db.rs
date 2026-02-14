@@ -83,6 +83,8 @@ pub trait TypeDatabase {
     fn literal_string_atom(&self, atom: Atom) -> TypeId;
     fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId;
     fn readonly_type(&self, inner: TypeId) -> TypeId;
+    fn keyof(&self, inner: TypeId) -> TypeId;
+    fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId;
 
     /// Get the base class type for a symbol (class/interface).
     /// Returns the TypeId of the extends clause, or None if the symbol doesn't extend anything.
@@ -268,6 +270,14 @@ impl TypeDatabase for TypeInterner {
 
     fn readonly_type(&self, inner: TypeId) -> TypeId {
         TypeInterner::readonly_type(self, inner)
+    }
+
+    fn keyof(&self, inner: TypeId) -> TypeId {
+        TypeInterner::keyof(self, inner)
+    }
+
+    fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        TypeInterner::index_access(self, object_type, index_type)
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
@@ -1028,6 +1038,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.readonly_type(inner)
     }
 
+    fn keyof(&self, inner: TypeId) -> TypeId {
+        self.interner.keyof(inner)
+    }
+
+    fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.interner.index_access(object_type, index_type)
+    }
+
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {
         // Delegate to the interner
         self.interner.get_class_base_type(symbol_id)
@@ -1585,6 +1603,14 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
 
     fn readonly_type(&self, inner: TypeId) -> TypeId {
         self.query_cache.readonly_type(inner)
+    }
+
+    fn keyof(&self, inner: TypeId) -> TypeId {
+        self.query_cache.keyof(inner)
+    }
+
+    fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.query_cache.index_access(object_type, index_type)
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
