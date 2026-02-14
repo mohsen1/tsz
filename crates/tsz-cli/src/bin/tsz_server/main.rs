@@ -298,14 +298,13 @@ pub(crate) struct TsServerResponse {
 /// Legacy request from client
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-#[allow(clippy::large_enum_variant)]
 enum LegacyRequest {
     /// Type check files and return error codes
     Check {
         id: u64,
-        files: FxHashMap<String, String>,
+        files: Box<FxHashMap<String, String>>,
         #[serde(default)]
-        options: CheckOptions,
+        options: Box<CheckOptions>,
     },
     /// Get server status (memory usage, checks completed)
     Status { id: u64 },
@@ -3680,7 +3679,7 @@ impl Server {
     fn handle_legacy_request(&mut self, request: LegacyRequest) -> LegacyResponse {
         match request {
             LegacyRequest::Check { id, files, options } => {
-                self.handle_legacy_check(id, files, options)
+                self.handle_legacy_check(id, *files, *options)
             }
             LegacyRequest::Status { id } => self.handle_legacy_status(id),
             LegacyRequest::Recycle { id } => self.handle_legacy_recycle(id),

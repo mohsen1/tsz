@@ -150,7 +150,7 @@ mod ts2307_path_mapping_tests {
         let mut cache = ModuleResolutionCache::default();
 
         // Try to resolve a module that doesn't match the path mapping
-        let result = resolve_for_test(
+        let _result = resolve_for_test(
             &base_url.join("src/index.ts"),
             "lodash", // Bare specifier, should try node_modules
             &options,
