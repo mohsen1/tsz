@@ -45,11 +45,12 @@ To keep this actionable, treat each major heading below as a checkpoint you can 
 - A is live through `scripts/arch_guard.py` and the boundary checks in:
   - `scripts/check-checker-boundaries.sh`
   - `crates/tsz-checker/src/tests/architecture_contract_tests.rs`
-  - `crates/tsz-solver/src/tests/typekey_contract_tests.rs`
+  - `crates/tsz-solver/src/tests/typedata_contract_tests.rs`
 - B is implemented by:
-  - Gating checker legacy type re-exports under `legacy-type-arena` in `crates/tsz-checker/src/lib.rs`.
+  - Removing checker legacy semantic typing surface (`types` + `arena`) from `crates/tsz-checker/src`.
+  - Removing `legacy-type-arena` from `crates/tsz-checker/Cargo.toml`.
   - Moving all downstream diagnostic uses to `tsz_checker::diagnostics`.
-  - Keeping `types` as an internal transition module only.
+  - Guarding regressions with architecture checks that fail if `types`/`arena` surfaces are reintroduced.
 - D is implemented by routing all compatibility checks through `crates/tsz-checker/src/query_boundaries/assignability.rs`:
   - `is_assignable_with_overrides`
   - `is_assignable_with_resolver`
@@ -518,13 +519,13 @@ The checker crate still contains a full local type arena and constructors for un
 
 * **Status:** Completed
 * **Completed in this iteration (Milestone 1 sub-item):**
-  * Quarantined checker legacy `TypeArena` surface behind an explicit crate feature flag:
-    * `crates/tsz-checker/Cargo.toml` now defines `legacy-type-arena` (off by default).
-    * `crates/tsz-checker/src/lib.rs` now gates `pub mod arena;` and `pub use arena::TypeArena;` behind `#[cfg(feature = "legacy-type-arena")]`.
-  * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to lock this boundary and fail if the legacy `TypeArena` module/re-export become default-visible again.
+  * Removed checker legacy type-system modules entirely:
+    * deleted `crates/tsz-checker/src/arena.rs`
+    * deleted `crates/tsz-checker/src/types/*`
+  * Removed the `legacy-type-arena` feature from `crates/tsz-checker/Cargo.toml`.
+  * Added focused architecture guard coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` and `scripts/arch_guard.py` to fail if `types`/`arena` surfaces reappear.
 * **Remaining for Milestone 1:**
-  * Continue migrating/deleting checker-local type-system internals (`types`/`arena`) from active checker paths.
-  * Remove the `legacy-type-arena` feature entirely once migration users are gone.
+  * Keep enforcement rules aligned as checker modules evolve.
 
 ---
 
@@ -632,7 +633,7 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
   * Strengthened architecture contract coverage to fail if non-test checker source imports `tsz_solver::types::...`, preventing new solver-internal module coupling.
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Added a solver-side enforcement rule that direct `.intern(TypeKey::...)` construction is quarantined to `tsz-solver/src/intern.rs`.
-  * Added a dedicated solver contract test (`typekey_contract_tests.rs`) to enforce this invariant continuously.
+  * Added a dedicated solver contract test (`typedata_contract_tests.rs`) to enforce this invariant continuously.
 * **Remaining for Milestone 2:**
   * Keep tightening guard patterns as solver constructor surface expands (for example, extend CI matching beyond direct `.intern(TypeKey::...)` aliases and new raw-construction forms).
 
