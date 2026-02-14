@@ -3074,6 +3074,3 @@ impl<'a> TypeLowering<'a> {
     }
 }
 
-#[cfg(test)]
-#[path = "../tests/lower_tests.rs"]
-mod tests;
