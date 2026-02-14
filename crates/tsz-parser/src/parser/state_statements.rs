@@ -3809,7 +3809,7 @@ impl ParserState {
             let _ = self.parse_statement();
 
             // Return NONE to indicate this is not a valid member
-            return NodeIndex::NONE;
+            NodeIndex::NONE
         } else {
             // Property - parse optional type and initializer
             let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
@@ -3983,7 +3983,7 @@ mod tests {
         let sf = parser.get_arena().get_source_file_at(root).unwrap();
 
         assert!(!sf.statements.nodes.is_empty());
-        assert!(!parser.get_diagnostics().is_empty() || sf.statements.nodes.len() >= 1);
+        assert!(!parser.get_diagnostics().is_empty() || !sf.statements.nodes.is_empty());
     }
 
     #[test]

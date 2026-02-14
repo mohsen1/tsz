@@ -38,23 +38,21 @@ impl NodeArena {
     pub fn with_capacity(capacity: usize) -> NodeArena {
         let safe_capacity = capacity.min(Self::MAX_NODE_PREALLOC);
         // Use Default for all the new pools, just set capacity for main ones
-        let mut arena = NodeArena::default();
-
-        // Pre-allocate the most commonly used pools
-        arena.nodes = Vec::with_capacity(safe_capacity);
-        arena.extended_info = Vec::with_capacity(safe_capacity);
-        arena.identifiers = Vec::with_capacity(safe_capacity / 4); // ~25% identifiers
-        arena.literals = Vec::with_capacity(safe_capacity / 8); // ~12% literals
-        arena.binary_exprs = Vec::with_capacity(safe_capacity / 8); // ~12% binary
-        arena.call_exprs = Vec::with_capacity(safe_capacity / 8); // ~12% calls
-        arena.access_exprs = Vec::with_capacity(safe_capacity / 8); // ~12% property access
-        arena.blocks = Vec::with_capacity(safe_capacity / 8); // ~12% blocks
-        arena.variables = Vec::with_capacity(safe_capacity / 16); // ~6% variables
-        arena.functions = Vec::with_capacity(safe_capacity / 16); // ~6% functions
-        arena.type_refs = Vec::with_capacity(safe_capacity / 8); // ~12% type refs
-        arena.source_files = Vec::with_capacity(1); // Usually 1
-
-        arena
+        NodeArena {
+            nodes: Vec::with_capacity(safe_capacity),
+            extended_info: Vec::with_capacity(safe_capacity),
+            identifiers: Vec::with_capacity(safe_capacity / 4), // ~25% identifiers
+            literals: Vec::with_capacity(safe_capacity / 8),    // ~12% literals
+            binary_exprs: Vec::with_capacity(safe_capacity / 8), // ~12% binary
+            call_exprs: Vec::with_capacity(safe_capacity / 8),  // ~12% calls
+            access_exprs: Vec::with_capacity(safe_capacity / 8), // ~12% property access
+            blocks: Vec::with_capacity(safe_capacity / 8),      // ~12% blocks
+            variables: Vec::with_capacity(safe_capacity / 16),  // ~6% variables
+            functions: Vec::with_capacity(safe_capacity / 16),  // ~6% functions
+            type_refs: Vec::with_capacity(safe_capacity / 8),   // ~12% type refs
+            source_files: Vec::with_capacity(1),                // Usually 1
+            ..Default::default()
+        }
     }
 
     pub fn clear(&mut self) {
