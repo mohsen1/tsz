@@ -962,15 +962,6 @@ impl<'a> CheckerState<'a> {
                 | "object"
                 | "bigint"
         );
-
-        // TypeScript primitive type keywords used as values should report TS2693
-        // in syntax-recovery paths. Keep this narrow to avoid over-reporting in
-        // otherwise valid files.
-        let node_has_parse_error = self.ctx.arena.get(idx).is_some_and(|node| {
-            let flags = node.flags as u32;
-            (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-        });
         let is_import_equals_module_specifier = self
             .ctx
             .arena
@@ -988,10 +979,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|imp| imp.module_specifier == idx)
             });
 
-        if is_primitive_type_keyword
-            && !is_import_equals_module_specifier
-            && (node_has_parse_error || self.has_syntax_parse_errors())
-        {
+        if is_primitive_type_keyword && !is_import_equals_module_specifier {
             self.error_type_only_value_at(name, idx);
             return;
         }
@@ -1130,6 +1118,9 @@ impl<'a> CheckerState<'a> {
                 current = ext.parent;
             }
             if in_class && in_class_member_body {
+                if is_primitive_type_keyword {
+                    self.error_type_only_value_at(name, idx);
+                }
                 return;
             }
         }
