@@ -24,6 +24,7 @@ Before diving in, review these documents:
 - **`conformance-analysis-slice3.md`** - Baseline metrics and failure patterns
 - **`conformance-fix-guide.md`** - Step-by-step implementation workflow
 - **`conformance-work-session-summary.md`** - Detailed investigation examples
+- **`TS2322_INVESTIGATION_2026-02-14.md`** - Focused TS2322 mismatch analysis (missing vs extra patterns and owners)
 
 **Key takeaway**: Budget 1-2 days per test fix. There are no "quick wins."
 
