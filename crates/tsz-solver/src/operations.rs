@@ -1753,38 +1753,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                elements
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, elem)| {
-                        if !elem.rest {
-                            return None;
-                        }
-                        if !var_map.contains_key(&elem.type_id) {
-                            return None;
-                        }
+                elements.iter().enumerate().find_map(|(i, elem)| {
+                    if !elem.rest {
+                        return None;
+                    }
+                    if !var_map.contains_key(&elem.type_id) {
+                        return None;
+                    }
 
-                        // Count trailing elements after the variadic part, but allow optional
-                        // tail elements to be omitted when they don't match.
-                        let tail = &elements[i + 1..];
-                        let min_index = rest_start + i;
-                        let mut trailing_count = 0usize;
-                        let mut arg_index = arg_types.len();
-                        for tail_elem in tail.iter().rev() {
-                            if arg_index <= min_index {
-                                break;
-                            }
-                            let arg_type = arg_types[arg_index - 1];
-                            let assignable =
-                                self.checker.is_assignable_to(arg_type, tail_elem.type_id);
-                            if tail_elem.optional && !assignable {
-                                break;
-                            }
-                            trailing_count += 1;
-                            arg_index -= 1;
+                    // Count trailing elements after the variadic part, but allow optional
+                    // tail elements to be omitted when they don't match.
+                    let tail = &elements[i + 1..];
+                    let min_index = rest_start + i;
+                    let mut trailing_count = 0usize;
+                    let mut arg_index = arg_types.len();
+                    for tail_elem in tail.iter().rev() {
+                        if arg_index <= min_index {
+                            break;
                         }
-                        Some((rest_start + i, elem.type_id, trailing_count))
-                    })
+                        let arg_type = arg_types[arg_index - 1];
+                        let assignable = self.checker.is_assignable_to(arg_type, tail_elem.type_id);
+                        if tail_elem.optional && !assignable {
+                            break;
+                        }
+                        trailing_count += 1;
+                        arg_index -= 1;
+                    }
+                    Some((rest_start + i, elem.type_id, trailing_count))
+                })
             }
             _ => None,
         }?;
