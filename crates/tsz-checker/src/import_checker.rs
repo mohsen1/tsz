@@ -1081,6 +1081,7 @@ impl<'a> CheckerState<'a> {
         // Use get_require_module_specifier so both StringLiteral and recovered require-call
         // representations are handled consistently.
         let require_module_specifier = self.get_require_module_specifier(import.module_specifier);
+        let mut force_module_not_found = false;
         if require_module_specifier.is_some() {
             if self.ctx.arena.get(import.module_specifier).is_some() {
                 // This is an external module reference (require("..."))
@@ -1137,6 +1138,7 @@ impl<'a> CheckerState<'a> {
                     if !namespace_is_exported {
                         return;
                     }
+                    force_module_not_found = true;
                 }
 
                 // TS2439: Ambient modules cannot use relative imports
@@ -1149,7 +1151,8 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_messages::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
                                 diagnostic_codes::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
                             );
-                            // Don't return - let TS2307 also be emitted for module resolution
+                            // Keep TS2439 and also force TS2307 in this ambient-relative import case.
+                            force_module_not_found = true
                         }
                     }
                 }
@@ -1387,6 +1390,20 @@ impl<'a> CheckerState<'a> {
         let Some(module_name) = require_module_specifier.as_deref() else {
             return;
         };
+
+        if force_module_not_found {
+            let (message, code) = self.module_not_found_diagnostic(module_name);
+            self.ctx.push_diagnostic(crate::types::Diagnostic {
+                code,
+                category: crate::types::DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: spec_start,
+                length: spec_length,
+                related_information: Vec::new(),
+            });
+            return;
+        }
 
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
