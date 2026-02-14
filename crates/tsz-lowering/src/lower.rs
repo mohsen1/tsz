@@ -359,16 +359,15 @@ impl<'a> TypeLowering<'a> {
             };
 
             // If we haven't collected type params yet, do it now
-            if !type_params_collected {
-                if let Some(params) = &interface.type_parameters {
-                    if !params.nodes.is_empty() {
-                        // Push scope on the shared state
-                        self.push_type_param_scope();
-                        // Use the specific lowerer to resolve param nodes in that arena
-                        collected_params = lowerer.collect_type_parameters(params);
-                        type_params_collected = true;
-                    }
-                }
+            if !type_params_collected
+                && let Some(params) = &interface.type_parameters
+                && !params.nodes.is_empty()
+            {
+                // Push scope on the shared state
+                self.push_type_param_scope();
+                // Use the specific lowerer to resolve param nodes in that arena
+                collected_params = lowerer.collect_type_parameters(params);
+                type_params_collected = true;
             }
 
             // Collect members using the arena-specific lowerer
@@ -1562,10 +1561,9 @@ impl<'a> TypeLowering<'a> {
         // Handle computed property names like [Symbol.iterator]
         if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(computed) = self.arena.get_computed_property(node)
+            && let Some(symbol_name) = self.get_well_known_symbol_name(computed.expression)
         {
-            if let Some(symbol_name) = self.get_well_known_symbol_name(computed.expression) {
-                return Some(self.interner.intern_string(&symbol_name));
-            }
+            return Some(self.interner.intern_string(&symbol_name));
         }
         None
     }
