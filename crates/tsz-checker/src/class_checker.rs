@@ -1393,6 +1393,25 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
+                    // TS2720: `implements` can reference a class symbol. When that class has
+                    // private/protected members, structural implementation is invalid and tsc
+                    // reports "Did you mean to extend ...".
+                    if interface_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                        if let Some(base_class_data) = self.ctx.arena.get_class(interface_node)
+                            && self.class_has_private_or_protected_members(base_class_data)
+                        {
+                            self.error_at_node(
+                                type_idx,
+                                &format!(
+                                    "Class '{}' incorrectly implements class '{}'. Did you mean to extend '{}' and inherit its members as a subclass?",
+                                    class_name, interface_name, interface_name
+                                ),
+                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
+                            );
+                        }
+                        continue;
+                    }
+
                     // Check if it's actually an interface declaration
                     if interface_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
                         continue;
@@ -1836,6 +1855,46 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        false
+    }
+
+    fn class_has_private_or_protected_members(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    if let Some(prop) = self.ctx.arena.get_property_decl(member_node)
+                        && (self.has_private_modifier(&prop.modifiers)
+                            || self.has_protected_modifier(&prop.modifiers))
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self.ctx.arena.get_method_decl(member_node)
+                        && (self.has_private_modifier(&method.modifiers)
+                            || self.has_protected_modifier(&method.modifiers))
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                        && (self.has_private_modifier(&accessor.modifiers)
+                            || self.has_protected_modifier(&accessor.modifiers))
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
         false
     }
 
