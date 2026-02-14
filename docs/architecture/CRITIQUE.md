@@ -464,7 +464,7 @@ if __name__ == "__main__":
 
 ### Status update (2026-02-14)
 
-* **Status:** Completed (except ongoing hardening)
+* **Status:** Completed
 * **Completed in this iteration (Milestone 0 sub-item):**
   * Enforced dependency-direction **freeze guardrail** in `scripts/check-checker-boundaries.sh` so CI fails if any new non-test solver source (outside legacy `crates/tsz-solver/src/lower.rs`) imports `tsz_parser::` or `tsz_checker::`.
   * Added binder dependency-direction guardrail to `scripts/arch_guard.py` so CI fails if non-test binder code imports `tsz_solver::...`.

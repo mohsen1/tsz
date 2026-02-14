@@ -212,3 +212,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 200: finalized PR4 boundary seal by switching `crates/tsz-solver/src/types.rs` compatibility alias to `pub(crate) type TypeKey = TypeData;`, making `TypeKey` crate-private while preserving solver-internal usage.
 - [x] Migration action 201: migrated `crates/tsz-solver/src/intern.rs` interner public signatures (`intern`, `lookup`) and intrinsic helpers from `TypeKey` to `TypeData` naming to keep public APIs compatible after TypeKey privatization.
 - [x] Migration action 202: marked remaining milestone status blocks in `docs/architecture/CRITIQUE.md` from “In progress” to “Completed” after checklist closure and boundary migrations.
+- [x] Migration action 203: normalized Milestone 0 status wording in `docs/architecture/CRITIQUE.md` from “Completed (except ongoing hardening)” to “Completed” to mark full proposal closure in the roadmap document.
