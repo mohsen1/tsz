@@ -2491,13 +2491,9 @@ fn collect_diagnostics(
                 let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
                 if should_filter_type_errors {
-                    // Keep only syntax/semantic errors, not type errors
-                    // Syntax/semantic errors include: TS1xxx errors (syntax errors)
-                    // Type errors include: TS2xxx errors (most type errors)
-                    checker_diagnostics.retain(|diag| {
-                        // Keep TS1xxx errors (syntax/semantic)
-                        diag.code < 2000
-                    });
+                    // Keep syntax/semantic diagnostics and JS grammar diagnostics (TS8xxx).
+                    checker_diagnostics
+                        .retain(|diag| diag.code < 2000 || (8000..9000).contains(&diag.code));
                 }
 
                 file_diagnostics.extend(checker_diagnostics);
@@ -2738,13 +2734,9 @@ fn check_file_for_parallel(
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
         if should_filter_type_errors {
-            // Keep only syntax/semantic errors, not type errors
-            // Syntax/semantic errors include: TS1xxx errors (syntax errors)
-            // Type errors include: TS2xxx errors (most type errors)
-            checker_diagnostics.retain(|diag| {
-                // Keep TS1xxx errors (syntax/semantic)
-                diag.code < 2000
-            });
+            // Keep syntax/semantic diagnostics and JS grammar diagnostics (TS8xxx).
+            checker_diagnostics
+                .retain(|diag| diag.code < 2000 || (8000..9000).contains(&diag.code));
         }
 
         file_diagnostics.extend(checker_diagnostics);
