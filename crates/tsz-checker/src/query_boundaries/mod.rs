@@ -8,6 +8,7 @@ pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
 pub(crate) mod flow_analysis;
 pub(crate) mod iterable_checker;
+pub(crate) mod iterators;
 pub(crate) mod namespace_checker;
 pub(crate) mod object_type;
 pub(crate) mod promise_checker;
