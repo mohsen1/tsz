@@ -5,11 +5,11 @@
 
 #![allow(clippy::print_stderr)]
 
-use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
+use tsz_binder::{symbol_flags, SymbolArena, SymbolId};
 use tsz_checker::TypeCache;
 use tsz_common::interner::Atom;
-use tsz_solver::TypeInterner;
 use tsz_solver::types::{TypeId, TypeKey};
+use tsz_solver::TypeInterner;
 
 /// Prints types as TypeScript syntax for declaration emit.
 ///
@@ -605,15 +605,5 @@ impl<'a> TypePrinter<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_primitive_types() {
-        // For now we can't easily test without a real TypeInterner
-        // In the future we'll need to set up a mock or test fixture
-        assert!(TypeId::STRING.is_intrinsic());
-        assert!(TypeId::NUMBER.is_intrinsic());
-        assert!(TypeId::BOOLEAN.is_intrinsic());
-    }
-}
+#[path = "tests/type_printer.rs"]
+mod tests;
