@@ -520,6 +520,11 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         type_computation_complex_src.contains("check_assignable_or_report_generic_at("),
         "type_computation_complex callback constraint mismatch checks should route through check_assignable_or_report_generic_at"
     );
+    assert!(
+        type_computation_complex_src.contains("ensure_relation_input_ready(")
+            && type_computation_complex_src.contains("ensure_relation_inputs_ready("),
+        "type_computation_complex should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
+    );
 
     let dispatch_src =
         fs::read_to_string("src/dispatch.rs").expect("failed to read src/dispatch.rs for guard");
@@ -534,6 +539,14 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         class_checker_src.contains("should_report_member_type_mismatch(")
             && class_checker_src.contains("should_report_member_type_mismatch_bivariant("),
         "class member compatibility should use centralized class query-boundary mismatch helpers"
+    );
+
+    let call_checker_src =
+        fs::read_to_string("src/call_checker.rs").expect("failed to read src/call_checker.rs");
+    assert!(
+        call_checker_src.contains("ensure_relation_input_ready(")
+            && call_checker_src.contains("ensure_relation_inputs_ready("),
+        "call_checker should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
     );
 
     let generic_checker_src = fs::read_to_string("src/generic_checker.rs")

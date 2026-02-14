@@ -352,16 +352,8 @@ impl<'a> CheckerState<'a> {
         // First pass: try each signature with union-contextual argument types.
         for (idx, (_sig, &func_type)) in signatures.iter().zip(signature_types.iter()).enumerate() {
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
-            self.ensure_application_symbols_resolved(func_type);
-            for &arg_type in &arg_types {
-                self.ensure_application_symbols_resolved(arg_type);
-            }
-
-            // Ensure all Ref types are resolved into type_env for assignability.
-            self.ensure_refs_resolved(func_type);
-            for &arg_type in &arg_types {
-                self.ensure_refs_resolved(arg_type);
-            }
+            self.ensure_relation_input_ready(func_type);
+            self.ensure_relation_inputs_ready(&arg_types);
             let result = {
                 let env = self.ctx.type_env.borrow();
                 // Resolve Lazy func_type via type_env before passing to solver.
@@ -449,15 +441,8 @@ impl<'a> CheckerState<'a> {
                 None,
             );
 
-            self.ensure_application_symbols_resolved(func_type);
-            for &arg_type in &sig_arg_types {
-                self.ensure_application_symbols_resolved(arg_type);
-            }
-
-            self.ensure_refs_resolved(func_type);
-            for &arg_type in &sig_arg_types {
-                self.ensure_refs_resolved(arg_type);
-            }
+            self.ensure_relation_input_ready(func_type);
+            self.ensure_relation_inputs_ready(&sig_arg_types);
 
             let result = {
                 let env = self.ctx.type_env.borrow();

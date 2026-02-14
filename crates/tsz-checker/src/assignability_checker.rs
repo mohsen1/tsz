@@ -33,6 +33,19 @@ use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Ensure relation preconditions (lazy refs + application symbols) for one type.
+    pub(crate) fn ensure_relation_input_ready(&mut self, type_id: TypeId) {
+        self.ensure_refs_resolved(type_id);
+        self.ensure_application_symbols_resolved(type_id);
+    }
+
+    /// Ensure relation preconditions (lazy refs + application symbols) for multiple types.
+    pub(crate) fn ensure_relation_inputs_ready(&mut self, type_ids: &[TypeId]) {
+        for &type_id in type_ids {
+            self.ensure_relation_input_ready(type_id);
+        }
+    }
+
     /// Centralized suppression for TS2322-style assignability diagnostics.
     pub(crate) fn should_suppress_assignability_diagnostic(
         &self,
