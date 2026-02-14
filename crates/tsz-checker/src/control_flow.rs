@@ -29,8 +29,8 @@ use tsz_parser::parser::node::{BinaryExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeGuard, TypeId, TypePredicate,
-    Visibility,
+    NarrowingContext, ParamInfo, QueryDatabase, TypeDatabase, TypeGuard, TypeId,
+    TypePredicate, Visibility,
 };
 
 // =============================================================================
