@@ -197,6 +197,20 @@ impl<'a> LoweringPass<'a> {
                 }
             }
             k if k == SyntaxKind::Identifier as u16 => {
+                if self.this_capture_level > 0 {
+                    if let Some(text) = self.get_identifier_text_ref(idx)
+                        && text == "this"
+                    {
+                        let capture_name = self
+                            .enclosing_capture_names
+                            .last()
+                            .cloned()
+                            .unwrap_or_else(|| Arc::from("_this"));
+                        self.transforms
+                            .insert(idx, TransformDirective::SubstituteThis { capture_name });
+                    }
+                }
+
                 // Check if this is the 'arguments' identifier
                 if self.arguments_capture_level > 0 {
                     if let Some(text) = self.get_identifier_text_ref(idx) {
@@ -1596,8 +1610,11 @@ impl<'a> LoweringPass<'a> {
                 if has_spread {
                     self.transforms
                         .insert(idx, TransformDirective::ES5CallSpread { call_expr: idx });
-                    // Flag that __spreadArray helper is needed
-                    self.transforms.helpers_mut().spread_array = true;
+                    // __spreadArray is only needed when spread arguments must be merged
+                    // with additional segments (not for plain foo(...args)).
+                    if self.call_spread_needs_spread_array(args.nodes.as_slice()) {
+                        self.transforms.helpers_mut().spread_array = true;
+                    }
                 }
             }
         }
@@ -2057,6 +2074,34 @@ impl<'a> LoweringPass<'a> {
 
         node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
             || node.kind == syntax_kind_ext::SPREAD_ELEMENT
+    }
+
+    fn call_spread_needs_spread_array(&self, args: &[NodeIndex]) -> bool {
+        let mut spread_count = 0usize;
+        let mut real_arg_count = 0usize;
+
+        for &idx in args {
+            if idx.is_none() {
+                continue;
+            }
+            real_arg_count += 1;
+            if self.is_spread_element(idx) {
+                spread_count += 1;
+            }
+        }
+
+        // No spread means no spread helper.
+        if spread_count == 0 {
+            return false;
+        }
+
+        // Exactly one spread and no other args: foo(...arr) -> foo.apply(void 0, arr)
+        // This does not require __spreadArray.
+        if spread_count == 1 && real_arg_count == 1 {
+            return false;
+        }
+
+        true
     }
 
     /// Check if a for-of initializer contains binding patterns (destructuring)

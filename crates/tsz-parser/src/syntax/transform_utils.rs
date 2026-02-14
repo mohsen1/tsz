@@ -11,6 +11,13 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
         return false;
     };
 
+    if node.kind == SyntaxKind::Identifier as u16
+        && let Some(identifier) = arena.get_identifier(node)
+        && identifier.escaped_text == "this"
+    {
+        return true;
+    }
+
     // Check if this node is `this` or `super`
     if node.kind == SyntaxKind::ThisKeyword as u16 || node.kind == SyntaxKind::SuperKeyword as u16 {
         return true;
@@ -175,11 +182,124 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
                 return contains_this_reference(arena, expr_stmt.expression);
             }
         }
+        k if k == syntax_kind_ext::IF_STATEMENT => {
+            if let Some(if_stmt) = arena.get_if_statement(node) {
+                if contains_this_reference(arena, if_stmt.expression) {
+                    return true;
+                }
+                if contains_this_reference(arena, if_stmt.then_statement) {
+                    return true;
+                }
+                if !if_stmt.else_statement.is_none()
+                    && contains_this_reference(arena, if_stmt.else_statement)
+                {
+                    return true;
+                }
+            }
+        }
+        k if k == syntax_kind_ext::FOR_STATEMENT
+            || k == syntax_kind_ext::WHILE_STATEMENT
+            || k == syntax_kind_ext::DO_STATEMENT =>
+        {
+            if let Some(loop_data) = arena.get_loop(node) {
+                if !loop_data.initializer.is_none()
+                    && contains_this_reference(arena, loop_data.initializer)
+                {
+                    return true;
+                }
+                if !loop_data.condition.is_none()
+                    && contains_this_reference(arena, loop_data.condition)
+                {
+                    return true;
+                }
+                if !loop_data.incrementor.is_none()
+                    && contains_this_reference(arena, loop_data.incrementor)
+                {
+                    return true;
+                }
+                if contains_this_reference(arena, loop_data.statement) {
+                    return true;
+                }
+            }
+        }
+        k if k == syntax_kind_ext::FOR_IN_STATEMENT || k == syntax_kind_ext::FOR_OF_STATEMENT => {
+            if let Some(for_in_of) = arena.get_for_in_of(node) {
+                if contains_this_reference(arena, for_in_of.initializer) {
+                    return true;
+                }
+                if contains_this_reference(arena, for_in_of.expression) {
+                    return true;
+                }
+                if contains_this_reference(arena, for_in_of.statement) {
+                    return true;
+                }
+            }
+        }
         k if k == syntax_kind_ext::RETURN_STATEMENT => {
             if let Some(ret) = arena.get_return_statement(node)
                 && !ret.expression.is_none()
             {
                 return contains_this_reference(arena, ret.expression);
+            }
+        }
+        k if k == syntax_kind_ext::THROW_STATEMENT => {
+            if let Some(thr) = arena.get_return_statement(node)
+                && !thr.expression.is_none()
+                && contains_this_reference(arena, thr.expression)
+            {
+                return true;
+            }
+        }
+        k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+            if let Some(switch) = arena.get_switch(node) {
+                if contains_this_reference(arena, switch.expression) {
+                    return true;
+                }
+                if contains_this_reference(arena, switch.case_block) {
+                    return true;
+                }
+            }
+        }
+        k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+            if let Some(clause) = arena.get_case_clause(node) {
+                if !clause.expression.is_none() && contains_this_reference(arena, clause.expression)
+                {
+                    return true;
+                }
+                for &stmt in &clause.statements.nodes {
+                    if contains_this_reference(arena, stmt) {
+                        return true;
+                    }
+                }
+            }
+        }
+        k if k == syntax_kind_ext::TRY_STATEMENT => {
+            if let Some(try_stmt) = arena.get_try(node) {
+                if contains_this_reference(arena, try_stmt.try_block) {
+                    return true;
+                }
+                if !try_stmt.catch_clause.is_none()
+                    && contains_this_reference(arena, try_stmt.catch_clause)
+                {
+                    return true;
+                }
+                if !try_stmt.finally_block.is_none()
+                    && contains_this_reference(arena, try_stmt.finally_block)
+                {
+                    return true;
+                }
+            }
+        }
+        k if k == syntax_kind_ext::CATCH_CLAUSE => {
+            if let Some(catch) = arena.get_catch_clause(node) {
+                if !catch.variable_declaration.is_none()
+                    && contains_this_reference(arena, catch.variable_declaration)
+                {
+                    return true;
+                }
+                if contains_this_reference(arena, catch.block) {
+                    return true;
+                }
             }
         }
         k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
@@ -448,11 +568,125 @@ pub fn contains_arguments_reference(arena: &NodeArena, node_idx: NodeIndex) -> b
                 return contains_arguments_reference(arena, expr_stmt.expression);
             }
         }
+        k if k == syntax_kind_ext::IF_STATEMENT => {
+            if let Some(if_stmt) = arena.get_if_statement(node) {
+                if contains_arguments_reference(arena, if_stmt.expression) {
+                    return true;
+                }
+                if contains_arguments_reference(arena, if_stmt.then_statement) {
+                    return true;
+                }
+                if !if_stmt.else_statement.is_none()
+                    && contains_arguments_reference(arena, if_stmt.else_statement)
+                {
+                    return true;
+                }
+            }
+        }
+        k if k == syntax_kind_ext::FOR_STATEMENT
+            || k == syntax_kind_ext::WHILE_STATEMENT
+            || k == syntax_kind_ext::DO_STATEMENT =>
+        {
+            if let Some(loop_data) = arena.get_loop(node) {
+                if !loop_data.initializer.is_none()
+                    && contains_arguments_reference(arena, loop_data.initializer)
+                {
+                    return true;
+                }
+                if !loop_data.condition.is_none()
+                    && contains_arguments_reference(arena, loop_data.condition)
+                {
+                    return true;
+                }
+                if !loop_data.incrementor.is_none()
+                    && contains_arguments_reference(arena, loop_data.incrementor)
+                {
+                    return true;
+                }
+                if contains_arguments_reference(arena, loop_data.statement) {
+                    return true;
+                }
+            }
+        }
+        k if k == syntax_kind_ext::FOR_IN_STATEMENT || k == syntax_kind_ext::FOR_OF_STATEMENT => {
+            if let Some(for_in_of) = arena.get_for_in_of(node) {
+                if contains_arguments_reference(arena, for_in_of.initializer) {
+                    return true;
+                }
+                if contains_arguments_reference(arena, for_in_of.expression) {
+                    return true;
+                }
+                if contains_arguments_reference(arena, for_in_of.statement) {
+                    return true;
+                }
+            }
+        }
         k if k == syntax_kind_ext::RETURN_STATEMENT => {
             if let Some(ret) = arena.get_return_statement(node)
                 && !ret.expression.is_none()
             {
                 return contains_arguments_reference(arena, ret.expression);
+            }
+        }
+        k if k == syntax_kind_ext::THROW_STATEMENT => {
+            if let Some(thr) = arena.get_return_statement(node)
+                && !thr.expression.is_none()
+                && contains_arguments_reference(arena, thr.expression)
+            {
+                return true;
+            }
+        }
+        k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+            if let Some(switch) = arena.get_switch(node) {
+                if contains_arguments_reference(arena, switch.expression) {
+                    return true;
+                }
+                if contains_arguments_reference(arena, switch.case_block) {
+                    return true;
+                }
+            }
+        }
+        k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+            if let Some(clause) = arena.get_case_clause(node) {
+                if !clause.expression.is_none()
+                    && contains_arguments_reference(arena, clause.expression)
+                {
+                    return true;
+                }
+                for &stmt in &clause.statements.nodes {
+                    if contains_arguments_reference(arena, stmt) {
+                        return true;
+                    }
+                }
+            }
+        }
+        k if k == syntax_kind_ext::TRY_STATEMENT => {
+            if let Some(try_stmt) = arena.get_try(node) {
+                if contains_arguments_reference(arena, try_stmt.try_block) {
+                    return true;
+                }
+                if !try_stmt.catch_clause.is_none()
+                    && contains_arguments_reference(arena, try_stmt.catch_clause)
+                {
+                    return true;
+                }
+                if !try_stmt.finally_block.is_none()
+                    && contains_arguments_reference(arena, try_stmt.finally_block)
+                {
+                    return true;
+                }
+            }
+        }
+        k if k == syntax_kind_ext::CATCH_CLAUSE => {
+            if let Some(catch) = arena.get_catch_clause(node) {
+                if !catch.variable_declaration.is_none()
+                    && contains_arguments_reference(arena, catch.variable_declaration)
+                {
+                    return true;
+                }
+                if contains_arguments_reference(arena, catch.block) {
+                    return true;
+                }
             }
         }
         k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
