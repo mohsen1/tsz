@@ -760,6 +760,9 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
 * **Completed in this iteration (Milestone 3 sub-item, follow-up):**
   * Migrated remaining assignability/subtype/change-detection precondition call sites in `crates/tsz-checker/src/assignability_checker.rs` from open-coded `ensure_refs_resolved + ensure_application_symbols_resolved` sequences to centralized `ensure_relation_input_ready(...)`.
   * Updated subtype precondition-order architecture checks to enforce the centralized helper path before subtype cache lookups.
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Migrated contextual-literal lazy-resolution precondition setup in `crates/tsz-checker/src/state_type_analysis.rs` from direct `ensure_refs_resolved(...)` calls to centralized `ensure_relation_input_ready(...)`.
+  * Added architecture contract coverage to ensure `state_type_analysis` uses centralized relation precondition setup on this path.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
 

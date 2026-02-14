@@ -3086,8 +3086,8 @@ impl<'a> CheckerState<'a> {
             {
                 return self.contextual_type_allows_literal_inner(resolved, literal_type, visited);
             }
-            // If not resolved, try ensure_refs_resolved to populate type_env
-            self.ensure_refs_resolved(ctx_type);
+            // If not resolved, use centralized relation precondition setup to populate type_env.
+            self.ensure_relation_input_ready(ctx_type);
             let resolved = {
                 let env = self.ctx.type_env.borrow();
                 env.get_def(def_id)
