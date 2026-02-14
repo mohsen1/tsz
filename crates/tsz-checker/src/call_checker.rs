@@ -393,23 +393,32 @@ impl<'a> CheckerState<'a> {
                     tracing::debug!("Overload {} result: {:?}", idx, result);
                 }
             }
-            if let CallResult::Success(return_type) = result {
-                // Phase 6 Task 4: Merge the node types inferred during argument collection
-                self.ctx.node_types.extend(temp_node_types);
+            match result {
+                CallResult::Success(return_type) => {
+                    // Phase 6 Task 4: Merge the node types inferred during argument collection
+                    self.ctx.node_types.extend(temp_node_types);
 
-                // Phase 6 Task 4: CRITICAL FIX - Check excess properties against the MATCHED signature,
-                // not the union. Using the union would allow properties that exist in other overloads
-                // but not in the selected one, causing false negatives.
-                let matched_sig_helper = ContextualTypeContext::with_expected_and_options(
-                    self.ctx.types,
-                    func_type,
-                    self.ctx.compiler_options.no_implicit_any,
-                );
-                self.check_call_argument_excess_properties(args, &arg_types, |i, arg_count| {
-                    matched_sig_helper.get_parameter_type_for_call(i, arg_count)
-                });
+                    // Phase 6 Task 4: CRITICAL FIX - Check excess properties against the MATCHED signature,
+                    // not the union. Using the union would allow properties that exist in other overloads
+                    // but not in the selected one, causing false negatives.
+                    let matched_sig_helper = ContextualTypeContext::with_expected_and_options(
+                        self.ctx.types,
+                        func_type,
+                        self.ctx.compiler_options.no_implicit_any,
+                    );
+                    self.check_call_argument_excess_properties(args, &arg_types, |i, arg_count| {
+                        matched_sig_helper.get_parameter_type_for_call(i, arg_count)
+                    });
 
-                return Some(return_type);
+                    return Some(return_type);
+                }
+                CallResult::TypeParameterConstraintViolation { return_type, .. } => {
+                    // Constraint violation from callback return - overload matched
+                    // but with constraint error. Treat as match for overload resolution.
+                    self.ctx.node_types.extend(temp_node_types);
+                    return Some(return_type);
+                }
+                _ => {}
             }
         }
 

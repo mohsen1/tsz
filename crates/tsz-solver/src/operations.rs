@@ -29,7 +29,7 @@
 pub use crate::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 
 use crate::diagnostics::PendingDiagnostic;
-use crate::infer::InferenceContext;
+use crate::infer::{InferenceContext, InferenceError};
 use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::*;
 use crate::utils;
@@ -84,6 +84,19 @@ pub enum CallResult {
         index: usize,
         expected: TypeId,
         actual: TypeId,
+    },
+
+    /// Type parameter constraint violation (TS2322, not TS2345).
+    /// Used when inference from callback return types produces a type that
+    /// violates the type parameter's constraint. tsc reports TS2322 on the
+    /// return expression, not TS2345 on the whole callback argument.
+    TypeParameterConstraintViolation {
+        /// The inferred type that violated the constraint
+        inferred_type: TypeId,
+        /// The constraint type that was violated
+        constraint_type: TypeId,
+        /// The return type of the call (for type computation to continue)
+        return_type: TypeId,
     },
 
     /// No overload matched (for overloaded functions)
@@ -979,10 +992,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             error = ?e,
                             "Constraint resolution failed, using fallback"
                         );
-                        // Inference from constraints failed - try fallback options
-                        // Use ERROR as ultimate fallback when constraints exist but inference fails
-                        // (this indicates a real type conflict that should be reported)
-                        let fallback = if let Some(default) = tp.default {
+
+                        // When the bounds violation comes from callback return type
+                        // inference (Round 2, ReturnType priority), tsc uses the inferred
+                        // type and reports TS2322 on the return expression rather than
+                        // falling back to the constraint and reporting TS2345 on the
+                        // whole callback argument.
+                        let use_inferred = matches!(&e, InferenceError::BoundsViolation { .. })
+                            && infer_ctx.all_candidates_are_return_type(var);
+
+                        let fallback = if use_inferred {
+                            // Use the inferred type (lower bound from BoundsViolation)
+                            if let InferenceError::BoundsViolation { lower, .. } = &e {
+                                *lower
+                            } else {
+                                unreachable!()
+                            }
+                        } else if let Some(default) = tp.default {
                             instantiate_type(self.interner, default, &final_subst)
                         } else if let Some(constraint) = tp.constraint {
                             instantiate_type(self.interner, constraint, &final_subst)
@@ -991,6 +1017,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         };
                         trace!(
                             fallback_type = ?fallback,
+                            use_inferred = use_inferred,
                             "Using fallback type"
                         );
                         fallback
@@ -1021,12 +1048,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if let Some(constraint) = tp.constraint {
                 let constraint_ty = instantiate_type(self.interner, constraint, &final_subst);
                 if !self.checker.is_assignable_to(ty, constraint_ty) {
-                    // Inferred type doesn't satisfy constraint - report as type mismatch
-                    // This allows the checker to emit TS2322 errors instead of silently accepting Any/ERROR
-                    return CallResult::ArgumentTypeMismatch {
-                        index: 0, // Placeholder - indicates a constraint violation occurred
-                        expected: constraint_ty,
-                        actual: ty,
+                    // Inferred type doesn't satisfy constraint.
+                    // Use TypeParameterConstraintViolation for callback return type inferences
+                    // (TS2322) vs ArgumentTypeMismatch for direct arg inferences (TS2345).
+                    let return_type =
+                        instantiate_type(self.interner, func.return_type, &final_subst);
+                    return CallResult::TypeParameterConstraintViolation {
+                        inferred_type: ty,
+                        constraint_type: constraint_ty,
+                        return_type,
                     };
                 }
             }
@@ -3386,6 +3416,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             match self.resolve_function_call(&func, arg_types) {
                 CallResult::Success(ret) => return CallResult::Success(ret),
+                CallResult::TypeParameterConstraintViolation { return_type, .. } => {
+                    // Constraint violation is a "near match" - return the type
+                    // for overload resolution (treat as success with error)
+                    return CallResult::Success(return_type);
+                }
                 CallResult::ArgumentTypeMismatch {
                     index: _,
                     expected,
@@ -3560,6 +3595,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             match self.resolve_function_call(&func, arg_types) {
                 CallResult::Success(ret) => return CallResult::Success(ret),
+                CallResult::TypeParameterConstraintViolation { return_type, .. } => {
+                    return CallResult::Success(return_type);
+                }
                 CallResult::ArgumentTypeMismatch {
                     index: _,
                     expected,

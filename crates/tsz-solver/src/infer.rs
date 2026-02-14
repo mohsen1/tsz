@@ -969,6 +969,19 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
+    /// Check if all inference candidates for a variable have ReturnType priority.
+    /// This indicates the type was inferred from callback return types (Round 2),
+    /// not from direct arguments (Round 1).
+    pub fn all_candidates_are_return_type(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        !info.candidates.is_empty()
+            && info
+                .candidates
+                .iter()
+                .all(|c| c.priority == InferencePriority::ReturnType)
+    }
+
     /// Collect a constraint from an assignment: source flows into target
     /// If target is an inference variable, source becomes a lower bound.
     /// If source is an inference variable, target becomes an upper bound.

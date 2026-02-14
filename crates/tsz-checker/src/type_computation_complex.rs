@@ -478,6 +478,16 @@ impl<'a> CheckerState<'a> {
                 }
                 TypeId::ERROR
             }
+            CallResult::TypeParameterConstraintViolation {
+                inferred_type,
+                constraint_type,
+                return_type,
+            } => {
+                // Report TS2322 instead of TS2345 for constraint violations from
+                // callback return type inference.
+                self.error_type_not_assignable_at(inferred_type, constraint_type, idx);
+                return_type
+            }
             CallResult::NoOverloadMatch { failures, .. } => {
                 if !self.should_suppress_weak_key_no_overload(new_expr.expression, args) {
                     self.error_no_overload_matches_at(idx, &failures);
@@ -1514,6 +1524,15 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 TypeId::ERROR
+            }
+            CallResult::TypeParameterConstraintViolation {
+                inferred_type,
+                constraint_type,
+                return_type,
+            } => {
+                // Report TS2322 for constraint violations from callback return type inference
+                self.error_type_not_assignable_at(inferred_type, constraint_type, call_idx);
+                return_type
             }
             CallResult::NoOverloadMatch { failures, .. } => {
                 if !self.should_suppress_weak_key_no_overload(callee_expr, args) {
