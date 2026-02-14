@@ -3,10 +3,6 @@
 //! This is a clean implementation of the binder that works directly with
 //! Node and NodeArena, avoiding the old Node enum pattern matching.
 
-// Allow dead code for binder infrastructure methods that will be used in future phases
-
-#![allow(clippy::print_stderr)]
-
 use crate::lib_loader;
 use crate::module_resolution_debug::ModuleResolutionDebugger;
 use crate::{
@@ -1694,12 +1690,12 @@ impl BinderState {
 
         // Debug: log what's going into file_locals
         if std::env::var("BIND_DEBUG").is_ok() {
-            eprintln!(
+            debug!(
                 "[FILE_LOCALS] Root scope has {} symbols",
                 root_scope_symbols.len()
             );
             for (name, _) in root_scope_symbols.iter() {
-                eprintln!("[FILE_LOCALS]   - {}", name);
+                debug!("[FILE_LOCALS]   - {}", name);
             }
         }
 
