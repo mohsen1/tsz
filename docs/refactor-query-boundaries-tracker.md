@@ -1,6 +1,6 @@
 # Query-Boundary Refactor Tracker
 
-Last updated: 2026-02-13
+Last updated: 2026-02-14
 Branch: `refactor/checker-query-boundaries`
 Goal: reduce checker complexity while preserving exact `tsc` behavior.
 
@@ -40,7 +40,7 @@ Notes: Limited cleanup so far; more structural dedup needed.
 
 9. Add focused parity tests per refactor seam
 Status: Partially complete
-Notes: Full suites run constantly; seam-targeted additions are still sparse.
+Notes: Added focused seam tests for `state_type_environment`, `state_type_resolution`, `state_type_analysis`, and `state_checking` query boundaries. Full suites still run constantly; more seam coverage is still needed in remaining high-churn subsystems.
 
 10. Document canonical architecture/dependency directions
 Status: In progress
