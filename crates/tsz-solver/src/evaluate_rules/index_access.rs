@@ -96,9 +96,10 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         if let Some(constraint) = param.constraint {
             if constraint == self.object_type {
                 Some(
-                    self.evaluator
-                        .interner()
-                        .intern(TypeKey::IndexAccess(self.object_type, self.index_type)),
+                    self.evaluator.interner().index_access(
+                        self.object_type,
+                        self.index_type,
+                    ),
                 )
             } else {
                 Some(
@@ -108,9 +109,7 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             }
         } else {
             Some(
-                self.evaluator
-                    .interner()
-                    .intern(TypeKey::IndexAccess(self.object_type, self.index_type)),
+                self.evaluator.interner().index_access(self.object_type, self.index_type),
             )
         }
     }
@@ -261,7 +260,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             Some(
                 self.evaluator
                     .interner()
-                    .intern(TypeKey::IndexAccess(self.object_type, self.index_type)),
+                    .index_access(self.object_type, self.index_type),
             )
         } else {
             Some(
@@ -626,9 +625,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         object_type: TypeId,
         index_type: TypeId,
     ) -> TypeId {
-        let index_access = self
-            .interner()
-            .intern(TypeKey::IndexAccess(object_type, index_type));
+        let index_access = self.interner().index_access(object_type, index_type);
         self.evaluate(index_access)
     }
 
@@ -690,8 +687,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // For other types, keep as IndexAccess (deferred)
-        self.interner()
-            .intern(TypeKey::IndexAccess(object_type, index_type))
+        self.interner().index_access(object_type, index_type)
     }
 
     /// Evaluate property access on an object type
