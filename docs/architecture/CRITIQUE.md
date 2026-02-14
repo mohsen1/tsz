@@ -964,6 +964,14 @@ If you want the fastest path to momentum, do these in order:
 
 After those five, the rest of the roadmap becomes dramatically easier because the codebase is no longer allowed to regress.
 
+## Practical cadence for this roadmap
+
+Use one lightweight rhythm for each step.
+1. Define the checker-to-solver boundary change for that step.
+2. Apply only syntax-level edits for the target module(s).
+3. Run the narrow architecture guard checks relevant to that step.
+4. Merge the smallest safe commit and sync with `main` before the next step.
+
 ---
 
 ## What this roadmap explicitly fixes in your current snapshot
