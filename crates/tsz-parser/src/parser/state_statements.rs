@@ -1,7 +1,8 @@
 //! Parser state - statement and declaration parsing methods
 
 use super::state::{
-    CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
+    CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC,
+    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
     CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK,
     IncrementalParseResult, ParserState,
 };
@@ -1837,7 +1838,7 @@ impl ParserState {
         let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
             // Check if parameter has both optional marker (?) and initializer (=)
             // TS1015: Parameter cannot have question mark and initializer
-            if question_token {
+            if question_token && (self.context_flags & CONTEXT_FLAG_ARROW_PARAMETERS) == 0 {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "A parameter cannot have question mark and initializer.",
