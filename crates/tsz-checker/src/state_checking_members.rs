@@ -3702,19 +3702,28 @@ impl<'a> CheckerState<'a> {
                         if let Some(list_node) = self.ctx.arena.get(list_idx)
                             && let Some(decl_list) = self.ctx.arena.get_variable(list_node)
                         {
-                            // TypeScript allows `export const x = literal;` in ambient contexts (Constant Ambient Modules)
-                            // TS1039 only applies to non-const variables with initializers
                             use tsz_parser::parser::node_flags;
                             let is_const = (list_node.flags & node_flags::CONST as u16) != 0;
 
-                            if !is_const {
-                                for &decl_idx in &decl_list.declarations.nodes {
-                                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                                        && let Some(var_decl) =
-                                            self.ctx.arena.get_variable_declaration(decl_node)
-                                        && !var_decl.initializer.is_none()
-                                    {
-                                        // TS1039: Initializers are not allowed in ambient contexts
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                    && let Some(var_decl) =
+                                        self.ctx.arena.get_variable_declaration(decl_node)
+                                    && !var_decl.initializer.is_none()
+                                {
+                                    if is_const && var_decl.type_annotation.is_none() {
+                                        // const without type annotation: only string/numeric literals allowed
+                                        // TS1254 if initializer is not a valid literal
+                                        if !self.is_valid_const_initializer(var_decl.initializer) {
+                                            self.error_at_node(
+                                                var_decl.initializer,
+                                                diagnostic_messages::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                                                diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                                            );
+                                        }
+                                        // else: valid literal initializer, no error
+                                    } else {
+                                        // Non-const or const with type annotation: TS1039
                                         self.error_at_node(
                                             var_decl.initializer,
                                             diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
@@ -3736,6 +3745,33 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Check if a node is a valid const initializer in an ambient context.
+    /// Valid initializers are string literals, numeric literals, or negative numeric literals.
+    fn is_valid_const_initializer(&self, init_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                || k == tsz_scanner::SyntaxKind::NumericLiteral as u16 =>
+            {
+                true
+            }
+            // Allow negative numeric literals: -1, -3.14, etc.
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    if unary.operator == tsz_scanner::SyntaxKind::MinusToken as u16 {
+                        if let Some(operand) = self.ctx.arena.get(unary.operand) {
+                            return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16;
+                        }
+                    }
+                }
+                false
+            }
+            _ => false,
         }
     }
 

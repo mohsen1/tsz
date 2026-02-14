@@ -425,9 +425,14 @@ impl ParserState {
             let this_start = self.token_pos();
             let this_end = self.token_end();
             self.next_token();
-            return self
+            let this_type = self
                 .arena
                 .add_token(syntax_kind_ext::THIS_TYPE, this_start, this_end);
+            // Handle array types of this (e.g., this[], this[][])
+            if self.is_token(SyntaxKind::OpenBracketToken) {
+                return self.parse_array_type(start_pos, this_type);
+            }
+            return this_type;
         }
 
         // Handle literal types: "foo", 42, true, false
