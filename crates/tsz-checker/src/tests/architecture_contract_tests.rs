@@ -438,7 +438,9 @@ fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
 
     let ensure_apps_pos = subtype_src
         .find("self.ensure_application_symbols_resolved(source);")
-        .expect("is_subtype_of should resolve application symbols for source before relation checks");
+        .expect(
+            "is_subtype_of should resolve application symbols for source before relation checks",
+        );
     let lookup_pos = subtype_src
         .find("lookup_subtype_cache(")
         .expect("is_subtype_of should consult solver subtype cache");
