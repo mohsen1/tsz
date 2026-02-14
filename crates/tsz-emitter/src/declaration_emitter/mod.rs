@@ -24,8 +24,6 @@
 //! }
 //! ```
 
-#![allow(clippy::print_stderr)]
-
 pub mod usage_analyzer;
 
 #[cfg(test)]
@@ -37,6 +35,7 @@ use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_of
 use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
+use tracing::debug;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -281,7 +280,7 @@ impl<'a> DeclarationEmitter<'a> {
                         import.import_clause,
                     );
                     for (name, sym_id) in symbols {
-                        eprintln!(
+                        debug!(
                             "[DEBUG] prepare_import_metadata: inserting {} -> SymbolId({:?}) -> '{}'",
                             name, sym_id, module_specifier
                         );
@@ -388,15 +387,15 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Run usage analyzer if we have all required components AND haven't run yet
         if self.used_symbols.is_none() {
-            eprintln!(
+            debug!(
                 "[DEBUG] emit: type_cache.is_none()={}",
                 self.type_cache.is_none()
             );
-            eprintln!(
+            debug!(
                 "[DEBUG] emit: type_interner.is_none()={}",
                 self.type_interner.is_none()
             );
-            eprintln!(
+            debug!(
                 "[DEBUG] emit: current_arena.is_none()={}",
                 self.current_arena.is_none()
             );
@@ -407,7 +406,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.binder,
                 &self.current_arena,
             ) {
-                eprintln!(
+                debug!(
                     "[DEBUG] emit: import_name_map has {} entries: {:?}",
                     self.import_name_map.len(),
                     self.import_name_map
@@ -422,7 +421,7 @@ impl<'a> DeclarationEmitter<'a> {
                 );
                 let used = analyzer.analyze(root_idx).clone();
                 let foreign = analyzer.get_foreign_symbols();
-                eprintln!(
+                debug!(
                     "[DEBUG] emit: foreign_symbols has {} symbols",
                     foreign.len()
                 );
@@ -442,7 +441,7 @@ impl<'a> DeclarationEmitter<'a> {
             return String::new();
         };
 
-        eprintln!(
+        debug!(
             "[DEBUG] source_file has {} comments",
             source_file.comments.len()
         );
@@ -504,7 +503,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.queue_source_mapping(stmt_node);
 
         let kind = stmt_node.kind;
-        eprintln!(
+        debug!(
             "[DEBUG STATEMENT] kind={}, syntax_kind_ext::EXPORT_ASSIGNMENT={}",
             kind,
             syntax_kind_ext::EXPORT_ASSIGNMENT
@@ -2386,7 +2385,7 @@ impl<'a> DeclarationEmitter<'a> {
         if has_elided_symbols {
             // This import is being handled by the elision system via emit_auto_imports
             // Skip emitting it here to avoid duplicates
-            eprintln!(
+            debug!(
                 "[DEBUG] emit_import_declaration_if_needed: skipping import (handled by elision)"
             );
         } else {
@@ -3894,25 +3893,25 @@ impl<'a> DeclarationEmitter<'a> {
     fn group_foreign_symbols_by_module(&self) -> FxHashMap<String, Vec<SymbolId>> {
         let mut module_map: FxHashMap<String, Vec<SymbolId>> = FxHashMap::default();
 
-        eprintln!(
+        debug!(
             "[DEBUG] group_foreign_symbols_by_module: foreign_symbols = {:?}",
             self.foreign_symbols
         );
 
         if let Some(foreign_symbols) = &self.foreign_symbols {
             for &sym_id in foreign_symbols {
-                eprintln!(
+                debug!(
                     "[DEBUG] group_foreign_symbols_by_module: resolving symbol {:?}",
                     sym_id
                 );
                 if let Some(module_path) = self.resolve_symbol_module_path(sym_id) {
-                    eprintln!(
+                    debug!(
                         "[DEBUG] group_foreign_symbols_by_module: symbol {:?} -> module '{}'",
                         sym_id, module_path
                     );
                     module_map.entry(module_path).or_default().push(sym_id);
                 } else {
-                    eprintln!(
+                    debug!(
                         "[DEBUG] group_foreign_symbols_by_module: symbol {:?} -> no module path",
                         sym_id
                     );
@@ -3920,7 +3919,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        eprintln!(
+        debug!(
             "[DEBUG] group_foreign_symbols_by_module: returning {} modules",
             module_map.len()
         );
@@ -3941,7 +3940,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Group foreign symbols by their module paths
         let module_map = self.group_foreign_symbols_by_module();
-        eprintln!(
+        debug!(
             "[DEBUG] emit_auto_imports: module_map has {} entries",
             module_map.len()
         );
@@ -3950,7 +3949,7 @@ impl<'a> DeclarationEmitter<'a> {
         let mut imports: Vec<(String, Vec<String>)> = Vec::new();
 
         for (module_path, symbol_ids) in &module_map {
-            eprintln!(
+            debug!(
                 "[DEBUG] emit_auto_imports: processing module '{}' with {} symbols",
                 module_path,
                 symbol_ids.len()
@@ -3966,7 +3965,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .filter(|&&sym_id| {
                     // Skip if not in import_symbol_map (it's a local or lib symbol, not imported)
                     if !self.import_symbol_map.contains_key(&sym_id) {
-                        eprintln!(
+                        debug!(
                             "[DEBUG] emit_auto_imports: skipping symbol {:?} - not in import_symbol_map (local or lib symbol)",
                             sym_id
                         );
@@ -3977,7 +3976,7 @@ impl<'a> DeclarationEmitter<'a> {
                 })
                 .filter_map(|&sym_id| {
                     let symbol = binder.symbols.get(sym_id)?;
-                    eprintln!(
+                    debug!(
                         "[DEBUG] emit_auto_imports: found symbol '{}' (id={:?})",
                         symbol.escaped_name, sym_id
                     );
@@ -3991,7 +3990,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        eprintln!(
+        debug!(
             "[DEBUG] emit_auto_imports: collected {} imports to emit",
             imports.len()
         );
@@ -4001,7 +4000,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Emit the import statements
         for (module_path, symbol_names) in imports {
-            eprintln!(
+            debug!(
                 "[DEBUG] emit_auto_imports: emitting import from '{}' with symbols: {:?}",
                 module_path, symbol_names
             );
@@ -4029,11 +4028,11 @@ impl<'a> DeclarationEmitter<'a> {
     /// This should be called before emitting other declarations.
     fn emit_required_imports(&mut self) {
         if self.required_imports.is_empty() {
-            eprintln!("[DEBUG] emit_required_imports: no required imports");
+            debug!("[DEBUG] emit_required_imports: no required imports");
             return;
         }
 
-        eprintln!(
+        debug!(
             "[DEBUG] emit_required_imports: has {} modules: {:?}",
             self.required_imports.len(),
             self.required_imports

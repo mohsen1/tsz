@@ -139,53 +139,6 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    fn normalize_union_member(&self, mut member: TypeId) -> TypeId {
-        for _ in 0..8 {
-            let next = match self.interner.lookup(member) {
-                Some(TypeData::Lazy(def_id)) => self
-                    .interner
-                    .resolve_lazy(def_id, self.interner)
-                    .unwrap_or(member),
-                Some(TypeData::Application(_)) | Some(TypeData::Mapped(_)) => {
-                    self.interner.evaluate_type(member)
-                }
-                _ => member,
-            };
-            if next == member {
-                break;
-            }
-            member = next;
-        }
-        member
-    }
-
-    fn is_function_like_union_member(&self, member: TypeId) -> bool {
-        let member = self.normalize_union_member(member);
-        match self.interner.lookup(member) {
-            Some(TypeData::Intrinsic(IntrinsicKind::Function)) => true,
-            Some(TypeData::Function(_)) | Some(TypeData::Callable(_)) => true,
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                let apply = self.interner.intern_string("apply");
-                let call = self.interner.intern_string("call");
-                let has_apply = shape.properties.iter().any(|prop| prop.name == apply);
-                let has_call = shape.properties.iter().any(|prop| prop.name == call);
-                has_apply && has_call
-            }
-            Some(TypeData::Union(members_id)) => self
-                .interner
-                .type_list(members_id)
-                .iter()
-                .any(|&m| self.is_function_like_union_member(m)),
-            Some(TypeData::Intersection(members_id)) => self
-                .interner
-                .type_list(members_id)
-                .iter()
-                .any(|&m| self.is_function_like_union_member(m)),
-            _ => false,
-        }
-    }
-
     pub fn new(interner: &'a dyn QueryDatabase, checker: &'a mut C) -> Self {
         CallEvaluator {
             interner,
