@@ -147,7 +147,6 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-
                 return result;
             }
             return self.resolve_qualified_name(type_name_idx);
@@ -389,41 +388,36 @@ impl<'a> CheckerState<'a> {
                 // DefId in the Application's Lazy base may differ from the DefId used
                 // when resolve_lib_type_by_name registered the body. Fix this by copying
                 // the registration to the Application's actual DefId.
-                if let Some(tsz_solver::TypeKey::Application(app_id)) =
-                    self.ctx.types.lookup(result)
+                if let Some((app_base, _app_args)) =
+                    query::get_application_info(self.ctx.types, result)
+                    && let Some(app_def_id) = query::get_lazy_def_id(self.ctx.types, app_base)
                 {
-                    let app = self.ctx.types.type_application(app_id);
-                    if let Some(tsz_solver::TypeKey::Lazy(app_def_id)) =
-                        self.ctx.types.lookup(app.base)
-                    {
-                        let has_body_in_env = self
-                            .ctx
-                            .type_env
-                            .try_borrow()
-                            .map(|env| env.get_def(app_def_id).is_some())
-                            .unwrap_or(true);
-                        if !has_body_in_env && !self.ctx.lib_contexts.is_empty() {
-                            // The Application's base DefId isn't in type_env.
-                            // Re-resolve the lib type to register with the current DefId.
-                            if let Some(lib_type) = self.resolve_lib_type_by_name(name) {
-                                // lib_type is Lazy(DefId_new). Copy its registration
-                                // to the Application's actual DefId.
-                                if let Some(tsz_solver::TypeKey::Lazy(lib_def_id)) =
-                                    self.ctx.types.lookup(lib_type)
-                                {
-                                    if lib_def_id != app_def_id {
-                                        if let Ok(env) = self.ctx.type_env.try_borrow() {
-                                            let body = env.get_def(lib_def_id);
-                                            let params = env.get_def_params(lib_def_id).cloned();
-                                            if let (Some(body), Some(params)) = (body, params) {
-                                                drop(env);
-                                                if let Ok(mut env) =
-                                                    self.ctx.type_env.try_borrow_mut()
-                                                {
-                                                    env.insert_def_with_params(
-                                                        app_def_id, body, params,
-                                                    );
-                                                }
+                    let has_body_in_env = self
+                        .ctx
+                        .type_env
+                        .try_borrow()
+                        .map(|env| env.get_def(app_def_id).is_some())
+                        .unwrap_or(true);
+                    if !has_body_in_env && !self.ctx.lib_contexts.is_empty() {
+                        // The Application's base DefId isn't in type_env.
+                        // Re-resolve the lib type to register with the current DefId.
+                        if let Some(lib_type) = self.resolve_lib_type_by_name(name) {
+                            // lib_type is Lazy(DefId_new). Copy its registration
+                            // to the Application's actual DefId.
+                            if let Some(lib_def_id) =
+                                query::get_lazy_def_id(self.ctx.types, lib_type)
+                            {
+                                if lib_def_id != app_def_id {
+                                    if let Ok(env) = self.ctx.type_env.try_borrow() {
+                                        let body = env.get_def(lib_def_id);
+                                        let params = env.get_def_params(lib_def_id).cloned();
+                                        if let (Some(body), Some(params)) = (body, params) {
+                                            drop(env);
+                                            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+                                            {
+                                                env.insert_def_with_params(
+                                                    app_def_id, body, params,
+                                                );
                                             }
                                         }
                                     }
@@ -2486,19 +2480,13 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|sig| {
                 {
-                    use tsz_solver::types::TypeKey;
                     let key = self.ctx.types.lookup(sig.return_type);
-                    let app_info = match &key {
-                        Some(TypeKey::Application(app_id)) => {
-                            let app = self.ctx.types.type_application(*app_id);
-                            let base_key = self.ctx.types.lookup(app.base);
-                            format!(
-                                "base={:?} base_key={:?} args={:?}",
-                                app.base, base_key, app.args
-                            )
-                        }
-                        _ => String::new(),
-                    };
+                    let app_info = query::get_application_info(self.ctx.types, sig.return_type)
+                        .map(|(base, args)| {
+                            let base_key = self.ctx.types.lookup(base);
+                            format!("base={:?} base_key={:?} args={:?}", base, base_key, args)
+                        })
+                        .unwrap_or_default();
                     tracing::trace!(
                         ?sig.return_type,
                         ?key,
@@ -2522,19 +2510,13 @@ impl<'a> CheckerState<'a> {
                 }
                 let result = self.instantiate_constructor_signature(sig, &args);
                 {
-                    use tsz_solver::types::TypeKey;
                     let key = self.ctx.types.lookup(result.return_type);
-                    let app_info = match &key {
-                        Some(TypeKey::Application(app_id)) => {
-                            let app = self.ctx.types.type_application(*app_id);
-                            let base_key = self.ctx.types.lookup(app.base);
-                            format!(
-                                "base={:?} base_key={:?} args={:?}",
-                                app.base, base_key, app.args
-                            )
-                        }
-                        _ => String::new(),
-                    };
+                    let app_info = query::get_application_info(self.ctx.types, result.return_type)
+                        .map(|(base, args)| {
+                            let base_key = self.ctx.types.lookup(base);
+                            format!("base={:?} base_key={:?} args={:?}", base, base_key, args)
+                        })
+                        .unwrap_or_default();
                     tracing::trace!(
                         ?result.return_type,
                         ?key,
@@ -3128,10 +3110,7 @@ impl<'a> CheckerState<'a> {
             let base_type = self.get_type_of_node(expr_idx);
 
             // Check if this is a type parameter
-            if matches!(
-                self.ctx.types.lookup(base_type),
-                Some(tsz_solver::TypeKey::TypeParameter(_))
-            ) {
+            if query::is_type_parameter(self.ctx.types, base_type) {
                 extends_type_param = Some(base_type);
                 break;
             }
