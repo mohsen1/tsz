@@ -921,6 +921,7 @@ impl<'a> CheckerState<'a> {
         matches!(
             parent_node.kind,
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT
+                || k == syntax_kind_ext::LABELED_STATEMENT
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 || k == syntax_kind_ext::CALL_EXPRESSION

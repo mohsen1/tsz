@@ -1779,6 +1779,11 @@ impl<'a> CheckerState<'a> {
 
             if self.is_type_only_import_equals_namespace_expr(idx) {
                 self.error_namespace_used_as_value_at(name, idx);
+                if let Some(sym_id) = self.resolve_identifier_symbol(idx)
+                    && self.alias_resolves_to_type_only(sym_id)
+                {
+                    self.error_type_only_value_at(name, idx);
+                }
                 return TypeId::ERROR;
             }
 

@@ -1259,6 +1259,11 @@ impl<'a> CheckerState<'a> {
             if self.is_type_only_import_equals_namespace_expr(access.expression) {
                 if let Some(ns_name) = self.entity_name_text(access.expression) {
                     self.error_namespace_used_as_value_at(&ns_name, access.expression);
+                    if let Some(sym_id) = self.resolve_identifier_symbol(access.expression)
+                        && self.alias_resolves_to_type_only(sym_id)
+                    {
+                        self.error_type_only_value_at(&ns_name, access.expression);
+                    }
                 }
                 return TypeId::ERROR;
             }

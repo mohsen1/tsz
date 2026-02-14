@@ -3791,7 +3791,8 @@ impl<'a> CheckerState<'a> {
     /// // alias_resolves_to_type_only(bar) → false
     /// ```
     pub(crate) fn alias_resolves_to_type_only(&self, sym_id: SymbolId) -> bool {
-        let symbol = match self.ctx.binder.get_symbol(sym_id) {
+        let lib_binders = self.get_lib_binders();
+        let symbol = match self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
             Some(symbol) => symbol,
             None => return false,
         };
@@ -3809,7 +3810,7 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        let target_symbol = match self.ctx.binder.get_symbol(target) {
+        let target_symbol = match self.ctx.binder.get_symbol_with_libs(target, &lib_binders) {
             Some(target_symbol) => target_symbol,
             None => return false,
         };

@@ -229,6 +229,12 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // Check for type-only symbols used as values in assignment position (TS2693)
+        if symbol.flags & symbol_flags::TYPE != 0 && symbol.flags & symbol_flags::VALUE == 0 {
+            self.error_type_only_value_at(name, inner);
+            return true;
+        }
+
         // Check if this symbol is a namespace/module (TS2708)
         if symbol.flags & symbol_flags::MODULE != 0 {
             self.error_namespace_used_as_value_at(name, inner);
