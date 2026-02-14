@@ -2487,7 +2487,8 @@ fn collect_diagnostics(
 
                 // Filter diagnostics for JS files without checkJs
                 let is_js = is_js_file(Path::new(&file.file_name));
-                let should_filter_type_errors = is_js && !options.check_js;
+                let has_ts_check_pragma = js_file_has_ts_check_pragma(file);
+                let should_filter_type_errors = is_js && !options.check_js && !has_ts_check_pragma;
                 let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
                 if should_filter_type_errors {
@@ -2730,7 +2731,8 @@ fn check_file_for_parallel(
 
         // Filter diagnostics for JS files without checkJs
         let is_js = is_js_file(Path::new(&file.file_name));
-        let should_filter_type_errors = is_js && !check_js;
+        let has_ts_check_pragma = js_file_has_ts_check_pragma(file);
+        let should_filter_type_errors = is_js && !check_js && !has_ts_check_pragma;
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
         if should_filter_type_errors {
@@ -2782,6 +2784,20 @@ fn compute_export_hash(
     }
 
     hasher.finish()
+}
+
+fn js_file_has_ts_check_pragma(file: &BoundFile) -> bool {
+    let Some(source) = file.arena.get_source_file_at(file.source_file) else {
+        return false;
+    };
+    let text = source.text.as_ref().to_ascii_lowercase();
+    let ts_check = text.rfind("@ts-check");
+    let ts_no_check = text.rfind("@ts-nocheck");
+    match (ts_check, ts_no_check) {
+        (Some(check_idx), Some(no_check_idx)) => check_idx > no_check_idx,
+        (Some(_), None) => true,
+        _ => false,
+    }
 }
 
 fn is_exported_symbol(symbols: &tsz::binder::SymbolArena, sym_id: SymbolId) -> bool {
