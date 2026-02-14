@@ -9,6 +9,7 @@ pub(crate) mod dispatch;
 pub(crate) mod flow_analysis;
 pub(crate) mod iterable_checker;
 pub(crate) mod object_type;
+pub(crate) mod promise_checker;
 pub(crate) mod state;
 pub(crate) mod state_type_analysis;
 pub(crate) mod state_type_environment;

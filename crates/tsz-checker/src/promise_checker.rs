@@ -9,13 +9,13 @@
 //! - Async function return type checking
 //! - Promise-like type recognition (Promise, PromiseLike, custom promises)
 
+use crate::query_boundaries::promise_checker as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver as solver_narrowing;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{PromiseTypeKind, classify_promise_type, get_union_members};
 
 // =============================================================================
 // Promise and Async Type Checking Methods
@@ -41,8 +41,8 @@ impl<'a> CheckerState<'a> {
     /// - Promise<T> type applications
     /// - Object types from lib files (conservatively assumed to be Promise-like)
     pub fn type_ref_is_promise_like(&self, type_id: TypeId) -> bool {
-        match classify_promise_type(self.ctx.types, type_id) {
-            PromiseTypeKind::Lazy(def_id) => {
+        match query::classify_promise_type(self.ctx.types, type_id) {
+            query::PromiseTypeKind::Lazy(def_id) => {
                 // Phase 4.2: Use DefId -> SymbolId bridge
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -51,18 +51,18 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
-            PromiseTypeKind::Application { base, .. } => {
+            query::PromiseTypeKind::Application { base, .. } => {
                 // Check if the base type of the application is a Promise-like type
                 self.type_ref_is_promise_like(base)
             }
-            PromiseTypeKind::Object(_) => {
+            query::PromiseTypeKind::Object(_) => {
                 // For Object types (interfaces from lib files), we conservatively assume
                 // they might be Promise-like. This avoids false positives for Promise<void>
                 // return types from lib files where we can't easily determine the interface name.
                 // A more precise check would require tracking the original type reference.
                 true
             }
-            PromiseTypeKind::Union(_) | PromiseTypeKind::NotPromise => false,
+            query::PromiseTypeKind::Union(_) | query::PromiseTypeKind::NotPromise => false,
         }
     }
 
@@ -75,13 +75,13 @@ impl<'a> CheckerState<'a> {
     /// It does NOT use the conservative assumption that all Object types might be Promise-like.
     /// This ensures TS2705 is correctly emitted for async functions with non-Promise return types.
     pub fn is_promise_type(&self, type_id: TypeId) -> bool {
-        match classify_promise_type(self.ctx.types, type_id) {
-            PromiseTypeKind::Application { base, .. } => {
+        match query::classify_promise_type(self.ctx.types, type_id) {
+            query::PromiseTypeKind::Application { base, .. } => {
                 // For Application types, STRICTLY check if the base symbol is Promise/PromiseLike
                 // We do NOT use type_ref_is_promise_like here because it conservatively assumes
                 // all Object types are Promise-like, which causes false negatives for TS2705
-                match classify_promise_type(self.ctx.types, base) {
-                    PromiseTypeKind::Lazy(def_id) => {
+                match query::classify_promise_type(self.ctx.types, base) {
+                    query::PromiseTypeKind::Lazy(def_id) => {
                         // Phase 4.2: Use DefId -> SymbolId bridge
                         if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -91,13 +91,13 @@ impl<'a> CheckerState<'a> {
                         false
                     }
                     // Handle nested applications (e.g., Promise<SomeType<T>>)
-                    PromiseTypeKind::Application {
+                    query::PromiseTypeKind::Application {
                         base: inner_base, ..
                     } => self.is_promise_type(inner_base),
                     _ => false,
                 }
             }
-            PromiseTypeKind::Lazy(def_id) => {
+            query::PromiseTypeKind::Lazy(def_id) => {
                 // Phase 4.2: Use DefId -> SymbolId bridge
                 // Check for direct Promise or PromiseLike reference (this also handles type aliases)
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
@@ -107,9 +107,9 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
-            PromiseTypeKind::Object(_)
-            | PromiseTypeKind::Union(_)
-            | PromiseTypeKind::NotPromise => false,
+            query::PromiseTypeKind::Object(_)
+            | query::PromiseTypeKind::Union(_)
+            | query::PromiseTypeKind::NotPromise => false,
         }
     }
 
@@ -146,8 +146,8 @@ impl<'a> CheckerState<'a> {
     /// - Type aliases that expand to Promise<T>
     /// - Classes that extend Promise<T>
     pub fn promise_like_return_type_argument(&mut self, return_type: TypeId) -> Option<TypeId> {
-        if let PromiseTypeKind::Application { base, args, .. } =
-            classify_promise_type(self.ctx.types, return_type)
+        if let query::PromiseTypeKind::Application { base, args, .. } =
+            query::classify_promise_type(self.ctx.types, return_type)
         {
             // Check for synthetic PROMISE_BASE type (created when Promise symbol wasn't resolved)
             // This allows us to extract T from Promise<T> even without full lib files
@@ -168,8 +168,8 @@ impl<'a> CheckerState<'a> {
             // and we have type arguments, return the first one
             // This handles cases where Promise doesn't have expected flags or where
             // promise_like_type_argument_from_base fails for other reasons
-            match classify_promise_type(self.ctx.types, base) {
-                PromiseTypeKind::Lazy(def_id) => {
+            match query::classify_promise_type(self.ctx.types, base) {
+                query::PromiseTypeKind::Lazy(def_id) => {
                     // Phase 4.2: Use DefId -> SymbolId bridge
                     if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -204,8 +204,8 @@ impl<'a> CheckerState<'a> {
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
         // Phase 4.2: Handle Lazy variant properly
-        let sym_id = match classify_promise_type(self.ctx.types, base) {
-            PromiseTypeKind::Lazy(def_id) => {
+        let sym_id = match query::classify_promise_type(self.ctx.types, base) {
+            query::PromiseTypeKind::Lazy(def_id) => {
                 // Use DefId -> SymbolId bridge
                 self.ctx.def_to_symbol_id(def_id)?
             }
@@ -317,11 +317,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let lowered = self.lower_type_with_bindings(type_alias.type_node, bindings);
-        if let PromiseTypeKind::Application {
+        if let query::PromiseTypeKind::Application {
             base: lowered_base,
             args: lowered_args,
             ..
-        } = classify_promise_type(self.ctx.types, lowered)
+        } = query::classify_promise_type(self.ctx.types, lowered)
         {
             return self.promise_like_type_argument_from_base(
                 lowered_base,
@@ -472,7 +472,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for union types that include void/undefined using the solver helper
-        if let Some(members) = get_union_members(self.ctx.types, return_type) {
+        if let Some(members) = query::union_members(self.ctx.types, return_type) {
             for member in members.iter() {
                 if *member == TypeId::VOID || *member == TypeId::UNDEFINED {
                     return false;
@@ -565,10 +565,8 @@ impl<'a> CheckerState<'a> {
     /// Returns `Some(TReturn)` if the type is a Generator/AsyncGenerator/Iterator/AsyncIterator
     /// type application with at least 2 type arguments, otherwise `None`.
     pub fn get_generator_return_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
-        use tsz_solver::type_queries::get_type_application;
-
         // Check if it's a type application (e.g., Generator<Y, R, N>)
-        let app = get_type_application(self.ctx.types, type_id)?;
+        let app = query::type_application(self.ctx.types, type_id)?;
 
         // Need at least 2 type arguments (Y and R)
         if app.args.len() < 2 {
@@ -591,9 +589,7 @@ impl<'a> CheckerState<'a> {
     /// For `yield expr` in a generator with an explicit return annotation,
     /// `expr` must be assignable to TYield (the first type argument).
     pub fn get_generator_yield_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
-        use tsz_solver::type_queries::get_type_application;
-
-        let app = get_type_application(self.ctx.types, type_id)?;
+        let app = query::type_application(self.ctx.types, type_id)?;
 
         if app.args.is_empty() {
             return None;
@@ -611,8 +607,7 @@ impl<'a> CheckerState<'a> {
     fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {
         // Fast path: Check for Lazy types to known Generator-like types
         {
-            if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id)
-            {
+            if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
                 // Use def_to_symbol_id to find the symbol
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     if let Some(symbol) = self.get_symbol_globally(sym_id) {
