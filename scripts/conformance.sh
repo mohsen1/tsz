@@ -45,6 +45,8 @@ Options:
   --max N           Maximum number of tests to run (default: all)
   --offset N        Skip first N tests (default: 0)
   --verbose         Show per-test results
+  --compare-fingerprints  Compare full diagnostic fingerprints (requires regenerated cache)
+  --print-fingerprints    Print fingerprint deltas for failed tests
   --filter PAT      Filter test files by pattern
   --error-code N    Only show tests with this error code (e.g., 2304)
   --no-cache        Force cache regeneration even if cache exists
@@ -58,6 +60,7 @@ Examples:
   ./scripts/conformance.sh run --max 100              # Test first 100 files
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
   ./scripts/conformance.sh run --error-code 2304      # Only show tests with TS2304
+  ./scripts/conformance.sh run --compare-fingerprints --print-fingerprints  # Rich diagnostic parity
   ./scripts/conformance.sh analyze                    # Full analysis with impact report
   ./scripts/conformance.sh analyze --offset 0 --max 3101  # Analyze slice failures
   ./scripts/conformance.sh analyze --category false-positive  # Show only false positives
@@ -264,6 +267,7 @@ run_tests() {
     # Filter out --workers and --no-cache from passed args to avoid duplication
     local extra_args=()
     local verbose=false
+    local print_fingerprints=false
     local has_error_code=false
     local has_max=false
     local prev_arg=""
@@ -291,6 +295,9 @@ run_tests() {
         if [[ "$arg" == --verbose ]]; then
             verbose=true
         fi
+        if [[ "$arg" == --print-fingerprints ]]; then
+            print_fingerprints=true
+        fi
         # Check for --error-code (either --error-code N or --error-code=N)
         if [[ "$arg" == --error-code* ]] || [ "$prev_arg" = "--error-code" ]; then
             has_error_code=true
@@ -306,6 +313,9 @@ run_tests() {
     # Always capture expected/actual/config (needed for last 10 failing tests section)
     extra_args+=(--print-test)
     local show_per_test=$verbose
+    if [ "$print_fingerprints" = true ]; then
+        show_per_test=true
+    fi
 
     # Always capture output to extract failing tests and their details
     local tmpfile
@@ -320,7 +330,7 @@ run_tests() {
         --workers $WORKERS \
         "${extra_args[@]}" | tee "$tmpfile" | if [ "$show_per_test" = true ]; then
             # --verbose: show all lines including expected/actual/options
-            grep -E '^(PASS|FAIL|SKIP|CRASH|⏱️) |^  (expected|actual|options):' 2>/dev/null || true
+            grep -E '^(PASS|FAIL|SKIP|CRASH|⏱️) |^  (expected|actual|options):|^  (missing-fingerprints|extra-fingerprints):|^    - ' 2>/dev/null || true
         else
             # default: only show FAIL/CRASH/TIMEOUT file names (no expected/actual/options)
             grep -E '^(FAIL|CRASH|⏱️) ' 2>/dev/null || true
