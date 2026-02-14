@@ -1,8 +1,8 @@
 //! Parser state - expression parsing methods
 
 use super::state::{
-    CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR,
-    CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
+    CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN,
+    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
 };
 use crate::parser::{NodeIndex, NodeList, node::*, node_flags, syntax_kind_ext};
 use tsz_common::interner::Atom;
@@ -1820,8 +1820,13 @@ impl ParserState {
                 };
 
                 // Optional initializer: = value
+                // Per spec, BindingElement initializers always use [+In],
+                // so 'in' is allowed even inside for-statement headers.
                 let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+                    let saved = self.context_flags;
+                    self.context_flags &= !CONTEXT_FLAG_DISALLOW_IN;
                     let init = self.parse_assignment_expression();
+                    self.context_flags = saved;
                     if init.is_none() {
                         // Emit TS1109 for missing object binding initializer: {x = missing}
                         self.error_expression_expected();
@@ -1918,8 +1923,13 @@ impl ParserState {
             }
 
             // Optional initializer: = value
+            // Per spec, BindingElement initializers always use [+In],
+            // so 'in' is allowed even inside for-statement headers.
             let initializer = if !dot_dot_dot && self.parse_optional(SyntaxKind::EqualsToken) {
+                let saved = self.context_flags;
+                self.context_flags &= !CONTEXT_FLAG_DISALLOW_IN;
                 let init = self.parse_assignment_expression();
+                self.context_flags = saved;
                 if init.is_none() {
                     // Emit TS1109 for missing binding initializer: [x = missing]
                     self.error_expression_expected();
