@@ -579,18 +579,23 @@ fn process_test_file(
 
     // Read and decode file content (UTF-8/UTF-8 BOM/UTF-16 BOM).
     let bytes = fs::read(path)?;
-    let content = match tsz_conformance::text_decode::decode_source_text(&bytes) {
-        Ok(s) => s,
-        Err(_) => return Ok(None),
-    };
+    let (content, filenames, options) =
+        match tsz_conformance::text_decode::decode_source_text(&bytes) {
+            tsz_conformance::text_decode::DecodedSourceText::Text(content) => {
+                // Parse directives
+                let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
 
-    // Parse directives
-    let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
+                // Check if should skip
+                if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
+                    return Ok(None);
+                }
 
-    // Check if should skip
-    if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
-        return Ok(None);
-    }
+                (content, parsed.directives.filenames, parsed.directives.options)
+            }
+            tsz_conformance::text_decode::DecodedSourceText::Binary(bytes) => {
+                (String::from_utf8_lossy(&bytes).into_owned(), Vec::new(), HashMap::new())
+            }
+        };
 
     // Get file metadata
     let metadata = fs::metadata(path)?;
@@ -616,15 +621,13 @@ fn process_test_file(
 
     // Create tsconfig.json with parsed @-directives unless test provides its own.
     // This ensures tsserver respects options like @target: es6, @module: commonjs, etc.
-    let has_tsconfig_file = parsed
-        .directives
-        .filenames
+    let has_tsconfig_file = filenames
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
     if !has_tsconfig_file {
         let tsconfig_path = test_dir.join("tsconfig.json");
         let tsconfig_content = serde_json::json!({
-            "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
+            "compilerOptions": convert_options_to_tsconfig(&options),
             "include": ["*.ts", "*.tsx", "**/*.ts", "**/*.tsx"],
             "exclude": ["node_modules"]
         });
@@ -638,7 +641,7 @@ fn process_test_file(
     let mut opened_files: Vec<String> = Vec::new();
 
     // Write and open additional files from @filename directives first
-    for (filename, file_content) in &parsed.directives.filenames {
+    for (filename, file_content) in &filenames {
         // Sanitize filename to prevent path traversal
         let sanitized = filename
             .replace("..", "_")

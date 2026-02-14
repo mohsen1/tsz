@@ -170,6 +170,69 @@ pub fn prepare_test_dir(
     Ok(PreparedTest { temp_dir })
 }
 
+/// Prepare a test directory from raw (non-UTF8) bytes.
+///
+/// Binary fixtures are intentionally preserved as bytes so `tsz` can run its
+/// own binary-file diagnostics (TS1490) on the test content.
+pub fn prepare_binary_test_dir(
+    bytes: &[u8],
+    ext: &str,
+    options: &HashMap<String, String>,
+) -> anyhow::Result<PreparedTest> {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new()?;
+    let dir_path = temp_dir.path();
+
+    let main_file = dir_path.join(format!("test.{}", ext));
+    std::fs::write(&main_file, bytes)?;
+
+    let tsconfig_path = dir_path.join("tsconfig.json");
+    let has_tsconfig_file = options
+        .get("tsconfig")
+        .is_some_and(|value| value == "false");
+
+    if !has_tsconfig_file {
+        let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
+        let check_js = options
+            .get("checkJs")
+            .or_else(|| options.get("checkjs"))
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
+
+        let include = if allow_js {
+            serde_json::json!([
+                "*.ts", "*.tsx", "*.cts", "*.mts", "*.js", "*.jsx", "*.mjs", "*.cjs", "**/*.ts",
+                "**/*.tsx", "**/*.cts", "**/*.mts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+            ])
+        } else {
+            serde_json::json!([
+                "*.ts",
+                "*.tsx",
+                "*.cts",
+                "*.mts",
+                "**/*.ts",
+                "**/*.tsx",
+                "**/*.cts",
+                "**/*.mts"
+            ])
+        };
+
+        let tsconfig_content = serde_json::json!({
+            "compilerOptions": convert_options_to_tsconfig(options),
+            "include": include,
+            "exclude": ["node_modules"]
+        });
+        std::fs::write(
+            &tsconfig_path,
+            serde_json::to_string_pretty(&tsconfig_content)?,
+        )?;
+    }
+
+    Ok(PreparedTest { temp_dir })
+}
+
 /// Parse tsz process output into a CompilationResult.
 pub fn parse_tsz_output(
     output: &std::process::Output,
