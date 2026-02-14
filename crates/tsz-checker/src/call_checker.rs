@@ -13,7 +13,7 @@
 
 use crate::query_boundaries::call_checker::{
     array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type,
-    tuple_elements_for_type,
+    resolve_call_with_context, tuple_elements_for_type,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -288,7 +288,7 @@ impl<'a> CheckerState<'a> {
         signatures: &[tsz_solver::CallSignature],
         force_bivariant_callbacks: bool,
     ) -> Option<TypeId> {
-        use tsz_solver::{CallEvaluator, CallResult, CompatChecker, FunctionShape};
+        use tsz_solver::{CallResult, FunctionShape};
 
         if signatures.is_empty() {
             return None;
@@ -369,14 +369,15 @@ impl<'a> CheckerState<'a> {
                         func_type
                     }
                 };
-                let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-                self.ctx.configure_compat_checker(&mut checker);
-                let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-                evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
-                // Pass contextual type for generic type inference
-                // Example: `let x: string = id(42)` should infer T = string from context
-                evaluator.set_contextual_type(self.ctx.contextual_type);
-                evaluator.resolve_call(resolved_func_type, &arg_types)
+                resolve_call_with_context(
+                    self.ctx.types,
+                    &self.ctx,
+                    &*env,
+                    resolved_func_type,
+                    &arg_types,
+                    force_bivariant_callbacks,
+                    self.ctx.contextual_type,
+                )
             };
 
             match &result {
@@ -462,12 +463,15 @@ impl<'a> CheckerState<'a> {
                         func_type
                     }
                 };
-                let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-                self.ctx.configure_compat_checker(&mut checker);
-                let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-                evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
-                evaluator.set_contextual_type(self.ctx.contextual_type);
-                evaluator.resolve_call(resolved_func_type, &sig_arg_types)
+                resolve_call_with_context(
+                    self.ctx.types,
+                    &self.ctx,
+                    &*env,
+                    resolved_func_type,
+                    &sig_arg_types,
+                    force_bivariant_callbacks,
+                    self.ctx.contextual_type,
+                )
             };
 
             if let CallResult::Success(return_type) = result {

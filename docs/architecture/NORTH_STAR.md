@@ -255,6 +255,30 @@ impl AnyPropagationRules {
 
 **Key Principle:** `any` should NOT silence structural mismatches. While `any` is TypeScript's escape hatch, the Lawyer layer ensures real errors are still caught.
 
+### 3.3.1 TS2322 Parity Strategy (Primary Workstream)
+
+`TS2322` is the highest-impact parity surface and must follow a strict pipeline:
+
+1. **Relation First (Solver)**  
+   Checker asks Solver relation queries (`Assignable`/`Subtype`) and does not run custom structural checks.
+2. **Reason Second (Solver Explain)**  
+   When relation fails, Checker asks Solver for a structured failure reason and renders diagnostics from it.
+3. **Location/Message Last (Checker)**  
+   Checker owns source span selection, suppression policy, and TS code/message mapping.
+
+**Architecture Requirements for TS2322 paths:**
+
+- All call/new/assignment comparability checks must go through checker `query_boundaries` wrappers.
+- Checker modules must not construct `CallEvaluator` or run ad-hoc compatibility logic directly.
+- Checker must centralize suppression and prioritization policy (e.g. weak unions, excess properties, `ERROR/ANY/UNKNOWN` cascades).
+- `DefId -> TypeEnvironment` resolution must be stabilized before relation checks so `Lazy(DefId)` types resolve consistently.
+
+**Implementation Direction:**
+
+- Keep relation policy configuration in one place (`pack_relation_flags` + query policy).
+- Reuse a single assignability mismatch gate in checker code paths to avoid divergent TS2322 behavior.
+- Expand boundary helpers rather than adding solver-specific constructions in checker files.
+
 ### 3.4 Dependency Direction Rules
 
 The architectural direction is strict and one-way. This is the canonical dependency policy.

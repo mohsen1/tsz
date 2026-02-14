@@ -2726,6 +2726,11 @@ impl<'a> CheckerContext<'a> {
         self.compiler_options.exact_optional_property_types
     }
 
+    /// Check if sound mode is enabled.
+    pub fn sound_mode(&self) -> bool {
+        self.compiler_options.sound_mode
+    }
+
     /// Pack the checker's compiler options into a `u16` bitmask for use as a
     /// `RelationCacheKey` flags field. This is the single source of truth for
     /// flag packing — call this instead of manually constructing the bitmask.

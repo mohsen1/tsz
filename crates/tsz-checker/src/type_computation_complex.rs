@@ -4,6 +4,7 @@
 //! containing complex type computation methods for new expressions,
 //! call expressions, constructability, union/keyof types, and identifiers.
 
+use crate::query_boundaries::call_checker;
 use crate::query_boundaries::type_computation_complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
@@ -298,8 +299,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::types::diagnostics::diagnostic_codes;
-
-        use tsz_solver::{CallEvaluator, CallResult, CompatChecker};
+        use tsz_solver::CallResult;
 
         let Some(new_expr) = self.ctx.arena.get_call_expr_at(idx) else {
             return TypeId::ERROR; // Missing new expression data - propagate error
@@ -426,10 +426,14 @@ impl<'a> CheckerState<'a> {
         // Delegate to Solver for constructor resolution
         let result = {
             let env = self.ctx.type_env.borrow();
-            let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            self.ctx.configure_compat_checker(&mut checker);
-            let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-            evaluator.resolve_new(constructor_type, &arg_types)
+            call_checker::resolve_new_with_context(
+                self.ctx.types,
+                &self.ctx,
+                &*env,
+                constructor_type,
+                &arg_types,
+                false,
+            )
         };
 
         match result {
@@ -1072,7 +1076,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_call_expression_inner(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_solver::{CallEvaluator, CompatChecker, instantiate_type};
+        use tsz_solver::instantiate_type;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -1255,10 +1259,8 @@ impl<'a> CheckerState<'a> {
         let callee_type_for_shape = self.resolve_ref_type(callee_type_for_resolution);
 
         // Extract function shape to check if this is a generic call that needs two-pass inference
-        let callee_shape = CallEvaluator::<CompatChecker>::get_contextual_signature(
-            self.ctx.types,
-            callee_type_for_shape,
-        );
+        let callee_shape =
+            call_checker::get_contextual_signature(self.ctx.types, callee_type_for_shape);
         let is_generic_call = callee_shape
             .as_ref()
             .is_some_and(|s| !s.type_params.is_empty())
@@ -1306,17 +1308,15 @@ impl<'a> CheckerState<'a> {
                     // Use the solver to infer type parameters from non-contextual arguments only.
                     let substitution = {
                         let env = self.ctx.type_env.borrow();
-                        let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-                        self.ctx.configure_compat_checker(&mut checker);
-                        let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-
-                        // Set contextual type for downward inference (e.g., `let x: string = id(...)`).
-                        if let Some(ctx_type) = self.ctx.contextual_type {
-                            evaluator.set_contextual_type(Some(ctx_type));
-                        }
-
                         // Run Round 1 inference and get substitution with fixed type variables.
-                        evaluator.compute_contextual_types(&shape, &round1_arg_types)
+                        call_checker::compute_contextual_types_with_context(
+                            self.ctx.types,
+                            &self.ctx,
+                            &*env,
+                            &shape,
+                            &round1_arg_types,
+                            self.ctx.contextual_type,
+                        )
                     };
 
                     // === Pre-evaluate instantiated parameter types ===
@@ -1379,7 +1379,7 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        // Use CallEvaluator to resolve the call
+        // Delegate the call resolution to solver boundary helpers.
         self.ensure_application_symbols_resolved(callee_type_for_resolution);
         for &arg_type in &arg_types {
             self.ensure_application_symbols_resolved(arg_type);
@@ -1429,16 +1429,27 @@ impl<'a> CheckerState<'a> {
 
         let result = {
             let env = self.ctx.type_env.borrow();
-            let mut checker = CompatChecker::with_resolver(self.ctx.types, &*env);
-            self.ctx.configure_compat_checker(&mut checker);
-            let mut evaluator = CallEvaluator::new(self.ctx.types, &mut checker);
-            evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
             // super() calls are constructor calls, not function calls.
             // Use resolve_new() which checks construct signatures instead of call signatures.
             if is_super_call {
-                evaluator.resolve_new(callee_type_for_call, &arg_types)
+                call_checker::resolve_new_with_context(
+                    self.ctx.types,
+                    &self.ctx,
+                    &*env,
+                    callee_type_for_call,
+                    &arg_types,
+                    force_bivariant_callbacks,
+                )
             } else {
-                evaluator.resolve_call(callee_type_for_call, &arg_types)
+                call_checker::resolve_call_with_context(
+                    self.ctx.types,
+                    &self.ctx,
+                    &*env,
+                    callee_type_for_call,
+                    &arg_types,
+                    force_bivariant_callbacks,
+                    None,
+                )
             }
         };
 

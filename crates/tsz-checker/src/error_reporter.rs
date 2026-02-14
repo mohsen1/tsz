@@ -158,12 +158,7 @@ impl<'a> CheckerState<'a> {
 
         // Use the solver's explain API to get the detailed reason
         // Use the type environment to resolve TypeQuery and Ref types
-        let reason = {
-            let env = self.ctx.type_env.borrow();
-            let mut checker = tsz_solver::CompatChecker::with_resolver(self.ctx.types, &*env);
-            self.ctx.configure_compat_checker(&mut checker);
-            checker.explain_failure(source, target)
-        };
+        let reason = self.explain_assignability_failure(source, target);
 
         if tracing::enabled!(Level::TRACE) {
             let source_type = self.format_type(source);

@@ -27,7 +27,8 @@
 
 use crate::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
-    object_shape_for_type, tuple_elements_for_type, union_members_for_type,
+    are_types_mutually_subtype_with_env, object_shape_for_type, tuple_elements_for_type,
+    union_members_for_type,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use crate::types::diagnostics::Diagnostic;
@@ -1464,9 +1465,16 @@ impl<'a> CheckerState<'a> {
                 if let Some(prop_type) = member_prop_type {
                     // Keep this member if the sibling's narrowed type overlaps
                     // with the member's property type
-                    prop_type == sib_narrowed
-                        || tsz_solver::is_subtype_of(self.ctx.types, sib_narrowed, prop_type)
-                        || tsz_solver::is_subtype_of(self.ctx.types, prop_type, sib_narrowed)
+                    prop_type == sib_narrowed || {
+                        let env = self.ctx.type_env.borrow();
+                        are_types_mutually_subtype_with_env(
+                            self.ctx.types,
+                            &*env,
+                            sib_narrowed,
+                            prop_type,
+                            self.ctx.strict_null_checks(),
+                        )
+                    }
                 } else {
                     true // Keep if we can't determine
                 }
