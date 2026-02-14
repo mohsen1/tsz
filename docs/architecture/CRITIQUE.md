@@ -482,6 +482,9 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
   * Added focused regression tests:
     * architecture guard assertions for `context`, `state_type_resolution`, and `type_checking_queries` to prevent direct `TypeKey::Lazy`/`TypeKey::TypeParameter` interning in these helpers
     * solver interner test covering `lazy` and `type_param` constructor behavior
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Migrated `state_checking_members` missing-name type-parameter scope construction away from direct `intern(TypeKey::TypeParameter(...))` calls to solver constructor API (`types.type_param(...)`).
+  * Extended checker architecture guard coverage so `state_checking_members` is explicitly checked for `TypeKey::TypeParameter` regressions.
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
   * Add CI guard that fails on checker `TypeKey` imports/usages.

@@ -1731,14 +1731,12 @@ impl<'a> CheckerState<'a> {
                     let mut param_bindings = Vec::new();
                     for param_name in &infer_params {
                         let atom = self.ctx.types.intern_string(param_name);
-                        let type_id = self.ctx.types.intern(tsz_solver::TypeKey::TypeParameter(
-                            tsz_solver::TypeParamInfo {
-                                name: atom,
-                                constraint: None,
-                                default: None,
-                                is_const: false,
-                            },
-                        ));
+                        let type_id = self.ctx.types.type_param(tsz_solver::TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        });
                         let previous = self
                             .ctx
                             .type_parameter_scope
@@ -1800,14 +1798,12 @@ impl<'a> CheckerState<'a> {
                     {
                         let name = ident.escaped_text.clone();
                         let atom = self.ctx.types.intern_string(&name);
-                        let type_id = self.ctx.types.intern(tsz_solver::TypeKey::TypeParameter(
-                            tsz_solver::TypeParamInfo {
-                                name: atom,
-                                constraint: None,
-                                default: None,
-                                is_const: false,
-                            },
-                        ));
+                        let type_id = self.ctx.types.type_param(tsz_solver::TypeParamInfo {
+                            name: atom,
+                            constraint: None,
+                            default: None,
+                            is_const: false,
+                        });
                         let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
                         param_binding = Some((name, previous));
                     }
@@ -1867,7 +1863,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_parameters: &Option<tsz_parser::parser::NodeList>,
     ) -> Vec<(String, Option<TypeId>)> {
-        use tsz_solver::{TypeKey, TypeParamInfo};
+        use tsz_solver::TypeParamInfo;
 
         let Some(list) = type_parameters else {
             return Vec::new();
@@ -1889,12 +1885,12 @@ impl<'a> CheckerState<'a> {
             };
             let name = ident.escaped_text.clone();
             let atom = self.ctx.types.intern_string(&name);
-            let type_id = self.ctx.types.intern(TypeKey::TypeParameter(TypeParamInfo {
+            let type_id = self.ctx.types.type_param(TypeParamInfo {
                 name: atom,
                 constraint: None,
                 default: None,
                 is_const: false,
-            }));
+            });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous));
         }
