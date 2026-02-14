@@ -88,10 +88,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeKey::TypeParameter(_)
             | TypeKey::Infer(_)
             | TypeKey::KeyOf(_)
-            | TypeKey::IndexAccess(_, _) => self.interner().intern(TypeKey::StringIntrinsic {
-                kind,
-                type_arg: evaluated_arg,
-            }),
+            | TypeKey::IndexAccess(_, _) => self.interner().string_intrinsic(kind, evaluated_arg),
 
             // Handle chained string intrinsics: Uppercase<Lowercase<T>>
             // The inner intrinsic already wraps the type, so wrap again with outer
@@ -102,10 +99,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Wrap the already-evaluated intrinsic with the outer one
                 // This creates Uppercase<Lowercase<T>> structure which will be
                 // evaluated layer by layer when the type parameter is substituted
-                self.interner().intern(TypeKey::StringIntrinsic {
-                    kind,
-                    type_arg: evaluated_arg,
-                })
+                self.interner().string_intrinsic(kind, evaluated_arg)
             }
 
             // For all other types, return error
@@ -121,7 +115,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         let string_intrinsic = self
             .interner()
-            .intern(TypeKey::StringIntrinsic { kind, type_arg });
+            .string_intrinsic(kind, type_arg);
         self.evaluate(string_intrinsic)
     }
 
@@ -196,18 +190,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // since those only affect the first character
                     let wrapped_type = if is_first_span {
                         // First position type: apply the intrinsic
-                        self.interner().intern(TypeKey::StringIntrinsic {
-                            kind,
-                            type_arg: *type_id,
-                        })
+                        self.interner().string_intrinsic(kind, *type_id)
                     } else {
                         // Non-first position: only Uppercase/Lowercase apply
                         match kind {
                             StringIntrinsicKind::Uppercase | StringIntrinsicKind::Lowercase => {
-                                self.interner().intern(TypeKey::StringIntrinsic {
-                                    kind,
-                                    type_arg: *type_id,
-                                })
+                                self.interner().string_intrinsic(kind, *type_id)
                             }
                             StringIntrinsicKind::Capitalize | StringIntrinsicKind::Uncapitalize => {
                                 // Capitalize/Uncapitalize don't affect non-first positions
