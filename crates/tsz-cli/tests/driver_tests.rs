@@ -1,5 +1,3 @@
-#![allow(clippy::print_stderr)]
-
 use super::args::CliArgs;
 use super::driver::{
     CompilationCache, compile, compile_with_cache, compile_with_cache_and_changes,
@@ -2180,14 +2178,14 @@ fn invalidate_paths_with_dependents_symbols_handles_import_equals() {
 
     let result = compile_with_cache(&args, base, &mut cache).expect("compile should succeed");
     if !result.diagnostics.is_empty() {
-        eprintln!("\n=== DIAGNOSTICS FOUND ===");
+        println!("\n=== DIAGNOSTICS FOUND ===");
         for diag in &result.diagnostics {
-            eprintln!(
+            println!(
                 "  TS{}: {} (at {}:{})",
                 diag.code, diag.message_text, diag.file, diag.start
             );
         }
-        eprintln!("=========================\n");
+        println!("=========================\n");
     }
     assert!(result.diagnostics.is_empty());
     assert_eq!(cache.len(), 2);
@@ -3758,14 +3756,14 @@ export function isNonNull<T>(value: T | null | undefined): value is T {
 
     // Debug: print any diagnostics found
     if !result.diagnostics.is_empty() {
-        eprintln!("\n=== DIAGNOSTICS FOUND ===");
+        println!("\n=== DIAGNOSTICS FOUND ===");
         for diag in &result.diagnostics {
-            eprintln!(
+            println!(
                 "  TS{}: {} (at {}:{})",
                 diag.code, diag.message_text, diag.file, diag.start
             );
         }
-        eprintln!("=========================\n");
+        println!("=========================\n");
     }
 
     assert!(
