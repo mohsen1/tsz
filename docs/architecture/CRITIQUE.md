@@ -541,6 +541,22 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
 * Cleaner relation gateway (next milestone).
 * Less bug surface area for new type variants.
 
+### Status update (2026-02-14)
+
+* **Status:** In progress
+* **Completed in this iteration (Milestone 3 sub-item):**
+  * Added solver visitor utilities for traversal-oriented preconditions:
+    * `visitor::walk_referenced_types(...)`
+    * `visitor::collect_lazy_def_ids(...)`
+    * `visitor::collect_type_queries(...)`
+  * Migrated checker `assignability_checker::ensure_refs_resolved` away from checker-owned recursive `TypeTraversalKind` branching to solver visitor collectors plus checker-only DefId/type-environment orchestration.
+  * Added focused regression tests:
+    * solver visitor tests for lazy/type-query collector behavior (unique + transitive collection)
+    * checker architecture contract assertions preventing `assignability_checker` from regressing to direct traversal classification/branching.
+* **Remaining for Milestone 3:**
+  * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
+  * Add broader visitor coverage for any additional traversal-specific query needs discovered during migration.
+
 ---
 
 # Milestone 4 — One relation gateway + structured Explain everywhere

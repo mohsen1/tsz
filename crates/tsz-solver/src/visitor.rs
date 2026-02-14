@@ -540,6 +540,61 @@ where
     }
 }
 
+/// Walk all transitively referenced type IDs from `root`.
+///
+/// The callback is invoked once per unique reachable type (including `root`).
+pub fn walk_referenced_types<F>(types: &dyn TypeDatabase, root: TypeId, mut f: F)
+where
+    F: FnMut(TypeId),
+{
+    let mut visited = FxHashSet::default();
+    let mut stack = vec![root];
+
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        f(current);
+
+        let Some(key) = types.lookup(current) else {
+            continue;
+        };
+        for_each_child(types, &key, |child| stack.push(child));
+    }
+}
+
+/// Collect all unique lazy DefIds reachable from `root`.
+pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId> {
+    let mut out = Vec::new();
+    let mut seen = FxHashSet::default();
+
+    walk_referenced_types(types, root, |type_id| {
+        if let Some(TypeKey::Lazy(def_id)) = types.lookup(type_id) {
+            if seen.insert(def_id) {
+                out.push(def_id);
+            }
+        }
+    });
+
+    out
+}
+
+/// Collect all unique type-query symbol references reachable from `root`.
+pub fn collect_type_queries(types: &dyn TypeDatabase, root: TypeId) -> Vec<SymbolRef> {
+    let mut out = Vec::new();
+    let mut seen = FxHashSet::default();
+
+    walk_referenced_types(types, root, |type_id| {
+        if let Some(TypeKey::TypeQuery(symbol_ref)) = types.lookup(type_id) {
+            if seen.insert(symbol_ref) {
+                out.push(symbol_ref);
+            }
+        }
+    });
+
+    out
+}
+
 // =============================================================================
 // Common Visitor Implementations
 // =============================================================================
