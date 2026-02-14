@@ -534,6 +534,25 @@ impl Runner {
                 all_fingerprints.clear();
             }
 
+            // Some multi-file conformance tests provide a tsconfig with allowJs and only JS inputs.
+            // In that setup, TS18003 is a harness artifact and should not be compared.
+            let has_tsconfig = parsed
+                .directives
+                .filenames
+                .iter()
+                .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
+            let has_js_input_file = parsed.directives.filenames.iter().any(|(name, _)| {
+                let lower = name.to_lowercase();
+                lower.ends_with(".js")
+                    || lower.ends_with(".jsx")
+                    || lower.ends_with(".mjs")
+                    || lower.ends_with(".cjs")
+            });
+            if has_tsconfig && has_js_input_file {
+                all_codes.remove(&18003);
+                all_fingerprints.retain(|fp| fp.code != 18003);
+            }
+
             let compile_result = tsz_wrapper::CompilationResult {
                 error_codes: all_codes.into_iter().collect(),
                 diagnostic_fingerprints: all_fingerprints.into_iter().collect(),
