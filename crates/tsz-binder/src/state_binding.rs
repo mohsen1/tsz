@@ -729,16 +729,13 @@ impl BinderState {
             return true;
         };
 
-        match stmt_node.kind {
+        !matches!(
+            stmt_node.kind,
             k if k == syntax_kind_ext::BREAK_STATEMENT
                 || k == syntax_kind_ext::RETURN_STATEMENT
                 || k == syntax_kind_ext::THROW_STATEMENT
-                || k == syntax_kind_ext::CONTINUE_STATEMENT =>
-            {
-                false
-            }
-            _ => true,
-        }
+                || k == syntax_kind_ext::CONTINUE_STATEMENT
+        )
     }
 
     pub(crate) fn bind_try_statement(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
