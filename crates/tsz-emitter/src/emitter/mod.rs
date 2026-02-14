@@ -26,7 +26,8 @@ use crate::emit_context::EmitContext;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transform_context::{IdentifierId, TransformContext, TransformDirective};
 use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tracing::warn;
 use tsz_parser::parser::NodeIndex;
@@ -261,7 +262,7 @@ pub struct Printer<'a> {
 
     /// Stack for saving/restoring temp naming state when entering function scopes.
     /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted).
-    pub(super) temp_scope_stack: Vec<(u32, FxHashSet<String>, bool)>,
+    pub(super) temp_scope_stack: Vec<(u32, FxHashSet<String>, bool, VecDeque<String>)>,
 
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
@@ -284,9 +285,20 @@ pub struct Printer<'a> {
     /// as `var _a, _b, ...;`. Used for assignment destructuring in ES5 mode.
     pub(super) hoisted_assignment_temps: Vec<String>,
 
+    /// Temp names reserved ahead-of-time and consumed before generating new names.
+    pub(super) preallocated_temp_names: VecDeque<String>,
+
     /// Temp names for ES5 iterator-based for-of lowering that must be emitted
     /// as top-level `var` declarations (e.g., `e_1, _a, e_2, _b`).
     pub(super) hoisted_for_of_temps: Vec<String>,
+
+    /// Pre-allocated return-temp names for iterator for-of nodes.
+    /// This lets nested loops reserve their return temp before outer loop
+    /// iterator/result temps, matching tsc temp ordering.
+    pub(super) reserved_iterator_return_temps: FxHashMap<NodeIndex, String>,
+
+    /// Current nesting depth for iterator for-of emission.
+    pub(super) iterator_for_of_depth: usize,
 }
 
 impl<'a> Printer<'a> {
@@ -339,7 +351,10 @@ impl<'a> Printer<'a> {
             declared_namespace_names: FxHashSet::default(),
             pending_class_field_inits: Vec::new(),
             hoisted_assignment_temps: Vec::new(),
+            preallocated_temp_names: VecDeque::new(),
             hoisted_for_of_temps: Vec::new(),
+            reserved_iterator_return_temps: FxHashMap::default(),
+            iterator_for_of_depth: 0,
         }
     }
 
@@ -796,11 +811,11 @@ impl<'a> Printer<'a> {
             }
 
             EmitDirective::ES5ForOf { for_of_node } => {
-                if let Some(for_of_node) = self.arena.get(for_of_node)
-                    && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node)
+                if let Some(for_of_node_ref) = self.arena.get(for_of_node)
+                    && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node_ref)
                     && !for_in_of.await_modifier
                 {
-                    self.emit_for_of_statement_es5(for_in_of);
+                    self.emit_for_of_statement_es5(for_of_node, for_in_of);
                     return;
                 }
 
@@ -1173,11 +1188,11 @@ impl<'a> Printer<'a> {
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5ForOf { for_of_node } => {
-                if let Some(for_of_node) = self.arena.get(*for_of_node)
-                    && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node)
+                if let Some(for_of_node_ref) = self.arena.get(*for_of_node)
+                    && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node_ref)
                     && !for_in_of.await_modifier
                 {
-                    self.emit_for_of_statement_es5(for_in_of);
+                    self.emit_for_of_statement_es5(*for_of_node, for_in_of);
                     return;
                 }
 
@@ -2243,6 +2258,9 @@ impl<'a> Printer<'a> {
         // After emitting all statements, we'll insert `var _a, _b, ...;` here if needed.
         self.hoisted_assignment_temps.clear();
         self.hoisted_for_of_temps.clear();
+        self.preallocated_temp_names.clear();
+        self.reserved_iterator_return_temps.clear();
+        self.iterator_for_of_depth = 0;
         let hoisted_var_byte_offset = self.writer.len();
         let hoisted_var_line = self.writer.current_line();
 
@@ -2287,7 +2305,10 @@ impl<'a> Printer<'a> {
                 // These are truly "leading" comments for this statement.
                 // Comments inside expressions (like call arguments) have positions AFTER
                 // the statement's first token, so they won't be emitted here.
-                if let Some(text) = self.source_text {
+                let defer_for_of_comments = self.ctx.target_es5
+                    && self.ctx.options.downlevel_iteration
+                    && stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT;
+                if !defer_for_of_comments && let Some(text) = self.source_text {
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_pos = self.all_comments[self.comment_emit_idx].pos;
                         let c_end = self.all_comments[self.comment_emit_idx].end;
