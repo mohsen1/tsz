@@ -7,7 +7,6 @@
 use crate::state::{CheckerState, MemberAccessInfo, MemberAccessLevel, MemberLookup};
 use crate::statements::StatementCheckCallbacks;
 use std::rc::Rc;
-use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -3369,7 +3368,6 @@ impl<'a> CheckerState<'a> {
             self.push_return_type(instance_type);
             self.check_statement(ctor.body);
             self.pop_return_type();
-            self.check_constructor_signature_return_type(member_idx, ctor.body, instance_type);
 
             // TS2377: Constructors for derived classes must contain a super() call.
             let requires_super = self
@@ -3404,130 +3402,6 @@ impl<'a> CheckerState<'a> {
         // Check overload compatibility for constructor implementations
         if !ctor.body.is_none() {
             self.check_overload_compatibility(member_idx);
-        }
-    }
-
-    fn check_constructor_signature_return_type(
-        &mut self,
-        ctor_idx: NodeIndex,
-        body_idx: NodeIndex,
-        instance_type: TypeId,
-    ) {
-        let mut value_return_types = Vec::new();
-        self.collect_constructor_value_return_types(body_idx, &mut value_return_types);
-
-        if value_return_types
-            .iter()
-            .any(|&return_ty| !self.is_assignable_to(return_ty, instance_type))
-        {
-            self.error_at_node(
-                ctor_idx,
-                diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
-                diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
-            );
-        }
-    }
-
-    fn collect_constructor_value_return_types(
-        &mut self,
-        stmt_idx: NodeIndex,
-        return_types: &mut Vec<TypeId>,
-    ) {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
-        };
-
-        match node.kind {
-            syntax_kind_ext::RETURN_STATEMENT => {
-                if let Some(return_data) = self.ctx.arena.get_return_statement(node)
-                    && !return_data.expression.is_none()
-                {
-                    return_types.push(self.get_type_of_node(return_data.expression));
-                }
-            }
-            syntax_kind_ext::BLOCK => {
-                if let Some(block) = self.ctx.arena.get_block(node) {
-                    for &stmt in &block.statements.nodes {
-                        self.collect_constructor_value_return_types(stmt, return_types);
-                    }
-                }
-            }
-            syntax_kind_ext::IF_STATEMENT => {
-                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
-                    self.collect_constructor_value_return_types(
-                        if_data.then_statement,
-                        return_types,
-                    );
-                    if !if_data.else_statement.is_none() {
-                        self.collect_constructor_value_return_types(
-                            if_data.else_statement,
-                            return_types,
-                        );
-                    }
-                }
-            }
-            syntax_kind_ext::SWITCH_STATEMENT => {
-                if let Some(switch_data) = self.ctx.arena.get_switch(node)
-                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
-                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
-                {
-                    for &clause_idx in &case_block.statements.nodes {
-                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
-                        {
-                            for &stmt in &clause.statements.nodes {
-                                self.collect_constructor_value_return_types(stmt, return_types);
-                            }
-                        }
-                    }
-                }
-            }
-            syntax_kind_ext::TRY_STATEMENT => {
-                if let Some(try_data) = self.ctx.arena.get_try(node) {
-                    self.collect_constructor_value_return_types(try_data.try_block, return_types);
-                    if !try_data.catch_clause.is_none() {
-                        self.collect_constructor_value_return_types(
-                            try_data.catch_clause,
-                            return_types,
-                        );
-                    }
-                    if !try_data.finally_block.is_none() {
-                        self.collect_constructor_value_return_types(
-                            try_data.finally_block,
-                            return_types,
-                        );
-                    }
-                }
-            }
-            syntax_kind_ext::CATCH_CLAUSE => {
-                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
-                    self.collect_constructor_value_return_types(catch_data.block, return_types);
-                }
-            }
-            syntax_kind_ext::WHILE_STATEMENT
-            | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::FOR_STATEMENT => {
-                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
-                    self.collect_constructor_value_return_types(loop_data.statement, return_types);
-                }
-            }
-            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
-                if let Some(for_in_of_data) = self.ctx.arena.get_for_in_of(node) {
-                    self.collect_constructor_value_return_types(
-                        for_in_of_data.statement,
-                        return_types,
-                    );
-                }
-            }
-            syntax_kind_ext::LABELED_STATEMENT => {
-                if let Some(labeled_data) = self.ctx.arena.get_labeled_statement(node) {
-                    self.collect_constructor_value_return_types(
-                        labeled_data.statement,
-                        return_types,
-                    );
-                }
-            }
-            _ => {}
         }
     }
 

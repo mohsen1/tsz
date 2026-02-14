@@ -768,18 +768,18 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(return_type);
         self.ensure_application_symbols_resolved(expected_type);
 
-        // Check if the return type is assignable to the expected type
-        // Exception: Constructors allow `return;` without an expression (no assignability check)
-        let is_constructor_return_without_expr = self
+        // Check if the return type is assignable to the expected type.
+        // Constructors are validated holistically by TS2409 at declaration level,
+        // so we suppress per-return TS2322 diagnostics here.
+        let is_in_constructor = self
             .ctx
             .enclosing_class
             .as_ref()
             .map(|c| c.in_constructor)
-            .unwrap_or(false)
-            && return_data.expression.is_none();
+            .unwrap_or(false);
 
         if expected_type != TypeId::ANY
-            && !is_constructor_return_without_expr
+            && !is_in_constructor
             && !self.check_assignable_or_report(
                 return_type,
                 expected_type,
