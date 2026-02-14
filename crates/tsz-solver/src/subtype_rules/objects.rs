@@ -827,14 +827,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // For plain object sources (no source index signatures in this path), a target
-        // with only a numeric index signature should require at least one numeric key.
-        // This avoids accepting `{ one: 1 }` as `{ [n: number]: number }`.
-        if target.number_index.is_some()
-            && target.string_index.is_none()
-            && !source
-                .iter()
-                .any(|prop| utils::is_numeric_property_name(self.interner, prop.name))
+        // A target number index signature requires the source to provide
+        // number-compatible indexing via a number or string index signature.
+        // A plain object with only named properties cannot satisfy arbitrary
+        // numeric index access.
+        if !self
+            .check_number_index_compatibility(&source_shape, target)
+            .is_true()
         {
             return SubtypeResult::False;
         }
