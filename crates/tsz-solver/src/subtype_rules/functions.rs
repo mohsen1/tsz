@@ -609,9 +609,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .iter()
                 .zip(target_instantiated.type_params.iter())
             {
-                let source_type_param_type = self
-                    .interner
-                    .intern(TypeKey::TypeParameter(source_tp.clone()));
+                let source_type_param_type = self.interner.type_param(source_tp.clone());
                 target_to_source_substitution.insert(target_tp.name, source_type_param_type);
                 source_identity_substitution.insert(source_tp.name, source_type_param_type);
             }
