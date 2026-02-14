@@ -1094,6 +1094,22 @@ pub fn lazy_def_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<DefId> {
     })
 }
 
+/// Extract the De Bruijn index if this is a bound type parameter.
+pub fn bound_parameter_index(types: &dyn TypeDatabase, type_id: TypeId) -> Option<u32> {
+    extract_type_data(types, type_id, |key| match key {
+        TypeKey::BoundParameter(index) => Some(*index),
+        _ => None,
+    })
+}
+
+/// Extract the De Bruijn index if this is a recursive type reference.
+pub fn recursive_index(types: &dyn TypeDatabase, type_id: TypeId) -> Option<u32> {
+    extract_type_data(types, type_id, |key| match key {
+        TypeKey::Recursive(index) => Some(*index),
+        _ => None,
+    })
+}
+
 /// Check if this is an Enum type.
 pub fn is_enum_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeKey::Enum(_, _)))
@@ -1167,6 +1183,25 @@ pub fn readonly_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
     })
 }
 
+/// Extract the inner type if this is a NoInfer type.
+pub fn no_infer_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    extract_type_data(types, type_id, |key| match key {
+        TypeKey::NoInfer(inner) => Some(*inner),
+        _ => None,
+    })
+}
+
+/// Extract string intrinsic components if this is a string intrinsic type.
+pub fn string_intrinsic_components(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(StringIntrinsicKind, TypeId)> {
+    extract_type_data(types, type_id, |key| match key {
+        TypeKey::StringIntrinsic { kind, type_arg } => Some((*kind, *type_arg)),
+        _ => None,
+    })
+}
+
 /// Extract the unique symbol ref if this is a unique symbol type.
 pub fn unique_symbol_ref(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef> {
     extract_type_data(types, type_id, |key| match key {
@@ -1187,6 +1222,15 @@ pub fn module_namespace_symbol_ref(types: &dyn TypeDatabase, type_id: TypeId) ->
 pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     extract_type_data(types, type_id, |key| match key {
         TypeKey::ThisType => Some(true),
+        _ => None,
+    })
+    .unwrap_or(false)
+}
+
+/// Check whether this is an explicit error type.
+pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    extract_type_data(types, type_id, |key| match key {
+        TypeKey::Error => Some(true),
         _ => None,
     })
     .unwrap_or(false)

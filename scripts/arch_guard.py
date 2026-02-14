@@ -72,6 +72,18 @@ CHECKS = [
         {"exclude_dirs": {"tests"}},
     ),
     (
+        "Emitter boundary: direct TypeKey import/match",
+        ROOT / "crates" / "tsz-emitter",
+        re.compile(r"\bTypeKey::|\buse\s+tsz_solver::.*TypeKey"),
+        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
+    ),
+    (
+        "Emitter boundary: direct lookup() on solver interner",
+        ROOT / "crates" / "tsz-emitter",
+        re.compile(r"\.lookup\s*\("),
+        {"exclude_dirs": {"tests"}},
+    ),
+    (
         "Solver TypeKey construction must stay in interner",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\.intern\(TypeKey::"),
