@@ -310,4 +310,11 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !state_type_environment_src.contains("intern(TypeKey::Literal("),
         "state_type_environment should use solver literal constructors, not TypeKey::Literal"
     );
+
+    let type_computation_complex_src = fs::read_to_string("src/type_computation_complex.rs")
+        .expect("failed to read src/type_computation_complex.rs for architecture guard");
+    assert!(
+        !type_computation_complex_src.contains("intern(tsz_solver::TypeKey::TypeParameter("),
+        "type_computation_complex should use solver type_param constructor API, not direct TypeKey::TypeParameter interning"
+    );
 }

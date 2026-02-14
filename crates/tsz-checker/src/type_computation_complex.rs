@@ -800,9 +800,7 @@ impl<'a> CheckerState<'a> {
             constraint: Some(resolved_constraint),
             ..info.clone()
         };
-        self.ctx
-            .types
-            .intern(tsz_solver::TypeKey::TypeParameter(new_info))
+        self.ctx.types.type_param(new_info)
     }
 
     /// Get type from a union type node (A | B).
