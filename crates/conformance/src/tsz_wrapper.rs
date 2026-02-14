@@ -5,6 +5,8 @@
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
+use tsz::diagnostics::Diagnostic;
+use tsz::span::Span;
 
 /// Result of compiling a test file
 #[derive(Debug, Clone)]

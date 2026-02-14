@@ -2463,6 +2463,32 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Collect interface type parameter names in declaration order.
+    fn interface_type_parameter_names(&self, decl_idx: NodeIndex) -> Option<Vec<String>> {
+        let node = self.ctx.arena.get(decl_idx)?;
+        let interface = self.ctx.arena.get_interface(node)?;
+        let list = interface.type_parameters.as_ref()?;
+
+        let mut names = Vec::with_capacity(list.nodes.len());
+        for &param_idx in &list.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return None;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                return None;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                return None;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                return None;
+            };
+            names.push(self.ctx.arena.resolve_identifier_text(ident).to_string());
+        }
+
+        Some(names)
+    }
+
     /// Verify that a declaration node actually has a name matching the expected symbol name.
     /// This is used to filter out false matches when lib declarations' NodeIndex values
     /// overlap with user arena indices and point to unrelated user nodes.
@@ -3085,6 +3111,34 @@ impl<'a> CheckerState<'a> {
 
             if declarations.len() <= 1 {
                 continue;
+            }
+
+            // TS2428: interface merges must have identical type parameters.
+            let interface_decls: Vec<NodeIndex> = declarations
+                .iter()
+                .filter(|(_, flags)| (flags & symbol_flags::INTERFACE) != 0)
+                .map(|(decl_idx, _)| *decl_idx)
+                .collect();
+            if interface_decls.len() > 1 {
+                let baseline = self.interface_type_parameter_names(interface_decls[0]);
+                let mismatch = interface_decls[1..]
+                    .iter()
+                    .any(|&decl_idx| self.interface_type_parameter_names(decl_idx) != baseline);
+                if mismatch {
+                    let message = format_message(
+                        diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                        &[&symbol.escaped_name],
+                    );
+                    for decl_idx in interface_decls {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                        );
+                    }
+                }
             }
 
             self.check_merged_enum_declaration_diagnostics(&declarations);
