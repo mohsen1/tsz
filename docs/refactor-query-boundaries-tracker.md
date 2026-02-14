@@ -50,6 +50,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 
 - `query_boundaries/type_checking.rs`
 - `query_boundaries/type_computation.rs`
+- `query_boundaries/type_computation_complex.rs`
 - `query_boundaries/state_type_analysis.rs`
 - `query_boundaries/class_type.rs`
 - `query_boundaries/assignability.rs`
