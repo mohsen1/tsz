@@ -1736,12 +1736,12 @@ impl<'a> CheckerState<'a> {
             checker.ctx.class_constructor_resolution_set.insert(id);
         }
 
-        let result = checker.class_instance_type_from_symbol(sym_id);
+        let result = checker.class_instance_type_with_params_from_symbol(sym_id);
 
         self.ctx.leave_recursion();
         Self::leave_cross_arena_delegation();
 
-        result.map(|instance_type| (instance_type, Vec::new()))
+        result
     }
 
     /// Detect and record cross-file SymbolIds.
