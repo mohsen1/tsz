@@ -13,9 +13,6 @@ use crate::TypeDatabase;
 use crate::types::*;
 use crate::visitor::TypeVisitor;
 
-#[cfg(test)]
-use crate::TypeInterner;
-
 // =============================================================================
 // Helper Functions
 // =============================================================================

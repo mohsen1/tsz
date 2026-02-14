@@ -9,9 +9,6 @@ use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
-#[cfg(test)]
-use crate::TypeInterner;
-
 // =============================================================================
 // Visitor Pattern Implementations
 // =============================================================================

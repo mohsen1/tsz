@@ -29,9 +29,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
 use tsz_common::limits;
 
-#[cfg(test)]
-use crate::TypeInterner;
-
 /// Maximum recursion depth for subtype checking.
 /// This prevents OOM/stack overflow from infinitely expanding recursive types.
 /// Examples: `interface AA<T extends AA<T>>`, `interface List<T> { next: List<T> }`

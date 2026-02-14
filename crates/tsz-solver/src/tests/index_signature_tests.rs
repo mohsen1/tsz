@@ -1,6 +1,7 @@
 //! Tests for index signature matching in subtype checking.
 
 use super::*;
+use crate::TypeInterner;
 // =============================================================================
 // Index Signature Subtyping Tests
 // =============================================================================

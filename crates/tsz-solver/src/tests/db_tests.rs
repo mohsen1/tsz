@@ -1,5 +1,35 @@
 use crate::{LiteralValue, QueryCache, QueryDatabase, TypeDatabase, TypeId, TypeInterner, TypeKey};
 
+impl<'a> QueryCache<'a> {
+    fn eval_cache_len(&self) -> usize {
+        match self.eval_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
+    }
+
+    fn subtype_cache_len(&self) -> usize {
+        match self.subtype_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
+    }
+
+    fn assignability_cache_len(&self) -> usize {
+        match self.assignability_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
+    }
+
+    fn property_cache_len(&self) -> usize {
+        match self.property_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
+    }
+}
+
 #[test]
 fn type_database_interns_and_looks_up() {
     let interner = TypeInterner::new();

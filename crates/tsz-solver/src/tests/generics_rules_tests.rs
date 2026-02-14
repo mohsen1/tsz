@@ -1,4 +1,5 @@
 use super::*;
+use crate::TypeInterner;
 use crate::def::DefId;
 use crate::visitor::application_id;
 

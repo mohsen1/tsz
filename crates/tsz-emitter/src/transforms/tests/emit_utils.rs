@@ -1,5 +1,38 @@
 use super::*;
 
+fn push_usize(output: &mut String, value: usize) {
+    push_u64(output, value as u64);
+}
+
+fn push_i64(output: &mut String, value: i64) {
+    if value < 0 {
+        output.push('-');
+        push_u64(output, value.wrapping_neg() as u64);
+    } else {
+        push_u64(output, value as u64);
+    }
+}
+
+fn push_u64(output: &mut String, mut value: u64) {
+    if value == 0 {
+        output.push('0');
+        return;
+    }
+
+    let mut buf = [0u8; 20];
+    let mut i = buf.len();
+    while value > 0 {
+        let digit = (value % 10) as u8;
+        i -= 1;
+        buf[i] = b'0' + digit;
+        value /= 10;
+    }
+
+    for &b in &buf[i..] {
+        output.push(b as char);
+    }
+}
+
 #[test]
 fn push_usize_writes_digits() {
     let mut out = String::new();

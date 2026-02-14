@@ -1,4 +1,6 @@
 use super::*;
+use crate::TypeInterner;
+use crate::diagnostics::{DiagnosticTracer, FastTracer};
 
 /// Test that FastTracer returns correct boolean results
 #[test]
