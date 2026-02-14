@@ -2047,20 +2047,25 @@ impl ParserState {
         }
 
         // Check for missing exponent digits (e.g., 1e+, 1e-, 1e) - TS1124
-        // If there's a Scientific flag but the text ends without digits after e/E
+        // If there's a Scientific flag but the text ends without valid digits after e/E
         if (token_flags & TokenFlags::Scientific as u32) != 0 {
             let bytes = text.as_bytes();
             let len = bytes.len();
-            // Check if ends with e, E, e+, e-, E+, E- (no digit after exponent)
-            let missing_digit = if len > 0 {
-                let last = bytes[len - 1];
-                last == b'e'
-                    || last == b'E'
-                    || last == b'+'
-                    || last == b'-'
-                    || (len > 1
-                        && (last == b'+' || last == b'-')
-                        && (bytes[len - 2] == b'e' || bytes[len - 2] == b'E'))
+            let missing_digit = if let Some(exp_offset) = bytes
+                .iter()
+                .rposition(|byte| *byte == b'e' || *byte == b'E')
+            {
+                if exp_offset + 1 >= len {
+                    true
+                } else {
+                    let after = &bytes[exp_offset + 1..];
+                    let first = after[0];
+                    if first == b'+' || first == b'-' {
+                        after.len() == 1 || after[1] == b'_'
+                    } else {
+                        first == b'_'
+                    }
+                }
             } else {
                 false
             };
@@ -2126,6 +2131,11 @@ impl ParserState {
             (token_flags & TokenFlags::ContainsInvalidSeparator as u32) != 0;
 
         self.report_invalid_numeric_separator();
+        let invalid_separator_pos = if has_invalid_separator {
+            self.scanner.get_invalid_separator_pos()
+        } else {
+            None
+        };
         let value = if text.as_bytes().contains(&b'_') {
             let mut sanitized = String::with_capacity(text.len());
             for &byte in text.as_bytes() {
@@ -2141,15 +2151,31 @@ impl ParserState {
 
         // TS1351: If a numeric literal has an invalid separator and is immediately
         // followed by an identifier or keyword, report "identifier cannot follow numeric literal"
-        // In this case, skip the identifier to avoid "Cannot find name" error (TS2304)
+        // Keep the following identifier as a recoverable token; checker may emit TS2304 if needed.
         if has_invalid_separator && self.is_identifier_or_keyword() {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An identifier or keyword cannot immediately follow a numeric literal.",
                 diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
             );
-            // Skip the identifier to prevent cascading TS2304 errors
-            self.next_token();
+        }
+
+        // If the scanner stopped numeric scanning at an invalid separator and left a recoverable
+        // identifier immediately after it (for example `0_b`), emit the missing-name diagnostic
+        // expected by TS (TS2304) on that identifier.
+        if let Some(sep_pos) = invalid_separator_pos {
+            if self.is_identifier_or_keyword() && self.token_pos() as usize == sep_pos + 1 {
+                use tsz_common::diagnostics::diagnostic_codes;
+                let missing_name = self.scanner.get_token_text_ref().to_string();
+                if !missing_name.is_empty() {
+                    self.parse_error_at(
+                        self.token_pos(),
+                        self.token_end() - self.token_pos(),
+                        &format!("Cannot find name '{}'.", missing_name),
+                        diagnostic_codes::CANNOT_FIND_NAME,
+                    );
+                }
+            }
         }
 
         self.arena.add_literal(
@@ -2267,6 +2293,7 @@ impl ParserState {
 
         // Capture regex flag errors BEFORE calling parse_expected (which clears them via next_token)
         let flag_errors: Vec<_> = self.scanner.get_regex_flag_errors().to_vec();
+        self.report_invalid_regular_expression_escape_errors();
 
         self.parse_expected(SyntaxKind::RegularExpressionLiteral);
         let end_pos = self.token_end();
@@ -2374,6 +2401,7 @@ impl ParserState {
         let is_unterminated = self.scanner.is_unterminated();
         let text = self.scanner.get_token_value_ref().to_string();
         let end_pos = self.token_end();
+        self.report_invalid_string_or_template_escape_errors();
         self.parse_expected(SyntaxKind::NoSubstitutionTemplateLiteral);
         if is_unterminated {
             self.error_unterminated_template_literal_at(start_pos, end_pos);
@@ -2399,6 +2427,7 @@ impl ParserState {
         let head_text = self.scanner.get_token_value_ref().to_string();
         let head_start = self.token_pos();
         let head_end = self.token_end();
+        self.report_invalid_string_or_template_escape_errors();
         self.parse_expected(SyntaxKind::TemplateHead);
 
         let head = self.arena.add_literal(
@@ -2507,6 +2536,7 @@ impl ParserState {
             };
 
             let literal_end = self.token_end();
+            self.report_invalid_string_or_template_escape_errors();
             self.next_token();
 
             let literal = self.arena.add_literal(
