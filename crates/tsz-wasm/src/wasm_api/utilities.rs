@@ -409,31 +409,31 @@ pub fn get_typescript_version() -> String {
 /// Check if a kind is a keyword
 #[wasm_bindgen(js_name = isKeyword)]
 pub fn is_keyword(kind: u16) -> bool {
-    kind >= 83 && kind <= 165
+    (83..=165).contains(&kind)
 }
 
 /// Check if a kind is a punctuation token
 #[wasm_bindgen(js_name = isPunctuation)]
 pub fn is_punctuation(kind: u16) -> bool {
-    kind >= 19 && kind <= 79
+    (19..=79).contains(&kind)
 }
 
 /// Check if a kind is a trivia (whitespace, comment)
 #[wasm_bindgen(js_name = isTrivia)]
 pub fn is_trivia(kind: u16) -> bool {
-    kind >= 2 && kind <= 8
+    (2..=8).contains(&kind)
 }
 
 /// Check if a kind is a literal expression
 #[wasm_bindgen(js_name = isLiteralExpression)]
 pub fn is_literal_expression(kind: u16) -> bool {
-    kind >= 9 && kind <= 15
+    (9..=15).contains(&kind)
 }
 
 /// Check if a kind is a template literal token
 #[wasm_bindgen(js_name = isTemplateLiteralKind)]
 pub fn is_template_literal_kind(kind: u16) -> bool {
-    kind >= 15 && kind <= 18
+    (15..=18).contains(&kind)
 }
 
 /// Get the operator precedence for a binary operator
