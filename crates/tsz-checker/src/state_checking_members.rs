@@ -4757,12 +4757,15 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         .unwrap_or(NodeIndex::NONE);
                     if let Some(list_node) = self.ctx.arena.get(list_idx) {
                         let flags = list_node.flags as u32;
-                        if flags & node_flags::CONST != 0 {
+                        // Check USING first — AWAIT_USING (6) includes CONST bit
+                        if flags & node_flags::USING != 0 {
+                            // `using` and `await using` declarations in statement
+                            // position use different error codes, not TS1156
+                            None
+                        } else if flags & node_flags::CONST != 0 {
                             Some("const")
                         } else if flags & node_flags::LET != 0 {
                             Some("let")
-                        } else if flags & node_flags::USING != 0 {
-                            Some("using")
                         } else {
                             None
                         }
