@@ -30,6 +30,13 @@ interface SourceInputFile {
   content: string;
 }
 
+interface OutputPaths {
+  jsPath: string;
+  jsCandidates: string[];
+  dtsPath: string;
+  dtsCandidates: string[];
+}
+
 function dedupeUseStrictPreamble(text: string): string {
   const lines = text.split('\n');
   const out: string[] = [];
@@ -150,8 +157,21 @@ export class CliTranspiler {
       declaration?: boolean;
       alwaysStrict?: boolean;
       sourceMap?: boolean;
+      inlineSourceMap?: boolean;
       downlevelIteration?: boolean;
       noEmitHelpers?: boolean;
+      noEmitOnError?: boolean;
+      importHelpers?: boolean;
+      esModuleInterop?: boolean;
+      useDefineForClassFields?: boolean;
+      experimentalDecorators?: boolean;
+      emitDecoratorMetadata?: boolean;
+      jsx?: string;
+      jsxFactory?: string;
+      jsxFragmentFactory?: string;
+      jsxImportSource?: string;
+      moduleDetection?: string;
+      outFile?: string;
       sourceFiles?: SourceInputFile[];
       expectedJsFileName?: string;
       expectedDtsFileName?: string;
@@ -162,8 +182,21 @@ export class CliTranspiler {
       declaration = false,
       alwaysStrict = false,
       sourceMap = false,
+      inlineSourceMap = false,
       downlevelIteration = false,
       noEmitHelpers = false,
+      noEmitOnError = false,
+      importHelpers = false,
+      esModuleInterop = false,
+      useDefineForClassFields,
+      experimentalDecorators = false,
+      emitDecoratorMetadata = false,
+      jsx,
+      jsxFactory,
+      jsxFragmentFactory,
+      jsxImportSource,
+      moduleDetection,
+      outFile,
       sourceFiles,
       expectedJsFileName,
       expectedDtsFileName,
@@ -180,10 +213,7 @@ export class CliTranspiler {
         }];
 
     const inputFiles: string[] = [];
-    const expectedOutputs: Array<{ jsPath: string; dtsPath: string }> = [];
-
-    const sourceExtToJsExt = (ext: string) =>
-      ext === '.tsx' ? '.jsx' : ext === '.mts' ? '.mjs' : ext === '.cts' ? '.cjs' : '.js';
+    const expectedOutputs: OutputPaths[] = [];
 
     for (const file of files) {
       const relName = file.name.replace(/^\/+/, '');
@@ -195,9 +225,24 @@ export class CliTranspiler {
       const extMatch = relName.match(/\.(ts|tsx|mts|cts)$/);
       const ext = extMatch ? `.${extMatch[1]}` : '.ts';
       const stem = filePath.replace(/\.(ts|tsx|mts|cts)$/, '');
+      const sourceDefaultJsPath =
+        ext === '.tsx' ? `${stem}.jsx` : ext === '.mts' ? `${stem}.mjs` : ext === '.cts' ? `${stem}.cjs` : `${stem}.js`;
+
       expectedOutputs.push({
-        jsPath: `${stem}${sourceExtToJsExt(ext)}`,
+        jsPath: sourceDefaultJsPath,
+        jsCandidates: [
+          sourceDefaultJsPath,
+          `${stem}.js`,
+          `${stem}.jsx`,
+          `${stem}.mjs`,
+          `${stem}.cjs`,
+        ],
         dtsPath: `${stem}.d.ts`,
+        dtsCandidates: [
+          `${stem}.d.ts`,
+          `${stem}.d.mts`,
+          `${stem}.d.cts`,
+        ],
       });
     }
 
@@ -216,8 +261,23 @@ export class CliTranspiler {
       }
       if (alwaysStrict) args.push('--alwaysStrict', 'true');
       if (sourceMap) args.push('--sourceMap');
+      if (inlineSourceMap) args.push('--inlineSourceMap');
       if (downlevelIteration) args.push('--downlevelIteration');
       if (noEmitHelpers) args.push('--noEmitHelpers');
+      if (noEmitOnError) args.push('--noEmitOnError');
+      if (importHelpers) args.push('--importHelpers');
+      if (esModuleInterop) args.push('--esModuleInterop');
+      if (useDefineForClassFields !== undefined) {
+        args.push('--useDefineForClassFields', useDefineForClassFields ? 'true' : 'false');
+      }
+      if (experimentalDecorators) args.push('--experimentalDecorators');
+      if (emitDecoratorMetadata) args.push('--emitDecoratorMetadata');
+      if (jsx) args.push('--jsx', jsx);
+      if (jsxFactory) args.push('--jsxFactory', jsxFactory);
+      if (jsxFragmentFactory) args.push('--jsxFragmentFactory', jsxFragmentFactory);
+      if (jsxImportSource) args.push('--jsxImportSource', jsxImportSource);
+      if (moduleDetection) args.push('--moduleDetection', moduleDetection);
+      if (outFile) args.push('--outFile', outFile);
       const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
       args.push(...trailingArgs);
 
@@ -248,8 +308,12 @@ export class CliTranspiler {
         if (!shouldRetryDeclarationFastPath) {
           // Match tsc behavior: diagnostics can still produce outputs (exit code 2).
           // For JS-only emit mode, continue if JS output was generated.
-          const hasJsOutput = expectedOutputs.some(o => fs.existsSync(o.jsPath));
-          const hasDtsOutput = expectedOutputs.some(o => fs.existsSync(o.dtsPath));
+          const hasJsOutput =
+            (expectedJsFileName ? fs.existsSync(path.join(testDir, expectedJsFileName)) : false) ||
+            expectedOutputs.some(o => o.jsCandidates.some(candidate => fs.existsSync(candidate)));
+          const hasDtsOutput =
+            (expectedDtsFileName ? fs.existsSync(path.join(testDir, expectedDtsFileName)) : false) ||
+            expectedOutputs.some(o => o.dtsCandidates.some(candidate => fs.existsSync(candidate)));
           if (!declaration && hasJsOutput) {
             // continue
           } else if (declaration && hasDtsOutput) {
@@ -261,8 +325,23 @@ export class CliTranspiler {
           const retryArgs = ['--declaration', '--noCheck', '--noLib'];
           if (alwaysStrict) retryArgs.push('--alwaysStrict', 'true');
           if (sourceMap) retryArgs.push('--sourceMap');
+          if (inlineSourceMap) retryArgs.push('--inlineSourceMap');
           if (downlevelIteration) retryArgs.push('--downlevelIteration');
           if (noEmitHelpers) retryArgs.push('--noEmitHelpers');
+          if (noEmitOnError) retryArgs.push('--noEmitOnError');
+          if (importHelpers) retryArgs.push('--importHelpers');
+          if (esModuleInterop) retryArgs.push('--esModuleInterop');
+          if (useDefineForClassFields !== undefined) {
+            retryArgs.push('--useDefineForClassFields', useDefineForClassFields ? 'true' : 'false');
+          }
+          if (experimentalDecorators) retryArgs.push('--experimentalDecorators');
+          if (emitDecoratorMetadata) retryArgs.push('--emitDecoratorMetadata');
+          if (jsx) retryArgs.push('--jsx', jsx);
+          if (jsxFactory) retryArgs.push('--jsxFactory', jsxFactory);
+          if (jsxFragmentFactory) retryArgs.push('--jsxFragmentFactory', jsxFragmentFactory);
+          if (jsxImportSource) retryArgs.push('--jsxImportSource', jsxImportSource);
+          if (moduleDetection) retryArgs.push('--moduleDetection', moduleDetection);
+          if (outFile) retryArgs.push('--outFile', outFile);
           retryArgs.push(...trailingArgs);
           await runWithArgs(retryArgs);
         }
@@ -280,6 +359,15 @@ export class CliTranspiler {
         return dtsMode ? content : content;
       };
 
+      const readFirstExisting = (candidates: string[]): string | null => {
+        for (const candidate of candidates) {
+          if (fs.existsSync(candidate)) {
+            return fs.readFileSync(candidate, 'utf-8');
+          }
+        }
+        return null;
+      };
+
       const namedJs = readNamedOutput(expectedJsFileName, false);
       if (namedJs !== null) {
         js = namedJs;
@@ -287,8 +375,9 @@ export class CliTranspiler {
         const chunks: string[] = [];
         let sawUseStrict = false;
         for (const out of expectedOutputs) {
-          if (fs.existsSync(out.jsPath)) {
-            let chunk = fs.readFileSync(out.jsPath, 'utf-8');
+          const chunkContent = readFirstExisting(out.jsCandidates);
+          if (chunkContent !== null) {
+            let chunk = chunkContent;
             const strictPrefix = /^\s*["']use strict["'];\s*/;
             if (sawUseStrict) {
               chunk = chunk.replace(strictPrefix, '');
@@ -298,7 +387,7 @@ export class CliTranspiler {
             chunks.push(chunk);
           }
         }
-        js = chunks.join('\n');
+        js = chunks.join('');
       }
       js = dedupeUseStrictPreamble(js);
 
@@ -309,11 +398,12 @@ export class CliTranspiler {
         } else {
           const dtsChunks: string[] = [];
           for (const out of expectedOutputs) {
-            if (fs.existsSync(out.dtsPath)) {
-              dtsChunks.push(fs.readFileSync(out.dtsPath, 'utf-8'));
+            const dtsChunk = readFirstExisting(out.dtsCandidates);
+            if (dtsChunk !== null) {
+              dtsChunks.push(dtsChunk);
             }
           }
-          dts = dtsChunks.length > 0 ? dtsChunks.join('\n') : null;
+          dts = dtsChunks.length > 0 ? dtsChunks.join('') : null;
         }
       }
 
