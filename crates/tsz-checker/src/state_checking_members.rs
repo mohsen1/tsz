@@ -2879,9 +2879,7 @@ impl<'a> CheckerState<'a> {
             let init_type = self.get_type_of_node(prop.initializer);
             self.ctx.contextual_type = prev_context;
 
-            if declared_type != TypeId::ANY
-                && !self.type_contains_error(declared_type)
-            {
+            if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) {
                 let _ = self.check_assignable_or_report(init_type, declared_type, prop.initializer);
             }
         } else if !prop.initializer.is_none() {

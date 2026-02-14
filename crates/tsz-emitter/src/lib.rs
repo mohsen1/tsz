@@ -13,6 +13,6 @@ pub mod enums;
 pub mod lowering_pass;
 pub mod printer;
 pub mod source_writer;
-pub mod type_cache_view;
 pub mod transform_context;
 pub mod transforms;
+pub mod type_cache_view;

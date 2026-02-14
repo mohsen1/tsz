@@ -511,11 +511,8 @@ impl<'a> CheckerState<'a> {
             } => {
                 // Report TS2322 instead of TS2345 for constraint violations from
                 // callback return type inference.
-                let _ = self.check_assignable_or_report_generic_at(
-                    inferred_type,
-                    constraint_type,
-                    idx,
-                );
+                let _ =
+                    self.check_assignable_or_report_generic_at(inferred_type, constraint_type, idx);
                 return_type
             }
             CallResult::NoOverloadMatch { failures, .. } => {
@@ -1633,12 +1630,8 @@ impl<'a> CheckerState<'a> {
 
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
-                    if !self.should_suppress_weak_key_arg_mismatch(
-                        callee_expr,
-                        args,
-                        index,
-                        actual,
-                    ) {
+                    if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
+                    {
                         // Try to elaborate: for object literal arguments, report TS2322
                         // on specific mismatched properties instead of TS2345 on the
                         // whole argument. This matches tsc behavior.
@@ -1649,15 +1642,11 @@ impl<'a> CheckerState<'a> {
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
-                    if !self.should_suppress_weak_key_arg_mismatch(
-                        callee_expr,
-                        args,
-                        index,
-                        actual,
-                    ) {
+                    if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
+                    {
                         if !self.try_elaborate_object_literal_arg_error(last_arg, expected) {
-                            let _ =
-                                self.check_argument_assignable_or_report(actual, expected, last_arg);
+                            let _ = self
+                                .check_argument_assignable_or_report(actual, expected, last_arg);
                         }
                     }
                 }

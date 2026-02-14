@@ -483,10 +483,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // `satisfies` keeps the expression type at runtime, but checks assignability.
                             // This is different from `as` which coerces the type.
                             self.checker.ensure_relation_input_ready(expr_type);
-                            self.checker
-                                .ensure_relation_input_ready(asserted_type);
-                            if !self.checker.type_contains_error(asserted_type)
-                            {
+                            self.checker.ensure_relation_input_ready(asserted_type);
+                            if !self.checker.type_contains_error(asserted_type) {
                                 let _ = self.checker.check_assignable_or_report(
                                     expr_type,
                                     asserted_type,
@@ -498,8 +496,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // `expr as T` / `<T>expr` yields `T`.
                             // TS2352: Check if conversion may be a mistake (types don't sufficiently overlap)
                             self.checker.ensure_relation_input_ready(expr_type);
-                            self.checker
-                                .ensure_relation_input_ready(asserted_type);
+                            self.checker.ensure_relation_input_ready(asserted_type);
 
                             // Don't check if either type is error, any, unknown, or never.
                             // TS also skips this warning for unconcretized type-parameter
