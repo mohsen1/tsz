@@ -556,7 +556,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // Parse error - return ERROR to suppress cascading errors
                         return TypeId::ERROR;
                     }
-                    self.checker.get_type_of_node(paren.expression)
+                    // In JS/checkJs, inline JSDoc casts like `/** @type {T} */(expr)`
+                    // should behave as type assertions and produce the annotated type.
+                    if let Some(jsdoc_type) = self.checker.jsdoc_type_annotation_for_node(idx) {
+                        let _ = self.checker.get_type_of_node(paren.expression);
+                        jsdoc_type
+                    } else {
+                        self.checker.get_type_of_node(paren.expression)
+                    }
                 } else {
                     // Missing parenthesized data - propagate error
                     TypeId::ERROR

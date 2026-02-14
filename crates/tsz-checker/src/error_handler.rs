@@ -353,7 +353,7 @@ impl<'a> ErrorHandler for CheckerState<'a> {
         param_type: TypeId,
         idx: NodeIndex,
     ) {
-        self.error_argument_not_assignable_at(arg_type, param_type, idx);
+        let _ = self.check_argument_assignable_or_report(arg_type, param_type, idx);
     }
 
     fn emit_argument_count_mismatch(&mut self, expected: usize, got: usize, idx: NodeIndex) {
