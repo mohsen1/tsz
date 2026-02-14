@@ -527,3 +527,16 @@ If a change computes `WHERE` to report or which AST node triggered it, it belong
 
 1. Parity baseline snapshot: `docs/architecture/parity-baseline-2026-02-14.md`
 2. Checker type-internal inventory: `docs/architecture/checker-type-internal-inventory-2026-02-14.md`
+
+## 20. Executed Progress Checkpoints (2026-02-14)
+
+1. Query-boundary migration applied in:
+   1. `state_type_resolution` hot paths,
+   2. `state_type_environment` lazy/object resolution paths,
+   3. iterable boundary literal classification.
+2. Architecture guardrail now enforced:
+   1. `scripts/check-checker-boundaries.sh`,
+   2. pre-commit integration (`scripts/githooks/pre-commit`),
+   3. CI lint integration (`.github/workflows/ci.yml`).
+3. Checker direct `lookup()` usage outside query boundaries/tests is now zero by guardrail.
+4. Baseline parity slice (`offset=0`, `max=500`) re-verified stable after refactors.
