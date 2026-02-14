@@ -137,6 +137,7 @@ impl<'a> CheckerState<'a> {
     /// This is a convenience method for creating simple function types.
     /// For more complex functions, use the full type builder.
     pub fn create_function_type(&self, params: Vec<TypeId>, return_type: TypeId) -> TypeId {
+        let factory = self.ctx.types.factory();
         use tsz_solver::{CallSignature, CallableShape, ParamInfo};
 
         let signature = CallSignature {
@@ -165,6 +166,6 @@ impl<'a> CheckerState<'a> {
             symbol: None,
         };
 
-        self.ctx.types.callable(shape)
+        factory.callable(shape)
     }
 }

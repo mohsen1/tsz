@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
 
     /// Create an array type from an element type.
     pub fn create_array_type(&self, element_type: TypeId) -> TypeId {
-        self.ctx.types.array(element_type)
+        self.ctx.types.factory().array(element_type)
     }
 
     // =========================================================================
