@@ -82,6 +82,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let current_class_idx = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx);
+        let mut protected_receiver_mismatch: Option<(NodeIndex, NodeIndex)> = None;
         let allowed = match access_info.level {
             MemberAccessLevel::Private => {
                 current_class_idx == Some(access_info.declaring_class_idx)
@@ -98,12 +99,20 @@ impl<'a> CheckerState<'a> {
                     } else {
                         let receiver_class_idx =
                             self.resolve_receiver_class_for_access(object_expr, object_type);
-                        receiver_class_idx
-                            .map(|receiver| {
-                                receiver == current_class_idx
-                                    || self.is_class_derived_from(receiver, current_class_idx)
-                            })
-                            .unwrap_or(false)
+                        if let Some(receiver) = receiver_class_idx {
+                            if receiver == current_class_idx
+                                || self.is_class_derived_from(receiver, current_class_idx)
+                            {
+                                true
+                            } else if self.is_class_derived_from(current_class_idx, receiver) {
+                                false
+                            } else {
+                                protected_receiver_mismatch = Some((current_class_idx, receiver));
+                                false
+                            }
+                        } else {
+                            false
+                        }
                     }
                 }
             },
@@ -126,21 +135,34 @@ impl<'a> CheckerState<'a> {
                 );
             }
             MemberAccessLevel::Protected => {
-                let message = format!(
-                    "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
-                    property_name, access_info.declaring_class_name
-                );
-                self.error_at_node(
-                    error_node,
-                    &message,
-                    diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES,
-                );
+                if let Some((current_idx, receiver_idx)) = protected_receiver_mismatch {
+                    let current_name = self.get_class_name_from_decl(current_idx);
+                    let receiver_name = self.get_class_name_from_decl(receiver_idx);
+                    let message = format!(
+                        "Property '{}' is protected and only accessible through an instance of class '{}'. This is an instance of class '{}'.",
+                        property_name, current_name, receiver_name
+                    );
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A,
+                    );
+                } else {
+                    let message = format!(
+                        "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
+                        property_name, access_info.declaring_class_name
+                    );
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES,
+                    );
+                }
             }
         }
 
         false
     }
-
     // =========================================================================
     // Computed Property Name Validation
     // =========================================================================
