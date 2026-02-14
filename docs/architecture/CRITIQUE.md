@@ -426,7 +426,7 @@ if __name__ == "__main__":
 
 ### Status update (2026-02-14)
 
-* **Status:** In progress
+* **Status:** Completed (except ongoing hardening)
 * **Completed in this iteration (Milestone 0 sub-item):**
   * Enforced dependency-direction **freeze guardrail** in `scripts/check-checker-boundaries.sh` so CI fails if any new non-test solver source (outside legacy `crates/tsz-solver/src/lower.rs`) imports `tsz_parser::` or `tsz_checker::`.
   * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` that recursively scans non-test solver source files and fails on parser/checker import patterns outside the `lower.rs` legacy quarantine.
