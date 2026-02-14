@@ -1,0 +1,808 @@
+# CRITIQUE: TSZ architecture and design
+
+Here are the highest‑leverage changes that would make TSZ **fundamentally** better (not just “cleaner”), given the North Star doc’s stated principles.
+
+## 1) Make “Solver-first” real by eliminating the second type system
+
+Right now the checker crate still ships a **full parallel type representation** (`TypeArena`, its own `TypeId`, and a big `Type` enum + flags) that sits beside the solver’s `TypeId/TypeKey` world. That’s a structural violation of “single source of truth” and a long‑term maintenance trap because it guarantees drift, duplicate bugs, and confusion about which `TypeId` you’re holding. 
+
+### What to do
+
+* Pick **one** canonical semantic type system: it should be `tsz-solver`’s.
+* Move anything still needed from `tsz-checker::types` into solver (or delete it).
+* If you truly still need the legacy representation (debugging, migration, tests), quarantine it:
+
+  * Put it behind a feature flag (`legacy-type-arena`)
+  * Or move it into a separate crate (`tsz-checker-legacy`) so the main pipeline cannot depend on it.
+
+### “Definition of done”
+
+* There is exactly **one** `TypeId` type in the workspace API surface.
+* The checker no longer re-exports its own `Type`, `TypeId`, `type_flags`, etc.
+* No new code can accidentally mix type IDs from different worlds.
+
+This single change will reduce conceptual complexity more than any file-splitting effort.
+
+---
+
+## 2) Stop letting checker code touch `TypeKey` and raw interning
+
+Even if checker never *matches* on `TypeKey`, the moment checker can freely do `intern(TypeKey::…)`, you’ve leaked solver internals across the boundary. That defeats the point of “thin wrappers” and makes it hard to change representation/canonicalization rules later.
+
+### What to do
+
+In `tsz-solver`, introduce a **TypeFactory / TypeBuilder API** that covers *all* construction:
+
+* `array(element)`
+* `union(types)`
+* `intersection(types)`
+* `type_param(info)`
+* `lazy(def_id)`
+* `index_access(obj, key)`
+* `mapped(...)`, `conditional(...)`, etc.
+
+…and keep `TypeKey` **crate-private** inside the solver.
+
+Checker becomes incapable of building malformed/non-canonical types, and the solver becomes the only place where invariants live (union flattening, sorting, dedup, “readonly unwrap rules”, etc.).
+
+### “Definition of done”
+
+* `TypeKey` is not imported by checker at all.
+* The only interner entrypoints checker sees are safe constructors.
+
+---
+
+## 3) Collapse TS2322 / assignability into a single, policy-driven gate
+
+Your doc already has the right parity strategy: **relation first**, **reason second**, **location/message last**. The fundamental improvement is to make it *impossible* to bypass that pipeline.
+
+### What to do
+
+Create exactly one “assignability gate” used everywhere (assignment, args, returns, property writes, spreads, etc.):
+
+* Input: `(source TypeId, target TypeId, RelationPolicy, TypeEnvironment snapshot, context)`
+* Output: `RelationResult { related: bool, reason: Option<ReasonTree> }`
+
+Checker responsibilities:
+
+* choose span(s)
+* choose suppression strategy (error/any/unknown cascades, etc.)
+* map reason → TS diagnostic code/message (or let solver provide canonical templates)
+
+Solver responsibilities:
+
+* all compatibility rules (Judge/Lawyer)
+* all special cases (`() => void`, weak types, excess properties, `any` mode, variance)
+* explainable failure reasons (structured)
+
+### “Definition of done”
+
+* There are **zero** ad-hoc “type A vs type B” structural checks outside solver.
+* All TS2322-ish error emission goes through the same `check_assignable(...)` wrapper.
+
+---
+
+## 4) Move traversal + “type preconditions” out of checker recursion
+
+`ensure_refs_resolved` is a good example of something that’s currently too coupled: checker is doing deep traversal over type structure via `TypeTraversalKind`, and it must stay in sync with every type variant forever. 
+
+This violates the doc’s “Visitor patterns” rule in spirit: the traversal logic is still in checker; it’s just *indirect*.
+
+### What to do
+
+In solver, add visitor utilities that return exactly what checker needs for “WHERE”:
+
+* `collect_lazy_def_ids(type_id) -> SmallVec<DefId>`
+* `collect_type_queries(type_id) -> SmallVec<SymbolRef>`
+* `walk_referenced_types(type_id, |child| ...)`
+
+Then checker does only:
+
+1. iterate DefIds → resolve → insert into `TypeEnvironment`
+2. call solver relation query
+
+Checker should not know how to recurse through tuples/functions/mapped/conditional/etc.
+
+### “Definition of done”
+
+* Checker does not contain any “type graph traversal” code.
+* Adding a new `TypeKey` variant requires updating solver visitors, not checker modules.
+
+---
+
+## 5) Consolidate caches: checker should not own solver-computation caches
+
+Your checker’s shared cache has a lot of entries that are *type evaluation* concerns (application eval, mapped eval, object spread property collection, element access computation, etc.). Those are “WHAT” caches and belong in solver memoization, not checker state. 
+
+### What to do
+
+* Keep only these caches in checker:
+
+  * `node -> TypeId`
+  * `symbol -> TypeId`
+  * LSP-level “project graph” caches (reverse deps, file versioning)
+  * flow-analysis caches tied to CFG nodes (that’s “WHERE”)
+
+* Move these into solver:
+
+  * evaluation caches (mapped, conditional, application)
+  * property collection caches
+  * index access / keyof / template literal evaluation caches
+  * relation caches keyed by `RelationCacheKey` and policy flags
+
+### “Definition of done”
+
+* Checker cache shrinks to “AST & symbols & flow & diagnostics”.
+* Solver becomes the only place with memoization for type algorithms.
+
+This makes correctness better (one cache semantics) and also reduces the risk of “cache poisoning” inconsistencies.
+
+---
+
+## 6) Turn the “North Star” into an enforceable contract (not a wiki page)
+
+You already have architecture tests mentioned, but the doc itself is drifting from reality (it claims specific file sizes/line counts and even repeats section numbering).  Drift is deadly because it teaches contributors the doc is aspirational, not binding.
+
+### What to do
+
+**Enforce** the rules mechanically:
+
+* **Dependency direction tests**
+
+  * checker must not depend on solver internals (TypeKey, internal modules)
+  * binder must not import solver
+  * emitter must not import checker
+
+* **Forbidden import checks**
+
+  * fail CI if `tsz-checker` imports `tsz_solver::types::TypeKey` (or any internal module)
+  * fail CI if checker contains `match` on type internals (if you still have any)
+
+* **Auto-generated architecture metrics**
+
+  * generate a file report (top N largest modules, forbidden deps, etc.)
+  * don’t hand-maintain “state.rs is X lines” in docs; generate it
+
+### “Definition of done”
+
+* If someone violates “solver-first”, CI breaks immediately.
+* The doc is either auto-synced or only states rules that are enforced.
+
+---
+
+## 7) Make incremental + LSP a first-class design constraint (query engine)
+
+The doc implies salsa-like caching (“QueryDatabase traits”), reverse dependencies, and persistent state. The next step is to formalize it into a consistent query layer so incremental correctness doesn’t depend on “did we remember to invalidate that HashMap”.
+
+### What to do
+
+Adopt a real query model for:
+
+* `parse(file) -> NodeArena`
+* `bind(file) -> BinderState`
+* `def_info(def_id) -> DefinitionInfo`
+* `type_of_symbol(sym) -> TypeId`
+* `type_of_node(node) -> TypeId`
+* `relation(source, target, policy) -> RelationResult`
+
+Whether you use `salsa` or a minimal homegrown equivalent, the key is:
+
+* explicit dependencies
+* deterministic invalidation
+* cheap recomputation
+
+### “Definition of done”
+
+* edits invalidate only impacted queries
+* you can explain “why did this recompute” and “what depends on what”
+
+---
+
+## 8) Correctness strategy: differential + minimization beats heroic debugging
+
+You already have a conformance harness crate in the repo. The big jump is to make it do three things relentlessly:
+
+1. **differential diagnostics** against `tsc`
+2. **testcase minimization** when you diverge
+3. **performance regression detection** on the same suite
+
+### What to do
+
+* Always store:
+
+  * tsz diagnostics (structured)
+  * tsc diagnostics (structured)
+  * normalized diff (by code, span, message template)
+* When mismatch occurs:
+
+  * auto-minimize the input (delta-debug) until you get the smallest reproducer
+  * keep that as a permanent regression test
+
+### “Definition of done”
+
+* “Parity work” becomes an assembly line, not ad-hoc debugging.
+
+---
+
+# If you only do three things
+
+1. **Delete/quarantine the checker’s legacy type system** so there is one semantic `TypeId` universe. 
+2. **Hide `TypeKey` behind solver constructors** so checker cannot build or depend on solver internals.
+3. **Make one assignability gate** (relation → reason → diag) and force every TS2322-ish path through it.
+
+
+# TSZ Roadmap 2026: Make the North Star Real
+
+**Goal:** converge the implementation toward the North Star architecture in a way that is (a) enforceable, (b) testable, (c) incremental/LSP-friendly, and (d) parity-driven.
+
+This roadmap is designed so every milestone has:
+
+* **Objective** (what gets better)
+* **Deliverables** (what code exists afterward)
+* **Exit criteria** (how you know it’s done)
+* **Follow-on unlocks** (what it enables next)
+
+---
+
+## Non‑negotiable invariants
+
+These are the “project constitution.” Every milestone either enforces one or removes blockers.
+
+1. **Single semantic type universe**
+
+* Exactly one `TypeId` and one canonical type graph/interning system.
+* No parallel “checker-local type system” that can diverge.
+  (Right now the checker still contains a full `TypeArena` and type constructors like `create_union`, `create_intersection`, etc., which is precisely the drift risk.)
+
+2. **Sealed type representation**
+
+* `TypeKey` is not accessible in Checker (and ideally not outside solver/types internals).
+* Checker can only request types via solver constructors/query APIs.
+  (Right now checker code directly imports `TypeKey` and interns it.)
+
+3. **Solver-first “WHAT”**
+
+* All type algorithms live in solver: relations, evaluation, instantiation, narrowing, canonicalization, explanation.
+* Checker owns only “WHERE”: AST traversal, source spans, diagnostic selection, suppression policy.
+
+4. **One relation gateway**
+
+* Every assignability/subtype/comparability check used for diagnostics routes through a single checker gateway (which in turn calls solver relation + solver explain).
+
+5. **Type traversal lives in solver**
+
+* Checker must not recursively traverse type structures to “prepare” solver checks.
+  (Right now checker performs deep traversal in `ensure_refs_resolved` via traversal classification and manually recurses into type shapes.)
+
+6. **DefId-centric resolution is guaranteed**
+
+* `Lazy(DefId)` resolution is consistent and centralized (no scattered “insert into env if cached path skipped” patches).
+
+7. **Architecture is enforced by CI**
+
+* If someone violates boundaries, CI fails immediately.
+
+---
+
+## Workstreams (kept in sync by milestones)
+
+* **A. Guardrails & enforcement**
+* **B. Type system consolidation**
+* **C. Solver API + purity**
+* **D. Relations + Explain + diagnostics**
+* **E. Canonicalization & interning invariants**
+* **F. Query graph / incremental core**
+* **G. Performance & memory**
+* **H. Parity + testing + minimization**
+* **I. Documentation & contributor UX**
+
+The milestones below interleave these so you don’t “refactor blind.”
+
+---
+
+# Milestone 0 — Guardrails first (make drift impossible)
+
+### Objective
+
+Stop architectural regression while you refactor aggressively.
+
+### Deliverables
+
+1. **Architecture CI checks**
+
+* Forbid forbidden imports/patterns (examples below).
+* Enforce dependency direction (crate/module boundaries).
+
+2. **Auto-generated architecture report**
+
+* Largest files/modules, forbidden import hits, “TypeKey leakage count,” etc.
+
+3. **Parity harness skeleton**
+
+* A minimal “run tsc + run tsz + diff diagnostics” pipeline (even if diff is crude initially).
+
+### Exit criteria
+
+* CI fails if Checker imports `TypeKey`.
+* CI fails if Solver imports parser/checker crates.
+* Report is generated in CI artifacts (or printed) each run.
+
+### Reference implementation: one complete guard script
+
+Drop this in `scripts/arch_guard.py` and run it in CI.
+
+```python
+#!/usr/bin/env python3
+import pathlib
+import re
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+CHECKS = [
+    # 1) Checker must not touch TypeKey
+    ("Checker imports TypeKey",
+     ROOT / "crates" / "tsz-checker",
+     re.compile(r"\btsz_solver::.*TypeKey\b|\bTypeKey::", re.MULTILINE)),
+
+    # 2) Checker must not reach into solver internals module tree (tighten as needed)
+    ("Checker imports solver internals",
+     ROOT / "crates" / "tsz-checker",
+     re.compile(r"\btsz_solver::types::\b|\btsz_solver::internals::\b", re.MULTILINE)),
+
+    # 3) Solver must not depend on parser/checker (adjust paths to your workspace layout)
+    ("Solver imports parser/checker crates",
+     ROOT / "crates" / "tsz-solver",
+     re.compile(r"\btsz_parser::\b|\btsz_checker::\b", re.MULTILINE)),
+]
+
+EXCLUDE_DIRS = {".git", "target", "node_modules"}
+
+def iter_rs_files(base: pathlib.Path):
+    for p in base.rglob("*.rs"):
+        if any(part in EXCLUDE_DIRS for part in p.parts):
+            continue
+        yield p
+
+def main() -> int:
+    failures = []
+    for name, base, pattern in CHECKS:
+        if not base.exists():
+            # allow flexible layouts, but be strict once stabilized
+            continue
+        for f in iter_rs_files(base):
+            txt = f.read_text(encoding="utf-8", errors="ignore")
+            if pattern.search(txt):
+                failures.append((name, f))
+    if failures:
+        print("ARCH GUARD FAILURES:")
+        for name, f in failures:
+            print(f" - {name}: {f.relative_to(ROOT)}")
+        return 1
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+---
+
+# Milestone 1 — Unify the type system (one `TypeId` world)
+
+### Objective
+
+Eliminate the biggest correctness + maintainability risk: having two competing semantic type representations.
+
+### Current blocker (from code)
+
+The checker crate still contains a full local type arena and constructors for unions/intersections/templates/etc. That guarantees drift and confusion about which `TypeId` you hold. 
+
+### Deliverables
+
+1. **Deprecate/remove checker-local type system**
+
+* Identify every use of the checker `TypeArena` / checker `TypeId`.
+* Replace with solver `TypeId` + solver constructors/query APIs.
+* Quarantine any legacy components behind a feature flag if you can’t delete immediately.
+
+2. **One canonical “type construction API”**
+
+* A solver-owned `TypeFactory` / `TypeBuilder` API is the only way to create compound types.
+
+### Exit criteria
+
+* The checker does not define/own a semantic `TypeArena` that can construct semantic types.
+* There is one “type creation surface” in solver used by checker.
+
+### Unlocks
+
+* You can safely harden TypeKey privacy (next milestone).
+* You can trust memoization/canonicalization decisions.
+
+---
+
+# Milestone 2 — Seal the solver representation (no `TypeKey` leakage)
+
+### Objective
+
+Make it mechanically impossible for checker code to depend on solver internals.
+
+### Current blocker (from code)
+
+Checker modules import `TypeKey` and intern types directly (example: array type helper that does `intern(TypeKey::Array(..))`).
+
+### Deliverables
+
+1. **Introduce solver constructors**
+   Add a module like:
+
+* `solver::factory::{array, union, intersection, readonly, keyof, index_access, function, callable, ...}`
+
+2. **Migrate all checker construction calls**
+
+* Replace direct `intern(TypeKey::...)` with `factory::*` calls.
+
+3. **Make `TypeKey` crate-private**
+
+* `pub(crate)` or private, depending on crate layout.
+* Re-export only `TypeId` + safe APIs.
+
+### Exit criteria
+
+* `tsz-checker` compiles without importing `TypeKey`.
+* CI guard forbidding TypeKey in checker stays green.
+
+### Unlocks
+
+* Canonicalization can be centralized and enforced in constructors.
+* Solver internals can evolve without huge refactors.
+
+---
+
+# Milestone 3 — Move type traversal into solver visitors
+
+### Objective
+
+Checker shouldn’t need to understand the type graph structure (variants, shapes, recursion patterns).
+
+### Current blocker (from code)
+
+Checker does deep type traversal itself to resolve `Lazy(DefId)` and other referenced types before relation checks. That traversal must stay in sync with every type form forever. 
+
+### Deliverables
+
+1. **Solver visitor utilities**
+   Add solver helpers like:
+
+* `collect_lazy_def_ids(types, type_id) -> SmallVec<DefId>`
+* `collect_type_queries(types, type_id) -> SmallVec<SymbolRef>`
+* `walk_referenced_types(types, type_id, |child| ...)`
+
+2. **Checker “precondition” becomes simple**
+   Replace checker recursion with:
+
+* `for def in solver::visitor::collect_lazy_def_ids(type_id) { env.ensure(def) }`
+
+3. **Centralize DefId → TypeId insertion**
+
+* Make “ensuring env contains def mapping” a single helper.
+* Remove scattered “if cached path skipped insert_def…” patches.
+
+### Exit criteria
+
+* No checker code recursively walks through function shapes/tuple lists/conditional/mapped internals to find references.
+* Adding a new type variant requires updating solver visitors, not checker.
+
+### Unlocks
+
+* Cleaner relation gateway (next milestone).
+* Less bug surface area for new type variants.
+
+---
+
+# Milestone 4 — One relation gateway + structured Explain everywhere
+
+### Objective
+
+Stop TS2322/TS2345/TS2416/etc. from each evolving their own mismatch logic and becoming inconsistent.
+
+### Current state signal
+
+There is already a lot of checker orchestration around assignability, suppression, weak unions, excess properties, etc. (and it’s spread across many modules). You’ve begun centralizing it, but it’s not “impossible to bypass” yet. 
+
+### Deliverables
+
+1. **Single checker entrypoint for relations**
+   Create:
+
+* `checker::relations::check_assignable(node_ctx, source, target, policy) -> Result<(), DiagnosticParts>`
+* `checker::relations::check_subtype(...)`
+* `checker::relations::check_comparable(...)`
+
+Make all assignment/call/return/property-write checks call these.
+
+2. **Solver Explain as a stable structured tree**
+
+* `RelationResult { related: bool, reason: Option<ReasonTree> }`
+* Reason nodes like:
+
+  * `MissingProperty { name, expected, got }`
+  * `UnionMemberFailed { member, reason }`
+  * `CallSignatureMismatch { param_index, expected, got }`
+  * `IndexAccessKeyMismatch { object, key }`
+  * …
+
+3. **Reason minimizer**
+
+* Cap depth, pick smallest counterexample, compress repetitive branches.
+
+4. **Checker renders**
+
+* Checker picks span/message/code policy.
+* Solver provides the “why.”
+
+### Exit criteria
+
+* There is exactly one codepath that emits TS2322-style “not assignable” diagnostics.
+* No module emits assignability errors by doing custom structural checks.
+
+### Unlocks
+
+* Differential testing becomes dramatically easier because behavior becomes consistent.
+* LSP hover/code actions can reuse structured reasons.
+
+---
+
+# Milestone 5 — Canonicalization in constructors (make O(1) identity meaningful)
+
+### Objective
+
+Guarantee that interning gives you stable identity and stable memoization keys.
+
+### Deliverables
+
+Canonicalize in solver constructors (not at callsites):
+
+* **Union**
+
+  * flatten, dedup, stable sort
+  * absorb `never`, handle `any` per policy
+* **Intersection**
+
+  * flatten, dedup, stable sort
+  * absorb `unknown`, handle `any` per policy
+* **Object shapes**
+
+  * stable property ordering by `Atom`
+  * stable encoding of optional/readonly
+* **Type applications**
+
+  * stable arg ordering/encoding; eliminate identity substitutions if desired
+
+### Exit criteria
+
+* Property-based tests:
+
+  * `union([a,b]) == union([b,a])`
+  * `union([a,a]) == a`
+  * `intersection([a,unknown]) == a`
+* Deterministic interning across runs.
+
+### Unlocks
+
+* More effective solver memoization.
+* More stable diagnostics and diffing.
+
+---
+
+# Milestone 6 — Move algorithmic caches into solver (checker keeps only “WHERE” caches)
+
+### Objective
+
+Prevent cache inconsistency and “cache poisoning” across layers.
+
+### Current state signal
+
+Checker maintains relation caches keyed by solver types and flags, does inference checks, and handles evaluation-related concerns as preconditions. That’s a smell: solver should own algorithm caching. 
+
+### Deliverables
+
+1. **Solver-owned caches**
+
+* Relation result cache
+* Evaluation cache (conditional/mapped/applications)
+* Expensive query caches (keyof, index access, etc.)
+
+2. **Checker caches shrink**
+   Keep only:
+
+* `node -> TypeId`
+* `symbol -> TypeId`
+* CFG/flow-narrowing caches
+* diagnostics collection
+
+### Exit criteria
+
+* Checker does not maintain caches of “type algorithm outputs” except node/symbol results.
+* Relation/evaluation caches live in solver DB or query engine.
+
+### Unlocks
+
+* Incremental query graph becomes straightforward (next milestone).
+
+---
+
+# Milestone 7 — Query graph core: incremental is the default mode
+
+### Objective
+
+Unify CLI and LSP on one dependency-driven engine so they don’t diverge.
+
+### Deliverables
+
+1. **Explicit query model**
+
+* `parse(file_id) -> AST`
+* `bind(file_id) -> symbols/scopes/flow`
+* `type_of_node(node_id) -> TypeId`
+* `type_of_symbol(sym_id) -> TypeId`
+* `relation(source, target, policy) -> RelationResult`
+* `diagnostics(file_id) -> Vec<Diagnostic>`
+
+2. **Stable invalidation**
+
+* Keyed by file text hash/version and compiler options.
+* Reverse deps managed by project.
+
+3. **Interner lifetime strategy for LSP**
+
+* epochs/generations or reset strategy + monitoring.
+
+### Exit criteria
+
+* LSP and CLI call the same query APIs.
+* A file edit recomputes only dependent queries.
+
+### Unlocks
+
+* Real incremental speedups.
+* Better memory control over long-lived sessions.
+
+---
+
+# Milestone 8 — Performance & memory sweep (after invariants are enforced)
+
+### Objective
+
+Make performance wins durable and measurable.
+
+### Deliverables
+
+1. **Atom-based names in hot structs**
+
+* Replace `String` names with `Atom` where possible.
+* Only materialize strings for diagnostics/emission.
+
+2. **Arena-backed small collections**
+
+* Replace hot-path `Vec`/`Box` allocations with:
+
+  * typed pools (`ListId`)
+  * `SmallVec` for common small cases
+
+3. **Tracing + metrics**
+
+* relation cache hit rate
+* evaluation counts
+* fuel usage distribution
+* top N expensive queries
+
+### Exit criteria
+
+* Benchmarks show predictable improvements.
+* No new allocations in hot paths (tracked by optional instrumentation builds).
+
+---
+
+# Milestone 9 — Parity pipeline: scoreboard + minimization + regression lock-in
+
+### Objective
+
+Turn “parity” into a steady manufacturing process.
+
+### Deliverables
+
+1. **Differential harness against `tsc`**
+
+* Run TSZ + tsc on a corpus.
+* Normalize diagnostics (code + approximate span + category).
+* Report diff summary in CI.
+
+2. **Auto-minimization**
+
+* When mismatch is detected, shrink the input to a minimal reproducer.
+* Commit minimized repro as regression test.
+
+3. **Priority error surfaces**
+   Ramp coverage in this order:
+
+* TS2322 (assignability)
+* TS2345 (call args)
+* TS2339 (property access)
+* TS2536/TS7053 (indexing)
+* strict nullability family
+
+### Exit criteria
+
+* CI produces a parity report artifact every run.
+* Every fixed mismatch becomes a permanent regression test.
+
+---
+
+# Milestone 10 — Documentation & contributor experience (make the project easy to extend)
+
+### Objective
+
+Reduce “tribal knowledge” and make refactors safe.
+
+### Deliverables
+
+1. **Boundary docs**
+
+* One page that defines:
+
+  * what lives in Solver vs Checker
+  * what TypeEnvironment owns
+  * what “relation policy flags” are and where they are set
+
+2. **Auto-generated architecture tables**
+
+* Keep the North Star doc accurate by generating metrics (largest files, forbidden deps).
+
+3. **Contribution checklist**
+   Every PR must answer:
+
+* Is this “WHAT” or “WHERE”?
+* Which solver query does it use?
+* Which parity tests changed?
+
+### Exit criteria
+
+* New contributors can add a type feature by touching solver + tests, without spelunking.
+
+---
+
+## “First 5 PRs” (a concrete jumpstart sequence)
+
+If you want the fastest path to momentum, do these in order:
+
+1. **PR 1: Add CI architecture guard + report**
+   (Milestone 0, deliverable #1/#2)
+
+2. **PR 2: Add solver TypeFactory module (thin wrapper over intern for now)**
+   No behavior change yet. Just new API.
+
+3. **PR 3: Migrate 1–2 checker modules off `TypeKey` (start with array/object helpers)**
+   You already have a pattern of query-boundary modules; extend that approach.
+   (This directly targets the current `TypeKey` leakage.)
+
+4. **PR 4: Make `TypeKey` crate-private and fix all compilation fallout**
+   This forces boundary discipline permanently.
+
+5. **PR 5: Replace checker-side recursive type traversal with solver visitor `collect_lazy_def_ids`**
+   Start by eliminating `ensure_refs_resolved` recursion into type shapes. 
+
+After those five, the rest of the roadmap becomes dramatically easier because the codebase is no longer allowed to regress.
+
+---
+
+## What this roadmap explicitly fixes in your current snapshot
+
+* **Mega-file reality:** you’ve already split a lot, but `state.rs` and other modules remain extremely large and the “2k lines” rule was deemed unrealistic. The roadmap doesn’t hinge on line limits; it hinges on *boundary sealing + single source of truth*, which naturally reduces file bloat over time. 
+
+* **TypeKey leakage:** checker currently constructs types directly via TypeKey interning; roadmap seals that. 
+
+* **Checker owns type traversal:** `ensure_refs_resolved` does deep traversal and knows too much; roadmap moves that traversal into solver visitors. 
+
+* **Duplicate type system risk:** checker’s `TypeArena` still implements semantic type construction; roadmap removes/quarantines it so there’s only one meaning of `TypeId`. 
+

@@ -4,12 +4,13 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/codex-loop.sh [--conformance|--emit|--lsp|--spark] [--session N] [--config FILE] [--prompt-file FILE]
+  scripts/codex-loop.sh [--conformance|--emit|--lsp|--arch|--spark] [--session N] [--config FILE] [--prompt-file FILE]
 
 Modes:
   --conformance   Continuous conformance parity work (default)
   --emit          Continuous emitter-focused work
   --lsp           Continuous LSP-focused work
+  --arch          Continuous architecture-roadmap execution loop
   --spark         Explicit spark mode (same prompt as conformance)
 
 Options:
@@ -45,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --lsp)
       MODE="lsp"
+      shift
+      ;;
+    --arch)
+      MODE="arch"
       shift
       ;;
     --spark)
@@ -111,6 +116,8 @@ PROMPT_FILE_LEGACY="$(read_key prompt_file)"
 PROMPT_FILE_CONF="$(read_key prompt_file_conformance)"
 PROMPT_FILE_EMIT="$(read_key prompt_file_emit)"
 PROMPT_FILE_LSP="$(read_key prompt_file_lsp)"
+PROMPT_FILE_ARCH="$(read_key prompt_file_arch)"
+ARCH_DOC="$(read_key architecture_doc)"
 CONF_QUARTERS="$(read_key conformance_quarters)"
 CONF_TOTAL_FAILURES="$(read_key conformance_total_failures)"
 
@@ -123,6 +130,7 @@ WORKDIR="${WORKDIR:-.}"
 DEFAULT_MODE="${DEFAULT_MODE:-conformance}"
 CONF_QUARTERS="${CONF_QUARTERS:-4}"
 CONF_TOTAL_FAILURES="${CONF_TOTAL_FAILURES:-3101}"
+ARCH_DOC="${ARCH_DOC:-docs/architecture/CRITIQUE.md}"
 
 if ! [[ "$CONF_QUARTERS" =~ ^[1-9][0-9]*$ ]]; then
   echo "Invalid conformance_quarters in config: $CONF_QUARTERS" >&2
@@ -180,6 +188,9 @@ else
     lsp)
       PROMPT_FILE="${PROMPT_FILE_LSP:-scripts/codex-loop.prompt.lsp.txt}"
       ;;
+    arch)
+      PROMPT_FILE="${PROMPT_FILE_ARCH:-scripts/codex-loop.prompt.arch.txt}"
+      ;;
     *)
       echo "Unsupported mode: $MODE" >&2
       exit 1
@@ -189,6 +200,10 @@ fi
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
   echo "Prompt file not found: $PROMPT_FILE" >&2
+  exit 1
+fi
+if [[ "$MODE" == "arch" && ! -f "$ARCH_DOC" ]]; then
+  echo "Architecture document not found: $ARCH_DOC" >&2
   exit 1
 fi
 
@@ -230,6 +245,8 @@ while true; do
     fi
 
     PROMPT_TEXT="${PROMPT_TEXT} Parallel conformance sharding: you own quarter ${shard_label}/${CONF_QUARTERS}. Focus only on failures in your shard. Use scripts/conformance.sh analyze --offset ${shard_offset} --max ${shard_max} for your slice, and keep fixes targeted to this slice."
+  elif [[ "$MODE" == "arch" ]]; then
+    PROMPT_TEXT="${PROMPT_TEXT} Architecture loop requirements for this iteration: (1) drive work from ${ARCH_DOC} roadmap items, (2) if you complete any roadmap item(s), update ${ARCH_DOC} in the same iteration and mark status done/progress explicitly, (3) run relevant tests for every code change and include exact test commands plus pass/fail results in your iteration summary, (4) do not mark roadmap work done without tests."
   fi
 
   CMD=(codex exec --model "$MODEL" -C "$WORKDIR" -c 'model_reasoning_effort="low"')
