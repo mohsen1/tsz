@@ -2124,13 +2124,14 @@ impl<'a> CheckerState<'a> {
             // For union types of tuples/arrays, resolve element type from each member
             if let Some(members) = query::union_members(self.ctx.types, parent_type) {
                 let mut elem_types = Vec::new();
+                let factory = self.ctx.types.factory();
                 for member in members {
                     let member = query::unwrap_readonly_deep(self.ctx.types, member);
                     if element_data.dot_dot_dot_token {
                         let elem_type = if let Some(elem) =
                             query::array_element_type(self.ctx.types, member)
                         {
-                            self.ctx.types.array(elem)
+                            factory.array(elem)
                         } else if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
                             let rest_elem = elems
                                 .iter()
@@ -2156,7 +2157,7 @@ impl<'a> CheckerState<'a> {
                 } else if elem_types.len() == 1 {
                     elem_types[0]
                 } else {
-                    self.ctx.types.union(elem_types)
+                    factory.union(elem_types)
                 };
             }
 
@@ -2315,6 +2316,7 @@ impl<'a> CheckerState<'a> {
             // For union types, resolve the property in each member and union the results.
             if let Some(members) = query::union_members(self.ctx.types, parent_type) {
                 let mut prop_types = Vec::new();
+                let factory = self.ctx.types.factory();
                 for member in members {
                     if let Some(shape) = query::object_shape(self.ctx.types, member) {
                         for prop in shape.properties.as_slice() {
@@ -2331,7 +2333,7 @@ impl<'a> CheckerState<'a> {
                 } else if prop_types.len() == 1 {
                     prop_types[0]
                 } else {
-                    self.ctx.types.union(prop_types)
+                    factory.union(prop_types)
                 }
             } else if let Some(shape) = query::object_shape(self.ctx.types, parent_type) {
                 // Find the property by comparing names
@@ -2357,7 +2359,7 @@ impl<'a> CheckerState<'a> {
         if query::array_element_type(self.ctx.types, tuple_member_type).is_some() {
             tuple_member_type
         } else {
-            self.ctx.types.array(tuple_member_type)
+            self.ctx.types.factory().array(tuple_member_type)
         }
     }
 
@@ -2462,7 +2464,8 @@ impl<'a> CheckerState<'a> {
                     let nested_target = if target_prop_types.len() == 1 {
                         target_prop_types[0]
                     } else {
-                        self.ctx.types.union(target_prop_types.clone())
+                        let factory = self.ctx.types.factory();
+                        factory.union(target_prop_types.clone())
                     };
 
                     self.check_nested_object_literal_excess_properties(
