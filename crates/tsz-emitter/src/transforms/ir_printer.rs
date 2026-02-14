@@ -843,14 +843,27 @@ impl<'a> IRPrinter<'a> {
                 self.write(text);
             }
             IRNode::Sequence(nodes) => {
-                for (i, node) in nodes.iter().enumerate() {
-                    self.emit_node(node);
-                    // Add newline between sequence items (but not after the last one)
+                let mut i = 0;
+                while i < nodes.len() {
+                    if matches!(&nodes[i], IRNode::TrailingComment(_)) {
+                        i += 1;
+                        continue;
+                    }
+
+                    self.emit_node(&nodes[i]);
+                    if i + 1 < nodes.len()
+                        && let IRNode::TrailingComment(text) = &nodes[i + 1]
+                    {
+                        self.write(" ");
+                        self.write(text);
+                        i += 1;
+                    }
+
                     if i < nodes.len() - 1 {
                         self.write_line();
-                        // Preserve parent indentation for subsequent items
                         self.write_indent();
                     }
+                    i += 1;
                 }
             }
             IRNode::ASTRef(idx) => {
