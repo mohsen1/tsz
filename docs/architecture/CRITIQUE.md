@@ -457,6 +457,18 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
 * Canonicalization can be centralized and enforced in constructors.
 * Solver internals can evolve without huge refactors.
 
+### Status update (2026-02-14)
+
+* **Status:** In progress
+* **Completed in this iteration (Milestone 2 sub-item):**
+  * Migrated checker array-oriented construction sites from direct `TypeKey` interning to solver constructor APIs:
+    * `create_array_type` now uses `types.array(...)`
+    * `ReadonlyArray<T>` construction paths now use `types.readonly_type(types.array(...))`
+  * Added an architecture regression test that guards these array helper paths against direct `TypeKey` interning.
+* **Remaining for Milestone 2:**
+  * Migrate remaining checker `TypeKey` construction/import sites.
+  * Add CI guard that fails on checker `TypeKey` imports/usages.
+
 ---
 
 # Milestone 3 — Move type traversal into solver visitors
@@ -805,4 +817,3 @@ After those five, the rest of the roadmap becomes dramatically easier because th
 * **Checker owns type traversal:** `ensure_refs_resolved` does deep traversal and knows too much; roadmap moves that traversal into solver visitors. 
 
 * **Duplicate type system risk:** checker’s `TypeArena` still implements semantic type construction; roadmap removes/quarantines it so there’s only one meaning of `TypeId`. 
-

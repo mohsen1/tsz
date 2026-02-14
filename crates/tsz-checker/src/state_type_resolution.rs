@@ -567,9 +567,7 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(TypeId::ERROR);
         let array_type = self.ctx.types.array(elem_type);
         if name == "ReadonlyArray" {
-            self.ctx
-                .types
-                .intern(tsz_solver::TypeKey::ReadonlyType(array_type))
+            self.ctx.types.readonly_type(array_type)
         } else {
             array_type
         }

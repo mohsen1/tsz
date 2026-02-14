@@ -1,4 +1,5 @@
 use crate::context::{CheckerContext, CheckerOptions};
+use std::fs;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::{
@@ -179,4 +180,28 @@ fn test_no_implicit_any_scope_inference_for_js_files() {
         },
     );
     assert!(ts_file.no_implicit_any());
+}
+
+#[test]
+fn test_array_helpers_avoid_direct_typekey_interning() {
+    let array_type_src = fs::read_to_string("src/array_type.rs")
+        .expect("failed to read src/array_type.rs for architecture guard");
+    assert!(
+        !array_type_src.contains("TypeKey::Array"),
+        "array_type helper should use solver array constructor APIs, not TypeKey::Array"
+    );
+
+    let type_literal_src = fs::read_to_string("src/type_literal_checker.rs")
+        .expect("failed to read src/type_literal_checker.rs for architecture guard");
+    assert!(
+        !type_literal_src.contains("TypeKey::ReadonlyType"),
+        "type_literal_checker should use solver readonly constructor APIs, not TypeKey::ReadonlyType"
+    );
+
+    let type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
+        .expect("failed to read src/state_type_resolution.rs for architecture guard");
+    assert!(
+        !type_resolution_src.contains("TypeKey::ReadonlyType"),
+        "state_type_resolution should use solver readonly constructor APIs, not TypeKey::ReadonlyType"
+    );
 }
