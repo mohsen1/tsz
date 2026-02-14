@@ -482,7 +482,7 @@ class Derived extends Base {
 }
 
 #[test]
-fn test_super_property_access_reports_ts2340() {
+fn test_super_property_access_reports_ts2855() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
 class Base {
@@ -498,8 +498,8 @@ class Derived extends Base {
     );
 
     assert!(
-        has_error(&diagnostics, 2340),
-        "Expected TS2340 for super property access to non-method member. Actual diagnostics: {:#?}",
+        has_error(&diagnostics, 2855),
+        "Expected TS2855 for super property access to class field member. Actual diagnostics: {:#?}",
         diagnostics
     );
 }
