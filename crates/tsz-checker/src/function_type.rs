@@ -222,6 +222,7 @@ impl<'a> CheckerState<'a> {
         //   @template T
         //   @returns {T}
         // This enables return assignability checks for expression-bodied arrows.
+        let mut jsdoc_type_param_updates: Vec<(String, Option<TypeId>)> = Vec::new();
         if self.is_js_file()
             && type_params.is_empty()
             && let Some(ref jsdoc) = func_jsdoc
@@ -239,8 +240,12 @@ impl<'a> CheckerState<'a> {
                         is_const: false,
                     };
                     let ty = factory.type_param(info.clone());
-                    jsdoc_type_param_types.insert(name, ty);
+                    jsdoc_type_param_types.insert(name.clone(), ty);
                     jsdoc_type_params.push(info);
+                    // Register in type_parameter_scope so inline JSDoc casts
+                    // like `/** @type {T} */(expr)` can resolve `T`.
+                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+                    jsdoc_type_param_updates.push((name, previous));
                 }
                 type_params = jsdoc_type_params;
             }
@@ -846,6 +851,7 @@ impl<'a> CheckerState<'a> {
             is_method: false,
         };
 
+        self.pop_type_parameters(jsdoc_type_param_updates);
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_type_param_updates);
 
