@@ -1198,6 +1198,10 @@ pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeK
         Some(TypeKey::Array(elem)) => ArrayLikeKind::Array(elem),
         Some(TypeKey::Tuple(_)) => ArrayLikeKind::Tuple,
         Some(TypeKey::ReadonlyType(inner)) => ArrayLikeKind::Readonly(inner),
+        Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info
+            .constraint
+            .map(|constraint| classify_array_like(db, constraint))
+            .unwrap_or(ArrayLikeKind::Other),
         Some(TypeKey::Union(members_id)) => ArrayLikeKind::Union(db.type_list(members_id).to_vec()),
         Some(TypeKey::Intersection(members_id)) => {
             ArrayLikeKind::Intersection(db.type_list(members_id).to_vec())

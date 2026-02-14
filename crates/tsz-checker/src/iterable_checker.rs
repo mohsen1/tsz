@@ -453,6 +453,32 @@ impl<'a> CheckerState<'a> {
     /// Used for spread in array literals and function call arguments.
     /// Returns `true` if the type is iterable.
     pub fn check_spread_iterability(&mut self, spread_type: TypeId, expr_idx: NodeIndex) -> bool {
+        // In ES5 without downlevel iteration, spread requires an array/tuple source.
+        // Match tsc by emitting TS2461 for non-array spread arguments.
+        if self.ctx.compiler_options.target.is_es5() {
+            if spread_type == TypeId::ANY || spread_type == TypeId::UNKNOWN {
+                return true;
+            }
+
+            let resolved = self.resolve_lazy_type(spread_type);
+            if self.is_array_or_tuple_type(resolved) {
+                return true;
+            }
+
+            if let Some((start, end)) = self.get_node_span(expr_idx) {
+                let type_str = self.format_type(resolved);
+                let message =
+                    format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
+                self.error(
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                );
+            }
+            return false;
+        }
+
         // Skip error types and any/unknown
         if spread_type == TypeId::ANY
             || spread_type == TypeId::UNKNOWN

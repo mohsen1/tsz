@@ -1615,7 +1615,6 @@ impl<'a> CheckerState<'a> {
                 | "IteratorResult"
                 | "IteratorYieldResult"
                 | "IteratorReturnResult"
-                | "Iterable"
                 | "IterableIterator"
                 | "AsyncIterator"
                 | "AsyncIterable"
