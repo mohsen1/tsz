@@ -1014,15 +1014,13 @@ impl<'a> FlowGraphBuilder<'a> {
 
             // If this break has a label, find the matching labeled statement
             if let Some(label) = label_text {
-                if !ctx.label.is_none() {
-                    if let Some(ctx_label_node) = self.arena.get(ctx.label) {
-                        if let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node) {
-                            if ctx_label_data.escaped_text == label {
-                                target_label = ctx.break_label;
-                                break;
-                            }
-                        }
-                    }
+                if !ctx.label.is_none()
+                    && let Some(ctx_label_node) = self.arena.get(ctx.label)
+                    && let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node)
+                    && ctx_label_data.escaped_text == label
+                {
+                    target_label = ctx.break_label;
+                    break;
                 }
             } else {
                 // No label, use the nearest loop/switch
@@ -1076,17 +1074,14 @@ impl<'a> FlowGraphBuilder<'a> {
 
             // If this continue has a label, find the matching labeled statement
             if let Some(label) = label_text {
-                if !ctx.label.is_none() {
-                    if let Some(ctx_label_node) = self.arena.get(ctx.label) {
-                        if let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node) {
-                            if ctx_label_data.escaped_text == label {
-                                if let Some(continue_label) = ctx.continue_label {
-                                    target_label = continue_label;
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                if !ctx.label.is_none()
+                    && let Some(ctx_label_node) = self.arena.get(ctx.label)
+                    && let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node)
+                    && ctx_label_data.escaped_text == label
+                    && let Some(continue_label) = ctx.continue_label
+                {
+                    target_label = continue_label;
+                    break;
                 }
             } else {
                 // No label, use the nearest loop

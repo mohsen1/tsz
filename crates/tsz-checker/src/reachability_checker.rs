@@ -136,14 +136,13 @@ impl<'a> CheckerState<'a> {
                         // Only treat call/new expressions as non-falling-through when
                         // they return never. Type assertions like `null as never` still
                         // complete normally at runtime.
-                        if let Some(init_node) = self.ctx.arena.get(decl.initializer) {
-                            if init_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::NEW_EXPRESSION
-                            {
-                                let init_type = self.get_type_of_node(decl.initializer);
-                                if init_type.is_never() {
-                                    return false;
-                                }
+                        if let Some(init_node) = self.ctx.arena.get(decl.initializer)
+                            && (init_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                                || init_node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                        {
+                            let init_type = self.get_type_of_node(decl.initializer);
+                            if init_type.is_never() {
+                                return false;
                             }
                         }
                     }
@@ -364,18 +363,17 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
                 // Check if parent (VariableDeclarationList) has let/const flags
-                if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
-                    if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
-                        if (parent_node.flags as u32 & (node_flags::LET | node_flags::CONST)) != 0 {
-                            return false;
-                        }
-                    }
+                if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                    && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                    && (parent_node.flags as u32 & (node_flags::LET | node_flags::CONST)) != 0
+                {
+                    return false;
                 }
                 // Check that declaration has no initializer
-                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) {
-                    if !var_decl.initializer.is_none() {
-                        return false;
-                    }
+                if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                    && !var_decl.initializer.is_none()
+                {
+                    return false;
                 }
             }
         }

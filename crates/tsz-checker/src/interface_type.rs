@@ -917,32 +917,30 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    if member_node.kind == PROPERTY_SIGNATURE
-                        || member_node.kind == METHOD_SIGNATURE
+                    if (member_node.kind == PROPERTY_SIGNATURE
+                        || member_node.kind == METHOD_SIGNATURE)
+                        && let Some(sig) = arena.get_signature(member_node)
+                        && let Some(name_node) = arena.get(sig.name)
+                        && let Some(id_data) = arena.get_identifier(name_node)
                     {
-                        if let Some(sig) = arena.get_signature(member_node)
-                            && let Some(name_node) = arena.get(sig.name)
-                            && let Some(id_data) = arena.get_identifier(name_node)
+                        let type_id = if !sig.type_annotation.is_none()
+                            && std::ptr::eq(arena, self.ctx.arena)
                         {
-                            let type_id = if !sig.type_annotation.is_none()
-                                && std::ptr::eq(arena, self.ctx.arena)
-                            {
-                                self.get_type_of_node(sig.type_annotation)
-                            } else {
-                                TypeId::ANY
-                            };
+                            self.get_type_of_node(sig.type_annotation)
+                        } else {
+                            TypeId::ANY
+                        };
 
-                            members.push(PropertyInfo {
-                                name: self.ctx.types.intern_string(&id_data.escaped_text),
-                                type_id,
-                                write_type: type_id,
-                                optional: sig.question_token,
-                                readonly: self.has_readonly_modifier(&sig.modifiers),
-                                is_method: member_node.kind == METHOD_SIGNATURE,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                            });
-                        }
+                        members.push(PropertyInfo {
+                            name: self.ctx.types.intern_string(&id_data.escaped_text),
+                            type_id,
+                            write_type: type_id,
+                            optional: sig.question_token,
+                            readonly: self.has_readonly_modifier(&sig.modifiers),
+                            is_method: member_node.kind == METHOD_SIGNATURE,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                        });
                     }
                 }
                 continue;

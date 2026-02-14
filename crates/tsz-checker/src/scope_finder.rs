@@ -70,16 +70,15 @@ impl<'a> CheckerState<'a> {
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return None;
             }
-            if let Some(node) = self.ctx.arena.get(current) {
-                if node.kind == FUNCTION_DECLARATION
+            if let Some(node) = self.ctx.arena.get(current)
+                && (node.kind == FUNCTION_DECLARATION
                     || node.kind == FUNCTION_EXPRESSION
                     || node.kind == METHOD_DECLARATION
                     || node.kind == CONSTRUCTOR
                     || node.kind == GET_ACCESSOR
-                    || node.kind == SET_ACCESSOR
-                {
-                    return Some(current);
-                }
+                    || node.kind == SET_ACCESSOR)
+            {
+                return Some(current);
             }
             let ext = self.ctx.arena.get_extended(current)?;
             if ext.parent.is_none() {
@@ -463,13 +462,12 @@ impl<'a> CheckerState<'a> {
             match node.kind {
                 // Pattern 1: this is inside super(...) call arguments
                 k if k == CALL_EXPRESSION => {
-                    if let Some(call_data) = self.ctx.arena.get_call_expr(node) {
-                        if let Some(callee) = self.ctx.arena.get(call_data.expression) {
-                            if callee.kind == SyntaxKind::SuperKeyword as u16 {
-                                // Verify we're in a derived class constructor
-                                return self.is_in_derived_class_constructor(current);
-                            }
-                        }
+                    if let Some(call_data) = self.ctx.arena.get_call_expr(node)
+                        && let Some(callee) = self.ctx.arena.get(call_data.expression)
+                        && callee.kind == SyntaxKind::SuperKeyword as u16
+                    {
+                        // Verify we're in a derived class constructor
+                        return self.is_in_derived_class_constructor(current);
                     }
                 }
 
@@ -478,10 +476,10 @@ impl<'a> CheckerState<'a> {
                     // Check if this parameter belongs to a constructor
                     if let Some(param_ext) = self.ctx.arena.get_extended(current) {
                         let param_parent = param_ext.parent;
-                        if let Some(parent_node) = self.ctx.arena.get(param_parent) {
-                            if parent_node.kind == CONSTRUCTOR {
-                                return self.is_in_derived_class_constructor(param_parent);
-                            }
+                        if let Some(parent_node) = self.ctx.arena.get(param_parent)
+                            && parent_node.kind == CONSTRUCTOR
+                        {
+                            return self.is_in_derived_class_constructor(param_parent);
                         }
                     }
                 }

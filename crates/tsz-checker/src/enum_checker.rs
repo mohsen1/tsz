@@ -30,10 +30,10 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the type represents a TypeScript enum.
     pub fn is_enum_type(&self, type_id: TypeId) -> bool {
         // Use resolve_type_to_symbol_id which handles both Lazy and Enum variants
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                return (symbol.flags & symbol_flags::ENUM) != 0;
-            }
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return (symbol.flags & symbol_flags::ENUM) != 0;
         }
         false
     }
@@ -43,11 +43,11 @@ impl<'a> CheckerState<'a> {
     /// Const enums are fully inlined and cannot be accessed at runtime.
     pub fn is_const_enum_type(&self, type_id: TypeId) -> bool {
         // Use resolve_type_to_symbol_id which handles both Lazy and Enum variants
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                return (symbol.flags & symbol_flags::ENUM) != 0
-                    && (symbol.flags & symbol_flags::CONST_ENUM) != 0;
-            }
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return (symbol.flags & symbol_flags::ENUM) != 0
+                && (symbol.flags & symbol_flags::CONST_ENUM) != 0;
         }
         false
     }

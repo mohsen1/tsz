@@ -584,10 +584,10 @@ impl<'a> CheckerState<'a> {
         if let Some(pattern_node) = self.ctx.arena.get(pattern_idx) {
             is_assignment_array_target =
                 pattern_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
-            if let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
-                if binding_pattern.elements.nodes.is_empty() {
-                    return true;
-                }
+            if let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node)
+                && binding_pattern.elements.nodes.is_empty()
+            {
+                return true;
             }
         }
 

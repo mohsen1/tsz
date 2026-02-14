@@ -251,35 +251,33 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS);
         let mut has_named_default_binding = false;
 
-        if has_named_imports {
-            if let Some(bindings_node) = bindings_node
-                && let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node)
-            {
-                for element_idx in &named_imports.elements.nodes {
-                    let Some(element_node) = self.ctx.arena.get(*element_idx) else {
-                        continue;
-                    };
-                    let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
-                        continue;
-                    };
-                    let imported_name_idx = if specifier.property_name.is_none() {
-                        specifier.name
-                    } else {
-                        specifier.property_name
-                    };
+        if has_named_imports
+            && let Some(bindings_node) = bindings_node
+            && let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node)
+        {
+            for element_idx in &named_imports.elements.nodes {
+                let Some(element_node) = self.ctx.arena.get(*element_idx) else {
+                    continue;
+                };
+                let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
+                    continue;
+                };
+                let imported_name_idx = if specifier.property_name.is_none() {
+                    specifier.name
+                } else {
+                    specifier.property_name
+                };
 
-                    let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx) else {
-                        continue;
-                    };
-                    let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node)
-                    else {
-                        continue;
-                    };
+                let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx) else {
+                    continue;
+                };
+                let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node) else {
+                    continue;
+                };
 
-                    if imported_ident.escaped_text.as_str() == "default" {
-                        has_named_default_binding = true;
-                        break;
-                    }
+                if imported_ident.escaped_text.as_str() == "default" {
+                    has_named_default_binding = true;
+                    break;
                 }
             }
         }
@@ -678,17 +676,17 @@ impl<'a> CheckerState<'a> {
         }
 
         // Also check with file name
-        if let Some(fname) = file_name {
-            if let Some(exports) = binder.module_exports.get(fname) {
-                for (export_name, sym_id) in exports.iter() {
-                    if let Some(sym) = binder.symbols.get(*sym_id) {
-                        let has_matching_name = sym.declarations.iter().any(|&decl_idx| {
-                            self.declaration_name_matches_string(decl_idx, import_name)
-                        });
+        if let Some(fname) = file_name
+            && let Some(exports) = binder.module_exports.get(fname)
+        {
+            for (export_name, sym_id) in exports.iter() {
+                if let Some(sym) = binder.symbols.get(*sym_id) {
+                    let has_matching_name = sym.declarations.iter().any(|&decl_idx| {
+                        self.declaration_name_matches_string(decl_idx, import_name)
+                    });
 
-                        if has_matching_name && export_name.as_str() != import_name {
-                            return Some((true, Some(export_name.clone())));
-                        }
+                    if has_matching_name && export_name.as_str() != import_name {
+                        return Some((true, Some(export_name.clone())));
                     }
                 }
             }
@@ -1182,106 +1180,103 @@ impl<'a> CheckerState<'a> {
         // representations are handled consistently.
         let require_module_specifier = self.get_require_module_specifier(import.module_specifier);
         let mut force_module_not_found = false;
-        if require_module_specifier.is_some() {
-            if self.ctx.arena.get(import.module_specifier).is_some() {
-                // This is an external module reference (require("..."))
-                // Check if we're inside a MODULE_DECLARATION (namespace/module)
-                let mut current = stmt_idx;
-                let mut inside_namespace = false;
-                let mut namespace_is_exported = false;
-                let mut containing_module_name: Option<String> = None;
+        if require_module_specifier.is_some()
+            && self.ctx.arena.get(import.module_specifier).is_some()
+        {
+            // This is an external module reference (require("..."))
+            // Check if we're inside a MODULE_DECLARATION (namespace/module)
+            let mut current = stmt_idx;
+            let mut inside_namespace = false;
+            let mut namespace_is_exported = false;
+            let mut containing_module_name: Option<String> = None;
 
-                while !current.is_none() {
-                    if let Some(node) = self.ctx.arena.get(current) {
-                        if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                            // Check if this is an ambient module (declare module "...") or namespace
-                            if let Some(module_decl) = self.ctx.arena.get_module(node) {
-                                if let Some(name_node) = self.ctx.arena.get(module_decl.name) {
-                                    if name_node.kind == SyntaxKind::StringLiteral as u16 {
-                                        // This is an ambient module: declare module "foo"
-                                        if let Some(name_literal) =
-                                            self.ctx.arena.get_literal(name_node)
-                                        {
-                                            containing_module_name =
-                                                Some(name_literal.text.clone());
-                                        }
-                                    } else {
-                                        // This is a namespace: namespace Foo
-                                        inside_namespace = true;
-                                        // Check if this namespace is exported
-                                        namespace_is_exported = self.has_export_modifier(current);
-                                    }
+            while !current.is_none() {
+                if let Some(node) = self.ctx.arena.get(current) {
+                    if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        // Check if this is an ambient module (declare module "...") or namespace
+                        if let Some(module_decl) = self.ctx.arena.get_module(node)
+                            && let Some(name_node) = self.ctx.arena.get(module_decl.name)
+                        {
+                            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+                                // This is an ambient module: declare module "foo"
+                                if let Some(name_literal) = self.ctx.arena.get_literal(name_node) {
+                                    containing_module_name = Some(name_literal.text.clone());
                                 }
+                            } else {
+                                // This is a namespace: namespace Foo
+                                inside_namespace = true;
+                                // Check if this namespace is exported
+                                namespace_is_exported = self.has_export_modifier(current);
                             }
-                            break;
                         }
-                        // Move to parent
-                        if let Some(ext) = self.ctx.arena.get_extended(current) {
-                            current = ext.parent;
-                        } else {
-                            break;
-                        }
+                        break;
+                    }
+                    // Move to parent
+                    if let Some(ext) = self.ctx.arena.get_extended(current) {
+                        current = ext.parent;
                     } else {
                         break;
                     }
+                } else {
+                    break;
                 }
+            }
 
-                // TS1147: Only emit for namespaces (not ambient modules)
-                if inside_namespace {
-                    self.error_at_node(
+            // TS1147: Only emit for namespaces (not ambient modules)
+            if inside_namespace {
+                self.error_at_node(
                         import.module_specifier,
                         diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                         diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
                     );
-                    // Only return early for non-exported namespaces
-                    // TypeScript emits both TS1147 and TS2307 for exported namespaces
-                    if !namespace_is_exported {
-                        return;
-                    }
-                    force_module_not_found = true;
+                // Only return early for non-exported namespaces
+                // TypeScript emits both TS1147 and TS2307 for exported namespaces
+                if !namespace_is_exported {
+                    return;
                 }
+                force_module_not_found = true;
+            }
 
-                // TS2439: Ambient modules cannot use relative imports
-                if containing_module_name.is_some() {
-                    if let Some(imported_module) = require_module_specifier.as_deref() {
-                        // Check if this is a relative import (starts with ./ or ../)
-                        if imported_module.starts_with("./") || imported_module.starts_with("../") {
-                            self.error_at_node(
+            // TS2439: Ambient modules cannot use relative imports
+            if containing_module_name.is_some()
+                && let Some(imported_module) = require_module_specifier.as_deref()
+            {
+                // Check if this is a relative import (starts with ./ or ../)
+                if imported_module.starts_with("./") || imported_module.starts_with("../") {
+                    self.error_at_node(
                                 import.module_specifier,
                                 diagnostic_messages::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
                                 diagnostic_codes::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
                             );
-                            // Keep TS2439 and also force TS2307 in this ambient-relative import case.
-                            force_module_not_found = true
-                        }
-                    }
+                    // Keep TS2439 and also force TS2307 in this ambient-relative import case.
+                    force_module_not_found = true
                 }
+            }
 
-                // TS2303: Check for circular import in ambient modules
-                if let Some(ref ambient_module_name) = containing_module_name {
-                    if let Some(imported_module) = require_module_specifier.as_deref() {
-                        // Check if the imported module matches the containing module
-                        if ambient_module_name == imported_module {
-                            // Emit TS2303: Circular definition of import alias
-                            if let Some(import_name) = self
-                                .ctx
-                                .arena
-                                .get(import.import_clause)
-                                .and_then(|n| self.ctx.arena.get_identifier(n))
-                                .map(|id| id.escaped_text.clone())
-                            {
-                                let message = format_message(
-                                    diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                                    &[&import_name],
-                                );
-                                self.error_at_node(
-                                    import.import_clause,
-                                    &message,
-                                    diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                                );
-                                return;
-                            }
-                        }
+            // TS2303: Check for circular import in ambient modules
+            if let Some(ref ambient_module_name) = containing_module_name
+                && let Some(imported_module) = require_module_specifier.as_deref()
+            {
+                // Check if the imported module matches the containing module
+                if ambient_module_name == imported_module {
+                    // Emit TS2303: Circular definition of import alias
+                    if let Some(import_name) = self
+                        .ctx
+                        .arena
+                        .get(import.import_clause)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.clone())
+                    {
+                        let message = format_message(
+                            diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                            &[&import_name],
+                        );
+                        self.error_at_node(
+                            import.import_clause,
+                            &message,
+                            diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                        );
+                        return;
                     }
                 }
             }
@@ -1404,20 +1399,17 @@ impl<'a> CheckerState<'a> {
                     // Special case: If this is a namespace module, check if it's the enclosing scope
                     // itself. In TypeScript, `namespace A.M { import M = Z.M; }` is allowed - the
                     // import alias `M` shadows the namespace container name `M`.
-                    if is_namespace {
-                        if let Some(import_scope_id) = import_scope {
-                            // Get the scope that contains the import
-                            if let Some(scope) =
-                                self.ctx.binder.scopes.get(import_scope_id.0 as usize)
-                            {
-                                // Check if any of this namespace's declarations match the container node
-                                // of the import's enclosing scope
-                                let is_enclosing_namespace =
-                                    sym.declarations.contains(&scope.container_node);
-                                if is_enclosing_namespace {
-                                    // This namespace is the enclosing context, not a conflicting declaration
-                                    continue;
-                                }
+                    if is_namespace && let Some(import_scope_id) = import_scope {
+                        // Get the scope that contains the import
+                        if let Some(scope) = self.ctx.binder.scopes.get(import_scope_id.0 as usize)
+                        {
+                            // Check if any of this namespace's declarations match the container node
+                            // of the import's enclosing scope
+                            let is_enclosing_namespace =
+                                sym.declarations.contains(&scope.container_node);
+                            if is_enclosing_namespace {
+                                // This namespace is the enclosing context, not a conflicting declaration
+                                continue;
                             }
                         }
                     }
@@ -1605,104 +1597,98 @@ impl<'a> CheckerState<'a> {
         }
 
         // Handle qualified name: import x = Namespace.Member
-        if ref_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            if let Some(qn) = self.ctx.arena.get_qualified_name(ref_node) {
-                // Check the leftmost part first - this is what determines TS2503 vs TS2694
-                let left_name = self.get_leftmost_identifier_name(qn.left);
-                if let Some(name) = left_name {
-                    // Try to resolve the left identifier
-                    let left_resolved = self.resolve_leftmost_qualified_name(qn.left);
-                    if left_resolved.is_none() {
-                        self.error_at_node_msg(
-                            qn.left,
-                            diagnostic_codes::CANNOT_FIND_NAMESPACE,
-                            &[&name],
-                        );
-                        return; // Don't check for TS2694 if left doesn't exist
+        if ref_node.kind == syntax_kind_ext::QUALIFIED_NAME
+            && let Some(qn) = self.ctx.arena.get_qualified_name(ref_node)
+        {
+            // Check the leftmost part first - this is what determines TS2503 vs TS2694
+            let left_name = self.get_leftmost_identifier_name(qn.left);
+            if let Some(name) = left_name {
+                // Try to resolve the left identifier
+                let left_resolved = self.resolve_leftmost_qualified_name(qn.left);
+                if left_resolved.is_none() {
+                    self.error_at_node_msg(
+                        qn.left,
+                        diagnostic_codes::CANNOT_FIND_NAMESPACE,
+                        &[&name],
+                    );
+                    return; // Don't check for TS2694 if left doesn't exist
+                }
+
+                // If left is resolved, check if right member exists (TS2694)
+                // Use the existing report_type_query_missing_member which handles this correctly
+                self.report_type_query_missing_member(module_ref);
+
+                // TS2708: Check if export import is used with a namespace member
+                // When you have `export import a = NS.Member`, if NS contains only types,
+                // you cannot export it as a value.
+                // Check if the parent node is an EXPORT_DECLARATION (for `export import`)
+                let mut is_exported = self.has_export_modifier(stmt_idx);
+                if !is_exported
+                    && let Some(ext) = self.ctx.arena.get_extended(stmt_idx)
+                    && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                    && parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                {
+                    is_exported = true;
+                }
+                if is_exported {
+                    if self.is_unresolved_import_symbol(qn.left) {
+                        return;
                     }
-
-                    // If left is resolved, check if right member exists (TS2694)
-                    // Use the existing report_type_query_missing_member which handles this correctly
-                    self.report_type_query_missing_member(module_ref);
-
-                    // TS2708: Check if export import is used with a namespace member
-                    // When you have `export import a = NS.Member`, if NS contains only types,
-                    // you cannot export it as a value.
-                    // Check if the parent node is an EXPORT_DECLARATION (for `export import`)
-                    let mut is_exported = self.has_export_modifier(stmt_idx);
-                    if !is_exported {
-                        if let Some(ext) = self.ctx.arena.get_extended(stmt_idx) {
-                            if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
-                                if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                                    is_exported = true;
+                    // Check if the left (namespace) is type-only by checking if it has
+                    // any value members. For now, emit TS2708 if we're exporting an import
+                    // from a namespace that contains a type member.
+                    // Try to resolve the qualified name to check if it's type-only
+                    if let Some(resolved_sym) = self.resolve_qualified_symbol(module_ref) {
+                        let lib_binders = self.get_lib_binders();
+                        if let Some(symbol) = self
+                            .ctx
+                            .binder
+                            .get_symbol_with_libs(resolved_sym, &lib_binders)
+                        {
+                            // Check if this is a type-only symbol (interface or type alias)
+                            let is_type_only = (symbol.flags
+                                & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
+                                != 0;
+                            if is_type_only {
+                                if self.should_suppress_namespace_value_error_for_failed_import(
+                                    qn.left,
+                                ) {
+                                    return;
                                 }
+                                // Emit TS2708: Cannot use namespace as a value
+                                // The error message mentions the namespace, not the member
+                                self.error_namespace_used_as_value_at(&name, qn.left);
                             }
                         }
-                    }
-                    if is_exported {
-                        if self.is_unresolved_import_symbol(qn.left) {
-                            return;
-                        }
-                        // Check if the left (namespace) is type-only by checking if it has
-                        // any value members. For now, emit TS2708 if we're exporting an import
-                        // from a namespace that contains a type member.
-                        // Try to resolve the qualified name to check if it's type-only
-                        if let Some(resolved_sym) = self.resolve_qualified_symbol(module_ref) {
+                    } else {
+                        // Even if we can't resolve the full qualified name (TS2694 case),
+                        // check if the namespace contains only types
+                        if let Some(left_sym) = self.resolve_qualified_symbol(qn.left) {
                             let lib_binders = self.get_lib_binders();
-                            if let Some(symbol) = self
-                                .ctx
-                                .binder
-                                .get_symbol_with_libs(resolved_sym, &lib_binders)
+                            if let Some(ns_symbol) =
+                                self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders)
                             {
-                                // Check if this is a type-only symbol (interface or type alias)
-                                let is_type_only = (symbol.flags
-                                    & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
-                                    != 0;
-                                if is_type_only {
+                                // Check if namespace exports table contains any value symbols
+                                let has_value_exports = if let Some(exports) = &ns_symbol.exports {
+                                    exports.as_ref().iter().any(|(_, &sym_id)| {
+                                        if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
+                                            (sym.flags & symbol_flags::VALUE) != 0
+                                        } else {
+                                            false
+                                        }
+                                    })
+                                } else {
+                                    false
+                                };
+
+                                // If namespace has no value exports, emit TS2708
+                                if !has_value_exports {
                                     if self.should_suppress_namespace_value_error_for_failed_import(
                                         qn.left,
                                     ) {
                                         return;
                                     }
-                                    // Emit TS2708: Cannot use namespace as a value
-                                    // The error message mentions the namespace, not the member
                                     self.error_namespace_used_as_value_at(&name, qn.left);
-                                }
-                            }
-                        } else {
-                            // Even if we can't resolve the full qualified name (TS2694 case),
-                            // check if the namespace contains only types
-                            if let Some(left_sym) = self.resolve_qualified_symbol(qn.left) {
-                                let lib_binders = self.get_lib_binders();
-                                if let Some(ns_symbol) =
-                                    self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders)
-                                {
-                                    // Check if namespace exports table contains any value symbols
-                                    let has_value_exports = if let Some(exports) =
-                                        &ns_symbol.exports
-                                    {
-                                        exports.as_ref().iter().any(|(_, &sym_id)| {
-                                            if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
-                                                (sym.flags & symbol_flags::VALUE) != 0
-                                            } else {
-                                                false
-                                            }
-                                        })
-                                    } else {
-                                        false
-                                    };
-
-                                    // If namespace has no value exports, emit TS2708
-                                    if !has_value_exports {
-                                        if self
-                                            .should_suppress_namespace_value_error_for_failed_import(
-                                                qn.left,
-                                            )
-                                        {
-                                            return;
-                                        }
-                                        self.error_namespace_used_as_value_at(&name, qn.left);
-                                    }
                                 }
                             }
                         }
@@ -1887,14 +1873,14 @@ impl<'a> CheckerState<'a> {
             emitted_dts_import_error = true;
         }
 
-        if let Some(binders) = &self.ctx.all_binders {
-            if binders.iter().any(|binder| {
+        if let Some(binders) = &self.ctx.all_binders
+            && binders.iter().any(|binder| {
                 binder.declared_modules.contains(module_name)
                     || binder.shorthand_ambient_modules.contains(module_name)
-            }) {
-                tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
-                return;
-            }
+            })
+        {
+            tracing::trace!(%module_name, "check_import_declaration: found in declared/shorthand modules, returning");
+            return;
         }
 
         if self.would_create_cycle(module_name) {
@@ -2257,24 +2243,23 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check direct exports
-        if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
-            if exports.has(import_name) {
-                return true;
-            }
+        if let Some(exports) = target_binder.module_exports.get(&target_file_name)
+            && exports.has(import_name)
+        {
+            return true;
         }
 
         // Check named re-exports
-        if let Some(reexports) = target_binder.reexports.get(&target_file_name) {
-            if let Some((source_module, original_name)) = reexports.get(import_name) {
-                let name = original_name.as_deref().unwrap_or(import_name);
-                if let Some(source_idx) = self
-                    .ctx
-                    .resolve_import_target_from_file(file_idx, source_module)
-                {
-                    if self.resolve_import_in_file(source_idx, name, visited) {
-                        return true;
-                    }
-                }
+        if let Some(reexports) = target_binder.reexports.get(&target_file_name)
+            && let Some((source_module, original_name)) = reexports.get(import_name)
+        {
+            let name = original_name.as_deref().unwrap_or(import_name);
+            if let Some(source_idx) = self
+                .ctx
+                .resolve_import_target_from_file(file_idx, source_module)
+                && self.resolve_import_in_file(source_idx, name, visited)
+            {
+                return true;
             }
         }
 
@@ -2285,10 +2270,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
+                    && self.resolve_import_in_file(source_idx, import_name, visited)
                 {
-                    if self.resolve_import_in_file(source_idx, import_name, visited) {
-                        return true;
-                    }
+                    return true;
                 }
             }
         }

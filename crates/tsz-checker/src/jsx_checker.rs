@@ -71,13 +71,13 @@ impl<'a> CheckerState<'a> {
         if is_intrinsic {
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]
             // Try to resolve JSX.IntrinsicElements and create an indexed access type
-            if let Some(tag) = tag_name {
-                if let Some(intrinsic_elements_type) = self.get_intrinsic_elements_type() {
-                    // Create JSX.IntrinsicElements['tagName'] as an IndexAccess type
-                    let factory = self.ctx.types.factory();
-                    let tag_literal = factory.literal_string(tag);
-                    return factory.index_access(intrinsic_elements_type, tag_literal);
-                }
+            if let Some(tag) = tag_name
+                && let Some(intrinsic_elements_type) = self.get_intrinsic_elements_type()
+            {
+                // Create JSX.IntrinsicElements['tagName'] as an IndexAccess type
+                let factory = self.ctx.types.factory();
+                let tag_literal = factory.literal_string(tag);
+                return factory.index_access(intrinsic_elements_type, tag_literal);
             }
             // Fall back to ANY if JSX namespace is not available
             TypeId::ANY
@@ -159,12 +159,10 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(jsx_sym_id, &lib_binders)
+                && let Some(exports) = symbol.exports.as_ref()
+                && let Some(element_sym_id) = exports.get("Element")
             {
-                if let Some(exports) = symbol.exports.as_ref() {
-                    if let Some(element_sym_id) = exports.get("Element") {
-                        return self.type_reference_symbol_type(element_sym_id);
-                    }
-                }
+                return self.type_reference_symbol_type(element_sym_id);
             }
         }
         // Fall back to ANY if JSX namespace or Element type is not available

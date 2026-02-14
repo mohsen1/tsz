@@ -830,10 +830,10 @@ impl<'a> CheckerState<'a> {
                 if elem_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
                     // Handle assignment patterns with defaults: [x = 1] = []
                     // The left side of the assignment is the target being assigned to
-                    if let Some(bin) = self.ctx.arena.get_binary_expr(elem_node) {
-                        if self.is_assignment_operator(bin.operator_token) {
-                            self.collect_assignment_target(bin.left, assigned, tracked);
-                        }
+                    if let Some(bin) = self.ctx.arena.get_binary_expr(elem_node)
+                        && self.is_assignment_operator(bin.operator_token)
+                    {
+                        self.collect_assignment_target(bin.left, assigned, tracked);
                     }
                 } else if elem_node.kind == SyntaxKind::Identifier as u16 {
                     // Handle simple identifier: [x] = [1]
@@ -1359,20 +1359,18 @@ impl<'a> CheckerState<'a> {
         // Correlated narrowing for destructured bindings.
         // When `const { data, isSuccess } = useQuery()` and we check `isSuccess`,
         // narrowing of `isSuccess` should also narrow `data`.
-        if narrowed == declared_type {
-            if let Some(sym_id) = self.get_symbol_for_identifier(idx) {
-                if let Some(info) = self.ctx.destructured_bindings.get(&sym_id).cloned() {
-                    if info.is_const {
-                        return self.apply_correlated_narrowing(
-                            &analyzer,
-                            sym_id,
-                            &info,
-                            declared_type,
-                            flow_node,
-                        );
-                    }
-                }
-            }
+        if narrowed == declared_type
+            && let Some(sym_id) = self.get_symbol_for_identifier(idx)
+            && let Some(info) = self.ctx.destructured_bindings.get(&sym_id).cloned()
+            && info.is_const
+        {
+            return self.apply_correlated_narrowing(
+                &analyzer,
+                sym_id,
+                &info,
+                declared_type,
+                flow_node,
+            );
         }
 
         narrowed
@@ -1506,10 +1504,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-            } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, *member) {
-                if let Some(e) = elems.get(info.element_index as usize) {
-                    result_types.push(e.type_id);
-                }
+            } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, *member)
+                && let Some(e) = elems.get(info.element_index as usize)
+            {
+                result_types.push(e.type_id);
             }
         }
 
@@ -1587,14 +1585,13 @@ impl<'a> CheckerState<'a> {
         // The value_declaration points to VARIABLE_DECLARATION, we need to check its parent's flags
         if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
-            if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
-                if !ext.parent.is_none() {
-                    if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
-                        let flags = parent_node.flags as u32;
-                        let is_const = (flags & node_flags::CONST) != 0;
-                        return !is_const; // Return true if NOT const (i.e., let or var)
-                    }
-                }
+            if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && !ext.parent.is_none()
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            {
+                let flags = parent_node.flags as u32;
+                let is_const = (flags & node_flags::CONST) != 0;
+                return !is_const; // Return true if NOT const (i.e., let or var)
             }
         }
 
@@ -1955,18 +1952,16 @@ impl<'a> CheckerState<'a> {
         // it's always assigned by the loop iteration itself
         if let Some(decl_list_info) = self.ctx.arena.node_info(decl_id) {
             let decl_list_idx = decl_list_info.parent;
-            if let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx) {
-                if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                    if let Some(for_info) = self.ctx.arena.node_info(decl_list_idx) {
-                        let for_idx = for_info.parent;
-                        if let Some(for_node) = self.ctx.arena.get(for_idx) {
-                            if for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                                || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                            {
-                                return false;
-                            }
-                        }
-                    }
+            if let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
+                && decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                && let Some(for_info) = self.ctx.arena.node_info(decl_list_idx)
+            {
+                let for_idx = for_info.parent;
+                if let Some(for_node) = self.ctx.arena.get(for_idx)
+                    && (for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+                {
+                    return false;
                 }
             }
         }
@@ -1988,18 +1983,16 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(node) = self.ctx.arena.get(current) {
                 // Check for ambient declarations
-                if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                    || node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                if (node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    || node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
+                    && let Some(var_data) = self.ctx.arena.get_variable(node)
+                    && let Some(mods) = &var_data.modifiers
                 {
-                    if let Some(var_data) = self.ctx.arena.get_variable(node) {
-                        if let Some(mods) = &var_data.modifiers {
-                            for &mod_idx in &mods.nodes {
-                                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
-                                {
-                                    return false;
-                                }
-                            }
+                    for &mod_idx in &mods.nodes {
+                        if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                            && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                        {
+                            return false;
                         }
                     }
                 }
@@ -2436,15 +2429,15 @@ impl<'a> CheckerState<'a> {
             if let Some(arenas) = self.ctx.all_arenas.as_ref() {
                 for arena in arenas.iter() {
                     if let Some(node) = arena.get(decl_idx) {
-                        if let Some(class) = arena.get_class(node) {
-                            if self.has_declare_modifier_in_arena(arena, &class.modifiers) {
-                                return false;
-                            }
+                        if let Some(class) = arena.get_class(node)
+                            && self.has_declare_modifier_in_arena(arena, &class.modifiers)
+                        {
+                            return false;
                         }
-                        if let Some(enum_decl) = arena.get_enum(node) {
-                            if self.has_declare_modifier_in_arena(arena, &enum_decl.modifiers) {
-                                return false;
-                            }
+                        if let Some(enum_decl) = arena.get_enum(node)
+                            && self.has_declare_modifier_in_arena(arena, &enum_decl.modifiers)
+                        {
+                            return false;
                         }
                     }
                 }
@@ -2480,20 +2473,17 @@ impl<'a> CheckerState<'a> {
             // the usage is deferred and not a TDZ violation.
             // Exception: IIFEs (immediately invoked function expressions) execute
             // immediately, so they ARE TDZ violations.
-            if node.is_function_like() {
-                if !self.is_immediately_invoked(current) {
-                    return false;
-                }
-                // IIFE - continue walking up, this function executes immediately
+            if node.is_function_like() && !self.is_immediately_invoked(current) {
+                return false;
             }
+            // IIFE - continue walking up, this function executes immediately
             // Non-static class property initializers run during constructor execution,
             // which is deferred — not a TDZ violation for class declarations.
-            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                if let Some(prop) = self.ctx.arena.get_property_decl(node) {
-                    if !self.has_static_modifier(&prop.modifiers) {
-                        return false;
-                    }
-                }
+            if node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && let Some(prop) = self.ctx.arena.get_property_decl(node)
+                && !self.has_static_modifier(&prop.modifiers)
+            {
+                return false;
             }
             // Export assignments (`export = X` / `export default X`) are not TDZ
             // violations: the compiler reorders them after all declarations, so

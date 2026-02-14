@@ -177,15 +177,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     // Don't also emit TS1155
                 } else {
                     // Check if this is in a for-in or for-of loop (allowed)
-                    if let Some(parent_ext) = self.ctx.arena.get_extended(parent_idx) {
-                        if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
-                            if gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                                || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                            {
-                                // const in for-in/for-of is allowed without initializer
-                                return;
-                            }
-                        }
+                    if let Some(parent_ext) = self.ctx.arena.get_extended(parent_idx)
+                        && let Some(gp_node) = self.ctx.arena.get(parent_ext.parent)
+                        && (gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                            || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+                    {
+                        // const in for-in/for-of is allowed without initializer
+                        return;
                     }
 
                     // Check if this is an ambient declaration (allowed)
@@ -383,10 +381,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     || k == syntax_kind_ext::FUNCTION_EXPRESSION
                     || k == syntax_kind_ext::ARROW_FUNCTION =>
                 {
-                    if let Some(func) = self.ctx.arena.get_function(parent) {
-                        if self.block_has_use_strict(func.body) {
-                            return true;
-                        }
+                    if let Some(func) = self.ctx.arena.get_function(parent)
+                        && self.block_has_use_strict(func.body)
+                    {
+                        return true;
                     }
                     // Continue walking up — the outer scope might have "use strict"
                 }
@@ -435,10 +433,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 break;
             };
             if expr.kind == SyntaxKind::StringLiteral as u16 {
-                if let Some(lit) = self.ctx.arena.get_literal(expr) {
-                    if lit.text == "use strict" {
-                        return true;
-                    }
+                if let Some(lit) = self.ctx.arena.get_literal(expr)
+                    && lit.text == "use strict"
+                {
+                    return true;
                 }
             } else {
                 break; // Non-string expression, stop looking for prologues
@@ -1106,15 +1104,15 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     && !member_data.initializer.is_none()
                 {
                     // Check if the initializer is a constant expression
-                    if !self.is_constant_expression(member_data.initializer) {
-                        if let Some(init_node) = self.ctx.arena.get(member_data.initializer) {
-                            self.ctx.error(
+                    if !self.is_constant_expression(member_data.initializer)
+                        && let Some(init_node) = self.ctx.arena.get(member_data.initializer)
+                    {
+                        self.ctx.error(
                                 init_node.pos,
                                 init_node.end - init_node.pos,
                                 "In ambient enum declarations member initializer must be constant expression.".to_string(),
                                 diagnostic_codes::IN_AMBIENT_ENUM_DECLARATIONS_MEMBER_INITIALIZER_MUST_BE_CONSTANT_EXPRESSION,
                             );
-                        }
                     }
                 }
             }
@@ -1194,12 +1192,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // When `module {` is parsed as a module declaration with a missing name,
             // TSC also emits TS2580 because `module` could be a Node.js identifier reference.
             let is_namespace = (node.flags as u32) & node_flags::NAMESPACE != 0;
-            if !is_namespace {
-                if let Some(name_node) = self.ctx.arena.get(module.name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && ident.escaped_text.is_empty()
-                {
-                    self.ctx.error(
+            if !is_namespace
+                && let Some(name_node) = self.ctx.arena.get(module.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text.is_empty()
+            {
+                self.ctx.error(
                         node.pos,
                         6, // length of "module"
                         format_message(
@@ -1208,7 +1206,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         ),
                         diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
                     );
-                }
             }
 
             // TS2668: 'export' modifier cannot be applied to ambient modules
@@ -1234,16 +1231,16 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // Find the export modifier position to report error there
                 if let Some(ref mods) = module.modifiers {
                     for &mod_idx in &mods.nodes {
-                        if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
-                            if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
-                                self.ctx.error(
+                        if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                            && mod_node.kind == SyntaxKind::ExportKeyword as u16
+                        {
+                            self.ctx.error(
                                     mod_node.pos,
                                     mod_node.end - mod_node.pos,
                                     "'export' modifier cannot be applied to ambient modules and module augmentations since they are always visible.".to_string(),
                                     2668, // TS2668
                                 );
-                                break;
-                            }
+                            break;
                         }
                     }
                 }
@@ -1262,36 +1259,31 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 let mut allowed_context = false;
                 if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
                     let parent = ext.parent;
-                    if !parent.is_none() {
-                        if let Some(parent_node) = self.ctx.arena.get(parent) {
-                            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
-                                allowed_context = self.is_external_module();
-                            } else if parent_node.kind == syntax_kind_ext::MODULE_BLOCK {
-                                if let Some(parent_ext) = self.ctx.arena.get_extended(parent) {
-                                    let gp = parent_ext.parent;
-                                    if let Some(gp_node) = self.ctx.arena.get(gp) {
-                                        if gp_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                                            && let Some(gp_module) =
-                                                self.ctx.arena.get_module(gp_node)
-                                            && self.ctx.has_modifier(
-                                                &gp_module.modifiers,
-                                                SyntaxKind::DeclareKeyword as u16,
-                                            )
-                                        {
-                                            let gp_name_node = self.ctx.arena.get(gp_module.name);
-                                            let gp_is_string_named = gp_name_node
-                                                .is_some_and(|name_node| {
-                                                    name_node.kind
-                                                        == SyntaxKind::StringLiteral as u16
-                                                        || name_node.kind
-                                                            == SyntaxKind::NoSubstitutionTemplateLiteral
-                                                                as u16
-                                                });
-                                            if gp_is_string_named {
-                                                allowed_context = true;
-                                            }
-                                        }
-                                    }
+                    if !parent.is_none()
+                        && let Some(parent_node) = self.ctx.arena.get(parent)
+                    {
+                        if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                            allowed_context = self.is_external_module();
+                        } else if parent_node.kind == syntax_kind_ext::MODULE_BLOCK
+                            && let Some(parent_ext) = self.ctx.arena.get_extended(parent)
+                        {
+                            let gp = parent_ext.parent;
+                            if let Some(gp_node) = self.ctx.arena.get(gp)
+                                && gp_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                && let Some(gp_module) = self.ctx.arena.get_module(gp_node)
+                                && self.ctx.has_modifier(
+                                    &gp_module.modifiers,
+                                    SyntaxKind::DeclareKeyword as u16,
+                                )
+                            {
+                                let gp_name_node = self.ctx.arena.get(gp_module.name);
+                                let gp_is_string_named = gp_name_node.is_some_and(|name_node| {
+                                    name_node.kind == SyntaxKind::StringLiteral as u16
+                                        || name_node.kind
+                                            == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                                });
+                                if gp_is_string_named {
+                                    allowed_context = true;
                                 }
                             }
                         }
@@ -1428,471 +1420,373 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     .unwrap_or_default();
                 let mut reported_import = false;
                 let mut reported_export = false;
-                if !module.body.is_none() {
-                    if let Some(body_node) = self.ctx.arena.get(module.body) {
-                        if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
-                            if let Some(block) = self.ctx.arena.get_module_block(body_node)
-                                && let Some(ref stmts) = block.statements
-                            {
-                                let mut register_value_name =
-                                    |name: &str, name_node: NodeIndex| -> bool {
-                                        if value_decl_map.contains_key(name) {
-                                            true
-                                        } else {
-                                            value_decl_map.insert(name.to_string(), name_node);
-                                            false
-                                        }
-                                    };
-                                for &stmt_idx in &stmts.nodes {
-                                    if reported_import && reported_export {
-                                        break;
-                                    }
-                                    let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                                        continue;
-                                    };
-                                    let kind = stmt_node.kind;
-                                    if !reported_import
-                                        && (kind == syntax_kind_ext::IMPORT_DECLARATION
-                                            || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
-                                    {
-                                        self.ctx.error(
+                if !module.body.is_none()
+                    && let Some(body_node) = self.ctx.arena.get(module.body)
+                    && body_node.kind == syntax_kind_ext::MODULE_BLOCK
+                    && let Some(block) = self.ctx.arena.get_module_block(body_node)
+                    && let Some(ref stmts) = block.statements
+                {
+                    let mut register_value_name = |name: &str, name_node: NodeIndex| -> bool {
+                        if value_decl_map.contains_key(name) {
+                            true
+                        } else {
+                            value_decl_map.insert(name.to_string(), name_node);
+                            false
+                        }
+                    };
+                    for &stmt_idx in &stmts.nodes {
+                        if reported_import && reported_export {
+                            break;
+                        }
+                        let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                            continue;
+                        };
+                        let kind = stmt_node.kind;
+                        if !reported_import
+                            && (kind == syntax_kind_ext::IMPORT_DECLARATION
+                                || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+                        {
+                            self.ctx.error(
                                             stmt_node.pos,
                                             stmt_node.end - stmt_node.pos,
                                             diagnostic_messages::IMPORTS_ARE_NOT_PERMITTED_IN_MODULE_AUGMENTATIONS_CONSIDER_MOVING_THEM_TO_THE_EN.to_string(),
                                             diagnostic_codes::IMPORTS_ARE_NOT_PERMITTED_IN_MODULE_AUGMENTATIONS_CONSIDER_MOVING_THEM_TO_THE_EN,
                                         );
-                                        reported_import = true;
-                                    } else if !reported_export {
-                                        let is_forbidden_export = if kind
-                                            == syntax_kind_ext::EXPORT_ASSIGNMENT
-                                            || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                                        {
+                            reported_import = true;
+                        } else if !reported_export {
+                            let is_forbidden_export = if kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                                || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                            {
+                                true
+                            } else if kind == syntax_kind_ext::EXPORT_DECLARATION {
+                                match self.ctx.arena.get_export_decl(stmt_node) {
+                                    Some(export_decl) => {
+                                        if export_decl.is_default_export {
                                             true
-                                        } else if kind == syntax_kind_ext::EXPORT_DECLARATION {
-                                            match self.ctx.arena.get_export_decl(stmt_node) {
-                                                Some(export_decl) => {
-                                                    if export_decl.is_default_export {
-                                                        true
-                                                    } else if !export_decl
-                                                        .module_specifier
-                                                        .is_none()
-                                                    {
-                                                        // Re-exports are not permitted in augmentations
-                                                        true
-                                                    } else if export_decl.export_clause.is_none() {
-                                                        true
-                                                    } else if let Some(clause_node) = self
-                                                        .ctx
-                                                        .arena
-                                                        .get(export_decl.export_clause)
-                                                    {
-                                                        !matches!(
-                                                            clause_node.kind,
-                                                            syntax_kind_ext::FUNCTION_DECLARATION
-                                                                | syntax_kind_ext::CLASS_DECLARATION
-                                                                | syntax_kind_ext::INTERFACE_DECLARATION
-                                                                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                                                                | syntax_kind_ext::ENUM_DECLARATION
-                                                                | syntax_kind_ext::MODULE_DECLARATION
-                                                                | syntax_kind_ext::VARIABLE_STATEMENT
-                                                        )
-                                                    } else {
-                                                        true
-                                                    }
-                                                }
-                                                None => true,
-                                            }
+                                        } else if !export_decl.module_specifier.is_none() {
+                                            // Re-exports are not permitted in augmentations
+                                            true
+                                        } else if export_decl.export_clause.is_none() {
+                                            true
+                                        } else if let Some(clause_node) =
+                                            self.ctx.arena.get(export_decl.export_clause)
+                                        {
+                                            !matches!(
+                                                clause_node.kind,
+                                                syntax_kind_ext::FUNCTION_DECLARATION
+                                                    | syntax_kind_ext::CLASS_DECLARATION
+                                                    | syntax_kind_ext::INTERFACE_DECLARATION
+                                                    | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                                    | syntax_kind_ext::ENUM_DECLARATION
+                                                    | syntax_kind_ext::MODULE_DECLARATION
+                                                    | syntax_kind_ext::VARIABLE_STATEMENT
+                                            )
                                         } else {
-                                            false
-                                        };
-                                        if is_forbidden_export {
-                                            self.ctx.error(
+                                            true
+                                        }
+                                    }
+                                    None => true,
+                                }
+                            } else {
+                                false
+                            };
+                            if is_forbidden_export {
+                                self.ctx.error(
                                                 stmt_node.pos,
                                                 stmt_node.end - stmt_node.pos,
                                                 diagnostic_messages::EXPORTS_AND_EXPORT_ASSIGNMENTS_ARE_NOT_PERMITTED_IN_MODULE_AUGMENTATIONS.to_string(),
                                                 diagnostic_codes::EXPORTS_AND_EXPORT_ASSIGNMENTS_ARE_NOT_PERMITTED_IN_MODULE_AUGMENTATIONS,
                                             );
-                                            reported_export = true;
-                                        }
-                                    }
+                                reported_export = true;
+                            }
+                        }
 
-                                    if kind == syntax_kind_ext::EXPORT_DECLARATION {
-                                        let Some(export_decl) =
-                                            self.ctx.arena.get_export_decl(stmt_node)
-                                        else {
-                                            continue;
-                                        };
-                                        if export_decl.is_default_export
-                                            || !export_decl.module_specifier.is_none()
-                                            || export_decl.export_clause.is_none()
-                                        {
-                                            continue;
-                                        }
-                                        let Some(clause_node) =
-                                            self.ctx.arena.get(export_decl.export_clause)
-                                        else {
-                                            continue;
-                                        };
-                                        match clause_node.kind {
-                                            syntax_kind_ext::VARIABLE_STATEMENT => {
-                                                if let Some(var_stmt) =
-                                                    self.ctx.arena.get_variable(clause_node)
+                        if kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node)
+                            else {
+                                continue;
+                            };
+                            if export_decl.is_default_export
+                                || !export_decl.module_specifier.is_none()
+                                || export_decl.export_clause.is_none()
+                            {
+                                continue;
+                            }
+                            let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause)
+                            else {
+                                continue;
+                            };
+                            match clause_node.kind {
+                                syntax_kind_ext::VARIABLE_STATEMENT => {
+                                    if let Some(var_stmt) = self.ctx.arena.get_variable(clause_node)
+                                    {
+                                        for &decl_list_idx in &var_stmt.declarations.nodes {
+                                            let Some(decl_list_node) =
+                                                self.ctx.arena.get(decl_list_idx)
+                                            else {
+                                                continue;
+                                            };
+                                            if decl_list_node.kind
+                                                == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                                            {
+                                                if let Some(decl_list) =
+                                                    self.ctx.arena.get_variable(decl_list_node)
                                                 {
-                                                    for &decl_list_idx in
-                                                        &var_stmt.declarations.nodes
-                                                    {
-                                                        let Some(decl_list_node) =
-                                                            self.ctx.arena.get(decl_list_idx)
-                                                        else {
-                                                            continue;
-                                                        };
-                                                        if decl_list_node.kind
-                                                            == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                                                        {
-                                                            if let Some(decl_list) = self
+                                                    for &decl_idx in &decl_list.declarations.nodes {
+                                                        if let Some(decl_node) =
+                                                            self.ctx.arena.get(decl_idx)
+                                                            && let Some(decl) = self
                                                                 .ctx
                                                                 .arena
-                                                                .get_variable(decl_list_node)
-                                                            {
-                                                                for &decl_idx in
-                                                                    &decl_list.declarations.nodes
-                                                                {
-                                                                    if let Some(decl_node) =
-                                                                        self.ctx.arena.get(
-                                                                            decl_idx,
-                                                                        )
-                                                                        && let Some(decl) = self
-                                                                            .ctx
-                                                                            .arena
-                                                                            .get_variable_declaration(decl_node)
-                                                                        && let Some(name_node) =
-                                                                            self.ctx.arena.get(
-                                                                                decl.name,
-                                                                            )
-                                                                        && let Some(ident) =
-                                                                            self.ctx.arena.get_identifier(
-                                                                                name_node,
-                                                                            )
-                                                                    {
-                                                                        if register_value_name(
-                                                                            &ident.escaped_text,
-                                                                            decl.name,
-                                                                        ) {
-                                                                            if let Some(node) = self
-                                                                                .ctx
-                                                                                .arena
-                                                                                .get(decl.name)
-                                                                            {
-                                                                                self.ctx.error(
-                                                                                    node.pos,
-                                                                                    node.end - node.pos,
-                                                                                    diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
-                                                                                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                                                                                );
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        } else if let Some(decl) = self
-                                                            .ctx
-                                                            .arena
-                                                            .get_variable_declaration(decl_list_node)
+                                                                .get_variable_declaration(decl_node)
                                                             && let Some(name_node) =
                                                                 self.ctx.arena.get(decl.name)
                                                             && let Some(ident) = self
                                                                 .ctx
                                                                 .arena
                                                                 .get_identifier(name_node)
-                                                        {
-                                                            if register_value_name(
+                                                            && register_value_name(
                                                                 &ident.escaped_text,
                                                                 decl.name,
-                                                            ) {
-                                                                if let Some(node) =
-                                                                    self.ctx.arena.get(decl.name)
-                                                                {
-                                                                    self.ctx.error(
+                                                            )
+                                                            && let Some(node) =
+                                                                self.ctx.arena.get(decl.name)
+                                                        {
+                                                            self.ctx.error(
+                                                                                    node.pos,
+                                                                                    node.end - node.pos,
+                                                                                    diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
+                                                                                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                                                                                );
+                                                        }
+                                                    }
+                                                }
+                                            } else if let Some(decl) = self
+                                                .ctx
+                                                .arena
+                                                .get_variable_declaration(decl_list_node)
+                                                && let Some(name_node) =
+                                                    self.ctx.arena.get(decl.name)
+                                                && let Some(ident) =
+                                                    self.ctx.arena.get_identifier(name_node)
+                                                && register_value_name(
+                                                    &ident.escaped_text,
+                                                    decl.name,
+                                                )
+                                                && let Some(node) = self.ctx.arena.get(decl.name)
+                                            {
+                                                self.ctx.error(
                                                                         node.pos,
                                                                         node.end - node.pos,
                                                                         diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
                                                                         diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                                     );
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
                                             }
-                                            syntax_kind_ext::FUNCTION_DECLARATION => {
-                                                if let Some(func) =
-                                                    self.ctx.arena.get_function(clause_node)
-                                                    && let Some(name_node) =
-                                                        self.ctx.arena.get(func.name)
-                                                    && let Some(ident) =
-                                                        self.ctx.arena.get_identifier(name_node)
-                                                {
-                                                    if register_value_name(
-                                                        &ident.escaped_text,
-                                                        func.name,
-                                                    ) {
-                                                        if let Some(node) =
-                                                            self.ctx.arena.get(func.name)
-                                                        {
-                                                            self.ctx.error(
+                                        }
+                                    }
+                                }
+                                syntax_kind_ext::FUNCTION_DECLARATION => {
+                                    if let Some(func) = self.ctx.arena.get_function(clause_node)
+                                        && let Some(name_node) = self.ctx.arena.get(func.name)
+                                        && let Some(ident) =
+                                            self.ctx.arena.get_identifier(name_node)
+                                        && register_value_name(&ident.escaped_text, func.name)
+                                        && let Some(node) = self.ctx.arena.get(func.name)
+                                    {
+                                        self.ctx.error(
                                                                 node.pos,
                                                                 node.end - node.pos,
                                                                 diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
                                                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                             );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            syntax_kind_ext::CLASS_DECLARATION => {
-                                                if let Some(class) =
-                                                    self.ctx.arena.get_class(clause_node)
-                                                    && let Some(name_node) =
-                                                        self.ctx.arena.get(class.name)
-                                                    && let Some(ident) =
-                                                        self.ctx.arena.get_identifier(name_node)
-                                                {
-                                                    if register_value_name(
-                                                        &ident.escaped_text,
-                                                        class.name,
-                                                    ) {
-                                                        if let Some(node) =
-                                                            self.ctx.arena.get(class.name)
-                                                        {
-                                                            self.ctx.error(
+                                    }
+                                }
+                                syntax_kind_ext::CLASS_DECLARATION => {
+                                    if let Some(class) = self.ctx.arena.get_class(clause_node)
+                                        && let Some(name_node) = self.ctx.arena.get(class.name)
+                                        && let Some(ident) =
+                                            self.ctx.arena.get_identifier(name_node)
+                                        && register_value_name(&ident.escaped_text, class.name)
+                                        && let Some(node) = self.ctx.arena.get(class.name)
+                                    {
+                                        self.ctx.error(
                                                                 node.pos,
                                                                 node.end - node.pos,
                                                                 diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
                                                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                             );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            syntax_kind_ext::ENUM_DECLARATION => {
-                                                if let Some(enm) =
-                                                    self.ctx.arena.get_enum(clause_node)
-                                                    && let Some(name_node) =
-                                                        self.ctx.arena.get(enm.name)
-                                                    && let Some(ident) =
-                                                        self.ctx.arena.get_identifier(name_node)
-                                                {
-                                                    if let Some(specifier) =
-                                                        module_specifier.as_deref()
-                                                        && let Some(target_idx) = self
-                                                            .ctx
-                                                            .resolve_import_target(specifier)
-                                                        && let Some(target_binder) =
-                                                            self.ctx.get_binder_for_file(target_idx)
-                                                    {
-                                                        let target_arena = self
-                                                            .ctx
-                                                            .get_arena_for_file(target_idx as u32);
-                                                        if let Some(source_file) =
-                                                            target_arena.source_files.first()
-                                                            && let Some(existing_sym_id) =
-                                                                target_binder
-                                                                    .resolve_import_if_needed_public(
-                                                                        &source_file.file_name,
-                                                                        &ident.escaped_text,
-                                                                    )
-                                                        {
-                                                            if let Some(symbol) = target_binder
-                                                                .get_symbol(existing_sym_id)
-                                                            {
-                                                                let allowed = (symbol.flags
-                                                                    & (symbol_flags::REGULAR_ENUM
-                                                                        | symbol_flags::CONST_ENUM
-                                                                        | symbol_flags::MODULE))
-                                                                    != 0;
-                                                                if !allowed {
-                                                                    self.ctx.error(
+                                    }
+                                }
+                                syntax_kind_ext::ENUM_DECLARATION => {
+                                    if let Some(enm) = self.ctx.arena.get_enum(clause_node)
+                                        && let Some(name_node) = self.ctx.arena.get(enm.name)
+                                        && let Some(ident) =
+                                            self.ctx.arena.get_identifier(name_node)
+                                    {
+                                        if let Some(specifier) = module_specifier.as_deref()
+                                            && let Some(target_idx) =
+                                                self.ctx.resolve_import_target(specifier)
+                                            && let Some(target_binder) =
+                                                self.ctx.get_binder_for_file(target_idx)
+                                        {
+                                            let target_arena =
+                                                self.ctx.get_arena_for_file(target_idx as u32);
+                                            if let Some(source_file) =
+                                                target_arena.source_files.first()
+                                                && let Some(existing_sym_id) = target_binder
+                                                    .resolve_import_if_needed_public(
+                                                        &source_file.file_name,
+                                                        &ident.escaped_text,
+                                                    )
+                                                && let Some(symbol) =
+                                                    target_binder.get_symbol(existing_sym_id)
+                                            {
+                                                let allowed = (symbol.flags
+                                                    & (symbol_flags::REGULAR_ENUM
+                                                        | symbol_flags::CONST_ENUM
+                                                        | symbol_flags::MODULE))
+                                                    != 0;
+                                                if !allowed {
+                                                    self.ctx.error(
                                                                         name_node.pos,
                                                                         name_node.end
                                                                             - name_node.pos,
                                                                         diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
                                                                         diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
                                                                     );
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                    if register_value_name(
-                                                        &ident.escaped_text,
-                                                        enm.name,
-                                                    ) {
-                                                        if let Some(node) =
-                                                            self.ctx.arena.get(enm.name)
-                                                        {
-                                                            self.ctx.error(
+                                                }
+                                            }
+                                        }
+                                        if register_value_name(&ident.escaped_text, enm.name)
+                                            && let Some(node) = self.ctx.arena.get(enm.name)
+                                        {
+                                            self.ctx.error(
                                                                 node.pos,
                                                                 node.end - node.pos,
                                                                 diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
                                                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                             );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            _ => {}
                                         }
-                                    } else if kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                                        if let Some(var_stmt) =
-                                            self.ctx.arena.get_variable(stmt_node)
-                                            && self.ctx.has_modifier(
-                                                &var_stmt.modifiers,
-                                                SyntaxKind::ExportKeyword as u16,
-                                            )
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else if kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                            if let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node)
+                                && self.ctx.has_modifier(
+                                    &var_stmt.modifiers,
+                                    SyntaxKind::ExportKeyword as u16,
+                                )
+                            {
+                                for &decl_list_idx in &var_stmt.declarations.nodes {
+                                    let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
+                                    else {
+                                        continue;
+                                    };
+                                    if decl_list_node.kind
+                                        == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                                    {
+                                        if let Some(decl_list) =
+                                            self.ctx.arena.get_variable(decl_list_node)
                                         {
-                                            for &decl_list_idx in &var_stmt.declarations.nodes {
-                                                let Some(decl_list_node) =
-                                                    self.ctx.arena.get(decl_list_idx)
-                                                else {
-                                                    continue;
-                                                };
-                                                if decl_list_node.kind
-                                                    == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                                            for &decl_idx in &decl_list.declarations.nodes {
+                                                if let Some(decl_node) =
+                                                    self.ctx.arena.get(decl_idx)
+                                                    && let Some(decl) = self
+                                                        .ctx
+                                                        .arena
+                                                        .get_variable_declaration(decl_node)
+                                                    && let Some(name_node) =
+                                                        self.ctx.arena.get(decl.name)
+                                                    && let Some(ident) =
+                                                        self.ctx.arena.get_identifier(name_node)
+                                                    && register_value_name(
+                                                        &ident.escaped_text,
+                                                        decl.name,
+                                                    )
+                                                    && let Some(node) =
+                                                        self.ctx.arena.get(decl.name)
                                                 {
-                                                    if let Some(decl_list) =
-                                                        self.ctx.arena.get_variable(decl_list_node)
-                                                    {
-                                                        for &decl_idx in
-                                                            &decl_list.declarations.nodes
-                                                        {
-                                                            if let Some(decl_node) =
-                                                                self.ctx.arena.get(decl_idx)
-                                                                && let Some(decl) = self
-                                                                    .ctx
-                                                                    .arena
-                                                                    .get_variable_declaration(
-                                                                        decl_node,
-                                                                    )
-                                                                && let Some(name_node) =
-                                                                    self.ctx.arena.get(decl.name)
-                                                                && let Some(ident) = self
-                                                                    .ctx
-                                                                    .arena
-                                                                    .get_identifier(name_node)
-                                                            {
-                                                                if register_value_name(
-                                                                    &ident.escaped_text,
-                                                                    decl.name,
-                                                                ) {
-                                                                    if let Some(node) = self
-                                                                        .ctx
-                                                                        .arena
-                                                                        .get(decl.name)
-                                                                    {
-                                                                        self.ctx.error(
+                                                    self.ctx.error(
                                                                             node.pos,
                                                                             node.end - node.pos,
                                                                             diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
                                                                             diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                                         );
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                } else if let Some(decl) = self
-                                                    .ctx
-                                                    .arena
-                                                    .get_variable_declaration(decl_list_node)
-                                                    && let Some(name_node) =
-                                                        self.ctx.arena.get(decl.name)
-                                                    && let Some(ident) =
-                                                        self.ctx.arena.get_identifier(name_node)
-                                                {
-                                                    if register_value_name(
-                                                        &ident.escaped_text,
-                                                        decl.name,
-                                                    ) {
-                                                        if let Some(node) =
-                                                            self.ctx.arena.get(decl.name)
-                                                        {
-                                                            self.ctx.error(
+                                                }
+                                            }
+                                        }
+                                    } else if let Some(decl) =
+                                        self.ctx.arena.get_variable_declaration(decl_list_node)
+                                        && let Some(name_node) = self.ctx.arena.get(decl.name)
+                                        && let Some(ident) =
+                                            self.ctx.arena.get_identifier(name_node)
+                                        && register_value_name(&ident.escaped_text, decl.name)
+                                        && let Some(node) = self.ctx.arena.get(decl.name)
+                                    {
+                                        self.ctx.error(
                                                                 node.pos,
                                                                 node.end - node.pos,
                                                                 diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
                                                                 diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                                                             );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } else if kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                                        if let Some(func) = self.ctx.arena.get_function(stmt_node)
-                                            && self.ctx.has_modifier(
-                                                &func.modifiers,
-                                                SyntaxKind::ExportKeyword as u16,
-                                            )
-                                            && let Some(name_node) = self.ctx.arena.get(func.name)
-                                            && let Some(ident) =
-                                                self.ctx.arena.get_identifier(name_node)
-                                        {
-                                            if register_value_name(&ident.escaped_text, func.name) {
-                                                if let Some(node) = self.ctx.arena.get(func.name) {
-                                                    self.ctx.error(
-                                                        node.pos,
-                                                        node.end - node.pos,
-                                                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
-                                                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    } else if kind == syntax_kind_ext::CLASS_DECLARATION {
-                                        if let Some(class) = self.ctx.arena.get_class(stmt_node)
-                                            && self.ctx.has_modifier(
-                                                &class.modifiers,
-                                                SyntaxKind::ExportKeyword as u16,
-                                            )
-                                            && let Some(name_node) = self.ctx.arena.get(class.name)
-                                            && let Some(ident) =
-                                                self.ctx.arena.get_identifier(name_node)
-                                        {
-                                            if register_value_name(&ident.escaped_text, class.name)
-                                            {
-                                                if let Some(node) = self.ctx.arena.get(class.name) {
-                                                    self.ctx.error(
-                                                        node.pos,
-                                                        node.end - node.pos,
-                                                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
-                                                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    } else if kind == syntax_kind_ext::ENUM_DECLARATION {
-                                        if let Some(enm) = self.ctx.arena.get_enum(stmt_node)
-                                            && self.ctx.has_modifier(
-                                                &enm.modifiers,
-                                                SyntaxKind::ExportKeyword as u16,
-                                            )
-                                            && let Some(name_node) = self.ctx.arena.get(enm.name)
-                                            && let Some(ident) =
-                                                self.ctx.arena.get_identifier(name_node)
-                                        {
-                                            if register_value_name(&ident.escaped_text, enm.name) {
-                                                if let Some(node) = self.ctx.arena.get(enm.name) {
-                                                    self.ctx.error(
-                                                        node.pos,
-                                                        node.end - node.pos,
-                                                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE.to_string(),
-                                                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                                                    );
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
+                        } else if kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                            if let Some(func) = self.ctx.arena.get_function(stmt_node)
+                                && self
+                                    .ctx
+                                    .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword as u16)
+                                && let Some(name_node) = self.ctx.arena.get(func.name)
+                                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                                && register_value_name(&ident.escaped_text, func.name)
+                                && let Some(node) = self.ctx.arena.get(func.name)
+                            {
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
+                                        .to_string(),
+                                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                                );
+                            }
+                        } else if kind == syntax_kind_ext::CLASS_DECLARATION {
+                            if let Some(class) = self.ctx.arena.get_class(stmt_node)
+                                && self.ctx.has_modifier(
+                                    &class.modifiers,
+                                    SyntaxKind::ExportKeyword as u16,
+                                )
+                                && let Some(name_node) = self.ctx.arena.get(class.name)
+                                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                                && register_value_name(&ident.escaped_text, class.name)
+                                && let Some(node) = self.ctx.arena.get(class.name)
+                            {
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end - node.pos,
+                                    diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
+                                        .to_string(),
+                                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                                );
+                            }
+                        } else if kind == syntax_kind_ext::ENUM_DECLARATION
+                            && let Some(enm) = self.ctx.arena.get_enum(stmt_node)
+                            && self
+                                .ctx
+                                .has_modifier(&enm.modifiers, SyntaxKind::ExportKeyword as u16)
+                            && let Some(name_node) = self.ctx.arena.get(enm.name)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                            && register_value_name(&ident.escaped_text, enm.name)
+                            && let Some(node) = self.ctx.arena.get(enm.name)
+                        {
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE
+                                    .to_string(),
+                                diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                            );
                         }
                     }
                 }
@@ -1918,10 +1812,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn is_external_module(&self) -> bool {
         // Check the per-file cache first (set by CLI driver for multi-file mode)
         // This preserves the correct is_external_module value across sequential file bindings
-        if let Some(ref map) = self.ctx.is_external_module_by_file {
-            if let Some(&is_ext) = map.get(&self.ctx.file_name) {
-                return is_ext;
-            }
+        if let Some(ref map) = self.ctx.is_external_module_by_file
+            && let Some(&is_ext) = map.get(&self.ctx.file_name)
+        {
+            return is_ext;
         }
         // Fallback to binder (for single-file mode or tests)
         self.ctx.binder.is_external_module()
@@ -1998,15 +1892,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         ] {
             for pattern in patterns {
                 let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
-                if pattern.contains('*') {
-                    if let Ok(glob) = globset::GlobBuilder::new(pattern)
+                if pattern.contains('*')
+                    && let Ok(glob) = globset::GlobBuilder::new(pattern)
                         .literal_separator(false)
                         .build()
-                    {
-                        if glob.compile_matcher().is_match(module_name) {
-                            return true;
-                        }
-                    }
+                    && glob.compile_matcher().is_match(module_name)
+                {
+                    return true;
                 }
             }
         }
@@ -2014,15 +1906,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Also check module_exports keys for wildcard patterns
         for pattern in self.ctx.binder.module_exports.keys() {
             let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
-            if pattern.contains('*') {
-                if let Ok(glob) = globset::GlobBuilder::new(pattern)
+            if pattern.contains('*')
+                && let Ok(glob) = globset::GlobBuilder::new(pattern)
                     .literal_separator(false)
                     .build()
-                {
-                    if glob.compile_matcher().is_match(module_name) {
-                        return true;
-                    }
-                }
+                && glob.compile_matcher().is_match(module_name)
+            {
+                return true;
             }
         }
 
@@ -2110,12 +2000,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         if let Some(target_idx) = self.ctx.resolve_import_target(name) {
             return format!("file_idx:{target_idx}");
         }
-        if self.is_relative_module_name(name) {
-            if let Some(parent) = Path::new(&self.ctx.file_name).parent() {
-                let joined = parent.join(name);
-                let normalized = Self::normalize_path(&joined);
-                return normalized.to_string_lossy().to_string();
-            }
+        if self.is_relative_module_name(name)
+            && let Some(parent) = Path::new(&self.ctx.file_name).parent()
+        {
+            let joined = parent.join(name);
+            let normalized = Self::normalize_path(&joined);
+            return normalized.to_string_lossy().to_string();
         }
         name.to_string()
     }
@@ -2189,15 +2079,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             let Some(parent_node) = self.ctx.arena.get(parent) else {
                 return false;
             };
-            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                if let Some(module) = self.ctx.arena.get_module(parent_node) {
-                    if self
-                        .ctx
-                        .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16)
-                    {
-                        return true;
-                    }
-                }
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.ctx.arena.get_module(parent_node)
+                && self
+                    .ctx
+                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16)
+            {
+                return true;
             }
             if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
                 return false;
@@ -2314,10 +2202,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         // Check labeled statements — the inner statement should also be checked
-        if node.kind == syntax_kind_ext::LABELED_STATEMENT {
-            if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
-                self.check_statement_in_ambient_context(labeled.statement);
-            }
+        if node.kind == syntax_kind_ext::LABELED_STATEMENT
+            && let Some(labeled) = self.ctx.arena.get_labeled_statement(node)
+        {
+            self.check_statement_in_ambient_context(labeled.statement);
         }
     }
 

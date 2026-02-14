@@ -260,16 +260,15 @@ impl<'a> FlowAnalyzer<'a> {
         //   - If true branch: method was called, so narrowing applies
         //   - If false branch: method might not have been called, so NO narrowing
         // Check if the callee expression is an optional property access
-        if let Some(callee_node) = self.arena.get(call.expression) {
-            if (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        if let Some(callee_node) = self.arena.get(call.expression)
+            && (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                && let Some(access) = self.arena.get_access_expr(callee_node)
-                && access.question_dot_token
-            {
-                // For optional chaining, only narrow the true branch
-                if !is_true_branch {
-                    return None;
-                }
+            && let Some(access) = self.arena.get_access_expr(callee_node)
+            && access.question_dot_token
+        {
+            // For optional chaining, only narrow the true branch
+            if !is_true_branch {
+                return None;
             }
         }
 
@@ -366,10 +365,10 @@ impl<'a> FlowAnalyzer<'a> {
                 // so once we encounter one we can no longer map param_index to a
                 // specific argument expression — bail out.
                 for (arg_pos, &arg_idx) in args.iter().enumerate() {
-                    if let Some(arg_node) = self.arena.get(arg_idx) {
-                        if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                            return None;
-                        }
+                    if let Some(arg_node) = self.arena.get(arg_idx)
+                        && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                    {
+                        return None;
                     }
                     if arg_pos == param_index {
                         return Some(arg_idx);
@@ -440,13 +439,13 @@ impl<'a> FlowAnalyzer<'a> {
             if param.type_id == pred_type {
                 // This parameter's declared type matches the predicate type (both are T)
                 // Get the corresponding argument's concrete type
-                if let Some(&arg_idx) = args.get(i) {
-                    if let Some(&arg_type) = node_types.get(&arg_idx.0) {
-                        return TypePredicate {
-                            type_id: Some(arg_type),
-                            ..predicate.clone()
-                        };
-                    }
+                if let Some(&arg_idx) = args.get(i)
+                    && let Some(&arg_type) = node_types.get(&arg_idx.0)
+                {
+                    return TypePredicate {
+                        type_id: Some(arg_type),
+                        ..predicate.clone()
+                    };
                 }
             }
         }
@@ -628,15 +627,15 @@ impl<'a> FlowAnalyzer<'a> {
         if let TypeParameterConstraintKind::TypeParameter { constraint } =
             classify_for_type_parameter_constraint(self.interner, type_id)
         {
-            if let Some(constraint) = constraint {
-                if constraint != type_id {
-                    let narrowed_constraint =
-                        self.narrow_by_in_operator(constraint, bin, target, is_true_branch);
-                    if narrowed_constraint != constraint {
-                        return self
-                            .interner
-                            .intersection(vec![type_id, narrowed_constraint]);
-                    }
+            if let Some(constraint) = constraint
+                && constraint != type_id
+            {
+                let narrowed_constraint =
+                    self.narrow_by_in_operator(constraint, bin, target, is_true_branch);
+                if narrowed_constraint != constraint {
+                    return self
+                        .interner
+                        .intersection(vec![type_id, narrowed_constraint]);
                 }
             }
             return type_id;
@@ -860,13 +859,12 @@ impl<'a> FlowAnalyzer<'a> {
             // Skip comma expressions - they evaluate to their rightmost operand
             // This allows narrowing to work through expressions like (a, b).prop
             // Fast path: check kind first before calling get_binary_expr
-            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                if let Some(bin) = self.arena.get_binary_expr(node) {
-                    if bin.operator_token == SyntaxKind::CommaToken as u16 {
-                        idx = bin.right;
-                        continue;
-                    }
-                }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.arena.get_binary_expr(node)
+                && bin.operator_token == SyntaxKind::CommaToken as u16
+            {
+                idx = bin.right;
+                continue;
             }
             return idx;
         }
@@ -1046,10 +1044,10 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(TypeId::UNDEFINED);
         }
         // In value position, `undefined` is an Identifier, not UndefinedKeyword
-        if let Some(ident) = self.arena.get_identifier(node) {
-            if ident.escaped_text == "undefined" {
-                return Some(TypeId::UNDEFINED);
-            }
+        if let Some(ident) = self.arena.get_identifier(node)
+            && ident.escaped_text == "undefined"
+        {
+            return Some(TypeId::UNDEFINED);
         }
 
         None
@@ -1240,18 +1238,17 @@ impl<'a> FlowAnalyzer<'a> {
         if let TypeParameterConstraintKind::TypeParameter {
             constraint: Some(constraint),
         } = classify_for_type_parameter_constraint(self.interner, type_id)
+            && constraint != type_id
         {
-            if constraint != type_id {
-                let narrowed_constraint = if is_true_branch {
-                    narrowing.narrow_by_discriminant(constraint, prop_path, literal_type)
-                } else {
-                    narrowing.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
-                };
-                if narrowed_constraint != constraint {
-                    return self
-                        .interner
-                        .intersection(vec![type_id, narrowed_constraint]);
-                }
+            let narrowed_constraint = if is_true_branch {
+                narrowing.narrow_by_discriminant(constraint, prop_path, literal_type)
+            } else {
+                narrowing.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
+            };
+            if narrowed_constraint != constraint {
+                return self
+                    .interner
+                    .intersection(vec![type_id, narrowed_constraint]);
             }
         }
 
@@ -1912,14 +1909,13 @@ impl<'a> FlowAnalyzer<'a> {
         // The value_declaration points to VARIABLE_DECLARATION, we need to check its parent's flags
         if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
-            if let Some(ext) = self.arena.get_extended(decl_id) {
-                if !ext.parent.is_none() {
-                    if let Some(parent_node) = self.arena.get(ext.parent) {
-                        let flags = parent_node.flags as u32;
-                        let is_const = (flags & node_flags::CONST) != 0;
-                        return !is_const; // Return true if NOT const (i.e., let or var)
-                    }
-                }
+            if let Some(ext) = self.arena.get_extended(decl_id)
+                && !ext.parent.is_none()
+                && let Some(parent_node) = self.arena.get(ext.parent)
+            {
+                let flags = parent_node.flags as u32;
+                let is_const = (flags & node_flags::CONST) != 0;
+                return !is_const; // Return true if NOT const (i.e., let or var)
             }
         }
 
@@ -2026,13 +2022,12 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Unwrap assignment expressions: if (flag = (x instanceof Foo)) should extract from RHS
         // TypeScript narrows based on the assigned value, not the assignment itself
-        if cond_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = self.arena.get_binary_expr(cond_node) {
-                if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                    // Recursively extract guard from the right-hand side
-                    return self.extract_type_guard(bin.right);
-                }
-            }
+        if cond_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(cond_node)
+            && bin.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            // Recursively extract guard from the right-hand side
+            return self.extract_type_guard(bin.right);
         }
 
         let bin = self.arena.get_binary_expr(cond_node)?;
@@ -2063,22 +2058,22 @@ impl<'a> FlowAnalyzer<'a> {
         let target = self.get_comparison_target(condition)?;
 
         // Check for typeof comparison: typeof x === "string"
-        if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
-            if let Some(typeof_kind) = TypeofKind::from_str(type_name) {
-                return Some((TypeGuard::Typeof(typeof_kind), target, false));
-            }
+        if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target)
+            && let Some(typeof_kind) = TypeofKind::from_str(type_name)
+        {
+            return Some((TypeGuard::Typeof(typeof_kind), target, false));
         }
 
         // Check for loose equality with null/undefined: x == null, x != null, x == undefined, x != undefined
         // TypeScript treats these as nullish equality (narrows to null | undefined)
         let is_loose_equality = bin.operator_token == SyntaxKind::EqualsEqualsToken as u16
             || bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
-        if is_loose_equality {
-            if let Some(_nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
-                // For loose equality with null/undefined, use NullishEquality guard
-                // This narrows to null | undefined in true branch, excludes both in false
-                return Some((TypeGuard::NullishEquality, target, false));
-            }
+        if is_loose_equality
+            && let Some(_nullish_type) = self.nullish_comparison(bin.left, bin.right, target)
+        {
+            // For loose equality with null/undefined, use NullishEquality guard
+            // This narrows to null | undefined in true branch, excludes both in false
+            return Some((TypeGuard::NullishEquality, target, false));
         }
 
         // Check for strict nullish comparison: x === null, x !== null, x === undefined, x !== undefined
@@ -2397,21 +2392,20 @@ impl<'a> FlowAnalyzer<'a> {
     /// For `obj.method(x)`, returns `false`.
     fn is_optional_call(&self, call_node_idx: NodeIndex, call: &CallExprData) -> bool {
         // 1. Check if the call node itself has OptionalChain flag (e.g., func?.())
-        if let Some(node) = self.arena.get(call_node_idx) {
-            if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
-                return true;
-            }
+        if let Some(node) = self.arena.get(call_node_idx)
+            && (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0
+        {
+            return true;
         }
 
         // 2. Check if the callee is a property access with ?. (e.g., obj?.method())
-        if let Some(callee_node) = self.arena.get(call.expression) {
-            if (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        if let Some(callee_node) = self.arena.get(call.expression)
+            && (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                && let Some(access) = self.arena.get_access_expr(callee_node)
-                && access.question_dot_token
-            {
-                return true;
-            }
+            && let Some(access) = self.arena.get_access_expr(callee_node)
+            && access.question_dot_token
+        {
+            return true;
         }
 
         false

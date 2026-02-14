@@ -133,13 +133,12 @@ impl<'a> CheckerState<'a> {
         let mut decl_flags = decl_node.flags as u32;
 
         // If CONST/LET not directly on node, check parent (VariableDeclarationList)
-        if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0 {
-            if let Some(ext) = self.ctx.arena.get_extended(value_decl)
-                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-            {
-                decl_flags |= parent_node.flags as u32;
-            }
+        if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
+            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+        {
+            decl_flags |= parent_node.flags as u32;
         }
 
         if decl_flags & node_flags::CONST != 0 {
@@ -570,13 +569,13 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::BinaryOpEvaluator;
 
         // Check if this is an enum type (Lazy/DefId to an enum symbol)
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                // Check if the symbol is an enum (ENUM flags)
-                use tsz_binder::symbol_flags;
-                if (symbol.flags & symbol_flags::ENUM) != 0 {
-                    return true;
-                }
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            // Check if the symbol is an enum (ENUM flags)
+            use tsz_binder::symbol_flags;
+            if (symbol.flags & symbol_flags::ENUM) != 0 {
+                return true;
             }
         }
 
@@ -613,9 +612,8 @@ impl<'a> CheckerState<'a> {
         let left_is_valid = self.is_arithmetic_operand(left_eval);
         let right_is_valid = self.is_arithmetic_operand(right_eval);
 
-        if !left_is_valid {
-            if let Some(loc) = self.get_source_location(left_idx) {
-                self.ctx.diagnostics.push(Diagnostic {
+        if !left_is_valid && let Some(loc) = self.get_source_location(left_idx) {
+            self.ctx.diagnostics.push(Diagnostic {
                     code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                     category: DiagnosticCategory::Error,
                     message_text: "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
@@ -624,12 +622,10 @@ impl<'a> CheckerState<'a> {
                     length: loc.length(),
                     related_information: Vec::new(),
                 });
-            }
         }
 
-        if !right_is_valid {
-            if let Some(loc) = self.get_source_location(right_idx) {
-                self.ctx.diagnostics.push(Diagnostic {
+        if !right_is_valid && let Some(loc) = self.get_source_location(right_idx) {
+            self.ctx.diagnostics.push(Diagnostic {
                     code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                     category: DiagnosticCategory::Error,
                     message_text: "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
@@ -638,7 +634,6 @@ impl<'a> CheckerState<'a> {
                     length: loc.length(),
                     related_information: Vec::new(),
                 });
-            }
         }
 
         !left_is_valid || !right_is_valid

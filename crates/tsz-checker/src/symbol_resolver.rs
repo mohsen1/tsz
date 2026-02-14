@@ -1233,15 +1233,15 @@ impl<'a> CheckerState<'a> {
         visited_modules.insert(key);
 
         // First, check if it's a direct export from this module (ambient modules)
-        if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
-            if let Some(sym_id) = self.resolve_member_from_module_exports(
+        if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier)
+            && let Some(sym_id) = self.resolve_member_from_module_exports(
                 self.ctx.binder,
                 module_exports,
                 member_name,
                 visited_aliases,
-            ) {
-                return Some(sym_id);
-            }
+            )
+        {
+            return Some(sym_id);
         }
 
         // Cross-file resolution: use canonical file-key lookups via state_type_resolution.
@@ -1253,16 +1253,16 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for named re-exports: `export { foo } from 'bar'`
-        if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
-            if let Some((source_module, original_name)) = file_reexports.get(member_name) {
-                let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                return self.resolve_reexported_member_symbol_inner(
-                    source_module,
-                    name_to_lookup,
-                    visited_aliases,
-                    visited_modules,
-                );
-            }
+        if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier)
+            && let Some((source_module, original_name)) = file_reexports.get(member_name)
+        {
+            let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
+            return self.resolve_reexported_member_symbol_inner(
+                source_module,
+                name_to_lookup,
+                visited_aliases,
+                visited_modules,
+            );
         }
 
         // Check for wildcard re-exports: `export * from 'bar'`
@@ -1366,10 +1366,9 @@ impl<'a> CheckerState<'a> {
         // These types use built-in TypeData representations instead of Refs
         if let Some(node) = self.ctx.arena.get(idx)
             && let Some(ident) = self.ctx.arena.get_identifier(node)
+            && is_compiler_managed_type(ident.escaped_text.as_str())
         {
-            if is_compiler_managed_type(ident.escaped_text.as_str()) {
-                return None;
-            }
+            return None;
         }
 
         let sym_id = match self.resolve_qualified_symbol_in_type_position(idx) {
@@ -1439,29 +1438,24 @@ impl<'a> CheckerState<'a> {
             .map(|i| i.escaped_text.as_str());
         if let Some(name) = name {
             // Check file_locals first (may have merged value from lib)
-            if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name) {
-                if let Some(val_symbol) = self
+            if let Some(val_sym_id) = self.ctx.binder.file_locals.get(name)
+                && let Some(val_symbol) = self
                     .ctx
                     .binder
                     .get_symbol_with_libs(val_sym_id, &lib_binders)
-                {
-                    if (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
-                        && !val_symbol.is_type_only
-                    {
-                        return Some(val_sym_id.0);
-                    }
-                }
+                && (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
+                && !val_symbol.is_type_only
+            {
+                return Some(val_sym_id.0);
             }
             // Search lib binders directly for a value declaration
             for lib_binder in &lib_binders {
-                if let Some(val_sym_id) = lib_binder.file_locals.get(name) {
-                    if let Some(val_symbol) = lib_binder.get_symbol(val_sym_id) {
-                        if (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
-                            && !val_symbol.is_type_only
-                        {
-                            return Some(val_sym_id.0);
-                        }
-                    }
+                if let Some(val_sym_id) = lib_binder.file_locals.get(name)
+                    && let Some(val_symbol) = lib_binder.get_symbol(val_sym_id)
+                    && (val_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
+                    && !val_symbol.is_type_only
+                {
+                    return Some(val_sym_id.0);
                 }
             }
         }
@@ -1654,10 +1648,10 @@ impl<'a> CheckerState<'a> {
 
             // First, check the raw symbol's direct exports (for namespace symbols)
             if let Some(left_symbol) = self.ctx.binder.get_symbol(left_sym_raw) {
-                if let Some(exports) = left_symbol.exports.as_ref() {
-                    if let Some(member_sym) = exports.get(&name) {
-                        return Some(member_sym);
-                    }
+                if let Some(exports) = left_symbol.exports.as_ref()
+                    && let Some(member_sym) = exports.get(&name)
+                {
+                    return Some(member_sym);
                 }
 
                 // For import aliases (import X = require("./module")), X represents
@@ -1686,25 +1680,23 @@ impl<'a> CheckerState<'a> {
             let mut visited_aliases = Vec::new();
             if let Some(resolved_sym) =
                 self.resolve_alias_symbol(left_sym_raw, &mut visited_aliases)
+                && resolved_sym != left_sym_raw
+                && let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym)
             {
-                if resolved_sym != left_sym_raw {
-                    if let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym) {
-                        if let Some(exports) = resolved_symbol.exports.as_ref() {
-                            if let Some(member_sym) = exports.get(&name) {
-                                return Some(member_sym);
-                            }
-                        }
-                        // Also check module_exports on the resolved symbol
-                        if let Some(ref module_specifier) = resolved_symbol.import_module {
-                            if let Some(member_sym) = self.resolve_reexported_member_symbol(
-                                module_specifier,
-                                &name,
-                                &mut visited_aliases,
-                            ) {
-                                return Some(member_sym);
-                            }
-                        }
-                    }
+                if let Some(exports) = resolved_symbol.exports.as_ref()
+                    && let Some(member_sym) = exports.get(&name)
+                {
+                    return Some(member_sym);
+                }
+                // Also check module_exports on the resolved symbol
+                if let Some(ref module_specifier) = resolved_symbol.import_module
+                    && let Some(member_sym) = self.resolve_reexported_member_symbol(
+                        module_specifier,
+                        &name,
+                        &mut visited_aliases,
+                    )
+                {
+                    return Some(member_sym);
                 }
             }
 
@@ -1791,10 +1783,10 @@ impl<'a> CheckerState<'a> {
             if self.is_ambient_module_match(module_name) {
                 return false; // Ambient module pattern matches (with body/exports)
             }
-            if let Some(ref resolved) = self.ctx.resolved_modules {
-                if resolved.contains(module_name) {
-                    return false; // CLI resolved module
-                }
+            if let Some(ref resolved) = self.ctx.resolved_modules
+                && resolved.contains(module_name)
+            {
+                return false; // CLI resolved module
             }
             // Module is not resolved - this is an unresolved import
             return true;
@@ -1806,31 +1798,28 @@ impl<'a> CheckerState<'a> {
             let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
                 return false;
             };
-            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                if let Some(import) = self.ctx.arena.get_import_decl(decl_node) {
-                    if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
-                        if ref_node.kind == SyntaxKind::StringLiteral as u16 {
-                            if let Some(lit) = self.ctx.arena.get_literal(ref_node) {
-                                let module_name = &lit.text;
-                                if !self.ctx.binder.module_exports.contains_key(module_name)
-                                    && !self
-                                        .ctx
-                                        .binder
-                                        .shorthand_ambient_modules
-                                        .contains(module_name)
-                                    && !self.ctx.binder.declared_modules.contains(module_name)
-                                    && !self
-                                        .ctx
-                                        .resolved_modules
-                                        .as_ref()
-                                        .is_some_and(|r| r.contains(module_name))
-                                    && self.ctx.resolve_import_target(module_name).is_none()
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
+            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import) = self.ctx.arena.get_import_decl(decl_node)
+                && let Some(ref_node) = self.ctx.arena.get(import.module_specifier)
+                && ref_node.kind == SyntaxKind::StringLiteral as u16
+                && let Some(lit) = self.ctx.arena.get_literal(ref_node)
+            {
+                let module_name = &lit.text;
+                if !self.ctx.binder.module_exports.contains_key(module_name)
+                    && !self
+                        .ctx
+                        .binder
+                        .shorthand_ambient_modules
+                        .contains(module_name)
+                    && !self.ctx.binder.declared_modules.contains(module_name)
+                    && !self
+                        .ctx
+                        .resolved_modules
+                        .as_ref()
+                        .is_some_and(|r| r.contains(module_name))
+                    && self.ctx.resolve_import_target(module_name).is_none()
+                {
+                    return true;
                 }
             }
         }
@@ -2046,20 +2035,19 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check direct exports first
-        if let Some(exports) = left_symbol.exports.as_ref() {
-            if exports.has(right_name) {
-                return false;
-            }
+        if let Some(exports) = left_symbol.exports.as_ref()
+            && exports.has(right_name)
+        {
+            return false;
         }
 
         // For classes, check if the member exists in the class's members (static members)
         // This handles `typeof C.staticMember` where C is a class
-        if left_symbol.flags & CLASS != 0 {
-            if let Some(members) = left_symbol.members.as_ref() {
-                if members.has(right_name) {
-                    return false;
-                }
-            }
+        if left_symbol.flags & CLASS != 0
+            && let Some(members) = left_symbol.members.as_ref()
+            && members.has(right_name)
+        {
+            return false;
         }
 
         // Check for re-exports from other modules

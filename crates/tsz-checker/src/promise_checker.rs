@@ -44,10 +44,10 @@ impl<'a> CheckerState<'a> {
         match query::classify_promise_type(self.ctx.types, type_id) {
             query::PromiseTypeKind::Lazy(def_id) => {
                 // Phase 4.2: Use DefId -> SymbolId bridge
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        return self.is_promise_like_name(symbol.escaped_name.as_str());
-                    }
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    return self.is_promise_like_name(symbol.escaped_name.as_str());
                 }
                 false
             }
@@ -83,10 +83,10 @@ impl<'a> CheckerState<'a> {
                 match query::classify_promise_type(self.ctx.types, base) {
                     query::PromiseTypeKind::Lazy(def_id) => {
                         // Phase 4.2: Use DefId -> SymbolId bridge
-                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                                return self.is_promise_like_name(symbol.escaped_name.as_str());
-                            }
+                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        {
+                            return self.is_promise_like_name(symbol.escaped_name.as_str());
                         }
                         false
                     }
@@ -100,10 +100,10 @@ impl<'a> CheckerState<'a> {
             query::PromiseTypeKind::Lazy(def_id) => {
                 // Phase 4.2: Use DefId -> SymbolId bridge
                 // Check for direct Promise or PromiseLike reference (this also handles type aliases)
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        return self.is_promise_like_name(symbol.escaped_name.as_str());
-                    }
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    return self.is_promise_like_name(symbol.escaped_name.as_str());
                 }
                 false
             }
@@ -151,10 +151,10 @@ impl<'a> CheckerState<'a> {
         {
             // Check for synthetic PROMISE_BASE type (created when Promise symbol wasn't resolved)
             // This allows us to extract T from Promise<T> even without full lib files
-            if base == TypeId::PROMISE_BASE {
-                if let Some(&first_arg) = args.first() {
-                    return Some(first_arg);
-                }
+            if base == TypeId::PROMISE_BASE
+                && let Some(&first_arg) = args.first()
+            {
+                return Some(first_arg);
             }
 
             // Try to get the type argument from the base symbol
@@ -171,14 +171,12 @@ impl<'a> CheckerState<'a> {
             match query::classify_promise_type(self.ctx.types, base) {
                 query::PromiseTypeKind::Lazy(def_id) => {
                     // Phase 4.2: Use DefId -> SymbolId bridge
-                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            if self.is_promise_like_name(symbol.escaped_name.as_str()) {
-                                if let Some(&first_arg) = args.first() {
-                                    return Some(first_arg);
-                                }
-                            }
-                        }
+                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && self.is_promise_like_name(symbol.escaped_name.as_str())
+                        && let Some(&first_arg) = args.first()
+                    {
+                        return Some(first_arg);
                     }
                 }
                 _ => {}
@@ -498,10 +496,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::UNKNOWN; // Generator support not implemented - use UNKNOWN
         }
 
-        if is_async {
-            if let Some(inner) = self.promise_like_return_type_argument(return_type) {
-                return inner;
-            }
+        if is_async && let Some(inner) = self.promise_like_return_type_argument(return_type) {
+            return inner;
         }
 
         return_type
@@ -609,12 +605,11 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
                 // Use def_to_symbol_id to find the symbol
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    if let Some(symbol) = self.get_symbol_globally(sym_id) {
-                        if Self::is_generator_like_name(&symbol.escaped_name) {
-                            return true;
-                        }
-                    }
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                    && let Some(symbol) = self.get_symbol_globally(sym_id)
+                    && Self::is_generator_like_name(&symbol.escaped_name)
+                {
+                    return true;
                 }
             }
         }
@@ -630,10 +625,10 @@ impl<'a> CheckerState<'a> {
             "AsyncIterableIterator",
         ] {
             // resolve_global_interface_type handles looking up in lib files and merging declarations
-            if let Some(global_type) = self.resolve_global_interface_type(name) {
-                if global_type == type_id {
-                    return true;
-                }
+            if let Some(global_type) = self.resolve_global_interface_type(name)
+                && global_type == type_id
+            {
+                return true;
             }
         }
 

@@ -61,10 +61,11 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .map(|c| c.in_static_property_initializer)
             .unwrap_or(false);
-        if is_static && !prop.initializer.is_none() {
-            if let Some(ref mut class_info) = self.ctx.enclosing_class {
-                class_info.in_static_property_initializer = true;
-            }
+        if is_static
+            && !prop.initializer.is_none()
+            && let Some(ref mut class_info) = self.ctx.enclosing_class
+        {
+            class_info.in_static_property_initializer = true;
         }
 
         if !is_static
@@ -278,17 +279,15 @@ impl<'a> CheckerState<'a> {
         for &param_idx in &method.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                && let Some(name_text) = self.node_text(param.name)
+                && name_text == "arguments"
             {
-                if let Some(name_text) = self.node_text(param.name) {
-                    if name_text == "arguments" {
-                        self.ctx.error(
+                self.ctx.error(
                             param_node.pos,
                             param_node.end - param_node.pos,
                             "Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'arguments'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.".to_string(),
                             1210,
                         );
-                    }
-                }
             }
         }
 
@@ -590,24 +589,23 @@ impl<'a> CheckerState<'a> {
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                && let Some(name_text) = self.node_text(param.name)
             {
-                if let Some(name_text) = self.node_text(param.name) {
-                    if name_text == "arguments" {
-                        self.ctx.error(
+                if name_text == "arguments" {
+                    self.ctx.error(
                             param_node.pos,
                             param_node.end - param_node.pos,
                             "Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'arguments'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.".to_string(),
                             1210,
                         );
-                    } else if name_text == "static" {
-                        self.ctx.error(
+                } else if name_text == "static" {
+                    self.ctx.error(
                             param_node.pos,
                             param_node.end - param_node.pos,
                             diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO
                                 .replace("{0}", "static"),
                             diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
                         );
-                    }
                 }
             }
         }
@@ -886,14 +884,12 @@ impl<'a> CheckerState<'a> {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
-            if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if let Some(getter) = self.ctx.arena.get_accessor(member_node) {
-                    if let Some(getter_name) = self.get_property_name(getter.name) {
-                        if getter_name == setter_name {
-                            return true;
-                        }
-                    }
-                }
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(getter) = self.ctx.arena.get_accessor(member_node)
+                && let Some(getter_name) = self.get_property_name(getter.name)
+                && getter_name == setter_name
+            {
+                return true;
             }
         }
         false

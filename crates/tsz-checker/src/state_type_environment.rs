@@ -527,19 +527,19 @@ impl<'a> CheckerState<'a> {
                         // For numeric enums, this includes a number index signature for reverse mapping.
                         // This is the same logic as Ref branch above - check for ENUM flags
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            if symbol.flags & symbol_flags::ENUM != 0 {
-                                if let Some(enum_object) = self.enum_object_type(sym_id) {
-                                    if enum_object != type_id {
-                                        let r = self.resolve_type_for_property_access_inner(
-                                            enum_object,
-                                            visited,
-                                        );
-                                        self.ctx.leave_recursion();
-                                        return r;
-                                    }
+                            if symbol.flags & symbol_flags::ENUM != 0
+                                && let Some(enum_object) = self.enum_object_type(sym_id)
+                            {
+                                if enum_object != type_id {
+                                    let r = self.resolve_type_for_property_access_inner(
+                                        enum_object,
+                                        visited,
+                                    );
                                     self.ctx.leave_recursion();
-                                    return enum_object;
+                                    return r;
                                 }
+                                self.ctx.leave_recursion();
+                                return enum_object;
                             }
 
                             // Classes in type position should resolve to instance type,
@@ -550,21 +550,20 @@ impl<'a> CheckerState<'a> {
                             //   var f: (a: A) => void = (a) => a.foo;
                             // would fail because get_type_of_symbol returns the
                             // constructor type (Callable), not the instance type.
-                            if symbol.flags & symbol_flags::CLASS != 0 {
-                                if let Some(&instance_type) =
+                            if symbol.flags & symbol_flags::CLASS != 0
+                                && let Some(&instance_type) =
                                     self.ctx.symbol_instance_types.get(&sym_id)
-                                {
-                                    if instance_type != type_id {
-                                        let r = self.resolve_type_for_property_access_inner(
-                                            instance_type,
-                                            visited,
-                                        );
-                                        self.ctx.leave_recursion();
-                                        return r;
-                                    }
+                            {
+                                if instance_type != type_id {
+                                    let r = self.resolve_type_for_property_access_inner(
+                                        instance_type,
+                                        visited,
+                                    );
                                     self.ctx.leave_recursion();
-                                    return instance_type;
+                                    return r;
                                 }
+                                self.ctx.leave_recursion();
+                                return instance_type;
                             }
                         }
 
@@ -705,11 +704,10 @@ impl<'a> CheckerState<'a> {
                 let env = self.ctx.type_env.borrow();
                 if let Some(resolved) =
                     tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                    && resolved != type_id
                 {
-                    if resolved != type_id {
-                        drop(env);
-                        return self.resolve_lazy_type_inner(resolved, visited);
-                    }
+                    drop(env);
+                    return self.resolve_lazy_type_inner(resolved, visited);
                 }
             }
 
@@ -793,10 +791,10 @@ impl<'a> CheckerState<'a> {
         // CRITICAL FIX: Only skip registering Lazy types if they point to THEMSELVES.
         // Skipping all Lazy types breaks alias chains (type A = B).
         let current_def_id = self.ctx.symbol_to_def.borrow().get(&sym_id).copied();
-        if let Some(target_def_id) = query::lazy_def_id(self.ctx.types, resolved) {
-            if Some(target_def_id) == current_def_id {
-                return true; // Skip self-recursive alias (A -> A)
-            }
+        if let Some(target_def_id) = query::lazy_def_id(self.ctx.types, resolved)
+            && Some(target_def_id) == current_def_id
+        {
+            return true; // Skip self-recursive alias (A -> A)
         }
 
         let symbol_ref = SymbolRef(sym_id.0);
@@ -1299,17 +1297,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Fallback: if no declaration has type params, use the first declaration
-            if let Some(&decl_idx) = decl_candidates.first() {
-                if let Some(node) = self.ctx.arena.get(decl_idx)
-                    && let Some(iface) = self.ctx.arena.get_interface(node)
-                {
-                    let (params, updates) = self.push_type_parameters(&iface.type_parameters);
-                    self.pop_type_parameters(updates);
-                    // params will be empty - mark as no type params
-                    self.ctx.def_no_type_params.borrow_mut().insert(def_id);
-                    self.ctx.leave_recursion();
-                    return params;
-                }
+            if let Some(&decl_idx) = decl_candidates.first()
+                && let Some(node) = self.ctx.arena.get(decl_idx)
+                && let Some(iface) = self.ctx.arena.get_interface(node)
+            {
+                let (params, updates) = self.push_type_parameters(&iface.type_parameters);
+                self.pop_type_parameters(updates);
+                // params will be empty - mark as no type params
+                self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+                self.ctx.leave_recursion();
+                return params;
             }
         }
 
@@ -1455,28 +1452,26 @@ impl<'a> CheckerState<'a> {
                             if k == syntax_kind_ext::LABELED_STATEMENT
                                 || k == syntax_kind_ext::EXPRESSION_STATEMENT
                     ) && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                        && let Some(name) = self.entity_name_text(type_ref.type_name)
+                        && matches!(
+                            name.as_str(),
+                            "number"
+                                | "string"
+                                | "boolean"
+                                | "symbol"
+                                | "void"
+                                | "undefined"
+                                | "null"
+                                | "any"
+                                | "unknown"
+                                | "never"
+                                | "object"
+                                | "bigint"
+                        )
                     {
-                        if let Some(name) = self.entity_name_text(type_ref.type_name)
-                            && matches!(
-                                name.as_str(),
-                                "number"
-                                    | "string"
-                                    | "boolean"
-                                    | "symbol"
-                                    | "void"
-                                    | "undefined"
-                                    | "null"
-                                    | "any"
-                                    | "unknown"
-                                    | "never"
-                                    | "object"
-                                    | "bigint"
-                            )
-                        {
-                            self.error_type_only_value_at(&name, type_ref.type_name);
-                            self.ctx.node_types.insert(idx.0, TypeId::ERROR);
-                            return TypeId::ERROR;
-                        }
+                        self.error_type_only_value_at(&name, type_ref.type_name);
+                        self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+                        return TypeId::ERROR;
                     }
                 }
 
@@ -1633,10 +1628,10 @@ impl<'a> CheckerState<'a> {
         // TypeNodeChecker uses TypeLowering which doesn't emit errors, so we must handle TYPE_REFERENCE
         // explicitly here to ensure undefined type names emit TS2304.
         // This fixes cases like `function A(): (public B) => C {}` where C is undefined.
-        if let Some(node) = self.ctx.arena.get(idx) {
-            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                return self.get_type_from_type_reference(idx);
-            }
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::TYPE_REFERENCE
+        {
+            return self.get_type_from_type_reference(idx);
         }
 
         // For other type nodes, delegate to TypeNodeChecker

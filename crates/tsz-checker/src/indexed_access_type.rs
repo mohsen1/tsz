@@ -171,17 +171,17 @@ impl<'a> CheckerState<'a> {
         // Try index signatures (string/number keys)
         if let Some((object_type, key_type)) = self.get_indexed_access_components(type_id) {
             // Check for string index signature
-            if key_type == TypeId::STRING || self.is_string_literal_type(key_type) {
-                if let Some(index_type) = self.get_string_index_type(object_type) {
-                    return Some(index_type);
-                }
+            if (key_type == TypeId::STRING || self.is_string_literal_type(key_type))
+                && let Some(index_type) = self.get_string_index_type(object_type)
+            {
+                return Some(index_type);
             }
 
             // Check for number index signature
-            if key_type == TypeId::NUMBER || self.is_number_literal_type(key_type) {
-                if let Some(index_type) = self.get_number_index_type(object_type) {
-                    return Some(index_type);
-                }
+            if (key_type == TypeId::NUMBER || self.is_number_literal_type(key_type))
+                && let Some(index_type) = self.get_number_index_type(object_type)
+            {
+                return Some(index_type);
             }
         }
 

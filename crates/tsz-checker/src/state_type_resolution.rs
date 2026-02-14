@@ -55,10 +55,10 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => {
                         if let Some(sym_id) = self.resolve_qualified_symbol(type_name_idx) {
-                            if let Some(args) = &type_ref.type_arguments {
-                                if !self.is_inside_type_parameter_declaration(idx) {
-                                    self.validate_type_reference_type_arguments(sym_id, args);
-                                }
+                            if let Some(args) = &type_ref.type_arguments
+                                && !self.is_inside_type_parameter_declaration(idx)
+                            {
+                                self.validate_type_reference_type_arguments(sym_id, args);
                             }
                             return self.type_reference_symbol_type(sym_id);
                         }
@@ -175,11 +175,11 @@ impl<'a> CheckerState<'a> {
                     }
                     TypeSymbolResolution::NotFound => None,
                 };
-                if let Some(sym_id) = sym_id {
-                    if self.symbol_is_namespace_only(sym_id) {
-                        self.error_namespace_used_as_type_at(name, type_name_idx);
-                        return TypeId::ERROR;
-                    }
+                if let Some(sym_id) = sym_id
+                    && self.symbol_is_namespace_only(sym_id)
+                {
+                    self.error_namespace_used_as_type_at(name, type_name_idx);
+                    return TypeId::ERROR;
                 }
                 // TS2318: Array<T> with noLib should emit "Cannot find global type 'Array'"
                 if is_builtin_array && !has_libs && sym_id.is_none() {
@@ -206,34 +206,9 @@ impl<'a> CheckerState<'a> {
                             // Global type symbol exists in lib binders - try to resolve it
                             if let Some(type_id) = self.resolve_lib_type_by_name(name) {
                                 // Successfully resolved - create a TypeApplication if there are type arguments
-                                if let Some(args) = &type_ref.type_arguments {
-                                    if !args.nodes.is_empty() {
-                                        // Collect type argument IDs
-                                        let type_args: Vec<TypeId> = args
-                                            .nodes
-                                            .iter()
-                                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                                            .collect();
-                                        // Create a TypeApplication to instantiate the generic type
-                                        return self
-                                            .ctx
-                                            .types
-                                            .factory()
-                                            .application(type_id, type_args);
-                                    }
-                                }
-                                return type_id;
-                            }
-                            // Symbol exists but failed to resolve - this is an error condition
-                            // The type is declared but we couldn't get its TypeId, which shouldn't happen
-                            // Fall through to emit error below
-                        }
-                        // Fall back to resolve_lib_type_by_name for cases where type may exist
-                        // but get_global_type_with_libs doesn't find it
-                        if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                            // Successfully resolved via alternate path - create TypeApplication if there are type arguments
-                            if let Some(args) = &type_ref.type_arguments {
-                                if !args.nodes.is_empty() {
+                                if let Some(args) = &type_ref.type_arguments
+                                    && !args.nodes.is_empty()
+                                {
                                     // Collect type argument IDs
                                     let type_args: Vec<TypeId> = args
                                         .nodes
@@ -247,6 +222,27 @@ impl<'a> CheckerState<'a> {
                                         .factory()
                                         .application(type_id, type_args);
                                 }
+                                return type_id;
+                            }
+                            // Symbol exists but failed to resolve - this is an error condition
+                            // The type is declared but we couldn't get its TypeId, which shouldn't happen
+                            // Fall through to emit error below
+                        }
+                        // Fall back to resolve_lib_type_by_name for cases where type may exist
+                        // but get_global_type_with_libs doesn't find it
+                        if let Some(type_id) = self.resolve_lib_type_by_name(name) {
+                            // Successfully resolved via alternate path - create TypeApplication if there are type arguments
+                            if let Some(args) = &type_ref.type_arguments
+                                && !args.nodes.is_empty()
+                            {
+                                // Collect type argument IDs
+                                let type_args: Vec<TypeId> = args
+                                    .nodes
+                                    .iter()
+                                    .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                    .collect();
+                                // Create a TypeApplication to instantiate the generic type
+                                return self.ctx.types.factory().application(type_id, type_args);
                             }
                             return type_id;
                         }
@@ -302,10 +298,11 @@ impl<'a> CheckerState<'a> {
                     }
                     // Validate type arguments against constraints (TS2344)
                     // Skip validation inside type parameter declarations (constraints/defaults)
-                    if !is_builtin_array && !self.is_inside_type_parameter_declaration(idx) {
-                        if let Some(sym_id) = sym_id {
-                            self.validate_type_reference_type_arguments(sym_id, args);
-                        }
+                    if !is_builtin_array
+                        && !self.is_inside_type_parameter_declaration(idx)
+                        && let Some(sym_id) = sym_id
+                    {
+                        self.validate_type_reference_type_arguments(sym_id, args);
                     }
                 }
                 // Cache type parameters for the symbol's DefId before lowering.
@@ -436,20 +433,15 @@ impl<'a> CheckerState<'a> {
                             // to the Application's actual DefId.
                             if let Some(lib_def_id) =
                                 query::get_lazy_def_id(self.ctx.types, lib_type)
+                                && lib_def_id != app_def_id
+                                && let Ok(env) = self.ctx.type_env.try_borrow()
                             {
-                                if lib_def_id != app_def_id {
-                                    if let Ok(env) = self.ctx.type_env.try_borrow() {
-                                        let body = env.get_def(lib_def_id);
-                                        let params = env.get_def_params(lib_def_id).cloned();
-                                        if let (Some(body), Some(params)) = (body, params) {
-                                            drop(env);
-                                            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-                                            {
-                                                env.insert_def_with_params(
-                                                    app_def_id, body, params,
-                                                );
-                                            }
-                                        }
+                                let body = env.get_def(lib_def_id);
+                                let params = env.get_def_params(lib_def_id).cloned();
+                                if let (Some(body), Some(params)) = (body, params) {
+                                    drop(env);
+                                    if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                                        env.insert_def_with_params(app_def_id, body, params);
                                     }
                                 }
                             }
@@ -648,12 +640,10 @@ impl<'a> CheckerState<'a> {
         // Create DefIds for type aliases (enables DefId-based resolution)
         if let TypeSymbolResolution::Type(sym_id) =
             self.resolve_identifier_symbol_in_type_position(type_name_idx)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
         {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && symbol.flags & symbol_flags::TYPE_ALIAS != 0
-            {
-                let _def_id = self.ctx.get_or_create_def_id(sym_id);
-            }
+            let _def_id = self.ctx.get_or_create_def_id(sym_id);
         }
 
         if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
@@ -914,17 +904,16 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .copied()
                             .unwrap_or(NodeIndex::NONE);
-                        if !first_decl.is_none() {
-                            if let Some(node) = self.ctx.arena.get(first_decl)
-                                && let Some(iface) = self.ctx.arena.get_interface(node)
-                                && let Some(ref type_params_list) = iface.type_parameters
-                            {
-                                let (params, updates) =
-                                    self.push_type_parameters(&Some(type_params_list.clone()));
-                                self.pop_type_parameters(updates);
-                                if !params.is_empty() {
-                                    self.ctx.insert_def_type_params(def_id, params);
-                                }
+                        if !first_decl.is_none()
+                            && let Some(node) = self.ctx.arena.get(first_decl)
+                            && let Some(iface) = self.ctx.arena.get_interface(node)
+                            && let Some(ref type_params_list) = iface.type_parameters
+                        {
+                            let (params, updates) =
+                                self.push_type_parameters(&Some(type_params_list.clone()));
+                            self.pop_type_parameters(updates);
+                            if !params.is_empty() {
+                                self.ctx.insert_def_type_params(def_id, params);
                             }
                         }
                     }
@@ -1025,179 +1014,175 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             // For classes, use class_instance_type_with_params_from_symbol which
             // returns both the instance type AND the type params used to build it
-            if symbol.flags & symbol_flags::CLASS != 0 {
-                if let Some((instance_type, params)) =
+            if symbol.flags & symbol_flags::CLASS != 0
+                && let Some((instance_type, params)) =
                     self.class_instance_type_with_params_from_symbol(sym_id)
-                {
-                    // Phase 4.2.1: Store type parameters for DefId-based resolution
-                    if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                        self.ctx.insert_def_type_params(def_id, params.clone());
-                    }
-                    return (instance_type, params);
+            {
+                // Phase 4.2.1: Store type parameters for DefId-based resolution
+                if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                    self.ctx.insert_def_type_params(def_id, params.clone());
                 }
+                return (instance_type, params);
             }
 
             // For interfaces, lower with type parameters and return both
-            if symbol.flags & symbol_flags::INTERFACE != 0 {
-                if !symbol.declarations.is_empty() {
-                    // Build per-declaration arena pairs for multi-arena support
-                    // (e.g. Promise has declarations in lib.es5.d.ts, lib.es2018.promise.d.ts, etc.)
-                    let fallback_arena: &NodeArena = self
-                        .ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .map(|arena| arena.as_ref())
-                        .unwrap_or(self.ctx.arena);
+            if symbol.flags & symbol_flags::INTERFACE != 0 && !symbol.declarations.is_empty() {
+                // Build per-declaration arena pairs for multi-arena support
+                // (e.g. Promise has declarations in lib.es5.d.ts, lib.es2018.promise.d.ts, etc.)
+                let fallback_arena: &NodeArena = self
+                    .ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .map(|arena| arena.as_ref())
+                    .unwrap_or(self.ctx.arena);
 
-                    let has_declaration_arenas = symbol.declarations.iter().any(|&decl_idx| {
-                        self.ctx
+                let has_declaration_arenas = symbol.declarations.iter().any(|&decl_idx| {
+                    self.ctx
+                        .binder
+                        .declaration_arenas
+                        .contains_key(&(sym_id, decl_idx))
+                });
+
+                let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
+                    .declarations
+                    .iter()
+                    .map(|&decl_idx| {
+                        let arena = self
+                            .ctx
                             .binder
                             .declaration_arenas
-                            .contains_key(&(sym_id, decl_idx))
+                            .get(&(sym_id, decl_idx))
+                            .map(|arc| arc.as_ref())
+                            .unwrap_or(fallback_arena);
+                        (decl_idx, arena)
+                    })
+                    .collect();
+
+                // Get type parameters from first declaration that has them,
+                // along with the arena they came from (needed for lib interfaces).
+                let type_params_with_arena: Option<(tsz_parser::parser::NodeList, &NodeArena)> =
+                    decls_with_arenas.iter().find_map(|(decl_idx, arena)| {
+                        arena
+                            .get(*decl_idx)
+                            .and_then(|node| arena.get_interface(node))
+                            .and_then(|iface| {
+                                iface.type_parameters.clone().map(|tpl| (tpl, *arena))
+                            })
                     });
+                let type_params_list = type_params_with_arena.as_ref().map(|(tpl, _)| tpl.clone());
 
-                    let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
-                        .declarations
-                        .iter()
-                        .map(|&decl_idx| {
-                            let arena = self
-                                .ctx
-                                .binder
-                                .declaration_arenas
-                                .get(&(sym_id, decl_idx))
-                                .map(|arc| arc.as_ref())
-                                .unwrap_or(fallback_arena);
-                            (decl_idx, arena)
-                        })
-                        .collect();
-
-                    // Get type parameters from first declaration that has them,
-                    // along with the arena they came from (needed for lib interfaces).
-                    let type_params_with_arena: Option<(tsz_parser::parser::NodeList, &NodeArena)> =
-                        decls_with_arenas.iter().find_map(|(decl_idx, arena)| {
-                            arena
-                                .get(*decl_idx)
-                                .and_then(|node| arena.get_interface(node))
-                                .and_then(|iface| {
-                                    iface.type_parameters.clone().map(|tpl| (tpl, *arena))
-                                })
+                // Push type params, lower interface, pop type params.
+                // push_type_parameters uses self.ctx.arena (user arena) to read
+                // type param nodes. For lib interfaces the nodes are in a lib arena,
+                // so push_type_parameters may return empty params. In that case,
+                // extract params directly from the lib arena.
+                let (mut params, updates) = self.push_type_parameters(&type_params_list);
+                if params.is_empty()
+                    && let Some((tpl, decl_arena)) = &type_params_with_arena
+                {
+                    for &tp_idx in &tpl.nodes {
+                        let Some(tp_node) = decl_arena.get(tp_idx) else {
+                            continue;
+                        };
+                        let Some(tp) = decl_arena.get_type_parameter(tp_node) else {
+                            continue;
+                        };
+                        let Some(tp_name_node) = decl_arena.get(tp.name) else {
+                            continue;
+                        };
+                        let Some(ident) = decl_arena.get_identifier(tp_name_node) else {
+                            continue;
+                        };
+                        params.push(tsz_solver::TypeParamInfo {
+                            name: self.ctx.types.intern_string(&ident.escaped_text),
+                            constraint: None,
+                            default: None,
+                            is_const: false,
                         });
-                    let type_params_list =
-                        type_params_with_arena.as_ref().map(|(tpl, _)| tpl.clone());
-
-                    // Push type params, lower interface, pop type params.
-                    // push_type_parameters uses self.ctx.arena (user arena) to read
-                    // type param nodes. For lib interfaces the nodes are in a lib arena,
-                    // so push_type_parameters may return empty params. In that case,
-                    // extract params directly from the lib arena.
-                    let (mut params, updates) = self.push_type_parameters(&type_params_list);
-                    if params.is_empty() {
-                        if let Some((tpl, decl_arena)) = &type_params_with_arena {
-                            for &tp_idx in &tpl.nodes {
-                                let Some(tp_node) = decl_arena.get(tp_idx) else {
-                                    continue;
-                                };
-                                let Some(tp) = decl_arena.get_type_parameter(tp_node) else {
-                                    continue;
-                                };
-                                let Some(tp_name_node) = decl_arena.get(tp.name) else {
-                                    continue;
-                                };
-                                let Some(ident) = decl_arena.get_identifier(tp_name_node) else {
-                                    continue;
-                                };
-                                params.push(tsz_solver::TypeParamInfo {
-                                    name: self.ctx.types.intern_string(&ident.escaped_text),
-                                    constraint: None,
-                                    default: None,
-                                    is_const: false,
-                                });
-                            }
-                        }
                     }
-
-                    let type_param_bindings = self.get_type_param_bindings();
-
-                    // For multi-arena interfaces (e.g. PromiseConstructor declared in
-                    // lib.es2015.promise.d.ts AND lib.es2015.iterable.d.ts), the resolver
-                    // must look up identifier text from ALL declaration arenas, not just
-                    // self.ctx.arena. NodeIndices from different arenas may collide, so
-                    // using self.ctx.arena alone could resolve to the wrong node.
-                    let binder = &self.ctx.binder;
-                    let lib_binders = self.get_lib_binders();
-                    let multi_arena_resolve = |node_idx: NodeIndex| -> Option<SymbolId> {
-                        use tsz_solver::is_compiler_managed_type;
-                        // Try each declaration arena to find the identifier text
-                        let ident_name = decls_with_arenas
-                            .iter()
-                            .find_map(|(_, arena)| arena.get_identifier_text(node_idx))
-                            .or_else(|| fallback_arena.get_identifier_text(node_idx))?;
-                        if is_compiler_managed_type(ident_name) {
-                            return None;
-                        }
-                        let sym_id = binder.file_locals.get(ident_name)?;
-                        let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                        if (symbol.flags & symbol_flags::TYPE) != 0 {
-                            Some(sym_id)
-                        } else {
-                            None
-                        }
-                    };
-
-                    let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
-                        if has_declaration_arenas {
-                            multi_arena_resolve(node_idx).map(|s| s.0)
-                        } else {
-                            self.resolve_type_symbol_for_lowering(node_idx)
-                        }
-                    };
-                    let value_resolver =
-                        |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-
-                    // Phase 4.2: Add def_id_resolver for DefId-based resolution
-                    let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
-                        if has_declaration_arenas {
-                            multi_arena_resolve(node_idx)
-                                .map(|sym_id| self.ctx.get_or_create_def_id(sym_id))
-                        } else {
-                            self.resolve_type_symbol_for_lowering(node_idx)
-                                .map(|sym_id| {
-                                    self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id))
-                                })
-                        }
-                    };
-
-                    let lowering = TypeLowering::with_hybrid_resolver(
-                        fallback_arena,
-                        self.ctx.types,
-                        &type_resolver,
-                        &def_id_resolver,
-                        &value_resolver,
-                    )
-                    .with_type_param_bindings(type_param_bindings);
-
-                    // Use merged interface lowering for multi-arena declarations
-                    let has_multi_arenas = has_declaration_arenas;
-                    let interface_type = if has_multi_arenas {
-                        let (ty, _merged_params) =
-                            lowering.lower_merged_interface_declarations(&decls_with_arenas);
-                        ty
-                    } else {
-                        lowering.lower_interface_declarations(&symbol.declarations)
-                    };
-                    let merged =
-                        self.merge_interface_heritage_types(&symbol.declarations, interface_type);
-
-                    self.pop_type_parameters(updates);
-
-                    // Phase 4.2.1: Store type parameters for DefId-based resolution
-                    if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                        self.ctx.insert_def_type_params(def_id, params.clone());
-                    }
-
-                    return (merged, params);
                 }
+
+                let type_param_bindings = self.get_type_param_bindings();
+
+                // For multi-arena interfaces (e.g. PromiseConstructor declared in
+                // lib.es2015.promise.d.ts AND lib.es2015.iterable.d.ts), the resolver
+                // must look up identifier text from ALL declaration arenas, not just
+                // self.ctx.arena. NodeIndices from different arenas may collide, so
+                // using self.ctx.arena alone could resolve to the wrong node.
+                let binder = &self.ctx.binder;
+                let lib_binders = self.get_lib_binders();
+                let multi_arena_resolve = |node_idx: NodeIndex| -> Option<SymbolId> {
+                    use tsz_solver::is_compiler_managed_type;
+                    // Try each declaration arena to find the identifier text
+                    let ident_name = decls_with_arenas
+                        .iter()
+                        .find_map(|(_, arena)| arena.get_identifier_text(node_idx))
+                        .or_else(|| fallback_arena.get_identifier_text(node_idx))?;
+                    if is_compiler_managed_type(ident_name) {
+                        return None;
+                    }
+                    let sym_id = binder.file_locals.get(ident_name)?;
+                    let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+                    if (symbol.flags & symbol_flags::TYPE) != 0 {
+                        Some(sym_id)
+                    } else {
+                        None
+                    }
+                };
+
+                let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    if has_declaration_arenas {
+                        multi_arena_resolve(node_idx).map(|s| s.0)
+                    } else {
+                        self.resolve_type_symbol_for_lowering(node_idx)
+                    }
+                };
+                let value_resolver =
+                    |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+
+                // Phase 4.2: Add def_id_resolver for DefId-based resolution
+                let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
+                    if has_declaration_arenas {
+                        multi_arena_resolve(node_idx)
+                            .map(|sym_id| self.ctx.get_or_create_def_id(sym_id))
+                    } else {
+                        self.resolve_type_symbol_for_lowering(node_idx)
+                            .map(|sym_id| {
+                                self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id))
+                            })
+                    }
+                };
+
+                let lowering = TypeLowering::with_hybrid_resolver(
+                    fallback_arena,
+                    self.ctx.types,
+                    &type_resolver,
+                    &def_id_resolver,
+                    &value_resolver,
+                )
+                .with_type_param_bindings(type_param_bindings);
+
+                // Use merged interface lowering for multi-arena declarations
+                let has_multi_arenas = has_declaration_arenas;
+                let interface_type = if has_multi_arenas {
+                    let (ty, _merged_params) =
+                        lowering.lower_merged_interface_declarations(&decls_with_arenas);
+                    ty
+                } else {
+                    lowering.lower_interface_declarations(&symbol.declarations)
+                };
+                let merged =
+                    self.merge_interface_heritage_types(&symbol.declarations, interface_type);
+
+                self.pop_type_parameters(updates);
+
+                // Phase 4.2.1: Store type parameters for DefId-based resolution
+                if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
+                    self.ctx.insert_def_type_params(def_id, params.clone());
+                }
+
+                return (merged, params);
             }
 
             // For type aliases, get body type and params together
@@ -1420,10 +1405,10 @@ impl<'a> CheckerState<'a> {
         }
         // Fall back to lib contexts for global type resolution
         // BUT only if lib files are actually loaded (noLib is false)
-        if self.ctx.has_lib_loaded() {
-            if let Some(type_id) = self.resolve_lib_type_by_name(name) {
-                return Some(type_id);
-            }
+        if self.ctx.has_lib_loaded()
+            && let Some(type_id) = self.resolve_lib_type_by_name(name)
+        {
+            return Some(type_id);
         }
         None
     }
@@ -1466,20 +1451,18 @@ impl<'a> CheckerState<'a> {
 
         // Look up the export in the target binder's module_exports.
         // Prefer canonical file key, then module specifier fallback.
-        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name) {
-            if let Some(sym_id) =
+        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
+            && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
-            {
-                return record_and_return(sym_id);
-            }
+        {
+            return record_and_return(sym_id);
         }
 
-        if let Some(exports_table) = target_binder.module_exports.get(module_specifier) {
-            if let Some(sym_id) =
+        if let Some(exports_table) = target_binder.module_exports.get(module_specifier)
+            && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
-            {
-                return record_and_return(sym_id);
-            }
+        {
+            return record_and_return(sym_id);
         }
 
         // Fall back to checking file_locals in the target binder
@@ -1564,12 +1547,11 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_binder::SymbolId> {
         let binders = self.ctx.all_binders.as_ref()?;
         for binder in binders.iter() {
-            if let Some(exports_table) = binder.module_exports.get(module_specifier) {
-                if let Some(sym_id) =
+            if let Some(exports_table) = binder.module_exports.get(module_specifier)
+                && let Some(sym_id) =
                     self.resolve_export_from_table(binder, exports_table, export_name)
-                {
-                    return Some(sym_id);
-                }
+            {
+                return Some(sym_id);
             }
         }
         None
@@ -1596,12 +1578,11 @@ impl<'a> CheckerState<'a> {
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
         // Check direct exports
-        if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
-            if let Some(sym_id) =
+        if let Some(exports) = target_binder.module_exports.get(&target_file_name)
+            && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports, export_name)
-            {
-                return Some((sym_id, file_idx));
-            }
+        {
+            return Some((sym_id, file_idx));
         }
 
         // Check file_locals
@@ -1610,17 +1591,16 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check named re-exports
-        if let Some(reexports) = target_binder.reexports.get(&target_file_name) {
-            if let Some((source_module, original_name)) = reexports.get(export_name) {
-                let name = original_name.as_deref().unwrap_or(export_name);
-                if let Some(source_idx) = self
-                    .ctx
-                    .resolve_import_target_from_file(file_idx, source_module)
-                {
-                    if let Some(result) = self.resolve_export_in_file(source_idx, name, visited) {
-                        return Some(result);
-                    }
-                }
+        if let Some(reexports) = target_binder.reexports.get(&target_file_name)
+            && let Some((source_module, original_name)) = reexports.get(export_name)
+        {
+            let name = original_name.as_deref().unwrap_or(export_name);
+            if let Some(source_idx) = self
+                .ctx
+                .resolve_import_target_from_file(file_idx, source_module)
+                && let Some(result) = self.resolve_export_in_file(source_idx, name, visited)
+            {
+                return Some(result);
             }
         }
 
@@ -1631,12 +1611,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
-                {
-                    if let Some(result) =
+                    && let Some(result) =
                         self.resolve_export_in_file(source_idx, export_name, visited)
-                    {
-                        return Some(result);
-                    }
+                {
+                    return Some(result);
                 }
             }
         }
@@ -1793,19 +1771,18 @@ impl<'a> CheckerState<'a> {
                 if let Some(source_idx) = self
                     .ctx
                     .resolve_import_target_from_file(file_idx, source_module)
+                    && let Some(source_binder) = self.ctx.get_binder_for_file(source_idx)
                 {
-                    if let Some(source_binder) = self.ctx.get_binder_for_file(source_idx) {
-                        // Add all exports from the source module
-                        if let Some((_, exports)) = source_binder.module_exports.iter().next() {
-                            for (name, sym_id) in exports.iter() {
-                                if !result.has(name) {
-                                    result.set(name.to_string(), *sym_id);
-                                }
+                    // Add all exports from the source module
+                    if let Some((_, exports)) = source_binder.module_exports.iter().next() {
+                        for (name, sym_id) in exports.iter() {
+                            if !result.has(name) {
+                                result.set(name.to_string(), *sym_id);
                             }
                         }
-                        // Recursively collect from the source's re-exports
-                        self.collect_reexported_symbols(source_idx, result, visited);
                     }
+                    // Recursively collect from the source's re-exports
+                    self.collect_reexported_symbols(source_idx, result, visited);
                 }
             }
         }
@@ -2061,22 +2038,20 @@ impl<'a> CheckerState<'a> {
 
         let mut named_default_specifier_node: Option<NodeIndex> = None;
 
-        if let Some(node) = self.ctx.arena.get(decl_node) {
-            if node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
-                if let Some(specifier) = self.ctx.arena.get_specifier(node) {
-                    let imported_name_idx = if specifier.property_name.is_none() {
-                        specifier.name
-                    } else {
-                        specifier.property_name
-                    };
-                    if let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx)
-                        && let Some(imported_ident) =
-                            self.ctx.arena.get_identifier(imported_name_node)
-                        && imported_ident.escaped_text.as_str() == "default"
-                    {
-                        named_default_specifier_node = Some(decl_node);
-                    }
-                }
+        if let Some(node) = self.ctx.arena.get(decl_node)
+            && node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+            && let Some(specifier) = self.ctx.arena.get_specifier(node)
+        {
+            let imported_name_idx = if specifier.property_name.is_none() {
+                specifier.name
+            } else {
+                specifier.property_name
+            };
+            if let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx)
+                && let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node)
+                && imported_ident.escaped_text.as_str() == "default"
+            {
+                named_default_specifier_node = Some(decl_node);
             }
         }
 
@@ -2453,10 +2428,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if it's in resolved_modules (set by the driver for multi-file mode)
-        if let Some(ref resolved) = self.ctx.resolved_modules {
-            if resolved.contains(module_name) {
-                return true;
-            }
+        if let Some(ref resolved) = self.ctx.resolved_modules
+            && resolved.contains(module_name)
+        {
+            return true;
         }
         // Could add additional cross-file resolution checks here in the future
         false

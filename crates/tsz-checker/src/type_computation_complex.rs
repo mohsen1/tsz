@@ -67,10 +67,9 @@ fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) -> bool {
                             // Standard property: check initializer
                             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                                 if let Some(prop) = state.ctx.arena.get_property_assignment(element)
+                                    && is_contextually_sensitive(state, prop.initializer)
                                 {
-                                    if is_contextually_sensitive(state, prop.initializer) {
-                                        return true;
-                                    }
+                                    return true;
                                 }
                             }
                             // Shorthand property: { x } refers to a variable, never sensitive
@@ -80,10 +79,10 @@ fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) -> bool {
                             }
                             // Spread: check the expression being spread
                             k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
-                                if let Some(spread) = state.ctx.arena.get_spread(element) {
-                                    if is_contextually_sensitive(state, spread.expression) {
-                                        return true;
-                                    }
+                                if let Some(spread) = state.ctx.arena.get_spread(element)
+                                    && is_contextually_sensitive(state, spread.expression)
+                                {
+                                    return true;
                                 }
                             }
                             // Methods and Accessors are function-like (always sensitive)
@@ -203,22 +202,21 @@ impl<'a> CheckerState<'a> {
         if actual == TypeId::SYMBOL {
             if let Some((method, receiver_expr)) =
                 self.weak_collection_method_name_and_receiver(callee_expr)
+                && mismatch_index == 0
             {
-                if mismatch_index == 0 {
-                    let receiver_type = self.get_type_of_node(receiver_expr);
-                    let receiver_name = self.format_type(receiver_type);
-                    if ((method == "add" || method == "has" || method == "delete")
-                        && receiver_name.contains("WeakSet"))
-                        || ((method == "set"
-                            || method == "has"
-                            || method == "get"
-                            || method == "delete")
-                            && receiver_name.contains("WeakMap"))
-                        || ((method == "register" || method == "unregister")
-                            && receiver_name.contains("FinalizationRegistry"))
-                    {
-                        return true;
-                    }
+                let receiver_type = self.get_type_of_node(receiver_expr);
+                let receiver_name = self.format_type(receiver_type);
+                if ((method == "add" || method == "has" || method == "delete")
+                    && receiver_name.contains("WeakSet"))
+                    || ((method == "set"
+                        || method == "has"
+                        || method == "get"
+                        || method == "delete")
+                        && receiver_name.contains("WeakMap"))
+                    || ((method == "register" || method == "unregister")
+                        && receiver_name.contains("FinalizationRegistry"))
+                {
+                    return true;
                 }
             }
 
@@ -675,34 +673,33 @@ impl<'a> CheckerState<'a> {
         }
 
         // Special handling for Callable types - check if the symbol is abstract
-        if let Some(callable_shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
-            if let Some(sym_id) = callable_shape.symbol {
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    return (symbol.flags & symbol_flags::ABSTRACT) != 0;
-                }
-            }
-            // If no symbol or not abstract, fall through to general classification
+        if let Some(callable_shape) = query::callable_shape_for_type(self.ctx.types, type_id)
+            && let Some(sym_id) = callable_shape.symbol
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return (symbol.flags & symbol_flags::ABSTRACT) != 0;
         }
+        // If no symbol or not abstract, fall through to general classification
 
         // Special handling for Lazy types - need to check via context
         if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
             // Try to get the SymbolId for this DefId
-            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    let is_abstract = (symbol.flags & symbol_flags::ABSTRACT) != 0;
-                    if is_abstract {
-                        return true;
-                    }
-                    // If not abstract, check if it's a type alias and recurse into its body
-                    if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
-                        // Get the body from the definition_store and recurse
-                        // NOTE: We need to use resolve_lazy_type here to handle nested type aliases
-                        if let Some(def) = self.ctx.definition_store.get(def_id) {
-                            if let Some(body_type) = def.body {
-                                // Recursively check the body (which may be a union, another lazy, etc.)
-                                return self.type_contains_abstract_class_inner(body_type, visited);
-                            }
-                        }
+            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                let is_abstract = (symbol.flags & symbol_flags::ABSTRACT) != 0;
+                if is_abstract {
+                    return true;
+                }
+                // If not abstract, check if it's a type alias and recurse into its body
+                if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                    // Get the body from the definition_store and recurse
+                    // NOTE: We need to use resolve_lazy_type here to handle nested type aliases
+                    if let Some(def) = self.ctx.definition_store.get(def_id)
+                        && let Some(body_type) = def.body
+                    {
+                        // Recursively check the body (which may be a union, another lazy, etc.)
+                        return self.type_contains_abstract_class_inner(body_type, visited);
                     }
                 }
             }
@@ -754,12 +751,11 @@ impl<'a> CheckerState<'a> {
                         // with the Lazy annotation type for `declare var X: X` patterns).
                         // Fall back to the type environment which may still have the
                         // structural type from initial symbol resolution.
-                        if let Ok(env) = self.ctx.type_env.try_borrow() {
-                            if let Some(env_type) = env.get_def(def_id) {
-                                if env_type != type_id {
-                                    return env_type;
-                                }
-                            }
+                        if let Ok(env) = self.ctx.type_env.try_borrow()
+                            && let Some(env_type) = env.get_def(def_id)
+                            && env_type != type_id
+                        {
+                            return env_type;
                         }
                         type_id
                     } else {
@@ -1647,11 +1643,10 @@ impl<'a> CheckerState<'a> {
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
+                        && !self.try_elaborate_object_literal_arg_error(last_arg, expected)
                     {
-                        if !self.try_elaborate_object_literal_arg_error(last_arg, expected) {
-                            let _ = self
-                                .check_argument_assignable_or_report(actual, expected, last_arg);
-                        }
+                        let _ =
+                            self.check_argument_assignable_or_report(actual, expected, last_arg);
                     }
                 }
                 TypeId::ERROR
@@ -1822,35 +1817,24 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.resolve_identifier_symbol(idx) {
                     // Found a symbol named "arguments". Check if it's declared locally
                     // in the current function (not in an outer scope).
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        if !symbol.declarations.is_empty() {
-                            let decl_node = symbol.declarations[0];
-                            // Find the enclosing function for both the reference and the declaration
-                            if let Some(current_fn) = self.find_enclosing_function(idx) {
-                                if let Some(decl_fn) = self.find_enclosing_function(decl_node) {
-                                    // If the declaration is in the same function scope, it shadows IArguments
-                                    if current_fn == decl_fn {
-                                        trace!(
-                                            name = name,
-                                            idx = ?idx,
-                                            sym_id = ?sym_id,
-                                            "get_type_of_identifier: local 'arguments' variable shadows built-in IArguments"
-                                        );
-                                        // Fall through to normal resolution below - use the local variable
-                                    } else {
-                                        // Declaration is in an outer scope - use built-in IArguments
-                                        let lib_binders = self.get_lib_binders();
-                                        if let Some(iargs_sym) = self
-                                            .ctx
-                                            .binder
-                                            .get_global_type_with_libs("IArguments", &lib_binders)
-                                        {
-                                            return self.type_reference_symbol_type(iargs_sym);
-                                        }
-                                        return TypeId::ANY;
-                                    }
+                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && !symbol.declarations.is_empty()
+                    {
+                        let decl_node = symbol.declarations[0];
+                        // Find the enclosing function for both the reference and the declaration
+                        if let Some(current_fn) = self.find_enclosing_function(idx) {
+                            if let Some(decl_fn) = self.find_enclosing_function(decl_node) {
+                                // If the declaration is in the same function scope, it shadows IArguments
+                                if current_fn == decl_fn {
+                                    trace!(
+                                        name = name,
+                                        idx = ?idx,
+                                        sym_id = ?sym_id,
+                                        "get_type_of_identifier: local 'arguments' variable shadows built-in IArguments"
+                                    );
+                                    // Fall through to normal resolution below - use the local variable
                                 } else {
-                                    // Declaration not in a function (global) - use built-in IArguments
+                                    // Declaration is in an outer scope - use built-in IArguments
                                     let lib_binders = self.get_lib_binders();
                                     if let Some(iargs_sym) = self
                                         .ctx
@@ -1861,6 +1845,17 @@ impl<'a> CheckerState<'a> {
                                     }
                                     return TypeId::ANY;
                                 }
+                            } else {
+                                // Declaration not in a function (global) - use built-in IArguments
+                                let lib_binders = self.get_lib_binders();
+                                if let Some(iargs_sym) = self
+                                    .ctx
+                                    .binder
+                                    .get_global_type_with_libs("IArguments", &lib_binders)
+                                {
+                                    return self.type_reference_symbol_type(iargs_sym);
+                                }
+                                return TypeId::ANY;
                             }
                         }
                     }
@@ -1934,16 +1929,15 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
                 // Don't emit TS2693 for export default/export = expressions
-                if let Some(parent_ext) = self.ctx.arena.get_extended(idx) {
-                    if !parent_ext.parent.is_none() {
-                        if let Some(parent_node) = self.ctx.arena.get(parent_ext.parent) {
-                            use tsz_parser::parser::syntax_kind_ext;
-                            if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                                || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                            {
-                                return TypeId::ERROR;
-                            }
-                        }
+                if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
+                    && !parent_ext.parent.is_none()
+                    && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
+                {
+                    use tsz_parser::parser::syntax_kind_ext;
+                    if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    {
+                        return TypeId::ERROR;
                     }
                 }
                 self.error_type_only_value_at(name, idx);
@@ -1958,13 +1952,12 @@ impl<'a> CheckerState<'a> {
             // Static members must be accessed via `ClassName.member`, not as
             // bare identifiers.  The binder puts them in the class scope so
             // they resolve, but the checker must reject unqualified access.
-            if (flags & tsz_binder::symbol_flags::STATIC) != 0 {
-                if let Some(ref class_info) = self.ctx.enclosing_class.clone() {
-                    if self.is_static_member(&class_info.member_nodes, name) {
-                        self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
-                        return TypeId::ERROR;
-                    }
-                }
+            if (flags & tsz_binder::symbol_flags::STATIC) != 0
+                && let Some(ref class_info) = self.ctx.enclosing_class.clone()
+                && self.is_static_member(&class_info.member_nodes, name)
+            {
+                self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
+                return TypeId::ERROR;
             }
 
             let has_type = (flags & tsz_binder::symbol_flags::TYPE) != 0;
@@ -2036,16 +2029,15 @@ impl<'a> CheckerState<'a> {
                 // Don't emit TS2693 for export default/export = expressions.
                 // `export default InterfaceName` and `export = InterfaceName`
                 // are valid TypeScript — they export the type binding.
-                if let Some(parent_ext) = self.ctx.arena.get_extended(idx) {
-                    if !parent_ext.parent.is_none() {
-                        if let Some(parent_node) = self.ctx.arena.get(parent_ext.parent) {
-                            use tsz_parser::parser::syntax_kind_ext;
-                            if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                                || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                            {
-                                return TypeId::ERROR;
-                            }
-                        }
+                if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
+                    && !parent_ext.parent.is_none()
+                    && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
+                {
+                    use tsz_parser::parser::syntax_kind_ext;
+                    if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    {
+                        return TypeId::ERROR;
                     }
                 }
 
@@ -2252,12 +2244,11 @@ impl<'a> CheckerState<'a> {
                 // type merged from all lib files.
                 if !self.ctx.lib_contexts.is_empty()
                     && self.is_self_referential_var_type(sym_id, value_decl, name)
+                    && let Some(lib_type) = self.resolve_lib_type_by_name(name)
+                    && lib_type != TypeId::UNKNOWN
+                    && lib_type != TypeId::ERROR
                 {
-                    if let Some(lib_type) = self.resolve_lib_type_by_name(name) {
-                        if lib_type != TypeId::UNKNOWN && lib_type != TypeId::ERROR {
-                            value_type = lib_type;
-                        }
-                    }
+                    value_type = lib_type;
                 }
                 // Final fallback: if value_type is still a Lazy type (e.g., due to
                 // check_variable_declaration overwriting the symbol_types cache with the
@@ -2699,14 +2690,12 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(value_decl)
             && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
             && !var_decl.type_annotation.is_none()
+            && let Some(type_node) = self.ctx.arena.get(var_decl.type_annotation)
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
+            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
-            if let Some(type_node) = self.ctx.arena.get(var_decl.type_annotation)
-                && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
-                && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            {
-                return ident.escaped_text == name;
-            }
+            return ident.escaped_text == name;
         }
 
         // For declarations in other arenas (lib files), check via declaration_arenas
@@ -2715,19 +2704,15 @@ impl<'a> CheckerState<'a> {
             .binder
             .declaration_arenas
             .get(&(_sym_id, value_decl))
+            && let Some(node) = decl_arena.get(value_decl)
+            && let Some(var_decl) = decl_arena.get_variable_declaration(node)
+            && !var_decl.type_annotation.is_none()
+            && let Some(type_node) = decl_arena.get(var_decl.type_annotation)
+            && let Some(type_ref) = decl_arena.get_type_ref(type_node)
+            && let Some(name_node) = decl_arena.get(type_ref.type_name)
+            && let Some(ident) = decl_arena.get_identifier(name_node)
         {
-            if let Some(node) = decl_arena.get(value_decl)
-                && let Some(var_decl) = decl_arena.get_variable_declaration(node)
-                && !var_decl.type_annotation.is_none()
-            {
-                if let Some(type_node) = decl_arena.get(var_decl.type_annotation)
-                    && let Some(type_ref) = decl_arena.get_type_ref(type_node)
-                    && let Some(name_node) = decl_arena.get(type_ref.type_name)
-                    && let Some(ident) = decl_arena.get_identifier(name_node)
-                {
-                    return ident.escaped_text == name;
-                }
-            }
+            return ident.escaped_text == name;
         }
 
         false
@@ -2808,27 +2793,25 @@ impl<'a> CheckerState<'a> {
         // to a global lib type. If so, use resolve_lib_type_by_name directly instead of
         // creating a child checker. The child checker inherits the parent's merged binder,
         // which can have wrong symbol IDs for lib types, causing incorrect type resolution.
-        if let Some(node) = decl_arena.get(decl_idx) {
-            if let Some(var_decl) = decl_arena.get_variable_declaration(node) {
-                if !var_decl.type_annotation.is_none() {
-                    // Try to extract the type name from a simple type reference
-                    if let Some(type_annotation_node) = decl_arena.get(var_decl.type_annotation) {
-                        if let Some(type_ref) = decl_arena.get_type_ref(type_annotation_node) {
-                            // Check if this is a simple identifier (not qualified name)
-                            if let Some(type_name_node) = decl_arena.get(type_ref.type_name) {
-                                if let Some(ident) = decl_arena.get_identifier(type_name_node) {
-                                    let type_name = ident.escaped_text.as_str();
-                                    // Use resolve_lib_type_by_name for global lib types
-                                    if let Some(lib_type) = self.resolve_lib_type_by_name(type_name)
-                                    {
-                                        if lib_type != TypeId::UNKNOWN && lib_type != TypeId::ERROR
-                                        {
-                                            return self.resolve_ref_type(lib_type);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+        if let Some(node) = decl_arena.get(decl_idx)
+            && let Some(var_decl) = decl_arena.get_variable_declaration(node)
+            && !var_decl.type_annotation.is_none()
+        {
+            // Try to extract the type name from a simple type reference
+            if let Some(type_annotation_node) = decl_arena.get(var_decl.type_annotation)
+                && let Some(type_ref) = decl_arena.get_type_ref(type_annotation_node)
+            {
+                // Check if this is a simple identifier (not qualified name)
+                if let Some(type_name_node) = decl_arena.get(type_ref.type_name)
+                    && let Some(ident) = decl_arena.get_identifier(type_name_node)
+                {
+                    let type_name = ident.escaped_text.as_str();
+                    // Use resolve_lib_type_by_name for global lib types
+                    if let Some(lib_type) = self.resolve_lib_type_by_name(type_name)
+                        && lib_type != TypeId::UNKNOWN
+                        && lib_type != TypeId::ERROR
+                    {
+                        return self.resolve_ref_type(lib_type);
                     }
                 }
             }

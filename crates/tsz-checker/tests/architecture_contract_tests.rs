@@ -102,7 +102,7 @@ fn test_configure_compat_checker_honors_strict_option_semantics() {
         strict_function_types: false,
         ..Default::default()
     };
-    let mut ctx = CheckerContext::new(
+    let ctx = CheckerContext::new(
         &arena,
         &binder,
         &types,
@@ -121,7 +121,7 @@ fn test_configure_compat_checker_honors_strict_option_semantics() {
         strict_function_types: true,
         ..Default::default()
     };
-    let mut ctx = CheckerContext::new(
+    let ctx = CheckerContext::new(
         &arena,
         &binder,
         &types,

@@ -167,28 +167,27 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // so that infer_return_type_from_body has the correct `this` context
             // (prevents false TS2683 during return type inference)
             let mut pushed_this_type = false;
-            if let Some(&first_param) = func.parameters.nodes.first() {
-                if let Some(param_node) = self.ctx.arena.get(first_param)
-                    && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                {
-                    // Check if parameter name is "this"
-                    // Must check both ThisKeyword and Identifier("this") to match parser behavior
-                    let is_this = if let Some(name_node) = self.ctx.arena.get(param.name) {
-                        if name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
-                            true
-                        } else if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                            ident.escaped_text == "this"
-                        } else {
-                            false
-                        }
+            if let Some(&first_param) = func.parameters.nodes.first()
+                && let Some(param_node) = self.ctx.arena.get(first_param)
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+            {
+                // Check if parameter name is "this"
+                // Must check both ThisKeyword and Identifier("this") to match parser behavior
+                let is_this = if let Some(name_node) = self.ctx.arena.get(param.name) {
+                    if name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                        true
+                    } else if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                        ident.escaped_text == "this"
                     } else {
                         false
-                    };
-                    if is_this && !param.type_annotation.is_none() {
-                        let this_type = self.get_type_from_type_node(param.type_annotation);
-                        self.ctx.this_type_stack.push(this_type);
-                        pushed_this_type = true;
                     }
+                } else {
+                    false
+                };
+                if is_this && !param.type_annotation.is_none() {
+                    let this_type = self.get_type_from_type_node(param.type_annotation);
+                    self.ctx.this_type_stack.push(this_type);
+                    pushed_this_type = true;
                 }
             }
 
@@ -470,14 +469,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         if clause_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                             return true;
                         }
-                        if clause_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                            if let Some(paren) = self.ctx.arena.get_parenthesized(clause_node) {
-                                return self.ctx.arena.get(paren.expression).is_some_and(
-                                    |expr_node| {
-                                        expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                    },
-                                );
-                            }
+                        if clause_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                            && let Some(paren) = self.ctx.arena.get_parenthesized(clause_node)
+                        {
+                            return self
+                                .ctx
+                                .arena
+                                .get(paren.expression)
+                                .is_some_and(|expr_node| {
+                                    expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                });
                         }
                         false
                     });
@@ -591,25 +592,24 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         self.check_import_alias_duplicates(&statements.nodes);
                         // Check import equals declarations for circular imports (TS2303)
                         for &stmt_idx in &statements.nodes {
-                            if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
-                                if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                            if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                                && stmt_node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                                     self.check_import_equals_declaration(stmt_idx);
                                 }
-                            }
                         }
                     }
                 }
 
                 // TS2300: Check for duplicate import aliases in non-ambient modules too
                 // This handles namespace { import X = ...; import X = ...; }
-                if !is_ambient && !module.body.is_none() {
-                    if let Some(body_node) = self.ctx.arena.get(module.body)
-                        && body_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
-                        && let Some(block) = self.ctx.arena.get_module_block(body_node)
-                        && let Some(ref statements) = block.statements
-                    {
-                        self.check_import_alias_duplicates(&statements.nodes);
-                    }
+                if !is_ambient
+                    && !module.body.is_none()
+                    && let Some(body_node) = self.ctx.arena.get(module.body)
+                    && body_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
+                    && let Some(block) = self.ctx.arena.get_module_block(body_node)
+                    && let Some(ref statements) = block.statements
+                {
+                    self.check_import_alias_duplicates(&statements.nodes);
                 }
             }
         }

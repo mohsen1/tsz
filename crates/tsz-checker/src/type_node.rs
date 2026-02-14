@@ -198,36 +198,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     let ident = self.ctx.arena.get_identifier_at(node_idx)?;
                     let name = ident.escaped_text.as_str();
 
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            if (symbol.flags
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                        && (symbol.flags
+                            & (symbol_flags::VALUE
+                                | symbol_flags::ALIAS
+                                | symbol_flags::REGULAR_ENUM
+                                | symbol_flags::CONST_ENUM))
+                            != 0
+                    {
+                        return Some(sym_id.0);
+                    }
+
+                    for lib_ctx in &self.ctx.lib_contexts {
+                        if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name)
+                            && let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id)
+                            && (symbol.flags
                                 & (symbol_flags::VALUE
                                     | symbol_flags::ALIAS
                                     | symbol_flags::REGULAR_ENUM
                                     | symbol_flags::CONST_ENUM))
                                 != 0
-                            {
-                                return Some(sym_id.0);
-                            }
-                        }
-                    }
-
-                    for lib_ctx in &self.ctx.lib_contexts {
-                        if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
-                            if let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id) {
-                                if (symbol.flags
-                                    & (symbol_flags::VALUE
-                                        | symbol_flags::ALIAS
-                                        | symbol_flags::REGULAR_ENUM
-                                        | symbol_flags::CONST_ENUM))
-                                    != 0
-                                {
-                                    // Use file binder's sym_id for correct ID space after lib merge
-                                    let file_sym_id =
-                                        self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
-                                    return Some(file_sym_id.0);
-                                }
-                            }
+                        {
+                            // Use file binder's sym_id for correct ID space after lib merge
+                            let file_sym_id =
+                                self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                            return Some(file_sym_id.0);
                         }
                     }
 
@@ -574,15 +570,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let index_type = self.check(indexed_access.index_type);
 
             // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
-            if self.is_invalid_index_type(index_type) {
-                if let Some(inode) = self.ctx.arena.get(indexed_access.index_type) {
-                    self.ctx.error(
-                        inode.pos,
-                        inode.end - inode.pos,
-                        "Type cannot be used as an index type.".to_string(),
-                        2538,
-                    );
-                }
+            if self.is_invalid_index_type(index_type)
+                && let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
+            {
+                self.ctx.error(
+                    inode.pos,
+                    inode.end - inode.pos,
+                    "Type cannot be used as an index type.".to_string(),
+                    2538,
+                );
             }
 
             factory.index_access(object_type, index_type)
@@ -671,8 +667,35 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         // Check return type annotation
-        if !func_data.type_annotation.is_none() {
-            if let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
+        if !func_data.type_annotation.is_none()
+            && let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
+            && tn.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(tr) = self.ctx.arena.get_type_ref(tn)
+            && let Some(name_node) = self.ctx.arena.get(tr.type_name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            let name = &ident.escaped_text;
+            let is_builtin = is_builtin_type(name);
+            let is_local_type_param = local_type_params.contains(name);
+            let is_type_param = self.ctx.type_parameter_scope.contains_key(name);
+            let in_file = self.ctx.binder.file_locals.get(name).is_some();
+            let in_lib = self
+                .ctx
+                .lib_contexts
+                .iter()
+                .any(|lib_ctx| lib_ctx.binder.file_locals.get(name).is_some());
+
+            if !is_builtin && !is_local_type_param && !is_type_param && !in_file && !in_lib {
+                undefined_types.push((tr.type_name, name.clone()));
+            }
+        }
+
+        // Check parameter type annotations
+        for param_idx in &func_data.parameters.nodes {
+            if let Some(param_node) = self.ctx.arena.get(*param_idx)
+                && let Some(param_data) = self.ctx.arena.get_parameter(param_node)
+                && !param_data.type_annotation.is_none()
+                && let Some(tn) = self.ctx.arena.get(param_data.type_annotation)
                 && tn.kind == syntax_kind_ext::TYPE_REFERENCE
                 && let Some(tr) = self.ctx.arena.get_type_ref(tn)
                 && let Some(name_node) = self.ctx.arena.get(tr.type_name)
@@ -691,37 +714,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                 if !is_builtin && !is_local_type_param && !is_type_param && !in_file && !in_lib {
                     undefined_types.push((tr.type_name, name.clone()));
-                }
-            }
-        }
-
-        // Check parameter type annotations
-        for param_idx in &func_data.parameters.nodes {
-            if let Some(param_node) = self.ctx.arena.get(*param_idx)
-                && let Some(param_data) = self.ctx.arena.get_parameter(param_node)
-                && !param_data.type_annotation.is_none()
-            {
-                if let Some(tn) = self.ctx.arena.get(param_data.type_annotation)
-                    && tn.kind == syntax_kind_ext::TYPE_REFERENCE
-                    && let Some(tr) = self.ctx.arena.get_type_ref(tn)
-                    && let Some(name_node) = self.ctx.arena.get(tr.type_name)
-                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                {
-                    let name = &ident.escaped_text;
-                    let is_builtin = is_builtin_type(name);
-                    let is_local_type_param = local_type_params.contains(name);
-                    let is_type_param = self.ctx.type_parameter_scope.contains_key(name);
-                    let in_file = self.ctx.binder.file_locals.get(name).is_some();
-                    let in_lib = self
-                        .ctx
-                        .lib_contexts
-                        .iter()
-                        .any(|lib_ctx| lib_ctx.binder.file_locals.get(name).is_some());
-
-                    if !is_builtin && !is_local_type_param && !is_type_param && !in_file && !in_lib
-                    {
-                        undefined_types.push((tr.type_name, name.clone()));
-                    }
                 }
             }
         }
@@ -1001,15 +993,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     || key_type == TypeId::NUMBER
                     || key_type == TypeId::SYMBOL
                     || tsz_solver::visitor::is_template_literal_type(self.ctx.types, key_type);
-                if !is_valid_index_type {
-                    if let Some(pnode) = self.ctx.arena.get(param_idx) {
-                        self.ctx.error(
+                if !is_valid_index_type && let Some(pnode) = self.ctx.arena.get(param_idx) {
+                    self.ctx.error(
                             pnode.pos,
                             pnode.end - pnode.pos,
                             "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.".to_string(),
                             1268,
                         );
-                    }
                 }
 
                 let value_type = if !index_sig.type_annotation.is_none() {
@@ -1233,35 +1223,30 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let ident = self.ctx.arena.get_identifier_at(node_idx)?;
             let name = ident.escaped_text.as_str();
 
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    if (symbol.flags
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && (symbol.flags
+                    & (tsz_binder::symbol_flags::VALUE
+                        | tsz_binder::symbol_flags::ALIAS
+                        | tsz_binder::symbol_flags::REGULAR_ENUM
+                        | tsz_binder::symbol_flags::CONST_ENUM))
+                    != 0
+            {
+                return Some(sym_id.0);
+            }
+
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name)
+                    && let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id)
+                    && (symbol.flags
                         & (tsz_binder::symbol_flags::VALUE
                             | tsz_binder::symbol_flags::ALIAS
                             | tsz_binder::symbol_flags::REGULAR_ENUM
                             | tsz_binder::symbol_flags::CONST_ENUM))
                         != 0
-                    {
-                        return Some(sym_id.0);
-                    }
-                }
-            }
-
-            for lib_ctx in &self.ctx.lib_contexts {
-                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
-                    if let Some(symbol) = lib_ctx.binder.get_symbol(lib_sym_id) {
-                        if (symbol.flags
-                            & (tsz_binder::symbol_flags::VALUE
-                                | tsz_binder::symbol_flags::ALIAS
-                                | tsz_binder::symbol_flags::REGULAR_ENUM
-                                | tsz_binder::symbol_flags::CONST_ENUM))
-                            != 0
-                        {
-                            let file_sym_id =
-                                self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
-                            return Some(file_sym_id.0);
-                        }
-                    }
+                {
+                    let file_sym_id = self.ctx.binder.file_locals.get(name).unwrap_or(lib_sym_id);
+                    return Some(file_sym_id.0);
                 }
             }
 
@@ -1396,10 +1381,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use tsz_scanner::SyntaxKind;
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::ReadonlyKeyword as u16 {
-                        return true;
-                    }
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
+                {
+                    return true;
                 }
             }
         }

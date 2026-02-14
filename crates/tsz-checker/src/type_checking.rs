@@ -337,10 +337,10 @@ impl<'a> CheckerState<'a> {
         let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
             return;
         };
-        if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
-            if let Some(member) = self.ctx.arena.get_named_tuple_member(elem_node) {
-                self.check_type_for_missing_names(member.type_node);
-            }
+        if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+            && let Some(member) = self.ctx.arena.get_named_tuple_member(elem_node)
+        {
+            self.check_type_for_missing_names(member.type_node);
         }
     }
 
@@ -497,10 +497,9 @@ impl<'a> CheckerState<'a> {
             self.check_type_for_parameter_properties(paren.type_node);
         } else if node.kind == syntax_kind_ext::TYPE_PREDICATE
             && let Some(pred) = self.ctx.arena.get_type_predicate(node)
+            && !pred.type_node.is_none()
         {
-            if !pred.type_node.is_none() {
-                self.check_type_for_parameter_properties(pred.type_node);
-            }
+            self.check_type_for_parameter_properties(pred.type_node);
         }
     }
 
@@ -715,18 +714,17 @@ impl<'a> CheckerState<'a> {
         // TS2408: Setters cannot return a value.
         if !return_data.expression.is_none() {
             use tsz_parser::parser::syntax_kind_ext;
-            if let Some(enclosing_fn_idx) = self.find_enclosing_function(stmt_idx) {
-                if let Some(enclosing_fn_node) = self.ctx.arena.get(enclosing_fn_idx) {
-                    if enclosing_fn_node.kind == syntax_kind_ext::SET_ACCESSOR {
-                        use crate::diagnostics::diagnostic_codes;
-                        self.error_at_node(
-                            stmt_idx,
-                            "Setters cannot return a value.",
-                            diagnostic_codes::SETTERS_CANNOT_RETURN_A_VALUE,
-                        );
-                        return;
-                    }
-                }
+            if let Some(enclosing_fn_idx) = self.find_enclosing_function(stmt_idx)
+                && let Some(enclosing_fn_node) = self.ctx.arena.get(enclosing_fn_idx)
+                && enclosing_fn_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    stmt_idx,
+                    "Setters cannot return a value.",
+                    diagnostic_codes::SETTERS_CANNOT_RETURN_A_VALUE,
+                );
+                return;
             }
         }
 
@@ -874,10 +872,10 @@ impl<'a> CheckerState<'a> {
                 }
                 syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
-                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
-                        if !unary_expr.expression.is_none() {
-                            stack.push(unary_expr.expression);
-                        }
+                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node)
+                        && !unary_expr.expression.is_none()
+                    {
+                        stack.push(unary_expr.expression);
                     }
                 }
                 syntax_kind_ext::AWAIT_EXPRESSION => {
@@ -906,10 +904,10 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node) {
-                        if !unary_expr.expression.is_none() {
-                            stack.push(unary_expr.expression);
-                        }
+                    if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node)
+                        && !unary_expr.expression.is_none()
+                    {
+                        stack.push(unary_expr.expression);
                     }
                 }
                 syntax_kind_ext::CALL_EXPRESSION => {
@@ -928,10 +926,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                    if let Some(access_expr) = self.ctx.arena.get_access_expr(node) {
-                        if !access_expr.expression.is_none() {
-                            stack.push(access_expr.expression);
-                        }
+                    if let Some(access_expr) = self.ctx.arena.get_access_expr(node)
+                        && !access_expr.expression.is_none()
+                    {
+                        stack.push(access_expr.expression);
                     }
                 }
                 syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
@@ -940,10 +938,10 @@ impl<'a> CheckerState<'a> {
                     // For now, skip this to avoid breaking the build
                 }
                 syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                    if let Some(paren_expr) = self.ctx.arena.get_parenthesized(node) {
-                        if !paren_expr.expression.is_none() {
-                            stack.push(paren_expr.expression);
-                        }
+                    if let Some(paren_expr) = self.ctx.arena.get_parenthesized(node)
+                        && !paren_expr.expression.is_none()
+                    {
+                        stack.push(paren_expr.expression);
                     }
                 }
                 _ => {
@@ -1868,27 +1866,17 @@ impl<'a> CheckerState<'a> {
                 //   }
                 // Only check the base - don't recurse further to avoid infinite loops
                 // Check if base is a Lazy type to a type alias with constructor type body
-                if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        if let Some(decl_idx) = symbol.declarations.first().copied() {
-                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                                if decl_node.kind
-                                    == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                                {
-                                    if let Some(alias) = self.ctx.arena.get_type_alias(decl_node) {
-                                        if let Some(body_node) = self.ctx.arena.get(alias.type_node)
-                                        {
-                                            // Constructor type syntax: new (...args) => T
-                                            if body_node.kind
-                                                == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR_TYPE
-                                            {
-                                                return true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && let Some(decl_idx) = symbol.declarations.first().copied()
+                    && let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                    && decl_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    && let Some(alias) = self.ctx.arena.get_type_alias(decl_node)
+                    && let Some(body_node) = self.ctx.arena.get(alias.type_node)
+                {
+                    // Constructor type syntax: new (...args) => T
+                    if body_node.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR_TYPE {
+                        return true;
                     }
                 }
                 // Also check if base is directly a Callable with construct signatures
@@ -2039,34 +2027,27 @@ impl<'a> CheckerState<'a> {
             .node_symbols
             .get(&access.name_or_argument.0)
             .copied()
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::GET_ACCESSOR) != 0
         {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                if (symbol.flags & tsz_binder::symbol_flags::GET_ACCESSOR) != 0 {
-                    return true;
-                }
-            }
+            return true;
         }
 
         // Check if the object type is a class instance with a get accessor for this property
-        if let Some(&obj_type) = self.ctx.node_types.get(&access.expression.0) {
-            if let Some(class_idx) = self.ctx.class_instance_type_to_decl.get(&obj_type).copied() {
-                if let Some(class) = self.ctx.arena.get_class_at(class_idx) {
-                    for &member_idx in &class.members.nodes {
-                        let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                            continue;
-                        };
-                        if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                            if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                                if let Some(acc_ident) =
-                                    self.ctx.arena.get_identifier_at(accessor.name)
-                                {
-                                    if acc_ident.escaped_text == *prop_name {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                    }
+        if let Some(&obj_type) = self.ctx.node_types.get(&access.expression.0)
+            && let Some(class_idx) = self.ctx.class_instance_type_to_decl.get(&obj_type).copied()
+            && let Some(class) = self.ctx.arena.get_class_at(class_idx)
+        {
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                    && let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                    && let Some(acc_ident) = self.ctx.arena.get_identifier_at(accessor.name)
+                    && acc_ident.escaped_text == *prop_name
+                {
+                    return true;
                 }
             }
         }
@@ -2239,13 +2220,12 @@ impl<'a> CheckerState<'a> {
                 true
             }
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
-                    if unary.operator == tsz_scanner::SyntaxKind::MinusToken as u16 {
-                        if let Some(operand) = self.ctx.arena.get(unary.operand) {
-                            return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
-                                || operand.kind == tsz_scanner::SyntaxKind::BigIntLiteral as u16;
-                        }
-                    }
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node)
+                    && unary.operator == tsz_scanner::SyntaxKind::MinusToken as u16
+                    && let Some(operand) = self.ctx.arena.get(unary.operand)
+                {
+                    return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                        || operand.kind == tsz_scanner::SyntaxKind::BigIntLiteral as u16;
                 }
                 false
             }
@@ -2307,14 +2287,12 @@ impl<'a> CheckerState<'a> {
             if parent.is_none() {
                 break;
             }
-            if let Some(parent_node) = self.ctx.arena.get(parent) {
-                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    if let Some(module) = self.ctx.arena.get_module(parent_node) {
-                        if self.has_declare_modifier(&module.modifiers) {
-                            return true;
-                        }
-                    }
-                }
+            if let Some(parent_node) = self.ctx.arena.get(parent)
+                && parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.ctx.arena.get_module(parent_node)
+                && self.has_declare_modifier(&module.modifiers)
+            {
+                return true;
             }
             current = parent;
         }
@@ -2342,14 +2320,12 @@ impl<'a> CheckerState<'a> {
             if parent.is_none() {
                 break;
             }
-            if let Some(parent_node) = self.ctx.arena.get(parent) {
-                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    if let Some(module) = self.ctx.arena.get_module(parent_node) {
-                        if self.has_declare_modifier(&module.modifiers) {
-                            return true;
-                        }
-                    }
-                }
+            if let Some(parent_node) = self.ctx.arena.get(parent)
+                && parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.ctx.arena.get_module(parent_node)
+                && self.has_declare_modifier(&module.modifiers)
+            {
+                return true;
             }
             current = parent;
         }
@@ -2514,46 +2490,38 @@ impl<'a> CheckerState<'a> {
             };
             match node.kind {
                 syntax_kind_ext::METHOD_DECLARATION => {
-                    if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                        if let Some(name_node) = self.ctx.arena.get(method.name) {
-                            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                return self.ctx.arena.resolve_identifier_text(ident)
-                                    == expected_name;
-                            }
-                        }
+                    if let Some(method) = self.ctx.arena.get_method_decl(node)
+                        && let Some(name_node) = self.ctx.arena.get(method.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
                     }
                     return false;
                 }
                 syntax_kind_ext::PROPERTY_DECLARATION => {
-                    if let Some(prop) = self.ctx.arena.get_property_decl(node) {
-                        if let Some(name_node) = self.ctx.arena.get(prop.name) {
-                            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                return self.ctx.arena.resolve_identifier_text(ident)
-                                    == expected_name;
-                            }
-                        }
+                    if let Some(prop) = self.ctx.arena.get_property_decl(node)
+                        && let Some(name_node) = self.ctx.arena.get(prop.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
                     }
                     return false;
                 }
                 syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
-                    if let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                        if let Some(name_node) = self.ctx.arena.get(accessor.name) {
-                            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                return self.ctx.arena.resolve_identifier_text(ident)
-                                    == expected_name;
-                            }
-                        }
+                    if let Some(accessor) = self.ctx.arena.get_accessor(node)
+                        && let Some(name_node) = self.ctx.arena.get(accessor.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
                     }
                     return false;
                 }
                 syntax_kind_ext::MODULE_DECLARATION => {
-                    if let Some(module) = self.ctx.arena.get_module(node) {
-                        if let Some(name_node) = self.ctx.arena.get(module.name) {
-                            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                return self.ctx.arena.resolve_identifier_text(ident)
-                                    == expected_name;
-                            }
-                        }
+                    if let Some(module) = self.ctx.arena.get_module(node)
+                        && let Some(name_node) = self.ctx.arena.get(module.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        return self.ctx.arena.resolve_identifier_text(ident) == expected_name;
                     }
                     return false;
                 }
@@ -3931,30 +3899,29 @@ impl<'a> CheckerState<'a> {
             }
 
             // Find the parent VARIABLE_DECLARATION and VARIABLE_DECLARATION_LIST
-            if let Some(var_decl_node_idx) = self.find_parent_variable_decl_node(decl_idx) {
-                if let Some(var_decl_list_idx) =
+            if let Some(var_decl_node_idx) = self.find_parent_variable_decl_node(decl_idx)
+                && let Some(var_decl_list_idx) =
                     self.find_parent_variable_declaration(var_decl_node_idx)
-                {
-                    // Track this VARIABLE_DECLARATION node under its parent list
-                    var_decl_list_children
-                        .entry(var_decl_list_idx)
+            {
+                // Track this VARIABLE_DECLARATION node under its parent list
+                var_decl_list_children
+                    .entry(var_decl_list_idx)
+                    .or_default()
+                    .insert(var_decl_node_idx);
+
+                // Check if this variable is unused
+                let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
+                if !is_used {
+                    unused_var_decls.insert(var_decl_node_idx);
+                }
+
+                if let Some(pattern_idx) = self.find_parent_binding_pattern(decl_idx) {
+                    pattern_children
+                        .entry(pattern_idx)
                         .or_default()
-                        .insert(var_decl_node_idx);
-
-                    // Check if this variable is unused
-                    let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
+                        .insert(decl_idx);
                     if !is_used {
-                        unused_var_decls.insert(var_decl_node_idx);
-                    }
-
-                    if let Some(pattern_idx) = self.find_parent_binding_pattern(decl_idx) {
-                        pattern_children
-                            .entry(pattern_idx)
-                            .or_default()
-                            .insert(decl_idx);
-                        if !is_used {
-                            unused_pattern_elements.insert(decl_idx);
-                        }
+                        unused_pattern_elements.insert(decl_idx);
                     }
                 }
             }
@@ -4247,21 +4214,22 @@ impl<'a> CheckerState<'a> {
         if check_locals {
             for (import_decl_idx, (total_count, unused_count)) in import_declarations {
                 // Only emit if there are multiple imports and ALL are unused
-                if total_count > 1 && unused_count == total_count {
-                    if let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx) {
-                        let msg = "All imports in import declaration are unused.".to_string();
-                        let start = import_decl_node.pos;
-                        let length = import_decl_node.end.saturating_sub(import_decl_node.pos);
-                        self.ctx.push_diagnostic(Diagnostic {
-                            file: file_name.clone(),
-                            start,
-                            length,
-                            message_text: msg,
-                            category: crate::diagnostics::DiagnosticCategory::Error,
-                            code: 6192,
-                            related_information: Vec::new(),
-                        });
-                    }
+                if total_count > 1
+                    && unused_count == total_count
+                    && let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx)
+                {
+                    let msg = "All imports in import declaration are unused.".to_string();
+                    let start = import_decl_node.pos;
+                    let length = import_decl_node.end.saturating_sub(import_decl_node.pos);
+                    self.ctx.push_diagnostic(Diagnostic {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: msg,
+                        category: crate::diagnostics::DiagnosticCategory::Error,
+                        code: 6192,
+                        related_information: Vec::new(),
+                    });
                 }
             }
 
@@ -4270,21 +4238,22 @@ impl<'a> CheckerState<'a> {
             // For single unused variables, TS6133 is emitted above.
             for (var_decl_idx, (total_count, unused_count)) in variable_declarations {
                 // Only emit if there are multiple variables and ALL are unused
-                if total_count > 1 && unused_count == total_count {
-                    if let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx) {
-                        let msg = "All variables are unused.".to_string();
-                        let start = var_decl_node.pos;
-                        let length = var_decl_node.end.saturating_sub(var_decl_node.pos);
-                        self.ctx.push_diagnostic(Diagnostic {
-                            file: file_name.clone(),
-                            start,
-                            length,
-                            message_text: msg,
-                            category: crate::diagnostics::DiagnosticCategory::Error,
-                            code: 6199,
-                            related_information: Vec::new(),
-                        });
-                    }
+                if total_count > 1
+                    && unused_count == total_count
+                    && let Some(var_decl_node) = self.ctx.arena.get(var_decl_idx)
+                {
+                    let msg = "All variables are unused.".to_string();
+                    let start = var_decl_node.pos;
+                    let length = var_decl_node.end.saturating_sub(var_decl_node.pos);
+                    self.ctx.push_diagnostic(Diagnostic {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: msg,
+                        category: crate::diagnostics::DiagnosticCategory::Error,
+                        code: 6199,
+                        related_information: Vec::new(),
+                    });
                 }
             }
 
@@ -4293,21 +4262,22 @@ impl<'a> CheckerState<'a> {
             // For single unused elements, TS6133 is emitted above.
             for (pattern_idx, (total_count, unused_count)) in destructuring_patterns {
                 // Only emit if there are multiple elements and ALL are unused
-                if total_count > 1 && unused_count == total_count {
-                    if let Some(pattern_node) = self.ctx.arena.get(pattern_idx) {
-                        let msg = "All destructured elements are unused.".to_string();
-                        let start = pattern_node.pos;
-                        let length = pattern_node.end.saturating_sub(pattern_node.pos);
-                        self.ctx.push_diagnostic(Diagnostic {
-                            file: file_name.clone(),
-                            start,
-                            length,
-                            message_text: msg,
-                            category: crate::diagnostics::DiagnosticCategory::Error,
-                            code: 6198,
-                            related_information: Vec::new(),
-                        });
-                    }
+                if total_count > 1
+                    && unused_count == total_count
+                    && let Some(pattern_node) = self.ctx.arena.get(pattern_idx)
+                {
+                    let msg = "All destructured elements are unused.".to_string();
+                    let start = pattern_node.pos;
+                    let length = pattern_node.end.saturating_sub(pattern_node.pos);
+                    self.ctx.push_diagnostic(Diagnostic {
+                        file: file_name.clone(),
+                        start,
+                        length,
+                        message_text: msg,
+                        category: crate::diagnostics::DiagnosticCategory::Error,
+                        code: 6198,
+                        related_information: Vec::new(),
+                    });
                 }
             }
         }
@@ -4324,10 +4294,10 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            if let Some(node) = self.ctx.arena.get(idx) {
-                if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                    return Some(idx);
-                }
+            if let Some(node) = self.ctx.arena.get(idx)
+                && node.kind == syntax_kind_ext::IMPORT_DECLARATION
+            {
+                return Some(idx);
             }
 
             // Move to parent
@@ -4354,10 +4324,10 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            if let Some(node) = self.ctx.arena.get(idx) {
-                if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                    return Some(idx);
-                }
+            if let Some(node) = self.ctx.arena.get(idx)
+                && node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            {
+                return Some(idx);
             }
 
             // Move to parent
@@ -4384,10 +4354,10 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            if let Some(node) = self.ctx.arena.get(idx) {
-                if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                    return Some(idx);
-                }
+            if let Some(node) = self.ctx.arena.get(idx)
+                && node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            {
+                return Some(idx);
             }
 
             // Move to parent
@@ -4415,12 +4385,11 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            if let Some(node) = self.ctx.arena.get(idx) {
-                if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                {
-                    return Some(idx);
-                }
+            if let Some(node) = self.ctx.arena.get(idx)
+                && (node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+            {
+                return Some(idx);
             }
 
             // Move to parent
@@ -4458,12 +4427,12 @@ impl<'a> CheckerState<'a> {
         if parent_idx.is_none() {
             return false;
         }
-        if let Some(parent) = self.ctx.arena.get(parent_idx) {
-            if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                let flags = parent.flags as u32;
-                if (flags & node_flags::USING) != 0 {
-                    return true;
-                }
+        if let Some(parent) = self.ctx.arena.get(parent_idx)
+            && parent.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+        {
+            let flags = parent.flags as u32;
+            if (flags & node_flags::USING) != 0 {
+                return true;
             }
         }
         false
@@ -4481,10 +4450,10 @@ impl<'a> CheckerState<'a> {
         if parent_idx.is_none() {
             return false;
         }
-        if let Some(parent) = self.ctx.arena.get(parent_idx) {
-            if parent.kind == syntax_kind_ext::CATCH_CLAUSE {
-                return true;
-            }
+        if let Some(parent) = self.ctx.arena.get(parent_idx)
+            && parent.kind == syntax_kind_ext::CATCH_CLAUSE
+        {
+            return true;
         }
         false
     }

@@ -324,33 +324,29 @@ impl<'a> CheckerState<'a> {
         };
 
         // First, check if it's a direct export from this module
-        if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier) {
-            if let Some(sym_id) = lookup_in_exports(self.ctx.binder, module_exports) {
-                // Found direct export - but we need to resolve if it's itself a re-export
-                // Get the symbol and check if it's an alias
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
-                        // Follow the alias
-                        if let Some(ref import_module) = symbol.import_module {
-                            let export_name = symbol.import_name.as_deref().unwrap_or(member_name);
-                            return self.resolve_reexported_member(
-                                import_module,
-                                export_name,
-                                lib_binders,
-                            );
-                        }
-                    }
+        if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier)
+            && let Some(sym_id) = lookup_in_exports(self.ctx.binder, module_exports)
+        {
+            // Found direct export - but we need to resolve if it's itself a re-export
+            // Get the symbol and check if it's an alias
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.flags & tsz_binder::symbol_flags::ALIAS != 0
+            {
+                // Follow the alias
+                if let Some(ref import_module) = symbol.import_module {
+                    let export_name = symbol.import_name.as_deref().unwrap_or(member_name);
+                    return self.resolve_reexported_member(import_module, export_name, lib_binders);
                 }
-                return Some(sym_id);
             }
+            return Some(sym_id);
         }
 
         // Check for named re-exports: `export { foo } from 'bar'`
-        if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier) {
-            if let Some((source_module, original_name)) = file_reexports.get(member_name) {
-                let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                return self.resolve_reexported_member(source_module, name_to_lookup, lib_binders);
-            }
+        if let Some(file_reexports) = self.ctx.binder.reexports.get(module_specifier)
+            && let Some((source_module, original_name)) = file_reexports.get(member_name)
+        {
+            let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
+            return self.resolve_reexported_member(source_module, name_to_lookup, lib_binders);
         }
 
         // Check for wildcard re-exports: `export * from 'bar'`
@@ -367,21 +363,17 @@ impl<'a> CheckerState<'a> {
         // Check lib binders for the module
         for lib_binder in lib_binders {
             // First check lib binder's module_exports
-            if let Some(module_exports) = lib_binder.module_exports.get(module_specifier) {
-                if let Some(sym_id) = lookup_in_exports(lib_binder, module_exports) {
-                    return Some(sym_id);
-                }
+            if let Some(module_exports) = lib_binder.module_exports.get(module_specifier)
+                && let Some(sym_id) = lookup_in_exports(lib_binder, module_exports)
+            {
+                return Some(sym_id);
             }
             // Then check lib binder's re-exports
-            if let Some(file_reexports) = lib_binder.reexports.get(module_specifier) {
-                if let Some((source_module, original_name)) = file_reexports.get(member_name) {
-                    let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
-                    return self.resolve_reexported_member(
-                        source_module,
-                        name_to_lookup,
-                        lib_binders,
-                    );
-                }
+            if let Some(file_reexports) = lib_binder.reexports.get(module_specifier)
+                && let Some((source_module, original_name)) = file_reexports.get(member_name)
+            {
+                let name_to_lookup = original_name.as_deref().unwrap_or(member_name);
+                return self.resolve_reexported_member(source_module, name_to_lookup, lib_binders);
             }
             // Then check lib binder's wildcard re-exports
             if let Some(source_modules) = lib_binder.wildcard_reexports.get(module_specifier) {

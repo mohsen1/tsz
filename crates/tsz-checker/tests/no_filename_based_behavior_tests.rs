@@ -143,10 +143,10 @@ fn count_nodes_by_kind(arena: &NodeArena, kind: u16) -> usize {
     let mut count = 0;
     for i in 0..arena.len() {
         let idx = tsz_parser::parser::NodeIndex(i as u32);
-        if let Some(node) = arena.get(idx) {
-            if node.kind == kind {
-                count += 1;
-            }
+        if let Some(node) = arena.get(idx)
+            && node.kind == kind
+        {
+            count += 1;
         }
     }
     count
