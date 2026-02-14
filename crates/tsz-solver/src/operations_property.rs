@@ -10,11 +10,11 @@ use crate::evaluate::evaluate_type;
 use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::subtype::TypeResolver;
 use crate::types::*;
+use crate::utils;
 use crate::visitor::TypeVisitor;
 use crate::{
     ApparentMemberKind, TypeDatabase, apparent_object_member_kind, apparent_primitive_member_kind,
 };
-use crate::utils;
 use std::cell::RefCell;
 use tsz_common::interner::Atom;
 

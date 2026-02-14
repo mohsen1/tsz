@@ -155,7 +155,9 @@ fn compile_with_source_map_emits_map_outputs() {
     write_file(&base.join("src/index.ts"), "export const value = 1;");
 
     let args = default_args();
-    let result = with_types_versions_env(None, || compile(&args, base).expect("compile should succeed"));
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
 
     assert!(result.diagnostics.is_empty());
     let js_path = base.join("dist/src/index.js");
@@ -214,7 +216,9 @@ fn compile_with_declaration_map_emits_map_outputs() {
     write_file(&base.join("src/index.ts"), "export const value = 1;");
 
     let args = default_args();
-    let result = with_types_versions_env(None, || compile(&args, base).expect("compile should succeed"));
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
 
     assert!(result.diagnostics.is_empty());
     let dts_path = base.join("dist/src/index.d.ts");
@@ -367,7 +371,9 @@ fn compile_with_jsx_preserve_emits_jsx_extension() {
     );
 
     let args = default_args();
-    let result = with_types_versions_env(None, || compile(&args, base).expect("compile should succeed"));
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
 
     assert!(result.diagnostics.is_empty());
     assert!(base.join("dist/src/view.jsx").is_file());
