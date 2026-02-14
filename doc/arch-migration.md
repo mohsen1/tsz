@@ -454,3 +454,52 @@ Use this template in each migration PR:
 
 If a change computes `WHAT` a type means or how two types relate, it belongs in Solver.  
 If a change computes `WHERE` to report or which AST node triggered it, it belongs in Checker.
+
+## 15. First PR Queue (Execution Order)
+
+1. PR-001: Baseline snapshot and failure taxonomy export.
+   1. Add committed baseline artifact and reproducible command.
+   2. Record top failing categories with counts.
+2. PR-002: Checker type-internal match inventory.
+   1. Add file-level inventory with owner and risk.
+   2. Mark quick wins vs high-risk migrations.
+3. PR-003: Query facade skeleton (no semantic behavior change).
+   1. Add request/response types and tracing IDs.
+   2. Route assignment path through facade only.
+4. PR-004: Query facade expansion for expression hot paths.
+   1. Route subtype/identity/assignability asks through facade.
+   2. Preserve current solver behavior exactly.
+5. PR-005: Initial architecture CI checks in warn-only mode.
+   1. Detect checker-side type-internal matching.
+   2. Emit actionable violation locations.
+
+## 16. Per-PR Acceptance Checklist
+
+1. Parity:
+   1. Differential run against `tsc` attached.
+   2. New pass/fail deltas explained.
+2. Architecture:
+   1. Checker contains no new type algorithm logic.
+   2. New type computation code lands in solver.
+3. Safety:
+   1. Rollback path documented.
+   2. Risky behavior changes gated with fixtures.
+4. Performance:
+   1. Hot-path query latency unchanged or explained.
+   2. Memory impact measured for touched areas.
+
+## 17. Metrics to Track Weekly
+
+1. Parity:
+   1. overall pass rate,
+   2. top-10 failing categories,
+   3. failure churn (new vs fixed).
+2. Architecture:
+   1. checker direct type-internal matches count,
+   2. solver query coverage on checker hot paths.
+3. Stability:
+   1. nondeterministic failure count,
+   2. diagnostic mismatch count (code/message/span).
+4. Performance:
+   1. P50/P95 check throughput,
+   2. type interner growth and cache hit ratio.
