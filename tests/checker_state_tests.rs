@@ -8,9 +8,6 @@
 //! - Generic types and type inference
 //! - Control flow analysis
 //! - Error diagnostics
-
-#![allow(clippy::print_stderr)]
-
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
@@ -2190,13 +2187,13 @@ const f = new Foo();
         checker.ctx.diagnostics
     );
 
-    eprintln!("=== debug Box ===");
+    println!("=== debug Box ===");
     if let Some(box_sym) = binder.file_locals.get("Box") {
         let box_type = checker.get_type_of_symbol(box_sym);
-        eprintln!("Box type id: {:?}", box_type);
-        eprintln!("Box type key: {:?}", types.lookup(box_type));
+        println!("Box type id: {:?}", box_type);
+        println!("Box type key: {:?}", types.lookup(box_type));
     } else {
-        eprintln!("Box symbol missing");
+        println!("Box symbol missing");
     }
 
     let f_sym = binder.file_locals.get("f").expect("f should exist");
@@ -3934,10 +3931,10 @@ fn test_abstract_class_in_local_scope_2511() {
 
     // Debug: Check symbols
     let symbols = binder.get_symbols();
-    eprintln!("=== Symbols ===");
+    println!("=== Symbols ===");
     for i in 0..symbols.len() {
         if let Some(sym) = symbols.get(crate::binder::SymbolId(i as u32)) {
-            eprintln!(
+            println!(
                 "  {:?}: {} flags={:#x} abstract={}",
                 sym.id,
                 sym.escaped_name,
@@ -3948,18 +3945,18 @@ fn test_abstract_class_in_local_scope_2511() {
     }
 
     // Also try manually checking new expression
-    eprintln!("=== Class name lookup test ===");
+    println!("=== Class name lookup test ===");
     if let Some(sym_id) = binder.get_symbols().find_by_name("A") {
-        eprintln!("Found symbol A: {:?}", sym_id);
+        println!("Found symbol A: {:?}", sym_id);
         if let Some(symbol) = binder.get_symbol(sym_id) {
-            eprintln!(
+            println!(
                 "  flags={:#x} abstract={}",
                 symbol.flags,
                 symbol.flags & symbol_flags::ABSTRACT != 0
             );
         }
     } else {
-        eprintln!("Symbol A not found!");
+        println!("Symbol A not found!");
     }
 
     let types = TypeInterner::new();
@@ -3974,9 +3971,9 @@ fn test_abstract_class_in_local_scope_2511() {
     checker.check_source_file(root);
 
     // Debug: Check diagnostics
-    eprintln!("=== Diagnostics ===");
+    println!("=== Diagnostics ===");
     for d in &checker.ctx.diagnostics {
-        eprintln!("  code={}, msg={}", d.code, d.message_text);
+        println!("  code={}, msg={}", d.code, d.message_text);
     }
 
     // Should have error 2511 for `new A()` but not for `new B()`
@@ -4037,9 +4034,9 @@ class C {
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
-    eprintln!("=== Diagnostics for static member suggestion ===");
+    println!("=== Diagnostics for static member suggestion ===");
     for d in &checker.ctx.diagnostics {
-        eprintln!("  code={}, msg={}", d.code, d.message_text);
+        println!("  code={}, msg={}", d.code, d.message_text);
     }
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -4421,9 +4418,9 @@ fn test_interface_name_cannot_be_reserved_2427() {
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
-    eprintln!("=== Diagnostics for 'interface string {{}}' ===");
+    println!("=== Diagnostics for 'interface string {{}}' ===");
     for d in &checker.ctx.diagnostics {
-        eprintln!("  code={}, msg={}", d.code, d.message_text);
+        println!("  code={}, msg={}", d.code, d.message_text);
     }
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -4459,9 +4456,9 @@ fn test_const_modifier_on_class_property_1248() {
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
-    eprintln!("=== Diagnostics for 'static const H = 1' ===");
+    println!("=== Diagnostics for 'static const H = 1' ===");
     for d in &checker.ctx.diagnostics {
-        eprintln!("  code={}, msg={}", d.code, d.message_text);
+        println!("  code={}, msg={}", d.code, d.message_text);
     }
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -4501,9 +4498,9 @@ fn test_accessor_type_compatibility_2322() {
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
-    eprintln!("=== Diagnostics for accessor type mismatch ===");
+    println!("=== Diagnostics for accessor type mismatch ===");
     for d in &checker.ctx.diagnostics {
-        eprintln!("  code={}, msg={}", d.code, d.message_text);
+        println!("  code={}, msg={}", d.code, d.message_text);
     }
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -4556,9 +4553,9 @@ class C {
     checker.check_source_file(root);
 
     // Debug: show all diagnostics
-    eprintln!("=== Diagnostics for inheritance accessor test ===");
+    println!("=== Diagnostics for inheritance accessor test ===");
     for d in &checker.ctx.diagnostics {
-        eprintln!("  code={}, msg={}", d.code, d.message_text);
+        println!("  code={}, msg={}", d.code, d.message_text);
     }
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
@@ -4649,8 +4646,8 @@ new cls2();
     // Once implemented, change to expect error 2511
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     if !codes.contains(&2511) {
-        eprintln!("=== Abstract Class Through Type Alias ===");
-        eprintln!(
+        println!("=== Abstract Class Through Type Alias ===");
+        println!(
             "Expected error 2511 once abstract class checking implemented, got: {:?}",
             codes
         );
@@ -4701,8 +4698,8 @@ new cls1();
     // Once implemented, change to expect error 2511
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     if !codes.contains(&2511) {
-        eprintln!("=== Abstract Class Union Type ===");
-        eprintln!(
+        println!("=== Abstract Class Union Type ===");
+        println!(
             "Expected error 2511 once abstract class checking implemented, got: {:?}",
             codes
         );
@@ -16045,9 +16042,9 @@ const n: number = s;
 
     // Print diagnostics for debugging
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Redux Pattern: ExtractState Diagnostics ===");
+        println!("=== Redux Pattern: ExtractState Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16109,9 +16106,9 @@ const m: string = state.message;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Redux Pattern: StateFromReducers Diagnostics ===");
+        println!("=== Redux Pattern: StateFromReducers Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16170,9 +16167,9 @@ const partial: PartialState = { nested: { value: 42 } };
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Redux Pattern: DeepPartial Diagnostics ===");
+        println!("=== Redux Pattern: DeepPartial Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16235,9 +16232,9 @@ const n: number = state;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Redux Pattern: createStore Diagnostics ===");
+        println!("=== Redux Pattern: createStore Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16297,9 +16294,9 @@ declare const action: AllActions;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Redux Pattern: ActionFromReducers Diagnostics ===");
+        println!("=== Redux Pattern: ActionFromReducers Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16369,9 +16366,9 @@ const reducers: RootReducers = {
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Redux Pattern: ReducersMapObject Diagnostics ===");
+        println!("=== Redux Pattern: ReducersMapObject Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16447,9 +16444,9 @@ function i<T extends string, U extends number>(x: T, y: U): string | number {
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Base Constraint Assignability Diagnostics ===");
+        println!("=== Base Constraint Assignability Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16507,10 +16504,10 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
     let error_count = checker.ctx.diagnostics.len();
 
     if error_count != 2 {
-        eprintln!("=== Generic Constraint Rejection Diagnostics ===");
-        eprintln!("Expected 2 errors, got {}", error_count);
+        println!("=== Generic Constraint Rejection Diagnostics ===");
+        println!("Expected 2 errors, got {}", error_count);
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16578,9 +16575,9 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Generic Param Identity Diagnostics ===");
+        println!("=== Generic Param Identity Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16812,10 +16809,10 @@ const n: number = box.value; // ERROR: string not assignable to number
 
     let error_count = checker.ctx.diagnostics.len();
     if error_count != 1 {
-        eprintln!("=== Split Accessors Read Error Diagnostics ===");
-        eprintln!("Expected 1 error, got {}", error_count);
+        println!("=== Split Accessors Read Error Diagnostics ===");
+        println!("Expected 1 error, got {}", error_count);
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -16928,10 +16925,10 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
 
     let error_count = checker.ctx.diagnostics.len();
     if error_count != 1 {
-        eprintln!("=== Abstract Class Instantiation Diagnostics ===");
-        eprintln!("Expected 1 error, got {}", error_count);
+        println!("=== Abstract Class Instantiation Diagnostics ===");
+        println!("Expected 1 error, got {}", error_count);
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17010,10 +17007,10 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
     // Fixed: Abstract constructor assignability now works correctly
     // Concrete class constructors can be assigned to abstract class constructor types
     if error_count != 0 {
-        eprintln!("=== Abstract Constructor Assignability Diagnostics ===");
-        eprintln!("Expected 0 errors, got {}", error_count);
+        println!("=== Abstract Constructor Assignability Diagnostics ===");
+        println!("Expected 0 errors, got {}", error_count);
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17080,12 +17077,12 @@ var CC: typeof C = B;
     let not_assignable_count = codes.iter().filter(|&&code| code == 2322).count();
 
     // Debug: print all diagnostics
-    eprintln!("=== Abstract to Concrete Constructor Diagnostics ===");
-    eprintln!("Total diagnostics: {}", checker.ctx.diagnostics.len());
+    println!("=== Abstract to Concrete Constructor Diagnostics ===");
+    println!("Total diagnostics: {}", checker.ctx.diagnostics.len());
     for diag in &checker.ctx.diagnostics {
-        eprintln!("[{}] Code {}: {}", diag.start, diag.code, diag.message_text);
+        println!("[{}] Code {}: {}", diag.start, diag.code, diag.message_text);
     }
-    eprintln!(
+    println!(
         "Abstract constructor types in context: {:?}",
         checker.ctx.abstract_constructor_types
     );
@@ -17171,13 +17168,13 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
 
     // Class inheritance type checking now works - expect 0 errors
     if error_count != 0 {
-        eprintln!("=== Concrete Extends Abstract Diagnostics ===");
-        eprintln!(
+        println!("=== Concrete Extends Abstract Diagnostics ===");
+        println!(
             "Expected 0 errors (class inheritance fixed), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17248,9 +17245,9 @@ const c3: AnyCallable = named; // OK
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Global Function Type Callable Assignability Diagnostics ===");
+        println!("=== Global Function Type Callable Assignability Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17309,9 +17306,9 @@ const specific: SpecificFn = untyped; // This is actually allowed in TS due to a
     // In TypeScript, (...args: any[]) => any IS assignable to specific functions
     // because `any` disables type checking. This is intentional unsoundness.
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Function Not Assignable Diagnostics ===");
+        println!("=== Function Not Assignable Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17382,9 +17379,9 @@ declare const obj: NotCallable;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Function Type Hierarchy Diagnostics ===");
+        println!("=== Function Type Hierarchy Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17448,9 +17445,9 @@ const s: string = strings[0]; // OK
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Best Common Type Array Literal Diagnostics ===");
+        println!("=== Best Common Type Array Literal Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17525,13 +17522,13 @@ const name = pet.name; // OK: both Dog and Cat have name
 
     // Class inheritance now works - expect 0 errors
     if error_count != 0 {
-        eprintln!("=== Best Common Type Class Hierarchy Diagnostics ===");
-        eprintln!(
+        println!("=== Best Common Type Class Hierarchy Diagnostics ===");
+        println!(
             "Expected 0 errors (class inheritance fixed), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17591,9 +17588,9 @@ const b: boolean = bools[0]; // OK
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Best Common Type Literal Widening Diagnostics ===");
+        println!("=== Best Common Type Literal Widening Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17664,9 +17661,9 @@ const l: string = box.label;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Interface Merging Basic Diagnostics ===");
+        println!("=== Interface Merging Basic Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17726,9 +17723,9 @@ const product: number = calc.multiply(3, 4);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Interface Merging Method Overloads Diagnostics ===");
+        println!("=== Interface Merging Method Overloads Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17799,9 +17796,9 @@ const e: string = person.email;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Interface Extend and Merge Diagnostics ===");
+        println!("=== Interface Extend and Merge Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -17938,9 +17935,9 @@ const created: Album = Album.create("New Album");
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Class Namespace Merging Diagnostics ===");
+        println!("=== Class Namespace Merging Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18009,13 +18006,13 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
 
     // Enum member access now works! Changed from expecting 4 errors to 0 errors.
     if error_count != 0 {
-        eprintln!("=== Enum Namespace Merging Diagnostics ===");
-        eprintln!(
+        println!("=== Enum Namespace Merging Diagnostics ===");
+        println!(
             "Expected 0 errors (enum member access working), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18088,13 +18085,13 @@ const animalHandler: HandlerWithAnimal = dogHandler;
     // Currently expects 1 error: method bivariance not implemented
     // Once method bivariance works, change to expect 0 errors
     if error_count != 1 {
-        eprintln!("=== Method Bivariance Wider Arg Diagnostics ===");
-        eprintln!(
+        println!("=== Method Bivariance Wider Arg Diagnostics ===");
+        println!(
             "Expected 1 error (method bivariance not implemented), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18165,13 +18162,13 @@ const dogHandler: HandlerWithDog = animalHandler;
     // Currently expects 1 error: interface inheritance not correctly resolved
     // Once interface extends is properly handled, expect 0 errors
     if error_count != 1 {
-        eprintln!("=== Method Bivariance Narrower Arg Diagnostics ===");
-        eprintln!(
+        println!("=== Method Bivariance Narrower Arg Diagnostics ===");
+        println!(
             "Expected 1 error (interface inheritance not resolved), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18239,13 +18236,13 @@ const dogHandler: HandlerWithDogProp = animalHandler;
 
     // Interface extends is now properly handled - expect 0 errors
     if error_count != 0 {
-        eprintln!("=== Function Property Contravariance Diagnostics ===");
-        eprintln!(
+        println!("=== Function Property Contravariance Diagnostics ===");
+        println!(
             "Expected 0 errors (interface inheritance fixed), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18309,10 +18306,10 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
     let error_count = checker.ctx.diagnostics.len();
 
     if error_count != 1 {
-        eprintln!("=== Function Property Covariant Rejection Diagnostics ===");
-        eprintln!("Expected 1 error, got {}", error_count);
+        println!("=== Function Property Covariant Rejection Diagnostics ===");
+        println!("Expected 1 error, got {}", error_count);
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18385,13 +18382,13 @@ elem.addEventListener(handleMouse);
     // The event handler pattern relies on method bivariance to allow passing
     // a MouseEvent handler to a function expecting an Event handler.
     if error_count != 0 {
-        eprintln!("=== Event Handler Pattern Diagnostics ===");
-        eprintln!(
+        println!("=== Event Handler Pattern Diagnostics ===");
+        println!(
             "Expected 0 errors (method bivariance implemented), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18458,13 +18455,13 @@ processor.process(dogs, handleDog);
 
     // Method bivariance now implemented - callback parameters benefit from bivariance
     if error_count != 0 {
-        eprintln!("=== Callback Method Parameter Diagnostics ===");
-        eprintln!(
+        println!("=== Callback Method Parameter Diagnostics ===");
+        println!(
             "Expected 0 errors (method bivariance implemented), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18520,9 +18517,9 @@ const arr: number[] = anyVal;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Any Assignable To Specific Diagnostics ===");
+        println!("=== Any Assignable To Specific Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18585,9 +18582,9 @@ anyTarget = arr;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Specific To Any Diagnostics ===");
+        println!("=== Specific To Any Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18644,9 +18641,9 @@ expectObject(anyVal);
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Any In Function Calls Diagnostics ===");
+        println!("=== Any In Function Calls Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18704,9 +18701,9 @@ const obj: { x: number } = call;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Any Propagation Diagnostics ===");
+        println!("=== Any Propagation Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18765,9 +18762,9 @@ function returnNever(): never {
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Any Never Relationship Diagnostics ===");
+        println!("=== Any Never Relationship Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -18833,9 +18830,9 @@ const config: Config = {
         .collect();
 
     if excess_errors.is_empty() {
-        eprintln!("=== Freshness Object Literal Diagnostics ===");
+        println!("=== Freshness Object Literal Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
+            println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
     }
 
@@ -18896,9 +18893,9 @@ const config: Config = obj;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Freshness Variable Assignment Diagnostics ===");
+        println!("=== Freshness Variable Assignment Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
+            println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
     }
 
@@ -18959,9 +18956,9 @@ configure({ timeout: 5000, retries: 3 });
         .collect();
 
     if excess_errors.is_empty() {
-        eprintln!("=== Freshness Function Argument Diagnostics ===");
+        println!("=== Freshness Function Argument Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
+            println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
     }
 
@@ -19021,9 +19018,9 @@ function getResult(): Result {
         .collect();
 
     if excess_errors.is_empty() {
-        eprintln!("=== Freshness Return Statement Diagnostics ===");
+        println!("=== Freshness Return Statement Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
+            println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
     }
 
@@ -19075,9 +19072,9 @@ const u: U = { a: 1, c: 2 };
         .collect();
 
     if excess_errors.is_empty() {
-        eprintln!("=== Union Optional Excess Property Diagnostics ===");
+        println!("=== Union Optional Excess Property Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
+            println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
     }
 
@@ -19141,9 +19138,9 @@ const u: U = { c: 1 };
         .collect();
 
     if excess_errors.is_empty() {
-        eprintln!("=== Union Optional No Common Property Diagnostics ===");
+        println!("=== Union Optional No Common Property Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
+            println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
     }
 
@@ -19208,9 +19205,9 @@ f({ c: 1 });
         .collect();
 
     if excess_errors.is_empty() {
-        eprintln!("=== Union Optional Call Argument Diagnostics ===");
+        println!("=== Union Optional Call Argument Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
+            println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
     }
 
@@ -19326,13 +19323,13 @@ const config: Config = { ...base };
     // Currently expects 1 error: spread not fully implemented
     // Once spread is implemented, change to expect 0 errors
     if error_count != 1 {
-        eprintln!("=== Freshness Spread Diagnostics ===");
-        eprintln!(
+        println!("=== Freshness Spread Diagnostics ===");
+        println!(
             "Expected 1 error (spread not implemented), got {}",
             error_count
         );
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
+            println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
     }
 
@@ -19471,8 +19468,8 @@ const result = new AdvancedBuilder()
     // Currently fails because class extends not implemented
     // Once class inheritance works, change to expect 0 errors
     if error_count == 0 {
-        eprintln!("=== Covariant This Fluent API Diagnostics ===");
-        eprintln!("Expected errors (class extends not implemented), got 0");
+        println!("=== Covariant This Fluent API Diagnostics ===");
+        println!("Expected errors (class extends not implemented), got 0");
     }
 
     // Expect some errors until class extends is implemented
@@ -19653,9 +19650,9 @@ const maybeNum: number | undefined = undefined;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Strict Null Checks On Diagnostics ===");
+        println!("=== Strict Null Checks On Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -19800,9 +19797,9 @@ const num: number | undefined = 42;
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Null/Undefined Union Diagnostics ===");
+        println!("=== Null/Undefined Union Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -19858,9 +19855,9 @@ function test(obj: AB) {
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Correlated Unions Basic Access Diagnostics ===");
+        println!("=== Correlated Unions Basic Access Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -19922,11 +19919,11 @@ function test(obj: AB) {
 
     // Currently may fail until discriminated union narrowing is implemented
     if error_count > 0 {
-        eprintln!("=== Correlated Unions Discriminant Narrowing Diagnostics ===");
+        println!("=== Correlated Unions Discriminant Narrowing Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
-        eprintln!("Expected 0 errors once discriminated union narrowing works");
+        println!("Expected 0 errors once discriminated union narrowing works");
     }
 
     // For now, just check it doesn't crash
@@ -19976,9 +19973,9 @@ function getArray(data: Data, key: 'numbers' | 'strings') {
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Correlated Unions Index Access Diagnostics ===");
+        println!("=== Correlated Unions Index Access Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -20032,9 +20029,9 @@ function getKind(shape: Shape): string {
     checker.check_source_file(root);
 
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== Correlated Unions Common Property Diagnostics ===");
+        println!("=== Correlated Unions Common Property Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 
@@ -20094,9 +20091,9 @@ if (typeof x === "string") {
 
     // Just check it doesn't crash - narrowing behavior depends on CFA implementation
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== CFA Invalidation Mutable Diagnostics ===");
+        println!("=== CFA Invalidation Mutable Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 }
@@ -20150,11 +20147,11 @@ if (typeof x === "string") {
     // Currently doesn't maintain narrowing in closures
     // Once implemented, change to expect 0 errors
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== CFA Const Narrowing Diagnostics ===");
+        println!("=== CFA Const Narrowing Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
-        eprintln!("Expected 0 errors once const narrowing in closures is implemented");
+        println!("Expected 0 errors once const narrowing in closures is implemented");
     }
 }
 
@@ -20205,9 +20202,9 @@ if (value !== null) {
 
     // Just check it doesn't crash
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== CFA Invalidation Arrow Function Diagnostics ===");
+        println!("=== CFA Invalidation Arrow Function Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 }
@@ -20261,9 +20258,9 @@ if (data !== undefined) {
 
     // Just check it doesn't crash
     if !checker.ctx.diagnostics.is_empty() {
-        eprintln!("=== CFA Invalidation Callback Parameter Diagnostics ===");
+        println!("=== CFA Invalidation Callback Parameter Diagnostics ===");
         for diag in &checker.ctx.diagnostics {
-            eprintln!("[{}] {}", diag.start, diag.message_text);
+            println!("[{}] {}", diag.start, diag.message_text);
         }
     }
 }
@@ -20299,9 +20296,9 @@ const elem2 = <span id="foo" />;
 
     // Check if parsing JSX is supported
     if !parser.get_diagnostics().is_empty() {
-        eprintln!("=== JSX Intrinsic Lowercase Parse Diagnostics ===");
+        println!("=== JSX Intrinsic Lowercase Parse Diagnostics ===");
         for diag in parser.get_diagnostics() {
-            eprintln!("[{}] {}", diag.start, diag.message);
+            println!("[{}] {}", diag.start, diag.message);
         }
         // JSX parsing may not be enabled - skip test
         return;
@@ -20324,13 +20321,13 @@ const elem2 = <span id="foo" />;
 
     // Currently expect errors - JSX type checking not implemented
     // Once JSX.IntrinsicElements lookup works, change to expect 0 errors
-    eprintln!("=== JSX Intrinsic Lowercase Diagnostics ===");
-    eprintln!(
+    println!("=== JSX Intrinsic Lowercase Diagnostics ===");
+    println!(
         "Got {} diagnostics (JSX checking not yet implemented)",
         checker.ctx.diagnostics.len()
     );
     for diag in &checker.ctx.diagnostics {
-        eprintln!("[{}] {}", diag.start, diag.message_text);
+        println!("[{}] {}", diag.start, diag.message_text);
     }
     // Just verify we don't crash - actual JSX checking is future work
 }
@@ -20365,9 +20362,9 @@ const btn = <MyButton label="Click me" />;
     let root = parser.parse_source_file();
 
     if !parser.get_diagnostics().is_empty() {
-        eprintln!("=== JSX Component Uppercase Parse Diagnostics ===");
+        println!("=== JSX Component Uppercase Parse Diagnostics ===");
         for diag in parser.get_diagnostics() {
-            eprintln!("[{}] {}", diag.start, diag.message);
+            println!("[{}] {}", diag.start, diag.message);
         }
         return;
     }
@@ -20387,13 +20384,13 @@ const btn = <MyButton label="Click me" />;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    eprintln!("=== JSX Component Uppercase Diagnostics ===");
-    eprintln!(
+    println!("=== JSX Component Uppercase Diagnostics ===");
+    println!(
         "Got {} diagnostics (JSX checking not yet implemented)",
         checker.ctx.diagnostics.len()
     );
     for diag in &checker.ctx.diagnostics {
-        eprintln!("[{}] {}", diag.start, diag.message_text);
+        println!("[{}] {}", diag.start, diag.message_text);
     }
     // Just verify we don't crash
 }
@@ -20443,13 +20440,13 @@ const elem = <unknowntag />;
     checker.check_source_file(root);
 
     // Once JSX checking is implemented, expect 1 error for unknown element
-    eprintln!("=== JSX Invalid Intrinsic Diagnostics ===");
-    eprintln!(
+    println!("=== JSX Invalid Intrinsic Diagnostics ===");
+    println!(
         "Got {} diagnostics (expected 1 once JSX implemented)",
         checker.ctx.diagnostics.len()
     );
     for diag in &checker.ctx.diagnostics {
-        eprintln!("[{}] {}", diag.start, diag.message_text);
+        println!("[{}] {}", diag.start, diag.message_text);
     }
 }
 
@@ -24687,7 +24684,7 @@ let { x, y }: { x: string, y: string } = obj;
         .filter(|d| d.code == 2322)
         .collect();
 
-    eprintln!(
+    println!(
         "All diagnostics: {:?}",
         checker
             .ctx
@@ -24696,7 +24693,7 @@ let { x, y }: { x: string, y: string } = obj;
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
     );
-    eprintln!("TS2322 count: {}", ts2322_errors.len());
+    println!("TS2322 count: {}", ts2322_errors.len());
 
     assert!(
         !ts2322_errors.is_empty(),
@@ -24751,7 +24748,7 @@ let [a, b]: [number, number] = arr;
         .filter(|d| d.code == 2322)
         .collect();
 
-    eprintln!(
+    println!(
         "[ARRAY] All diagnostics: {:?}",
         checker
             .ctx
@@ -24760,7 +24757,7 @@ let [a, b]: [number, number] = arr;
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
     );
-    eprintln!("[ARRAY] TS2322 count: {}", ts2322_errors.len());
+    println!("[ARRAY] TS2322 count: {}", ts2322_errors.len());
 
     assert!(
         !ts2322_errors.is_empty(),
@@ -24816,7 +24813,7 @@ let { x = 42 }: { x: string } = obj;
         .filter(|d| d.code == 2322)
         .collect();
 
-    eprintln!(
+    println!(
         "[DEFAULT] All diagnostics: {:?}",
         checker
             .ctx
@@ -24825,7 +24822,7 @@ let { x = 42 }: { x: string } = obj;
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
     );
-    eprintln!("[DEFAULT] TS2322 count: {}", ts2322_errors.len());
+    println!("[DEFAULT] TS2322 count: {}", ts2322_errors.len());
 
     assert!(
         !ts2322_errors.is_empty(),
@@ -24880,7 +24877,7 @@ let { a: { b } }: { a: { b: string } } = obj;
         .filter(|d| d.code == 2322)
         .collect();
 
-    eprintln!(
+    println!(
         "[NESTED] All diagnostics: {:?}",
         checker
             .ctx
@@ -24889,7 +24886,7 @@ let { a: { b } }: { a: { b: string } } = obj;
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
     );
-    eprintln!("[NESTED] TS2322 count: {}", ts2322_errors.len());
+    println!("[NESTED] TS2322 count: {}", ts2322_errors.len());
 
     assert!(
         !ts2322_errors.is_empty(),
@@ -24936,7 +24933,7 @@ let { x = 42 }: { x: string } = obj;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    eprintln!(
+    println!(
         "[BINDING_DEFAULT] All diagnostics: {:?}",
         checker
             .ctx
@@ -25000,7 +24997,7 @@ let { x = "hello" }: { x?: number } = {};
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    eprintln!(
+    println!(
         "[ISOLATED_DEFAULT] All diagnostics: {:?}",
         checker
             .ctx
