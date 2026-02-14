@@ -70,14 +70,11 @@ impl<'a> CheckerState<'a> {
                 if !visited_def_ids.insert(def_id) {
                     continue;
                 }
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    let result = self.get_type_of_symbol(sym_id);
-                    if result != TypeId::ERROR && result != TypeId::ANY {
-                        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                            env.insert_def(def_id, result);
-                        }
-                        worklist.push(result);
-                    }
+                if let Some(result) = self.resolve_and_insert_def_type(def_id)
+                    && result != TypeId::ERROR
+                    && result != TypeId::ANY
+                {
+                    worklist.push(result);
                 }
             }
         }

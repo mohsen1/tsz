@@ -584,6 +584,11 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
   * Added focused regression tests:
     * checker unit test coverage for property-traversal classification outcomes (`Object`, `Callable`, `Members`, `Other`) through the query boundary API
     * checker architecture contract assertions preventing `query_boundaries/diagnostics` regression back to direct traversal classification.
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Centralized checker DefId precondition orchestration for assignability lazy-ref preparation by adding `resolve_and_insert_def_type(...)` in `state_type_environment`.
+  * Migrated `assignability_checker::ensure_refs_resolved` to use the centralized helper instead of inline DefId->symbol->type resolution and direct `type_env` insertion.
+  * Added focused regression tests:
+    * checker architecture contract assertions that `assignability_checker` uses the centralized DefId resolver helper and avoids direct `env.insert_def(...)` calls.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
   * Add broader visitor coverage for any additional traversal-specific query needs discovered during migration.

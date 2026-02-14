@@ -869,6 +869,25 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve a `DefId` to a concrete type and insert a DefId mapping into the type environment.
+    ///
+    /// Returns the resolved type when a symbol bridge exists; returns `None` when the `DefId`
+    /// is unknown to the checker. For `ANY`/`ERROR`, we intentionally skip env insertion.
+    pub(crate) fn resolve_and_insert_def_type(
+        &mut self,
+        def_id: tsz_solver::DefId,
+    ) -> Option<TypeId> {
+        let sym_id = self.ctx.def_to_symbol_id(def_id)?;
+        let resolved = self.get_type_of_symbol(sym_id);
+        if resolved != TypeId::ERROR
+            && resolved != TypeId::ANY
+            && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
+        {
+            env.insert_def(def_id, resolved);
+        }
+        Some(resolved)
+    }
+
     pub(crate) fn ensure_application_symbols_resolved_inner(
         &mut self,
         type_id: TypeId,
