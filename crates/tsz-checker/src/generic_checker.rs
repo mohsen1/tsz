@@ -95,6 +95,9 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Resolve the constraint in case it's a Lazy type
+                let constraint = self.resolve_lazy_type(constraint);
+
                 // Instantiate the constraint with already-validated type arguments
                 let instantiated_constraint = if i > 0 {
                     let mut subst = tsz_solver::TypeSubstitution::new();
@@ -107,6 +110,15 @@ impl<'a> CheckerState<'a> {
                 } else {
                     constraint
                 };
+
+                // Resolve refs and lazy types before checking
+                self.ensure_refs_resolved(type_arg);
+                self.ensure_refs_resolved(instantiated_constraint);
+
+                // Skip if the instantiated constraint contains type parameters
+                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
+                    continue;
+                }
 
                 let is_satisfied = {
                     let env = self.ctx.type_env.borrow();
@@ -280,6 +292,15 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
+                // Skip constraint checking when the type argument contains unresolved type parameters
+                // (they'll be checked later when fully instantiated)
+                if query::contains_type_parameters(self.ctx.types, type_arg) {
+                    continue;
+                }
+
+                // Resolve the constraint in case it's a Lazy type
+                let constraint = self.resolve_lazy_type(constraint);
+
                 // Instantiate the constraint with already-validated type arguments
                 let instantiated_constraint = if i > 0 {
                     let mut subst = tsz_solver::TypeSubstitution::new();
@@ -292,6 +313,15 @@ impl<'a> CheckerState<'a> {
                 } else {
                     constraint
                 };
+
+                // Resolve refs and lazy types before checking
+                self.ensure_refs_resolved(type_arg);
+                self.ensure_refs_resolved(instantiated_constraint);
+
+                // Skip if the instantiated constraint contains type parameters
+                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
+                    continue;
+                }
 
                 let is_satisfied = {
                     let env = self.ctx.type_env.borrow();
