@@ -1110,6 +1110,9 @@ Reduce “tribal knowledge” and make refactors safe.
   * Wired architecture report artifact generation into `scripts/check-checker-boundaries.sh`:
     * emits `artifacts/architecture/arch_guard_report.json` on each run.
     * emits `artifacts/architecture/arch_guard_report.md` (largest files + guard summary) on each run.
+  * CI lint job uploads both architecture artifacts:
+    * `target/architecture-reports/arch-guard.json`
+    * `target/architecture-reports/arch-guard.md`
 
 ### Final closure note (2026-02-14)
 
