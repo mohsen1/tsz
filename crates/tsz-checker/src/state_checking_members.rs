@@ -3304,8 +3304,8 @@ impl<'a> CheckerState<'a> {
         // Check for duplicate parameter names (TS2300)
         self.check_duplicate_parameters(&ctor.parameters);
 
-        // TS1210: Check for 'arguments' parameter name in constructors (strict mode)
-        // Classes are implicitly strict mode, and 'arguments' cannot be used as a parameter name
+        // TS1210/TS1213: Check constructor parameter names in class strict mode.
+        // Classes are implicitly strict mode.
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -3317,6 +3317,14 @@ impl<'a> CheckerState<'a> {
                             param_node.end - param_node.pos,
                             "Code contained in a class is evaluated in JavaScript's strict mode which does not allow this use of 'arguments'. For more information, see https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode.".to_string(),
                             1210,
+                        );
+                    } else if name_text == "static" {
+                        self.ctx.error(
+                            param_node.pos,
+                            param_node.end - param_node.pos,
+                            diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO
+                                .replace("{0}", "static"),
+                            diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
                         );
                     }
                 }
