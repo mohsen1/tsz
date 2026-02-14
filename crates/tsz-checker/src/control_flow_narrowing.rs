@@ -2132,6 +2132,12 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((guard, target, is_optional));
         }
 
+        // Handle ArrayBuffer.isView(x) type guard directly.
+        if let Some((guard, target)) = self.check_array_buffer_is_view(call) {
+            let is_optional = self.is_optional_call(condition, call);
+            return Some((guard, target, is_optional));
+        }
+
         // Check for array.every(predicate) calls
         if let Some((guard, target)) = self.check_array_every_predicate(call, condition) {
             let is_optional = self.is_optional_call(condition, call);
@@ -2206,6 +2212,44 @@ impl<'a> FlowAnalyzer<'a> {
         let arg = call.arguments.as_ref()?.nodes.first().copied()?;
 
         Some((TypeGuard::Array, arg))
+    }
+
+    /// Check if a call is `ArrayBuffer.isView(x)` and return a predicate guard.
+    fn check_array_buffer_is_view(&self, call: &CallExprData) -> Option<(TypeGuard, NodeIndex)> {
+        let callee_node = self.arena.get(call.expression)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+
+        let obj_text = self
+            .arena
+            .get(access.expression)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+        if obj_text != "ArrayBuffer" {
+            return None;
+        }
+
+        let prop_text = self
+            .arena
+            .get(access.name_or_argument)
+            .and_then(|node| self.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())?;
+        if prop_text != "isView" {
+            return None;
+        }
+
+        let arg = call.arguments.as_ref()?.nodes.first().copied()?;
+        let node_types = self.node_types?;
+        let callee_type = *node_types.get(&call.expression.0)?;
+        let signature = self.predicate_signature_for_type(callee_type)?;
+        let type_id = signature.predicate.type_id?;
+
+        Some((
+            TypeGuard::Predicate {
+                type_id: Some(type_id),
+                asserts: false,
+            },
+            arg,
+        ))
     }
 
     /// Check if a call is `array.every(predicate)` where predicate has a type predicate.

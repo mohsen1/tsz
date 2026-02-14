@@ -1,0 +1,11 @@
+model: gpt-5.3-codex
+approval_mode: full-auto
+bypass_approvals_and_sandbox: true
+sleep_seconds: 2
+workdir: /Users/mohsenazimi/code/tsz
+default_mode: conformance
+prompt_file_conformance: scripts/codex-loop.prompt.conformance.txt
+prompt_file_emit: scripts/codex-loop.prompt.emit.txt
+prompt_file_lsp: scripts/codex-loop.prompt.lsp.txt
+# legacy key retained for backward compatibility
+prompt_file: scripts/codex-loop.prompt.conformance.txt
