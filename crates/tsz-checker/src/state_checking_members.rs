@@ -918,6 +918,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut seen_names: FxHashMap<String, MemberInfo> = FxHashMap::default();
+        let mut constructor_implementations: Vec<NodeIndex> = Vec::new();
 
         // Track accessor occurrences for duplicate detection
         // Key: "get:name" or "set:name" (with "static:" prefix for static members)
@@ -988,7 +989,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
-                    // Constructors have separate duplicate checking (TS2392)
+                    if let Some(constructor) = self.ctx.arena.get_constructor(member_node) {
+                        if !constructor.body.is_none() {
+                            constructor_implementations.push(member_idx);
+                        }
+                    }
                     continue;
                 }
                 _ => continue,
@@ -1077,6 +1082,18 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // else: Only method signatures + at most 1 implementation = valid overloads
+        }
+
+        // TS2392: multiple constructor implementations are not allowed.
+        // Constructor overload signatures are valid; only declarations with bodies count.
+        if constructor_implementations.len() > 1 {
+            for &idx in &constructor_implementations {
+                self.error_at_node(
+                    idx,
+                    "Multiple constructor implementations are not allowed.",
+                    diagnostic_codes::MULTIPLE_CONSTRUCTOR_IMPLEMENTATIONS_ARE_NOT_ALLOWED,
+                );
+            }
         }
 
         // Report TS2300 for duplicate accessors (e.g., two getters or two setters with same name)
