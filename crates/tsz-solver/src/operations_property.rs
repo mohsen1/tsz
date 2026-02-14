@@ -353,7 +353,11 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         // Reconstruct obj_type from shape_id for index signature checking
         let obj_type = self
             .interner()
-            .intern(TypeKey::Object(ObjectShapeId(shape_id)));
+            .object_with_flags_and_symbol(
+                self.interner().object_shape(ObjectShapeId(shape_id)).properties.clone(),
+                self.interner().object_shape(ObjectShapeId(shape_id)).flags,
+                self.interner().object_shape(ObjectShapeId(shape_id)).symbol,
+            );
 
         // Try string index signature first (most common)
         if resolver.has_index_signature(obj_type, IndexKind::String) {
@@ -445,9 +449,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         // Reconstruct obj_type for PropertyNotFound result
         let obj_type = self
             .interner()
-            .intern(crate::types::TypeKey::ObjectWithIndex(ObjectShapeId(
-                shape_id,
-            )));
+            .object_with_index(self.interner().object_shape(ObjectShapeId(shape_id)).as_ref().clone());
 
         Some(PropertyAccessResult::PropertyNotFound {
             type_id: obj_type,
@@ -491,7 +493,9 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         };
 
         // Reconstruct obj_type for resolve_array_property
-        let obj_type = self.interner().intern(TypeKey::Tuple(TupleListId(list_id)));
+        let obj_type = self
+            .interner()
+            .tuple(self.interner().tuple_list(TupleListId(list_id)).to_vec());
         Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
     }
 
@@ -599,7 +603,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Reconstruct obj_type from shape_id for index signature checking
         let obj_type = self
             .interner()
-            .intern(TypeKey::Object(ObjectShapeId(shape_id)));
+            .object_with_flags_and_symbol(
+                self.interner().object_shape(ObjectShapeId(shape_id)).properties.clone(),
+                self.interner().object_shape(ObjectShapeId(shape_id)).flags,
+                self.interner().object_shape(ObjectShapeId(shape_id)).symbol,
+            );
 
         // Try string index signature first (most common)
         if resolver.has_index_signature(obj_type, IndexKind::String) {
