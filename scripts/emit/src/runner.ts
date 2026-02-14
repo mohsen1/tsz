@@ -516,7 +516,16 @@ function parseArgs(): Config {
 
   for (const arg of args) {
     if (arg.startsWith('--max=')) {
-      config.maxTests = parseInt(arg.slice(6), 10);
+      const rawMax = arg.slice(6);
+      if (rawMax === 'all' || rawMax === 'All' || rawMax === 'ALL' || rawMax === '') {
+        config.maxTests = Infinity;
+      } else {
+        const parsed = parseInt(rawMax, 10);
+        if (Number.isNaN(parsed) || parsed <= 0) {
+          throw new Error(`Invalid --max value: ${rawMax}. Use a positive integer or all.`);
+        }
+        config.maxTests = parsed;
+      }
     } else if (arg.startsWith('--filter=')) {
       config.filter = arg.slice(9);
     } else if (arg.startsWith('--concurrency=') || arg.startsWith('-j')) {
