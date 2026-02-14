@@ -115,6 +115,7 @@ pub mod opcodes {
 /// It converts async functions to ES5 code using __awaiter and __generator helpers.
 pub struct AsyncES5Transformer<'a> {
     arena: &'a NodeArena,
+    source_text: Option<&'a str>,
     state: AsyncTransformState,
     helpers_needed: HelpersNeeded,
 }
@@ -124,9 +125,14 @@ impl<'a> AsyncES5Transformer<'a> {
     pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
+            source_text: None,
             state: AsyncTransformState::new(),
             helpers_needed: HelpersNeeded::default(),
         }
+    }
+
+    pub fn set_source_text(&mut self, source_text: &'a str) {
+        self.source_text = Some(source_text);
     }
 
     /// Get the helpers needed after transformation
@@ -229,8 +235,38 @@ impl<'a> AsyncES5Transformer<'a> {
             };
         }
 
+        let mut hoisted_decls = Vec::new();
+        let mut skipped_statements = Vec::new();
+        if !has_await
+            && let Some(body_node) = self.arena.get(body_idx)
+            && body_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(body_node)
+        {
+            for &stmt_idx in &block.statements.nodes {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                    continue;
+                }
+                if let Some(comment) = self.extract_preceding_line_comment(stmt_node.pos) {
+                    hoisted_decls.push(IRNode::Raw(comment));
+                }
+                skipped_statements.push(stmt_idx);
+                if let Some(func) = self.arena.get_function(stmt_node) {
+                    if func.is_async {
+                        hoisted_decls.push(self.transform_async_function(stmt_idx));
+                    } else {
+                        hoisted_decls.push(IRNode::ASTRef(stmt_idx));
+                    }
+                } else {
+                    hoisted_decls.push(IRNode::ASTRef(stmt_idx));
+                }
+            }
+        }
+
         // Build the generator body
-        let generator_body = self.build_generator_body(body_idx, has_await);
+        let generator_body = self.build_generator_body(body_idx, has_await, &skipped_statements);
 
         // Build the awaiter call
         let awaiter_call = IRNode::AwaiterCall {
@@ -242,17 +278,21 @@ impl<'a> AsyncES5Transformer<'a> {
         let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.as_str())).collect();
 
         if let Some(func_name) = name {
+            let mut body = hoisted_decls;
+            body.push(awaiter_call);
             IRNode::FunctionDecl {
                 name: func_name,
                 parameters: ir_params,
-                body: vec![awaiter_call],
+                body,
                 body_source_range: None,
             }
         } else {
+            let mut body = hoisted_decls;
+            body.push(awaiter_call);
             IRNode::FunctionExpr {
                 name: None,
                 parameters: ir_params,
-                body: vec![awaiter_call],
+                body,
                 is_expression_body: false,
                 body_source_range: None,
             }
@@ -265,15 +305,20 @@ impl<'a> AsyncES5Transformer<'a> {
         self.state.has_await = has_await;
         self.helpers_needed.generator = true;
 
-        self.build_generator_body(body_idx, has_await)
+        self.build_generator_body(body_idx, has_await, &[])
     }
 
     /// Build the generator body IR
-    fn build_generator_body(&mut self, body_idx: NodeIndex, has_await: bool) -> IRNode {
+    fn build_generator_body(
+        &mut self,
+        body_idx: NodeIndex,
+        has_await: bool,
+        skipped_statements: &[NodeIndex],
+    ) -> IRNode {
         self.state.in_async_body = true;
         self.state.label_counter = 0;
 
-        let cases = self.build_generator_cases(body_idx, has_await);
+        let cases = self.build_generator_cases(body_idx, has_await, skipped_statements);
 
         self.state.in_async_body = false;
 
@@ -285,6 +330,7 @@ impl<'a> AsyncES5Transformer<'a> {
         &mut self,
         body_idx: NodeIndex,
         _has_await: bool,
+        skipped_statements: &[NodeIndex],
     ) -> Vec<IRGeneratorCase> {
         let mut cases = Vec::new();
         let mut current_statements = Vec::new();
@@ -296,6 +342,7 @@ impl<'a> AsyncES5Transformer<'a> {
             &mut cases,
             &mut current_statements,
             &mut current_label,
+            skipped_statements,
         );
 
         // Add final case if there are remaining statements
@@ -339,6 +386,7 @@ impl<'a> AsyncES5Transformer<'a> {
         cases: &mut Vec<IRGeneratorCase>,
         current_statements: &mut Vec<IRNode>,
         current_label: &mut u32,
+        skipped_statements: &[NodeIndex],
     ) {
         let Some(node) = self.arena.get(idx) else {
             return;
@@ -348,6 +396,9 @@ impl<'a> AsyncES5Transformer<'a> {
         if node.kind == syntax_kind_ext::BLOCK {
             if let Some(block) = self.arena.get_block(node) {
                 for &stmt_idx in &block.statements.nodes {
+                    if skipped_statements.contains(&stmt_idx) {
+                        continue;
+                    }
                     self.process_async_statement(
                         stmt_idx,
                         cases,
@@ -1085,6 +1136,31 @@ impl<'a> AsyncES5Transformer<'a> {
             return false;
         };
         block.statements.nodes.is_empty()
+    }
+
+    fn extract_preceding_line_comment(&self, pos: u32) -> Option<String> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let mut pos = pos as usize;
+        if pos > bytes.len() {
+            pos = bytes.len();
+        }
+        if pos == 0 {
+            return None;
+        }
+
+        let line_start = text[..pos].rfind('\n').map_or(0, |i| i + 1);
+        if line_start == 0 {
+            return None;
+        }
+        let prev_line_end = line_start.saturating_sub(1);
+        let prev_line_start = text[..prev_line_end].rfind('\n').map_or(0, |i| i + 1);
+        let prev_line = &text[prev_line_start..prev_line_end];
+        let trimmed = prev_line.trim_start();
+        if trimmed.starts_with("//") && !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+        None
     }
 
     /// Get identifier text from a node

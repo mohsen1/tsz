@@ -124,6 +124,7 @@ impl<'a> AsyncES5Emitter<'a> {
     pub fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
         self.source_text = Some(source_text);
         self.source_index = source_index;
+        self.transformer.set_source_text(source_text);
     }
 
     pub fn take_mappings(&mut self) -> Vec<Mapping> {

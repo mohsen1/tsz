@@ -1032,7 +1032,63 @@ impl<'a> Printer<'a> {
             }
             async_emitter.set_lexical_this(this_expr != "this");
 
-            let generator_body = if async_emitter.body_contains_await(body) {
+            let body_has_await = async_emitter.body_contains_await(body);
+            let hoist_function_decls_only =
+                !body_has_await && self.block_has_only_function_decls(body);
+            if hoist_function_decls_only {
+                self.write("return __awaiter(");
+                self.write(this_expr);
+                self.write(", void 0, void 0, function () {");
+                self.write_line();
+                self.increase_indent();
+
+                if let Some(body_node) = self.arena.get(body)
+                    && let Some(block) = self.arena.get_block(body_node)
+                {
+                    for &stmt in &block.statements.nodes {
+                        if let Some(stmt_node) = self.arena.get(stmt) {
+                            let actual_start =
+                                self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                            self.emit_comments_before_pos(actual_start);
+                        }
+                        self.emit(stmt);
+                        self.write_line();
+                    }
+                }
+
+                self.write("return __generator(this, function (_a) {");
+                self.write_line();
+                self.increase_indent();
+                self.write("return [2 /*return*/];");
+                self.write_line();
+                self.decrease_indent();
+                self.write("});");
+                self.decrease_indent();
+                self.write_line();
+                self.write("});");
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
+                self.pop_temp_scope();
+                return;
+            }
+            if !body_has_await
+                && let Some(body_node) = self.arena.get(body)
+                && let Some(block) = self.arena.get_block(body_node)
+                && let Some(&first_stmt_idx) = block.statements.nodes.first()
+                && let Some(first_stmt_node) = self.arena.get(first_stmt_idx)
+                && first_stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            {
+                let actual_start =
+                    self.skip_trivia_forward(first_stmt_node.pos, first_stmt_node.end);
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].end <= actual_start
+                {
+                    self.comment_emit_idx += 1;
+                }
+            }
+
+            let generator_body = if body_has_await {
                 async_emitter.emit_generator_body_with_await(body)
             } else {
                 async_emitter.emit_simple_generator_body(body)
@@ -1108,6 +1164,23 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn block_has_only_function_decls(&self, body: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+        if block.statements.nodes.is_empty() {
+            return false;
+        }
+        block.statements.nodes.iter().all(|&stmt_idx| {
+            self.arena
+                .get(stmt_idx)
+                .is_some_and(|stmt_node| stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+        })
     }
 
     fn param_initializer_has_top_level_await(&self, param_idx: NodeIndex) -> bool {
