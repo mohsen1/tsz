@@ -1,0 +1,8 @@
+subtype_object_union_match
+                        time:   [186.70 µs 207.59 µs 228.31 µs]
+                        change: [-75.194% -66.537% -54.289%] (p = 0.00 < 0.05)
+                        Performance has improved.
+Found 3 outliers among 100 measurements (3.00%)
+  2 (2.00%) high mild
+  1 (1.00%) high severe
+

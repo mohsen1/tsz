@@ -1,0 +1,8 @@
+phase_timing/2_parse_bind/400decls_5282lines
+                        time:   [14.869 ms 16.195 ms 17.560 ms]
+                        change: [+57.214% +81.939% +111.07%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 30 measurements (6.67%)
+  1 (3.33%) low mild
+  1 (3.33%) high mild
+

@@ -1,0 +1,50 @@
+main_final=FINAL RESULTS: 8208/12546 passed (65.4%)
+perf_final=FINAL RESULTS: 8206/12546 passed (65.4%)
+main_time=  Time: 466.2s
+perf_time=  Time: 566.2s
+main_not_perf_count=20
+perf_not_main_count=22
+--- main_not_perf ---
+TypeScript/tests/cases/compiler/ambiguousGenericAssertion1.ts
+TypeScript/tests/cases/compiler/assignmentCompatability41.ts
+TypeScript/tests/cases/compiler/controlFlowLoopAnalysis.ts
+TypeScript/tests/cases/compiler/destructuringAssignmentWithStrictNullChecks.ts
+TypeScript/tests/cases/compiler/narrowingPastLastAssignmentInModule.ts
+TypeScript/tests/cases/compiler/objectLiteralWithSemicolons5.ts
+TypeScript/tests/cases/conformance/async/es5/asyncArrowFunction/asyncArrowFunction3_es5.ts
+TypeScript/tests/cases/conformance/controlFlow/controlFlowIteration.ts
+TypeScript/tests/cases/conformance/controlFlow/controlFlowIterationErrorsAsync.ts
+TypeScript/tests/cases/conformance/importDefer/importDeferTypeConflict1.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/ErrorRecovery/ArrowFunctions/parserX_ArrowFunction1.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Expressions/parseIncompleteBinaryExpression1.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Expressions/parserMemberAccessAfterPostfixExpression1.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Expressions/parserTypeAssertionInObjectCreationExpression1.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserES5ForOfStatement3.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForInStatement2.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserForInStatement3.ts
+TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement3.ts
+TypeScript/tests/cases/conformance/salsa/moduleExportAlias5.ts
+TypeScript/tests/cases/conformance/types/typeRelationships/assignmentCompatibility/unionTypesAssignability.ts
+--- perf_not_main ---
+TypeScript/tests/cases/compiler/assignmentToInstantiationExpression.ts
+TypeScript/tests/cases/compiler/cannotInvokeNewOnIndexExpression.ts
+TypeScript/tests/cases/compiler/classOverloadForFunction2.ts
+TypeScript/tests/cases/compiler/indexWithUndefinedAndNullStrictNullChecks.ts
+TypeScript/tests/cases/compiler/interfacedeclWithIndexerErrors.ts
+TypeScript/tests/cases/compiler/invalidUnicodeEscapeSequance.ts
+TypeScript/tests/cases/compiler/invalidUnicodeEscapeSequance2.ts
+TypeScript/tests/cases/compiler/invalidUnicodeEscapeSequance4.ts
+TypeScript/tests/cases/compiler/javascriptThisAssignmentInStaticBlock.ts
+TypeScript/tests/cases/compiler/newLineInTypeofInstantiation.ts
+TypeScript/tests/cases/compiler/newNonReferenceType.ts
+TypeScript/tests/cases/compiler/noImplicitAnyFunctionExpressionAssignment.ts
+TypeScript/tests/cases/compiler/primitiveTypeAssignment.ts
+TypeScript/tests/cases/compiler/undeclaredVarEmit.ts
+TypeScript/tests/cases/compiler/validRegexp.ts
+TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression15_es6.ts
+TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression17_es6.ts
+TypeScript/tests/cases/conformance/es6/yieldExpressions/YieldExpression2_es6.ts
+TypeScript/tests/cases/conformance/expressions/valuesAndReferences/assignments.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/RegressionTests/parser509669.ts
+TypeScript/tests/cases/conformance/parser/ecmascript5/Statements/parserES5ForOfStatement2.ts
+TypeScript/tests/cases/conformance/parser/ecmascript6/Iterators/parserForOfStatement2.ts

@@ -1,0 +1,5 @@
+cache_reuse/cold_check/100decls_1322lines
+                        time:   [2.0198 ms 2.0375 ms 2.0491 ms]
+                        change: [-78.211% -67.001% -44.321%] (p = 0.00 < 0.05)
+                        Performance has improved.
+

@@ -1,0 +1,8 @@
+subtype_object_union_match
+                        time:   [196.41 µs 219.85 µs 243.06 µs]
+                        change: [+237.38% +293.31% +348.94%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+Found 2 outliers among 100 measurements (2.00%)
+  1 (1.00%) high mild
+  1 (1.00%) high severe
+

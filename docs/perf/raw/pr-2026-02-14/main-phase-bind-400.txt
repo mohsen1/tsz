@@ -1,0 +1,5 @@
+phase_timing/2_parse_bind/400decls_5282lines
+                        time:   [12.775 ms 15.528 ms 18.152 ms]
+                        change: [+325.18% +422.10% +496.16%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+

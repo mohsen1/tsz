@@ -1,0 +1,8 @@
+phase_timing/2_parse_bind/100decls_1322lines
+                        time:   [798.97 µs 807.54 µs 822.81 µs]
+                        change: [+0.3139% +1.9192% +3.7498%] (p = 0.03 < 0.05)
+                        Change within noise threshold.
+Found 2 outliers among 30 measurements (6.67%)
+  1 (3.33%) low severe
+  1 (3.33%) high severe
+
