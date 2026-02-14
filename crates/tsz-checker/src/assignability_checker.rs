@@ -94,12 +94,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Wrapper around solver `contains_infer_types` for assignability cache policy.
-    pub(crate) fn contains_infer_types_cached(&mut self, type_id: TypeId) -> bool {
-        use tsz_solver::visitor::contains_infer_types;
-        contains_infer_types(self.ctx.types, type_id)
-    }
-
     // =========================================================================
     // Main Assignability Check
     // =========================================================================
@@ -147,8 +141,8 @@ impl<'a> CheckerState<'a> {
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
         // Note: Use ORIGINAL types for cache key, not evaluated types
-        let is_cacheable =
-            !self.contains_infer_types_cached(source) && !self.contains_infer_types_cached(target);
+        let is_cacheable = !tsz_solver::visitor::contains_infer_types(self.ctx.types, source)
+            && !tsz_solver::visitor::contains_infer_types(self.ctx.types, target);
 
         let flags = self.ctx.pack_relation_flags();
 

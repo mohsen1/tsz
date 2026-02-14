@@ -309,6 +309,10 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !assignability_checker_src.contains("env.insert_def("),
         "assignability_checker should not insert DefId mappings directly; use centralized helper"
     );
+    assert!(
+        !assignability_checker_src.contains("contains_infer_types_cached("),
+        "assignability_checker infer-shape cacheability checks should call solver visitors directly, not checker-local wrappers"
+    );
 
     let state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
         .expect("failed to read src/state_type_environment.rs for architecture guard");
