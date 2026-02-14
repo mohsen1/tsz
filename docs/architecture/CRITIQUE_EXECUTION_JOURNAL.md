@@ -203,3 +203,5 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 191: migrated `crates/tsz-emitter/src/emitter/type_printer.rs` off direct `TypeKey` pattern matching and `TypeInterner::lookup(...)`, routing through solver visitor extractors/predicates.
 - [x] Migration action 192: extended `scripts/arch_guard.py` with emitter-specific guardrails forbidding direct `TypeKey` usage and direct `.lookup(...)` traversal outside tests.
 - [x] Migration action 193: added repo-wide non-solver guardrail in `scripts/arch_guard.py` to fail on new `TypeKey` imports/variant matching outside `crates/tsz-solver` (tests excluded, comment-only lines ignored).
+- [x] Migration action 194: migrated `crates/tsz-lsp/src/completions.rs` off direct `TypeKey` matching and `TypeInterner::lookup(...)` in property/parameter completion paths by routing through solver `visitor` extractors.
+- [x] Migration action 195: added LSP-specific architecture guardrail in `scripts/arch_guard.py` to block direct solver `.lookup(...)` traversal in non-test `crates/tsz-lsp`.
