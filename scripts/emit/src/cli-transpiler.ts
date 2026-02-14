@@ -62,22 +62,31 @@ function moduleToCliArg(module: number): string {
 }
 
 /**
- * Find the tsz binary in common locations
+ * Find the tsz binary in common locations.
+ * Preference order:
+ * 1) TSZ_BIN env var (set by scripts/emit/run.sh)
+ * 2) Local workspace targets
+ * 3) PATH lookup
  */
 function findTszBinary(): string {
+  const envBin = process.env.TSZ_BIN;
+  if (envBin && fs.existsSync(envBin)) {
+    return envBin;
+  }
+
   const possiblePaths = [
-    path.join(ROOT_DIR, '.target/release/tsz'), // Local build (uses .target from .cargo/config.toml)
-    '/Users/mohsenazimi/.cargo/bin/tsz',       // User cargo bin (from which)
-    tszInPath(),                                 // Global installation
-  ].filter(Boolean);
+    path.join(ROOT_DIR, '.target/release/tsz'),
+    path.join(ROOT_DIR, 'target/release/tsz'),
+    tszInPath(),
+  ].filter(Boolean) as string[];
 
   for (const binPath of possiblePaths) {
-    if (binPath && fs.existsSync(binPath)) {
+    if (fs.existsSync(binPath)) {
       return binPath;
     }
   }
 
-  throw new Error('tsz binary not found. Run: cargo build --release');
+  throw new Error('tsz binary not found. Build it with: CARGO_TARGET_DIR=.target cargo build --release -p tsz-cli --bin tsz');
 }
 
 function tszInPath(): string | null {

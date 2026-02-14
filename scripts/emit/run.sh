@@ -46,14 +46,34 @@ die() { log_error "$@"; exit 2; }
 # Check for required tools
 command -v node &>/dev/null || die "Node.js is required"
 
-# Check for tsz binary
-check_tsz_binary() {
-    local tsz_bin="$ROOT_DIR/.target/release/tsz"
-    if [[ ! -f "$tsz_bin" ]]; then
-        log_error "tsz binary not found at $tsz_bin"
-        log_info "Build it with: cargo build --release"
-        exit 1
+# Resolve tsz binary path for the Node runner
+resolve_tsz_binary() {
+    local candidates=()
+
+    if [[ -n "${TSZ_BIN:-}" ]]; then
+        candidates+=("$TSZ_BIN")
     fi
+
+    if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
+        candidates+=("$CARGO_TARGET_DIR/release/tsz")
+    fi
+
+    candidates+=(
+        "$ROOT_DIR/.target/release/tsz"
+        "$ROOT_DIR/target/release/tsz"
+    )
+
+    for tsz_bin in "${candidates[@]}"; do
+        if [[ -x "$tsz_bin" ]]; then
+            TSZ_BIN="$tsz_bin"
+            export TSZ_BIN
+            return 0
+        fi
+    done
+
+    log_error "tsz binary not found in known target directories"
+    log_info "Build it with: CARGO_TARGET_DIR=.target cargo build --release -p tsz-cli --bin tsz"
+    exit 1
 }
 
 # Build TypeScript runner
@@ -77,7 +97,7 @@ main() {
         die "TypeScript baselines not found. Run: ./scripts/setup-ts-submodule.sh"
     fi
 
-    check_tsz_binary
+    resolve_tsz_binary
     build_runner
 
     log_step "Running emit tests..."
