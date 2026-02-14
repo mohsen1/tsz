@@ -753,7 +753,10 @@ impl<'a> CheckerState<'a> {
                 // without contextual information (e.g., during function body analysis)
                 self.clear_type_cache_recursive(return_data.expression);
             }
-            let return_type = self.get_type_of_node(return_data.expression);
+            let mut return_type = self.get_type_of_node(return_data.expression);
+            if self.ctx.in_async_context() {
+                return_type = self.unwrap_promise_type(return_type).unwrap_or(return_type);
+            }
             self.ctx.contextual_type = prev_context;
             return_type
         } else {
