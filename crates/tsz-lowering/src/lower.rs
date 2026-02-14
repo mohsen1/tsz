@@ -1857,11 +1857,13 @@ impl<'a> TypeLowering<'a> {
 
             // Get visibility (for type literals, always Public)
             let visibility = self.get_visibility_from_modifiers(&sig.modifiers);
+            let type_id = self.lower_type(sig.type_annotation);
+            let write_type = if readonly { TypeId::NONE } else { type_id };
 
             Some(PropertyInfo {
                 name,
-                type_id: self.lower_type(sig.type_annotation),
-                write_type: self.lower_type(sig.type_annotation),
+                type_id,
+                write_type,
                 optional: sig.question_token,
                 readonly,
                 is_method: false,
