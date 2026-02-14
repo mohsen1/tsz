@@ -2881,17 +2881,8 @@ impl<'a> CheckerState<'a> {
 
             if declared_type != TypeId::ANY
                 && !self.type_contains_error(declared_type)
-                && self.should_report_assignability_mismatch(
-                    init_type,
-                    declared_type,
-                    prop.initializer,
-                )
             {
-                self.error_type_not_assignable_with_reason_at(
-                    init_type,
-                    declared_type,
-                    prop.initializer,
-                );
+                let _ = self.check_assignable_or_report(init_type, declared_type, prop.initializer);
             }
         } else if !prop.initializer.is_none() {
             // Just check the initializer to catch errors within it
@@ -4966,16 +4957,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             expected_type,
                             clause_idx,
                         );
-                    } else if self.should_report_assignability_mismatch(
+                    } else if !self.check_assignable_or_report(
                         source_type,
                         expected_type,
                         clause_idx,
                     ) {
-                        self.error_type_not_assignable_with_reason_at(
-                            source_type,
-                            expected_type,
-                            clause_idx,
-                        );
+                        // Diagnostic emitted by check_assignable_or_report.
                     }
                 }
             }

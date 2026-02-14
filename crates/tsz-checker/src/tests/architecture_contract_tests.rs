@@ -488,6 +488,13 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_checking assignment-style checks should route through centralized assignability gateways"
     );
 
+    let state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
+        .expect("failed to read src/state_checking_members.rs for architecture guard");
+    assert!(
+        state_checking_members_src.contains("check_assignable_or_report("),
+        "state_checking_members assignment-style checks should route through check_assignable_or_report"
+    );
+
     let type_computation_src = fs::read_to_string("src/type_computation.rs")
         .expect("failed to read src/type_computation.rs for architecture guard");
     assert!(
