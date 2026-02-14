@@ -918,7 +918,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        matches!(
+        if matches!(
             parent_node.kind,
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT
                 || k == syntax_kind_ext::LABELED_STATEMENT
@@ -934,7 +934,43 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
                 || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
-        )
+        ) {
+            return true;
+        }
+
+        // Recovery path: malformed value expressions like `number[]` are parsed
+        // through ARRAY_TYPE wrappers, but still need TS2693 at the keyword.
+        if parent_node.kind == syntax_kind_ext::ARRAY_TYPE {
+            let Some(parent_ext) = self.ctx.arena.get_extended(parent) else {
+                return false;
+            };
+            let grandparent = parent_ext.parent;
+            if grandparent.is_none() {
+                return false;
+            }
+            let Some(grandparent_node) = self.ctx.arena.get(grandparent) else {
+                return false;
+            };
+            return matches!(
+                grandparent_node.kind,
+                k if k == syntax_kind_ext::EXPRESSION_STATEMENT
+                    || k == syntax_kind_ext::LABELED_STATEMENT
+                    || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::CALL_EXPRESSION
+                    || k == syntax_kind_ext::NEW_EXPRESSION
+                    || k == syntax_kind_ext::BINARY_EXPRESSION
+                    || k == syntax_kind_ext::RETURN_STATEMENT
+                    || k == syntax_kind_ext::VARIABLE_DECLARATION
+                    || k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                    || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                    || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
+            );
+        }
+
+        false
     }
 
     /// Compute the type of a node (internal, not cached).

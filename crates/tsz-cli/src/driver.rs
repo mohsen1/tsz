@@ -121,7 +121,6 @@ struct BindCacheEntry {
 }
 
 impl CompilationCache {
-    #[cfg(test)]
     pub(crate) fn invalidate_paths_with_dependents<I>(&mut self, paths: I)
     where
         I: IntoIterator<Item = PathBuf>,
@@ -218,34 +217,28 @@ impl CompilationCache {
         self.star_export_dependencies.clear();
     }
 
-    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.type_caches.len()
     }
 
-    #[cfg(test)]
     pub(crate) fn bind_len(&self) -> usize {
         self.bind_cache.len()
     }
 
-    #[cfg(test)]
     pub(crate) fn diagnostics_len(&self) -> usize {
         self.diagnostics.len()
     }
 
-    #[cfg(test)]
     pub(crate) fn export_hash(&self, path: &Path) -> Option<u64> {
         self.export_hashes.get(path).copied()
     }
 
-    #[cfg(test)]
     pub(crate) fn symbol_cache_len(&self, path: &Path) -> Option<usize> {
         self.type_caches
             .get(path)
             .map(|cache| cache.symbol_types.len())
     }
 
-    #[cfg(test)]
     pub(crate) fn node_cache_len(&self, path: &Path) -> Option<usize> {
         self.type_caches
             .get(path)
@@ -1086,24 +1079,6 @@ fn check_module_resolution_compatibility(
         message,
         diagnostic_codes::OPTION_MODULE_MUST_BE_SET_TO_WHEN_OPTION_MODULERESOLUTION_IS_SET_TO,
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::check_module_resolution_compatibility;
-    use crate::config::ResolvedCompilerOptions;
-    use tsz::config::ModuleResolutionKind;
-    use tsz_common::common::ModuleKind;
-
-    #[test]
-    fn test_module_resolution_requires_matching_module() {
-        let mut resolved = ResolvedCompilerOptions::default();
-        resolved.module_resolution = Some(ModuleResolutionKind::Node16);
-        resolved.printer.module = ModuleKind::CommonJS;
-
-        let diag = check_module_resolution_compatibility(&resolved, None);
-        assert!(diag.is_some());
-    }
 }
 
 /// Build file info with inclusion reasons
@@ -3588,3 +3563,7 @@ fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<St
         None
     }
 }
+
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;

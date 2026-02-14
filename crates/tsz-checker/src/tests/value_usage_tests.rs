@@ -84,6 +84,41 @@ const x = new Foo();
 }
 
 #[test]
+fn test_primitive_array_type_recovery_used_as_value_emits_ts2693() {
+    let source = r#"
+var results = number[];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2693_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2693)
+        .count();
+    assert!(
+        ts2693_count >= 1,
+        "Expected at least 1 TS2693 error for `number[]` value recovery, got {}",
+        ts2693_count
+    );
+}
+
+#[test]
 fn test_string_subtraction_emits_ts2362() {
     let source = r#"
 const str = "hello";

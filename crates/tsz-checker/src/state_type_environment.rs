@@ -1644,6 +1644,49 @@ impl<'a> CheckerState<'a> {
                 // Route array types through CheckerState so the element type reference
                 // goes through get_type_from_type_node (which checks TS2314 for generics).
                 if let Some(array_type) = self.ctx.arena.get_array_type(node) {
+                    // Recovery path: malformed value expressions like `number[]` can parse
+                    // as ARRAY_TYPE initializers. Emit TS2693 on the primitive keyword.
+                    if let Some(ext) = self.ctx.arena.get_extended(idx) {
+                        let parent = ext.parent;
+                        if !parent.is_none()
+                            && let Some(parent_node) = self.ctx.arena.get(parent)
+                            && matches!(
+                                parent_node.kind,
+                                k if k == syntax_kind_ext::EXPRESSION_STATEMENT
+                                    || k == syntax_kind_ext::LABELED_STATEMENT
+                                    || k == syntax_kind_ext::VARIABLE_DECLARATION
+                                    || k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                                    || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                                    || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                                    || k == syntax_kind_ext::BINARY_EXPRESSION
+                                    || k == syntax_kind_ext::RETURN_STATEMENT
+                            )
+                            && let Some(elem_node) = self.ctx.arena.get(array_type.element_type)
+                        {
+                            use tsz_scanner::SyntaxKind;
+                            let keyword_name = match elem_node.kind {
+                                k if k == SyntaxKind::NumberKeyword as u16 => Some("number"),
+                                k if k == SyntaxKind::StringKeyword as u16 => Some("string"),
+                                k if k == SyntaxKind::BooleanKeyword as u16 => Some("boolean"),
+                                k if k == SyntaxKind::SymbolKeyword as u16 => Some("symbol"),
+                                k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+                                k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
+                                k if k == SyntaxKind::NullKeyword as u16 => Some("null"),
+                                k if k == SyntaxKind::AnyKeyword as u16 => Some("any"),
+                                k if k == SyntaxKind::UnknownKeyword as u16 => Some("unknown"),
+                                k if k == SyntaxKind::NeverKeyword as u16 => Some("never"),
+                                k if k == SyntaxKind::ObjectKeyword as u16 => Some("object"),
+                                k if k == SyntaxKind::BigIntKeyword as u16 => Some("bigint"),
+                                _ => None,
+                            };
+                            if let Some(keyword_name) = keyword_name {
+                                self.error_type_only_value_at(keyword_name, array_type.element_type);
+                                self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+                                return TypeId::ERROR;
+                            }
+                        }
+                    }
+
                     let elem_type = self.get_type_from_type_node(array_type.element_type);
                     let result = self.ctx.types.array(elem_type);
                     self.ctx.node_types.insert(idx.0, result);
