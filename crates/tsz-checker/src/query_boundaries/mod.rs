@@ -13,7 +13,6 @@ pub(crate) mod generic_checker;
 pub(crate) mod indexed_access_type;
 pub(crate) mod intersection_type;
 pub(crate) mod iterable_checker;
-pub(crate) mod iterators;
 pub(crate) mod namespace_checker;
 pub(crate) mod object_type;
 pub(crate) mod promise_checker;
