@@ -1381,9 +1381,8 @@ impl<'a> CheckerState<'a> {
             && element_type != TypeId::ANY
             && element_type != TypeId::ERROR
             && !self.type_contains_error(var_type)
-            && self.should_report_assignability_mismatch(element_type, var_type, initializer)
         {
-            self.error_type_not_assignable_with_reason_at(element_type, var_type, initializer);
+            let _ = self.check_assignable_or_report(element_type, var_type, initializer);
         }
     }
 
@@ -1609,36 +1608,27 @@ impl<'a> CheckerState<'a> {
                                 target_level,
                                 decl_idx,
                             );
-                        } else if checker.should_report_assignability_mismatch(
-                            init_type,
-                            declared_type,
-                            var_decl.initializer,
-                        ) {
-                            // For destructuring patterns, emit a generic TS2322 error
-                            // instead of detailed property mismatch errors (TS2326)
-                            if is_destructuring {
+                        } else if is_destructuring {
+                            // For destructuring patterns, keep emitting a generic TS2322 error
+                            // instead of detailed property mismatch errors (TS2326-style detail).
+                            if checker.should_report_assignability_mismatch(
+                                init_type,
+                                declared_type,
+                                var_decl.initializer,
+                            ) {
                                 checker.error_type_not_assignable_generic_at(
                                     init_type,
                                     declared_type,
                                     decl_idx,
                                 );
-                            } else {
-                                checker.error_type_not_assignable_with_reason_at(
-                                    init_type,
-                                    declared_type,
-                                    decl_idx,
-                                );
                             }
-                        } else {
-                            // FIX: Only check excess properties when assignability SUCCEEDS.
-                            // This follows Solver-First architecture and prevents multiple TS2322 errors
-                            // for the same assignment. The Solver already determined compatibility, so we
-                            // only need to check for excess properties if types are assignable.
-                            //
-                            // Previously, excess properties were checked unconditionally, which violated
-                            // the separation of concerns between Solver (assignability) and Checker (freshness).
-                            // This caused tuples to be treated as objects with numeric index properties, leading
-                            // to multiple redundant errors instead of a single "Type not assignable" error.
+                        } else if checker.check_assignable_or_report_at(
+                            init_type,
+                            declared_type,
+                            var_decl.initializer,
+                            decl_idx,
+                        ) {
+                            // assignable, keep going to excess-property checks
                             checker.check_object_literal_excess_properties(
                                 init_type,
                                 declared_type,
