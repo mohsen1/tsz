@@ -6221,6 +6221,78 @@ fn test_mapped_type_key_remap_all_never_empty_object() {
 // =============================================================================
 
 #[test]
+fn test_generic_function_constraint_directionality() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = true;
+
+    let t = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+    };
+    let t_id = interner.intern(TypeKey::TypeParameter(t.clone()));
+
+    let t1 = TypeParamInfo {
+        name: interner.intern_string("T1"),
+        constraint: Some(t_id),
+        default: None,
+        is_const: false,
+    };
+    let t1_id = interner.intern(TypeKey::TypeParameter(t1.clone()));
+
+    let u = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(t_id),
+        default: None,
+        is_const: false,
+    };
+    let u_id = interner.intern(TypeKey::TypeParameter(u.clone()));
+
+    let v = TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: Some(t1_id),
+        default: None,
+        is_const: false,
+    };
+    let v_id = interner.intern(TypeKey::TypeParameter(v.clone()));
+
+    let fn_t = interner.function(FunctionShape {
+        type_params: vec![u],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: u_id,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: u_id,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let fn_t1 = interner.function(FunctionShape {
+        type_params: vec![v],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: v_id,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: v_id,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert!(checker.is_subtype_of(fn_t, fn_t1));
+    assert!(!checker.is_subtype_of(fn_t1, fn_t));
+}
+
+#[test]
 fn test_generic_covariant_return_position() {
     // Producer<T> = { get(): T } - T is in covariant position
     // Producer<string> <: Producer<string | number> (covariant)

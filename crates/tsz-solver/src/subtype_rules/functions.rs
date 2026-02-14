@@ -592,13 +592,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut source_instantiated = source.clone();
         let mut target_instantiated = target.clone();
 
-        // Generic source vs generic target (same arity): normalize target type parameter
-        // identities to source identities so alpha-equivalent signatures compare structurally.
+        // Generic source vs generic target (same arity): normalize both signatures to source
+        // type parameter identities so alpha-equivalent signatures compare structurally.
+        // Also enforce TypeScript's generic constraint directionality:
+        // for source <: target, each target constraint must be assignable to source constraint.
         if !source_instantiated.type_params.is_empty()
             && source_instantiated.type_params.len() == target_instantiated.type_params.len()
             && !target_instantiated.type_params.is_empty()
         {
-            let mut substitution = TypeSubstitution::new();
+            let mut target_to_source_substitution = TypeSubstitution::new();
+            let mut source_identity_substitution = TypeSubstitution::new();
             for (source_tp, target_tp) in source_instantiated
                 .type_params
                 .iter()
@@ -607,10 +610,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let source_type_param_type = self
                     .interner
                     .intern(TypeKey::TypeParameter(source_tp.clone()));
-                substitution.insert(target_tp.name, source_type_param_type);
+                target_to_source_substitution.insert(target_tp.name, source_type_param_type);
+                source_identity_substitution.insert(source_tp.name, source_type_param_type);
             }
-            target_instantiated =
-                self.instantiate_function_shape(&target_instantiated, &substitution);
+
+            for (source_tp, target_tp) in source_instantiated
+                .type_params
+                .iter()
+                .zip(target_instantiated.type_params.iter())
+            {
+                let source_constraint = source_tp.constraint.unwrap_or(TypeId::UNKNOWN);
+                let target_constraint = target_tp
+                    .constraint
+                    .map(|constraint| {
+                        instantiate_type(self.interner, constraint, &target_to_source_substitution)
+                    })
+                    .unwrap_or(TypeId::UNKNOWN);
+
+                if !self
+                    .check_subtype(target_constraint, source_constraint)
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
+            }
+
+            source_instantiated = self
+                .instantiate_function_shape(&source_instantiated, &source_identity_substitution);
+            target_instantiated = self
+                .instantiate_function_shape(&target_instantiated, &target_to_source_substitution);
         }
 
         // Contextual signature instantiation for generic source -> non-generic target.
