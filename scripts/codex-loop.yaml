@@ -2,7 +2,7 @@ model: gpt-5.3-codex
 approval_mode: full-auto
 bypass_approvals_and_sandbox: true
 sleep_seconds: 2
-workdir: /Users/mohsenazimi/code/tsz
+workdir: .
 default_mode: conformance
 # Parallel conformance sharding controls (used with --session)
 # Split failures into this many shards (quarters by default).
