@@ -331,6 +331,35 @@ pub struct ResolutionStats {
     pub failures: u64,
 }
 
+#[derive(Debug, Default)]
+pub struct BinderStateScopeInputs {
+    pub scopes: Vec<Scope>,
+    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
+    pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
+    pub module_exports: FxHashMap<String, SymbolTable>,
+    pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
+    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub modules_with_export_equals: FxHashSet<String>,
+    pub flow_nodes: FlowNodeArena,
+    pub node_flow: FxHashMap<u32, FlowNodeId>,
+    pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
+}
+
+impl BinderStateScopeInputs {
+    fn with_scopes(scopes: Vec<Scope>, node_scope_ids: FxHashMap<u32, ScopeId>) -> Self {
+        Self {
+            scopes,
+            node_scope_ids,
+            flow_nodes: FlowNodeArena::new(),
+            ..Self::default()
+        }
+    }
+}
+
 impl BinderState {
     pub fn new() -> Self {
         Self::with_options(BinderOptions::default())
@@ -567,20 +596,7 @@ impl BinderState {
             symbols,
             file_locals,
             node_symbols,
-            scopes,
-            node_scope_ids,
-            FxHashMap::default(), // global_augmentations
-            FxHashMap::default(), // module_augmentations
-            FxHashMap::default(), // module_exports
-            FxHashMap::default(), // reexports
-            FxHashMap::default(), // wildcard_reexports
-            FxHashMap::default(), // symbol_arenas
-            FxHashMap::default(), // declaration_arenas
-            FxHashSet::default(), // shorthand_ambient_modules
-            FxHashSet::default(), // modules_with_export_equals
-            FlowNodeArena::new(),
-            FxHashMap::default(), // node_flow
-            FxHashMap::default(), // switch_clause_to_switch
+            BinderStateScopeInputs::with_scopes(scopes, node_scope_ids),
         )
     }
 
@@ -596,21 +612,25 @@ impl BinderState {
         symbols: SymbolArena,
         file_locals: SymbolTable,
         node_symbols: FxHashMap<u32, SymbolId>,
-        scopes: Vec<Scope>,
-        node_scope_ids: FxHashMap<u32, ScopeId>,
-        global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
-        module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
-        module_exports: FxHashMap<String, SymbolTable>,
-        reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
-        wildcard_reexports: FxHashMap<String, Vec<String>>,
-        symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
-        declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
-        shorthand_ambient_modules: FxHashSet<String>,
-        modules_with_export_equals: FxHashSet<String>,
-        flow_nodes: FlowNodeArena,
-        node_flow: FxHashMap<u32, FlowNodeId>,
-        switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
+        inputs: BinderStateScopeInputs,
     ) -> Self {
+        let BinderStateScopeInputs {
+            scopes,
+            node_scope_ids,
+            global_augmentations,
+            module_augmentations,
+            module_exports,
+            reexports,
+            wildcard_reexports,
+            symbol_arenas,
+            declaration_arenas,
+            shorthand_ambient_modules,
+            modules_with_export_equals,
+            flow_nodes,
+            node_flow,
+            switch_clause_to_switch,
+        } = inputs;
+
         // Find the unreachable flow node in the existing flow_nodes, or create a new one
         let unreachable_flow = flow_nodes.find_unreachable().unwrap_or(
             // This shouldn't happen in practice since the binder always creates an unreachable flow

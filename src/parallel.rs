@@ -28,6 +28,7 @@
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
+use crate::binder::state::BinderStateScopeInputs;
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -1942,20 +1943,22 @@ pub fn create_binder_from_bound_file(
         program.symbols.clone(),
         file_locals,
         file.node_symbols.clone(),
-        file.scopes.clone(),
-        file.node_scope_ids.clone(),
-        merged_global_augmentations,
-        merged_module_augmentations,
-        program.module_exports.clone(),
-        program.reexports.clone(),
-        program.wildcard_reexports.clone(),
-        program.symbol_arenas.clone(),
-        program.declaration_arenas.clone(),
-        program.shorthand_ambient_modules.clone(),
-        FxHashSet::default(),
-        file.flow_nodes.clone(),
-        file.node_flow.clone(),
-        file.switch_clause_to_switch.clone(),
+        BinderStateScopeInputs {
+            scopes: file.scopes.clone(),
+            node_scope_ids: file.node_scope_ids.clone(),
+            global_augmentations: merged_global_augmentations,
+            module_augmentations: merged_module_augmentations,
+            module_exports: program.module_exports.clone(),
+            reexports: program.reexports.clone(),
+            wildcard_reexports: program.wildcard_reexports.clone(),
+            symbol_arenas: program.symbol_arenas.clone(),
+            declaration_arenas: program.declaration_arenas.clone(),
+            shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
+            modules_with_export_equals: FxHashSet::default(),
+            flow_nodes: file.flow_nodes.clone(),
+            node_flow: file.node_flow.clone(),
+            switch_clause_to_switch: file.switch_clause_to_switch.clone(),
+        },
     );
 
     binder.declared_modules = program.declared_modules.clone();
