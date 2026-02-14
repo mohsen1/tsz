@@ -103,7 +103,17 @@ function hashString(str: string): string {
   return hash.toString(36);
 }
 
-function getCacheKey(source: string, target: number, module: number, alwaysStrict: boolean, declaration: boolean, sourceMap: boolean = false, downlevelIteration: boolean = false, noEmitHelpers: boolean = false): string {
+function getCacheKey(
+  source: string,
+  sourceFileName: string | null,
+  target: number,
+  module: number,
+  alwaysStrict: boolean,
+  declaration: boolean,
+  sourceMap: boolean = false,
+  downlevelIteration: boolean = false,
+  noEmitHelpers: boolean = false,
+): string {
   const tszBin = process.env.TSZ_BIN;
   let engineSalt = '';
   if (tszBin) {
@@ -114,7 +124,7 @@ function getCacheKey(source: string, target: number, module: number, alwaysStric
       engineSalt = tszBin;
     }
   }
-  return hashString(`${source}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${downlevelIteration}:${noEmitHelpers}:${engineSalt}`);
+  return hashString(`${source}:${sourceFileName ?? ''}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${downlevelIteration}:${noEmitHelpers}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -374,7 +384,17 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
   try {
     loadCache();
     const emitDeclarations = !config.jsOnly && testCase.expectedDts !== null;
-    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module, testCase.alwaysStrict, emitDeclarations, testCase.sourceMap, testCase.downlevelIteration, testCase.noEmitHelpers);
+    const cacheKey = getCacheKey(
+      testCase.source,
+      testCase.sourceFileName,
+      testCase.target,
+      testCase.module,
+      testCase.alwaysStrict,
+      emitDeclarations,
+      testCase.sourceMap,
+      testCase.downlevelIteration,
+      testCase.noEmitHelpers,
+    );
     let tszJs: string;
     let tszDts: string | null = null;
 

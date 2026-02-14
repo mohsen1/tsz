@@ -384,9 +384,36 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let then_is_multiline_in_source = self.source_text.is_some_and(|text| {
+            let cond_end = self
+                .arena
+                .get(if_stmt.expression)
+                .map(|n| n.end as usize)
+                .unwrap_or(node.pos as usize);
+            let then_start = self
+                .arena
+                .get(if_stmt.then_statement)
+                .map(|n| n.pos as usize)
+                .unwrap_or(node.end as usize);
+            if cond_end >= then_start || then_start > text.len() {
+                return false;
+            }
+            text[cond_end..then_start].contains('\n')
+        }) || (!self.is_single_line(node)
+            && self
+                .arena
+                .get(if_stmt.then_statement)
+                .map(|n| n.kind != syntax_kind_ext::BLOCK)
+                .unwrap_or(false));
+
         self.write("if (");
         self.emit(if_stmt.expression);
-        self.write(") ");
+        self.write(")");
+        if then_is_multiline_in_source {
+            self.write_line();
+        } else {
+            self.write(" ");
+        }
         self.emit(if_stmt.then_statement);
 
         if !if_stmt.else_statement.is_none() {
