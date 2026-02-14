@@ -326,7 +326,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Expression statements may contain function expressions and arrow functions.
+            syntax_kind_ext::EXPRESSION_STATEMENT => {
+                if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
+                    self.check_js_grammar_expression(expr_stmt.expression);
+                }
+            }
+
             _ => {}
+        }
+    }
+
+    fn check_js_grammar_expression(&mut self, expr_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return;
+        };
+
+        if node.is_function_like() {
+            self.check_js_grammar_function(expr_idx, node);
+        }
+
+        for child_idx in self.ctx.arena.get_children(expr_idx) {
+            if !child_idx.is_none() {
+                self.check_js_grammar_expression(child_idx);
+            }
         }
     }
 

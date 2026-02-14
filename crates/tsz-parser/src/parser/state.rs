@@ -522,6 +522,386 @@ impl ParserState {
         self.parse_error_at(start, end - start, message, code);
     }
 
+    /// Report escaped sequence diagnostics for string and template tokens.
+    pub(crate) fn report_invalid_string_or_template_escape_errors(&mut self) {
+        use tsz_common::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_messages;
+
+        let token_text = self.scanner.get_token_text_ref().to_string();
+        if token_text.is_empty()
+            || (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) == 0
+        {
+            return;
+        }
+
+        let bytes = token_text.as_bytes();
+        let token_len = bytes.len();
+        let token_start = self.token_pos() as usize;
+
+        let (content_start_offset, content_end_offset) = match self.current_token {
+            SyntaxKind::StringLiteral => {
+                if token_len < 2
+                    || (bytes[0] != b'"' && bytes[0] != b'\'')
+                    || bytes[token_len - 1] != bytes[0]
+                {
+                    return;
+                }
+                (1, token_len - 1)
+            }
+            SyntaxKind::NoSubstitutionTemplateLiteral => {
+                if bytes[0] != b'`' || bytes[token_len - 1] != b'`' {
+                    return;
+                }
+                (1, token_len - 1)
+            }
+            SyntaxKind::TemplateHead => {
+                if bytes[0] != b'`' || !bytes.ends_with(b"${") {
+                    return;
+                }
+                (1, token_len - 2)
+            }
+            SyntaxKind::TemplateMiddle | SyntaxKind::TemplateTail => {
+                if bytes[0] != b'}' {
+                    return;
+                }
+                if bytes.ends_with(b"${") {
+                    (1, token_len - 2)
+                } else if bytes.ends_with(b"`") {
+                    (1, token_len - 1)
+                } else {
+                    (1, token_len)
+                }
+            }
+            _ => return,
+        };
+
+        if content_end_offset <= content_start_offset || content_end_offset > token_len {
+            return;
+        }
+
+        let raw = &bytes[content_start_offset..content_end_offset];
+        let content_start = token_start + content_start_offset;
+
+        let len = raw.len();
+        let err_len = |offset: usize| if offset < len { 1 } else { 0 };
+        let mut i = 0usize;
+
+        while i < raw.len() {
+            if raw[i] != b'\\' {
+                i += 1;
+                continue;
+            }
+
+            if i + 1 >= raw.len() {
+                break;
+            }
+
+            match raw[i + 1] {
+                b'x' => {
+                    let first = i + 2;
+                    let second = i + 3;
+                    if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+                        self.parse_error_at(
+                            (content_start + first) as u32,
+                            err_len(first),
+                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                        );
+                    } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+                        self.parse_error_at(
+                            (content_start + second) as u32,
+                            err_len(second),
+                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                        );
+                    }
+                    i += 2;
+                }
+                b'u' => {
+                    if i + 2 >= raw.len() {
+                        self.parse_error_at(
+                            (content_start + i + 2) as u32,
+                            err_len(i + 2),
+                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                        );
+                        i += 2;
+                        continue;
+                    }
+
+                    if raw[i + 2] == b'{' {
+                        let mut close = i + 3;
+                        let mut has_digit = false;
+                        while close < raw.len() && Self::is_hex_digit(raw[close]) {
+                            has_digit = true;
+                            close += 1;
+                        }
+
+                        if close >= raw.len() {
+                            self.parse_error_at(
+                                (content_start + close) as u32,
+                                0,
+                                diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                                diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                            );
+                        } else if raw[close] == b'}' {
+                            if !has_digit {
+                                self.parse_error_at(
+                                    (content_start + close) as u32,
+                                    1,
+                                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                                );
+                            }
+                        } else if !has_digit {
+                            self.parse_error_at(
+                                (content_start + i + 3) as u32,
+                                1,
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        } else {
+                            self.parse_error_at(
+                                (content_start + close) as u32,
+                                1,
+                                diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                                diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                            );
+                        }
+
+                        i = close + 1;
+                    } else {
+                        let first = i + 2;
+                        let second = i + 3;
+                        let third = i + 4;
+                        let fourth = i + 5;
+                        if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+                            self.parse_error_at(
+                                (content_start + first) as u32,
+                                err_len(first),
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+                            self.parse_error_at(
+                                (content_start + second) as u32,
+                                err_len(second),
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
+                            self.parse_error_at(
+                                (content_start + third) as u32,
+                                err_len(third),
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
+                            self.parse_error_at(
+                                (content_start + fourth) as u32,
+                                err_len(fourth),
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        }
+                        i += 2;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn is_hex_digit(byte: u8) -> bool {
+        matches!(byte, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
+    }
+
+    /// Parse regex unicode escape diagnostics for regex literals in /u or /v mode.
+    pub(crate) fn report_invalid_regular_expression_escape_errors(&mut self) {
+        use tsz_common::diagnostics::diagnostic_codes;
+        use tsz_common::diagnostics::diagnostic_messages;
+
+        let token_text = self.scanner.get_token_text_ref().to_string();
+        if !token_text.starts_with('/') || token_text.len() < 2 {
+            return;
+        }
+
+        let bytes = token_text.as_bytes();
+        let mut i = 1usize;
+        let mut in_escape = false;
+        let mut in_character_class = false;
+        while i < bytes.len() {
+            let ch = bytes[i];
+            if in_escape {
+                in_escape = false;
+                i += 1;
+                continue;
+            }
+            if ch == b'\\' {
+                in_escape = true;
+                i += 1;
+                continue;
+            }
+            if ch == b'[' {
+                in_character_class = true;
+                i += 1;
+                continue;
+            }
+            if ch == b']' {
+                in_character_class = false;
+                i += 1;
+                continue;
+            }
+            if ch == b'/' && !in_character_class {
+                break;
+            }
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return;
+        }
+
+        let body = &token_text[1..i];
+        let flags = if i + 1 < token_text.len() {
+            &token_text[i + 1..]
+        } else {
+            ""
+        };
+        let has_unicode_flag = flags.as_bytes().iter().any(|&b| b == b'u' || b == b'v');
+        if !has_unicode_flag {
+            return;
+        }
+
+        let body_start = self.token_pos() as usize + 1;
+        let raw = body.as_bytes();
+        let mut j = 0usize;
+
+        while j < raw.len() {
+            if raw[j] != b'\\' {
+                j += 1;
+                continue;
+            }
+
+            if j + 1 >= raw.len() {
+                break;
+            }
+
+            match raw[j + 1] {
+                b'x' => {
+                    let first = j + 2;
+                    let second = j + 3;
+                    if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+                        self.parse_error_at(
+                            (body_start + first) as u32,
+                            if first < raw.len() { 1 } else { 0 },
+                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                        );
+                    } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+                        self.parse_error_at(
+                            (body_start + second) as u32,
+                            if second < raw.len() { 1 } else { 0 },
+                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                        );
+                    }
+                    j += 2;
+                }
+                b'u' => {
+                    if j + 2 < raw.len() && raw[j + 2] == b'{' {
+                        let mut close = j + 3;
+                        let mut has_digit = false;
+                        while close < raw.len() && Self::is_hex_digit(raw[close]) {
+                            has_digit = true;
+                            close += 1;
+                        }
+
+                        if close >= raw.len() {
+                            self.parse_error_at(
+                                (body_start + close) as u32,
+                                0,
+                                diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                                diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                            );
+                            break;
+                        } else if raw[close] == b'}' {
+                            if !has_digit {
+                                self.parse_error_at(
+                                    (body_start + close) as u32,
+                                    1,
+                                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                                );
+                            }
+                        } else if !has_digit {
+                            self.parse_error_at(
+                                (body_start + j + 3) as u32,
+                                1,
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        } else {
+                            self.parse_error_at(
+                                (body_start + close) as u32,
+                                1,
+                                diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                                diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                            );
+                            self.parse_error_at(
+                                (body_start + close) as u32,
+                                1,
+                                diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                                diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                            );
+                        }
+                        j = close + 1;
+                    } else {
+                        let first = j + 2;
+                        let second = j + 3;
+                        let third = j + 4;
+                        let fourth = j + 5;
+                        if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+                            self.parse_error_at(
+                                (body_start + first) as u32,
+                                if first < raw.len() { 1 } else { 0 },
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+                            self.parse_error_at(
+                                (body_start + second) as u32,
+                                if second < raw.len() { 1 } else { 0 },
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
+                            self.parse_error_at(
+                                (body_start + third) as u32,
+                                if third < raw.len() { 1 } else { 0 },
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
+                            self.parse_error_at(
+                                (body_start + fourth) as u32,
+                                if fourth < raw.len() { 1 } else { 0 },
+                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                            );
+                        }
+                        j += 2;
+                    }
+                }
+                _ => {
+                    j += 1;
+                }
+            }
+        }
+    }
+
     // =========================================================================
     // Typed error helper methods (use these instead of parse_error_at_current_token)
     // =========================================================================

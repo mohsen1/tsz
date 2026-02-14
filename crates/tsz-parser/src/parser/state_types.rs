@@ -1033,6 +1033,7 @@ impl ParserState {
         let kind = self.token() as u16;
         let text = self.scanner.get_token_value_ref().to_string();
         let literal_end = self.token_end();
+        self.report_invalid_string_or_template_escape_errors();
         self.next_token();
         let end_pos = self.token_end();
         if is_unterminated {
@@ -1057,6 +1058,7 @@ impl ParserState {
         let kind = self.token() as u16;
         let text = self.scanner.get_token_value_ref().to_string();
         let literal_end = self.token_end();
+        self.report_invalid_string_or_template_escape_errors();
         self.next_token();
         let end_pos = self.token_end();
         if is_unterminated {
