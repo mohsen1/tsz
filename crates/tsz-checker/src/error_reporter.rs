@@ -946,9 +946,7 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::lib_loader;
         use tsz_parser::parser::node_flags;
 
-        // TypeScript primitive type keywords used as values should report TS2693
-        // even in malformed files where TS2304 is otherwise suppressed.
-        if matches!(
+        let is_primitive_type_keyword = matches!(
             name,
             "number"
                 | "string"
@@ -962,7 +960,17 @@ impl<'a> CheckerState<'a> {
                 | "never"
                 | "object"
                 | "bigint"
-        ) {
+        );
+
+        // TypeScript primitive type keywords used as values should report TS2693
+        // in syntax-recovery paths. Keep this narrow to avoid over-reporting in
+        // otherwise valid files.
+        let node_has_parse_error = self.ctx.arena.get(idx).is_some_and(|node| {
+            let flags = node.flags as u32;
+            (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+        });
+        if is_primitive_type_keyword && (node_has_parse_error || self.has_syntax_parse_errors()) {
             self.error_type_only_value_at(name, idx);
             return;
         }
