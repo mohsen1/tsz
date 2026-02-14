@@ -269,7 +269,6 @@ enum Protocol {
 pub(crate) struct TsServerRequest {
     pub(crate) seq: u64,
     #[serde(rename = "type")]
-    #[allow(dead_code)]
     pub(crate) msg_type: String,
     pub(crate) command: String,
     #[serde(default)]
@@ -318,7 +317,6 @@ enum LegacyRequest {
 /// Full compiler options for a check request (expanded for tsc compatibility)
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct CheckOptions {
     // === Strict Type Checking ===
     #[serde(default)]

@@ -353,7 +353,6 @@ impl DefinitionInfo {
 /// ```
 pub struct DefinitionStore {
     /// Unique instance ID for debugging (tracks which store instance this is)
-    #[allow(dead_code)]
     instance_id: u64,
 
     /// DefId -> DefinitionInfo mapping

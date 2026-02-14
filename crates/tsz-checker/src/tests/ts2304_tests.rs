@@ -7,8 +7,6 @@
 
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
-#[allow(unused_imports)]
-use crate::test_fixtures::TestContext;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;

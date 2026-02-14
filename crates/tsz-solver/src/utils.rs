@@ -29,7 +29,6 @@ use tsz_common::interner::Atom;
 ///     .filter(|&t| t != TypeId::NEVER)
 ///     .intersection_or_single(db);
 /// ```
-#[allow(dead_code)]
 pub trait TypeIdIteratorExt: Iterator<Item = TypeId> + Sized {
     /// Collects types into a union, returning NEVER for empty, single type for one element,
     /// or a union type for multiple elements.
@@ -74,7 +73,6 @@ where
 /// // Create intersection from slice
 /// let result = types.as_slice().intersection_or_single(db);
 /// ```
-#[allow(dead_code)]
 pub trait TypeIdSliceExt {
     /// Creates a union from a slice, returning NEVER for empty, single type for one element,
     /// or a union type for multiple elements.
@@ -253,7 +251,6 @@ pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> Type
 /// // Map with NEVER as default for None
 /// let result = maybe_type.map_or_never(|t| transform(t));
 /// ```
-#[allow(dead_code)]
 pub trait TypeIdExt {
     /// Returns Some(self) if self is not NEVER, otherwise None.
     ///

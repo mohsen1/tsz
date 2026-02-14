@@ -4,10 +4,7 @@ use crate::emit_context::EmitContext;
 use crate::emitter::{Printer, PrinterOptions, ScriptTarget};
 use crate::lowering_pass::LoweringPass;
 use crate::parser::ParserState;
-#[allow(unused_imports)]
-use crate::source_map::*;
-#[allow(unused_imports)]
-use crate::source_map_test_utils::{decode_mappings, find_line_col, has_mapping_for_prefixes};
+use crate::source_map_test_utils::decode_mappings;
 use serde_json::Value;
 
 #[test]
