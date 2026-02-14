@@ -527,6 +527,31 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use crate::types::diagnostics::diagnostic_codes;
         use tsz_binder::symbol_flags;
+        use tsz_scanner::SyntaxKind;
+
+        // Primitive type keywords in constructor position (`new number[]`) are
+        // type-only and should report TS2693.
+        if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
+            let keyword_name = match expr_node.kind {
+                k if k == SyntaxKind::NumberKeyword as u16 => Some("number"),
+                k if k == SyntaxKind::StringKeyword as u16 => Some("string"),
+                k if k == SyntaxKind::BooleanKeyword as u16 => Some("boolean"),
+                k if k == SyntaxKind::SymbolKeyword as u16 => Some("symbol"),
+                k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+                k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
+                k if k == SyntaxKind::NullKeyword as u16 => Some("null"),
+                k if k == SyntaxKind::AnyKeyword as u16 => Some("any"),
+                k if k == SyntaxKind::UnknownKeyword as u16 => Some("unknown"),
+                k if k == SyntaxKind::NeverKeyword as u16 => Some("never"),
+                k if k == SyntaxKind::ObjectKeyword as u16 => Some("object"),
+                k if k == SyntaxKind::BigIntKeyword as u16 => Some("bigint"),
+                _ => None,
+            };
+            if let Some(keyword_name) = keyword_name {
+                self.error_type_only_value_at(keyword_name, expr_idx);
+                return Some(TypeId::ERROR);
+            }
+        }
 
         let ident = self.ctx.arena.get_identifier_at(expr_idx)?;
         let class_name = &ident.escaped_text;
