@@ -265,6 +265,8 @@ pub enum IRNode {
         function: Box<IRNode>,
         /// Leading JSDoc or block comment from the original method declaration
         leading_comment: Option<String>,
+        /// Trailing comment from the original method declaration line
+        trailing_comment: Option<String>,
     },
 
     /// Static method assignment: `ClassName.method = function() {...};`
@@ -274,6 +276,8 @@ pub enum IRNode {
         function: Box<IRNode>,
         /// Leading JSDoc or block comment from the original method declaration
         leading_comment: Option<String>,
+        /// Trailing comment from the original method declaration line
+        trailing_comment: Option<String>,
     },
 
     /// Object.defineProperty for getters/setters
