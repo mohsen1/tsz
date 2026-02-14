@@ -1105,6 +1105,8 @@ Reduce “tribal knowledge” and make refactors safe.
     * `docs/architecture/BOUNDARIES.md`
   * Added dedicated contribution checklist doc:
     * `docs/architecture/CONTRIBUTION_CHECKLIST.md`
+  * Added repository PR template gate aligned to the architecture checklist:
+    * `.github/pull_request_template.md`
   * Wired architecture report artifact generation into `scripts/check-checker-boundaries.sh`:
     * emits `artifacts/architecture/arch_guard_report.json` on each run.
     * emits `artifacts/architecture/arch_guard_report.md` (largest files + guard summary) on each run.
