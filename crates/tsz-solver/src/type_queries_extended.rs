@@ -1441,23 +1441,21 @@ pub fn unwrap_readonly_for_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
 /// This abstracts away the TypeKey construction from the checker layer.
 pub fn create_string_literal_type(db: &dyn TypeDatabase, value: &str) -> TypeId {
     let atom = db.intern_string(value);
-    db.intern(TypeKey::Literal(crate::LiteralValue::String(atom)))
+    db.literal_string_atom(atom)
 }
 
 /// Create a number literal type from a numeric value.
 ///
 /// This abstracts away the TypeKey construction from the checker layer.
 pub fn create_number_literal_type(db: &dyn TypeDatabase, value: f64) -> TypeId {
-    db.intern(TypeKey::Literal(crate::LiteralValue::Number(
-        crate::OrderedFloat(value),
-    )))
+    db.literal_number(value)
 }
 
 /// Create a boolean literal type.
 ///
 /// This abstracts away the TypeKey construction from the checker layer.
 pub fn create_boolean_literal_type(db: &dyn TypeDatabase, value: bool) -> TypeId {
-    db.intern(TypeKey::Literal(crate::LiteralValue::Boolean(value)))
+    db.literal_boolean(value)
 }
 
 // =============================================================================
