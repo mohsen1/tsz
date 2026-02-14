@@ -3513,6 +3513,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             ) {
                 return Some(reason);
             }
+            if let Some(ref number_idx) = t_shape.number_index {
+                return Some(SubtypeFailureReason::IndexSignatureMismatch {
+                    index_kind: "number",
+                    source_value_type: TypeId::ANY,
+                    target_value_type: number_idx.value_type,
+                });
+            }
             if let Some(ref string_idx) = t_shape.string_index {
                 for prop in &s_shape.properties {
                     let prop_type = self.optional_property_type(prop);
