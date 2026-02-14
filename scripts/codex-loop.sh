@@ -139,6 +139,10 @@ fi
 if [[ "$WORKDIR" != /* ]]; then
   WORKDIR="$(pwd)/$WORKDIR"
 fi
+# Canonicalize existing paths (e.g. "/repo/." -> "/repo") before session remapping.
+if [[ -d "$WORKDIR" ]]; then
+  WORKDIR="$(cd "$WORKDIR" && pwd)"
+fi
 
 if [[ -n "$SESSION_ID" ]]; then
   if [[ "$WORKDIR" =~ ^(.+)-[0-9]+$ ]]; then
