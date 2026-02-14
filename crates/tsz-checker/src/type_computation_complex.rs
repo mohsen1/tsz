@@ -1117,6 +1117,15 @@ impl<'a> CheckerState<'a> {
 
         // Check if callee is any/error (don't report for those)
         if callee_type == TypeId::ANY {
+            if let Some(ref type_args_list) = call.type_arguments
+                && !type_args_list.nodes.is_empty()
+            {
+                self.error_at_node(
+                    idx,
+                    crate::types::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                    crate::types::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                );
+            }
             // Still need to check arguments for definite assignment (TS2454) and other errors
             // Create a dummy context helper that returns None for all parameter types
             let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
