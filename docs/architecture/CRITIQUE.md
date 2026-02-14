@@ -467,10 +467,10 @@ if __name__ == "__main__":
 
 * **Status:** Completed
 * **Completed in this iteration (Milestone 0 sub-item):**
-  * Enforced dependency-direction **freeze guardrail** in `scripts/check-checker-boundaries.sh` so CI fails if any new non-test solver source (outside legacy `crates/tsz-solver/src/lower.rs`) imports `tsz_parser::` or `tsz_checker::`.
+  * Enforced dependency-direction **freeze guardrail** in `scripts/check-checker-boundaries.sh` so CI fails if any new non-test solver source imports `tsz_parser::` or `tsz_checker::`.
   * Added binder dependency-direction guardrail to `scripts/arch_guard.py` so CI fails if non-test binder code imports `tsz_solver::...`.
   * Added emitter dependency-direction guardrail to `scripts/arch_guard.py` so CI fails if non-test emitter code imports `tsz_checker::...`.
-  * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` that recursively scans non-test solver source files and fails on parser/checker import patterns outside the `lower.rs` legacy quarantine.
+  * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` that recursively scans non-test solver source files and fails on parser/checker import patterns.
   * Added a checker boundary guardrail in `scripts/check-checker-boundaries.sh` that fails on any non-test `tsz_solver::types::...` import path usage, forcing checker code onto public `tsz_solver::*` APIs only.
   * Reduced one emitter→checker dependency edge by switching enum checker diagnostics in `crates/tsz-emitter/src/enums/checker.rs` from `tsz_checker::diagnostics::Diagnostic` to `tsz_common::diagnostics::Diagnostic`.
   * Removed remaining non-test emitter imports of checker `TypeCache` by introducing emitter-local `TypeCacheView` and migrating usage-analyzer/type-printer consumers onto that local view type.
@@ -478,9 +478,10 @@ if __name__ == "__main__":
   * Added manifest-level dependency guardrails in `scripts/arch_guard.py`:
     * fail if `crates/tsz-emitter/Cargo.toml` reintroduces `tsz-checker`
     * fail if `crates/tsz-binder/Cargo.toml` introduces `tsz-solver`
+* **Completed in this iteration (Milestone 0 follow-up):**
+  * Completed the `lower.rs` migration by extracting AST→type lowering into `crates/tsz-lowering`, leaving solver with zero parser/checker crate imports.
+  * Removed the solver guardrail exception for `crates/tsz-solver/src/lower.rs` in `scripts/arch_guard.py`.
 * **Remaining for Milestone 0:**
-  * Complete the `lower.rs` migration so solver has zero parser/checker crate imports.
-  * Add/standardize architecture report generation in CI artifacts. **Completed in this iteration.**
   * Keep parity harness skeleton aligned with the roadmap deliverables.
 
 # Milestone 1 — Unify the type system (one `TypeId` world)
@@ -525,7 +526,7 @@ The checker crate still contains a full local type arena and constructors for un
   * Removed the `legacy-type-arena` feature from `crates/tsz-checker/Cargo.toml`.
   * Added focused architecture guard coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` and `scripts/arch_guard.py` to fail if `types`/`arena` surfaces reappear.
 * **Remaining for Milestone 1:**
-  * Keep enforcement rules aligned as checker modules evolve.
+  * Keep enforcement rules aligned as checker modules evolve, including the explicit `tsz-lowering` bridge boundary.
 
 ---
 

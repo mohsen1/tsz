@@ -68,6 +68,7 @@ use tsz::parser::base::NodeIndex;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz_cli::config::{checker_target_from_emitter, default_lib_name_for_target};
 use tsz_solver::QueryCache;
+use tsz_solver::RelationCacheStats;
 use tsz_solver::TypeInterner;
 
 // Diagnostic code for "File appears to be binary."
@@ -512,6 +513,8 @@ pub(crate) struct Server {
     pub(crate) _server_mode: ServerMode,
     /// Log configuration
     pub(crate) _log_config: LogConfig,
+    /// Whether telemetry responses should be emitted.
+    pub(crate) enable_telemetry: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -519,6 +522,11 @@ pub(crate) enum ServerMode {
     Semantic,
     PartialSemantic,
     Syntactic,
+}
+
+struct RunCheckResult {
+    codes: Vec<i32>,
+    relation_cache_stats: RelationCacheStats,
 }
 
 impl Server {
@@ -564,6 +572,7 @@ impl Server {
             open_files: FxHashMap::default(),
             _server_mode: server_mode,
             _log_config: log_config,
+            enable_telemetry: args.enable_telemetry,
         })
     }
 
@@ -751,6 +760,7 @@ impl Server {
             "implementation" | "implementation-full" => self.handle_implementation(seq, &request),
             "getOutliningSpans" => self.handle_outlining_spans(seq, &request),
             "brace" => self.handle_brace(seq, &request),
+            "tszPerformance" | "performance" => self.handle_tsz_performance(seq, &request),
             "emitOutput" | "emit-output" => self.stub_response(
                 seq,
                 &request,
@@ -3686,11 +3696,11 @@ impl Server {
     ) -> LegacyResponse {
         let start = Instant::now();
         match self.run_check(files, options) {
-            Ok(codes) => {
+            Ok(result) => {
                 self.checks_completed += 1;
                 LegacyResponse::Check(CheckResponse {
                     id,
-                    codes,
+                    codes: result.codes,
                     elapsed_ms: start.elapsed().as_millis() as u64,
                 })
             }
@@ -3834,11 +3844,61 @@ impl Server {
         diagnostics
     }
 
+    fn handle_tsz_performance(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        let body = (|| -> Option<serde_json::Value> {
+            let file = request
+                .arguments
+                .get("file")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| self.open_files.keys().next().cloned())?;
+
+            let content = request
+                .arguments
+                .get("fileContent")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| self.open_files.get(&file).cloned())
+                .or_else(|| std::fs::read_to_string(&file).ok())?;
+
+            let mut files = FxHashMap::default();
+            files.insert(file.clone(), content);
+            let result = self.run_check(files, CheckOptions::default()).ok()?;
+            let stats = result.relation_cache_stats;
+
+            let mut payload = serde_json::json!({
+                "file": file,
+                "checksCompleted": self.checks_completed,
+                "errorCount": result.codes.len(),
+                "errorCodes": result.codes,
+                "relationCache": {
+                    "subtypeHits": stats.subtype_hits,
+                    "subtypeMisses": stats.subtype_misses,
+                    "subtypeEntries": stats.subtype_entries,
+                    "assignabilityHits": stats.assignability_hits,
+                    "assignabilityMisses": stats.assignability_misses,
+                    "assignabilityEntries": stats.assignability_entries
+                }
+            });
+
+            if self.enable_telemetry {
+                payload["telemetryEvent"] = serde_json::json!({
+                    "eventName": "tszPerformance",
+                    "relationCache": payload["relationCache"].clone()
+                });
+            }
+
+            Some(payload)
+        })();
+
+        self.stub_response(seq, request, body)
+    }
+
     fn run_check(
         &mut self,
         files: FxHashMap<String, String>,
         options: CheckOptions,
-    ) -> Result<Vec<i32>> {
+    ) -> Result<RunCheckResult> {
         // Use unified lib loading for proper cross-lib symbol resolution.
         // The unified binder has declaration_arenas tracking each declaration's source arena.
         let lib_files = if options.no_lib {
@@ -4020,7 +4080,10 @@ impl Server {
             }
         }
 
-        Ok(all_codes)
+        Ok(RunCheckResult {
+            codes: all_codes,
+            relation_cache_stats: query_cache.relation_cache_stats(),
+        })
     }
 
     /// Load libs with unified symbol merging.
