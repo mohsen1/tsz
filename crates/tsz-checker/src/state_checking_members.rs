@@ -3831,6 +3831,14 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
         );
 
+        if self.ctx.in_async_context() {
+            self.error_at_node(
+                stmt_idx,
+                diagnostic_messages::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_AN_ASYNC_FUNCTION_BLOCK,
+                diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_AN_ASYNC_FUNCTION_BLOCK,
+            );
+        }
+
         if self.is_with_statement_in_strict_mode_context(stmt_idx) {
             self.error_at_node(
                 stmt_idx,
