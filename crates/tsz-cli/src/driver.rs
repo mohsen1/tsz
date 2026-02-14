@@ -18,7 +18,7 @@ use tsz::binder::{SymbolId, SymbolTable, symbol_flags};
 use tsz::checker::TypeCache;
 use tsz::checker::context::LibContext;
 use tsz::checker::state::CheckerState;
-use tsz::checker::types::diagnostics::{
+use tsz_checker::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
@@ -45,7 +45,7 @@ use tsz::parser::ParseDiagnostic;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::parser::syntax_kind_ext;
 use tsz::scanner::SyntaxKind;
-use tsz::solver::{TypeFormatter, TypeId};
+use tsz_solver::{TypeFormatter, TypeId};
 
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,6 +243,41 @@ impl CompilationCache {
         }
 
         affected
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_paths_with_dependents<I>(&mut self, paths: I)
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        let changed: FxHashSet<PathBuf> = paths.into_iter().collect();
+        let affected = self.collect_dependents(changed.into_iter());
+        self.invalidate_paths(affected.into_iter());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.type_caches.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bind_len(&self) -> usize {
+        self.bind_cache.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn diagnostics_len(&self) -> usize {
+        self.diagnostics.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn symbol_cache_len(&self, path: &Path) -> Option<usize> {
+        self.type_caches.get(path).map(|cache| cache.symbol_types.len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn node_cache_len(&self, path: &Path) -> Option<usize> {
+        self.type_caches.get(path).map(|cache| cache.node_types.len())
     }
 }
 
@@ -1453,6 +1488,29 @@ fn has_no_default_lib_directive(source: &str) -> bool {
     false
 }
 
+pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
+    for (i, line) in source.lines().enumerate() {
+        if i >= 32 {
+            break;
+        }
+        let trimmed = line.trim();
+        if !trimmed.starts_with("//") {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        let Some(idx) = lower.find("@notypesandsymbols:") else {
+            continue;
+        };
+        let mut value = trimmed[idx + "@noTypesAndSymbols:".len()..].trim();
+        if let Some((first, _)) = value.split_once(',') {
+            value = first.trim();
+        }
+        value = value.trim_end_matches(';').trim();
+        return value.eq_ignore_ascii_case("true");
+    }
+    false
+}
+
 fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
     let needle = "no-default-lib";
     let lower = line.to_ascii_lowercase();
@@ -2068,7 +2126,7 @@ fn collect_diagnostics(
     let resolved_module_errors = Arc::new(resolved_module_errors);
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
-    let query_cache = tsz::solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
 
     // Prime Array<T> base type with global augmentations before any file checks.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
@@ -2563,7 +2621,7 @@ fn check_file_for_parallel(
     file_idx: usize,
     binder: BinderState,
     program: &MergedProgram,
-    query_cache: &tsz::solver::QueryCache,
+    query_cache: &tsz_solver::QueryCache,
     compiler_options: &tsz_common::CheckerOptions,
     lib_contexts: &[LibContext],
     all_arenas: &Arc<Vec<Arc<tsz::parser::node::NodeArena>>>,

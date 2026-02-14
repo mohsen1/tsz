@@ -12,7 +12,7 @@ use tsz::lsp::hover::HoverProvider;
 use tsz::lsp::position::{LineMap, Position};
 use tsz::lsp::references::FindReferences;
 use tsz::parser::{NodeArena, NodeIndex, ParserState};
-use tsz::solver::TypeInterner;
+use tsz_solver::TypeInterner;
 
 /// Language Service for a single file
 ///

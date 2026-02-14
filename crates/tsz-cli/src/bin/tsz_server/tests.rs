@@ -21,7 +21,7 @@ fn make_server() -> Server {
 fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest {
     TsServerRequest {
         seq: 1,
-        msg_type: "request".to_string(),
+        _msg_type: "request".to_string(),
         command: command.to_string(),
         arguments,
     }

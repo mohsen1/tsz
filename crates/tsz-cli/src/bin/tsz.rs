@@ -206,7 +206,7 @@ fn actual_main() -> Result<()> {
     let has_errors = result
         .diagnostics
         .iter()
-        .any(|diag| diag.category == tsz::checker::types::diagnostics::DiagnosticCategory::Error);
+        .any(|diag| diag.category == tsz_checker::diagnostics::DiagnosticCategory::Error);
 
     if has_errors {
         // Match tsc exit codes:
@@ -360,7 +360,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
     let errors = result
         .diagnostics
         .iter()
-        .filter(|d| d.category == tsz::checker::types::diagnostics::DiagnosticCategory::Error)
+        .filter(|d| d.category == tsz_checker::diagnostics::DiagnosticCategory::Error)
         .count();
 
     println!();
@@ -784,7 +784,7 @@ fn handle_all() -> Result<()> {
 }
 
 fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
-    use tsz::checker::types::diagnostics::DiagnosticCategory;
+    use tsz_checker::diagnostics::DiagnosticCategory;
     use tsz_cli::build;
     use tsz_cli::project_refs::ProjectReferenceGraph;
 
@@ -998,7 +998,7 @@ fn handle_build_single_project(
     cwd: &std::path::Path,
     config_path: &std::path::Path,
 ) -> Result<()> {
-    use tsz::checker::types::diagnostics::DiagnosticCategory;
+    use tsz_checker::diagnostics::DiagnosticCategory;
 
     let result = driver::compile(args, cwd)?;
 

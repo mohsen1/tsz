@@ -46,7 +46,7 @@ use tsz::binder::{BinderState, SymbolId};
 use tsz::checker::context::{CheckerOptions, LibContext};
 use tsz::checker::module_resolution::build_module_resolution_maps;
 use tsz::checker::state::CheckerState;
-use tsz::checker::types::diagnostics::DiagnosticCategory;
+use tsz_checker::diagnostics::DiagnosticCategory;
 use tsz::emitter::ScriptTarget;
 use tsz::lib_loader::LibFile;
 use tsz::lsp::call_hierarchy::CallHierarchyProvider;
@@ -67,7 +67,7 @@ use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::{NodeAccess, NodeArena};
-use tsz::solver::TypeInterner;
+use tsz_solver::TypeInterner;
 use tsz_cli::config::{checker_target_from_emitter, default_lib_name_for_target};
 
 // Diagnostic code for "File appears to be binary."
@@ -3740,7 +3740,7 @@ impl Server {
         &mut self,
         file_path: &str,
         content: &str,
-    ) -> Vec<tsz::checker::types::diagnostics::Diagnostic> {
+    ) -> Vec<tsz_checker::diagnostics::Diagnostic> {
         let options = CheckOptions::default();
 
         // Use unified lib loading for proper cross-lib symbol resolution.
@@ -3787,7 +3787,7 @@ impl Server {
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         let resolved_module_paths = Arc::new(resolved_module_paths);
 
-        let query_cache = tsz::solver::QueryCache::new(&type_interner);
+        let query_cache = tsz_solver::QueryCache::new(&type_interner);
 
         let mut checker = CheckerState::new(
             &arena,
@@ -3810,11 +3810,11 @@ impl Server {
         checker.ctx.set_current_file_idx(0);
         checker.check_source_file(root);
 
-        let mut diagnostics: Vec<tsz::checker::types::diagnostics::Diagnostic> = Vec::new();
+        let mut diagnostics: Vec<tsz_checker::diagnostics::Diagnostic> = Vec::new();
 
         // Add parse diagnostics
         for d in &parse_diagnostics {
-            diagnostics.push(tsz::checker::types::diagnostics::Diagnostic::error(
+            diagnostics.push(tsz_checker::diagnostics::Diagnostic::error(
                 file_path.to_string(),
                 d.start,
                 d.length,
@@ -3970,7 +3970,7 @@ impl Server {
         let resolved_modules_arc: Arc<rustc_hash::FxHashSet<String>> = Arc::new(resolved_modules);
 
         // PHASE 4: Type check all files
-        let query_cache = tsz::solver::QueryCache::new(&type_interner);
+        let query_cache = tsz_solver::QueryCache::new(&type_interner);
         let mut all_codes: Vec<i32> = Vec::new();
 
         // Add TS1490 for binary files detected earlier

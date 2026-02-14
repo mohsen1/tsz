@@ -4,7 +4,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use tsz::solver::TypeId;
+use tsz_solver::TypeId;
 
 /// Macro for handle-based type identity checks on TsType.
 /// Each entry generates a `pub fn` that returns `self.handle == TypeId::X.0`.
