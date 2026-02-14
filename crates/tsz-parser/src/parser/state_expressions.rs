@@ -207,19 +207,13 @@ impl ParserState {
                 // Line break before => means this is not an arrow function (ASI applies)
                 false
             } else if self.is_token(SyntaxKind::ColonToken) {
-                let saved_arena_len = self.arena.nodes.len();
-                let saved_diagnostics_len = self.parse_diagnostics.len();
-
-                self.next_token();
-                let _ = self.parse_return_type();
-                let result = !self.scanner.has_preceding_line_break()
-                    && (self.is_token(SyntaxKind::EqualsGreaterThanToken)
-                        || self.is_token(SyntaxKind::OpenBraceToken));
-
-                self.arena.nodes.truncate(saved_arena_len);
-                self.parse_diagnostics.truncate(saved_diagnostics_len);
-
-                result
+                // (): is definitely an arrow function with a return type annotation.
+                // Empty parens () are never a valid expression, so ():
+                // can only appear as arrow function parameters + return type.
+                // Don't try to parse the return type here - the type parser
+                // can greedily consume past the arrow's => (e.g. for function
+                // types like `(): (() => T) => body`).
+                true
             } else {
                 // Check for => or { (error recovery: user forgot =>)
                 self.is_token(SyntaxKind::EqualsGreaterThanToken)
