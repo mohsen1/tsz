@@ -150,6 +150,11 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Fuel exhausted - prevent infinite loop
         }
 
+        // Class member types can reference class type parameters (e.g. `class Box<T> { value: T }`).
+        // Keep class type parameters in scope while constructing the instance type.
+        let (_class_type_params, class_type_param_updates) =
+            self.push_type_parameters(&class.type_parameters);
+
         struct MethodAggregate {
             overload_signatures: Vec<CallSignature>,
             impl_signatures: Vec<CallSignature>,
@@ -975,6 +980,8 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .class_instance_type_to_decl
             .insert(instance_type, class_idx);
+
+        self.pop_type_parameters(class_type_param_updates);
 
         instance_type
     }
