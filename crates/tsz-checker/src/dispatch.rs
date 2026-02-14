@@ -207,10 +207,24 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.literal_type_from_initializer(idx),
                 TypeId::NUMBER,
             ),
-            k if k == SyntaxKind::BigIntLiteral as u16 => self.resolve_literal(
-                self.checker.literal_type_from_initializer(idx),
-                TypeId::BIGINT,
-            ),
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
+                // TS2737: bigint literals require target >= ES2020 in non-ambient contexts.
+                if (self.checker.ctx.compiler_options.target as u32)
+                    < (tsz_common::common::ScriptTarget::ES2020 as u32)
+                    && !self.checker.is_ambient_declaration(idx)
+                {
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::BIGINT_LITERALS_ARE_NOT_AVAILABLE_WHEN_TARGETING_LOWER_THAN_ES2020,
+                        diagnostic_codes::BIGINT_LITERALS_ARE_NOT_AVAILABLE_WHEN_TARGETING_LOWER_THAN_ES2020,
+                    );
+                }
+                self.resolve_literal(
+                    self.checker.literal_type_from_initializer(idx),
+                    TypeId::BIGINT,
+                )
+            }
             k if k == SyntaxKind::StringLiteral as u16 => self.resolve_literal(
                 self.checker.literal_type_from_initializer(idx),
                 TypeId::STRING,

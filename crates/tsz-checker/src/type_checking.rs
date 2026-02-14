@@ -2206,7 +2206,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an initializer is a valid const initializer for ambient contexts.
-    /// Valid initializers are string literals, numeric literals, or negative numeric literals.
+    /// Valid initializers are string/numeric/bigint literals and enum references.
     pub(crate) fn is_valid_ambient_const_initializer(&self, init_idx: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
 
@@ -2216,7 +2216,8 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
                 || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                || k == tsz_scanner::SyntaxKind::NumericLiteral as u16 =>
+                || k == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16 =>
             {
                 true
             }
@@ -2224,7 +2225,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
                     if unary.operator == tsz_scanner::SyntaxKind::MinusToken as u16 {
                         if let Some(operand) = self.ctx.arena.get(unary.operand) {
-                            return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16;
+                            return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                                || operand.kind == tsz_scanner::SyntaxKind::BigIntLiteral as u16;
                         }
                     }
                 }
