@@ -415,7 +415,9 @@ impl<'a> CheckerState<'a> {
             .copied()
             .find(|&stmt| self.is_super_call_statement(stmt))
         else {
-            return false;
+            // No super() call exists in a derived constructor; any `this` usage
+            // in the body is still before the required super() initialization.
+            return true;
         };
 
         let Some(super_stmt_node) = self.ctx.arena.get(first_super_stmt) else {
