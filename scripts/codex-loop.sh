@@ -99,7 +99,12 @@ WORKDIR="${WORKDIR:-$(pwd)}"
 DEFAULT_MODE="${DEFAULT_MODE:-conformance}"
 
 if [[ -z "$MODE" ]]; then
-  MODE="$DEFAULT_MODE"
+  # Spark is opt-in: if configuration defaults to spark, keep non-spark behavior.
+  if [[ "${DEFAULT_MODE:-}" == "spark" ]]; then
+    MODE="conformance"
+  else
+    MODE="$DEFAULT_MODE"
+  fi
 fi
 
 # Mode-specific prompt selection; fallback to legacy key, then hardcoded defaults.
