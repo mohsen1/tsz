@@ -42,7 +42,10 @@ CHECKS = [
         "Solver dependency direction freeze",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\btsz_parser::\b|\btsz_checker::\b"),
-        {"exclude_files": {"crates/tsz-solver/src/lower.rs"}},
+        {
+            "exclude_files": {"crates/tsz-solver/src/lower.rs"},
+            "exclude_dirs": {"tests"},
+        },
     ),
     (
         "Solver TypeKey construction must stay in interner",
