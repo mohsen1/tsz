@@ -2034,7 +2034,7 @@ fn rename_namespace_refs_in_node(node: &mut IRNode, old_name: &str, new_name: &s
 
 /// Detect collision between namespace name and body member names,
 /// and if found, rename the body's namespace references and return the new parameter name.
-fn detect_and_apply_param_rename(body: &mut Vec<IRNode>, ns_name: &str) -> Option<String> {
+fn detect_and_apply_param_rename(body: &mut [IRNode], ns_name: &str) -> Option<String> {
     let member_names = collect_body_member_names(body);
     if member_names.contains(ns_name) {
         let renamed = generate_unique_param_name(ns_name, &member_names);
