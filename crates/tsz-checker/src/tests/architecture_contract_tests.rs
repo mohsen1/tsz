@@ -204,4 +204,26 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !type_resolution_src.contains("TypeKey::ReadonlyType"),
         "state_type_resolution should use solver readonly constructor APIs, not TypeKey::ReadonlyType"
     );
+
+    let type_node_src =
+        fs::read_to_string("src/type_node.rs").expect("failed to read src/type_node.rs");
+    assert!(
+        !type_node_src.contains("TypeKey::ReadonlyType"),
+        "type_node should use solver readonly constructor API, not TypeKey::ReadonlyType"
+    );
+    assert!(
+        !type_node_src.contains("TypeKey::KeyOf"),
+        "type_node should use solver keyof constructor API, not TypeKey::KeyOf"
+    );
+    assert!(
+        !type_node_src.contains("TypeKey::IndexAccess"),
+        "type_node should use solver index_access constructor API, not TypeKey::IndexAccess"
+    );
+
+    let jsx_checker_src =
+        fs::read_to_string("src/jsx_checker.rs").expect("failed to read src/jsx_checker.rs");
+    assert!(
+        !jsx_checker_src.contains("TypeKey::IndexAccess"),
+        "jsx_checker should use solver index_access constructor API, not TypeKey::IndexAccess"
+    );
 }

@@ -27,6 +27,21 @@ fn test_interner_deduplication() {
 }
 
 #[test]
+fn test_interner_keyof_and_index_access_constructors() {
+    let interner = TypeInterner::new();
+
+    let keys = interner.keyof(TypeId::STRING);
+    assert_eq!(interner.lookup(keys), Some(TypeKey::KeyOf(TypeId::STRING)));
+
+    let string_array = interner.array(TypeId::STRING);
+    let indexed = interner.index_access(string_array, TypeId::NUMBER);
+    assert_eq!(
+        interner.lookup(indexed),
+        Some(TypeKey::IndexAccess(string_array, TypeId::NUMBER))
+    );
+}
+
+#[test]
 fn test_interner_fresh_object_distinct_from_non_fresh() {
     let interner = TypeInterner::new();
     let prop = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);
