@@ -45,6 +45,19 @@ pub struct Runner {
 }
 
 impl Runner {
+    fn resolve_tsz_binary(configured: &str) -> String {
+        // Prefer the workspace fast-build binary when the default "tsz" is used.
+        // This avoids accidentally running a stale PATH-installed binary and
+        // producing misleading parity deltas.
+        if configured == "tsz" {
+            let local_fast = Path::new("./.target/dist-fast/tsz");
+            if local_fast.is_file() {
+                return local_fast.to_string_lossy().to_string();
+            }
+        }
+        configured.to_string()
+    }
+
     /// Create a new runner
     pub fn new(args: Args) -> anyhow::Result<Self> {
         // Load cache
@@ -59,7 +72,7 @@ impl Runner {
 
         info!("Loaded {} cached TSC results", cache.len());
 
-        let tsz_binary = args.tsz_binary.clone();
+        let tsz_binary = Self::resolve_tsz_binary(&args.tsz_binary);
 
         Ok(Self {
             args,

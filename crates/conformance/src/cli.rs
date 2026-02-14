@@ -64,7 +64,8 @@ pub struct Args {
     #[arg(long, default_value = "./tsc-cache.json")]
     pub cache_file: String,
 
-    /// Path to tsz binary for compilation
+    /// Path to tsz binary for compilation.
+    /// When omitted (`tsz`), the runner prefers `./.target/dist-fast/tsz` if present.
     #[arg(long, default_value = "tsz")]
     pub tsz_binary: String,
 
