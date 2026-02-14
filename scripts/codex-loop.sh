@@ -106,6 +106,7 @@ read_key() {
 
 MODEL="$(read_key model)"
 MODEL_SPARK="$(read_key model_spark)"
+CODEX_CLI_TIMEOUT="$(read_key command_timeout_seconds)"
 # Backward-compat: accept approval_mode from previous YAML.
 APPROVAL_MODE="$(read_key approval_mode)"
 ASK_FOR_APPROVAL="$(read_key ask_for_approval)"
@@ -124,6 +125,7 @@ CONF_TOTAL_FAILURES="$(read_key conformance_total_failures)"
 
 MODEL="${MODEL:-gpt-5.3-codex}"
 MODEL_BASE="$MODEL"
+CODEX_CLI_TIMEOUT="${CODEX_CLI_TIMEOUT:-120}"
 APPROVAL_MODE="${APPROVAL_MODE:-full-auto}"
 ASK_FOR_APPROVAL="${ASK_FOR_APPROVAL:-}"
 BYPASS="${BYPASS:-false}"
@@ -279,7 +281,11 @@ while true; do
   ITER_PIPE="$(mktemp)"
   rm -f "$ITER_PIPE"
   mkfifo "$ITER_PIPE"
-  "${CMD[@]}" "$PROMPT_TEXT" >"$ITER_PIPE" 2>&1 &
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$CODEX_CLI_TIMEOUT" "${CMD[@]}" "$PROMPT_TEXT" >"$ITER_PIPE" 2>&1 &
+  else
+    "${CMD[@]}" "$PROMPT_TEXT" >"$ITER_PIPE" 2>&1 &
+  fi
   CODexLoopRun_PID=$!
 
   while IFS= read -r line <"$ITER_PIPE"; do
@@ -302,18 +308,27 @@ while true; do
 
   set -e
 
-  if [[ "$TERMINAL_FAILURE_DETECTED" == "true" ]]; then
-    if [[ "$MODE" == "spark" && "$MODEL" != "$MODEL_BASE" && "$SPARK_MODEL_FALLBACK_ATTEMPTED" == "false" ]]; then
+  status="${status:-0}"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i exit_status=$status" | tee -a "$LOG_FILE"
+
+  if [[ "$MODE" == "spark" && "$MODEL" != "$MODEL_BASE" && "$SPARK_MODEL_FALLBACK_ATTEMPTED" == "false" ]]; then
+    if [[ "$TERMINAL_FAILURE_DETECTED" == "true" || "$status" -ne 0 ]]; then
       SPARK_MODEL_FALLBACK_ATTEMPTED="true"
-      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i spark model unavailable; falling back to model=$MODEL_BASE" | tee -a "$LOG_FILE"
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i spark model unavailable (or terminal spark failure); falling back to model=$MODEL_BASE" | tee -a "$LOG_FILE"
       MODEL="$MODEL_BASE"
       continue
     fi
+  fi
+
+  if [[ "$TERMINAL_FAILURE_DETECTED" == "true" ]]; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i hard-stop-trigger matched terminal failure" | tee -a "$LOG_FILE"
     exit 1
   fi
 
-  status="${status:-0}"
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i exit_status=$status" | tee -a "$LOG_FILE"
+  if [[ "$MODE" == "spark" && "$status" -ne 0 ]]; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i hard-stop: spark codex exit_status=$status" | tee -a "$LOG_FILE"
+    exit "$status"
+  fi
+
   sleep "$SLEEP_SECS"
 done
