@@ -104,6 +104,9 @@ ensure_tsz_binary() {
         "$ROOT_DIR/crates/tsz-emitter/src" \
         "$ROOT_DIR/crates/tsz-checker/src" \
         "$ROOT_DIR/crates/tsz-solver/src" \
+        "$ROOT_DIR/crates/tsz-parser/src" \
+        "$ROOT_DIR/crates/tsz-scanner/src" \
+        "$ROOT_DIR/crates/tsz-common/src" \
         "$ROOT_DIR/Cargo.toml" \
         "$ROOT_DIR/Cargo.lock" \
         -type f -newer "$tsz_bin" 2>/dev/null | grep -q .; then

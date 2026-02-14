@@ -1440,11 +1440,17 @@ impl<'a> Printer<'a> {
         match kind {
             // Identifiers
             k if k == SyntaxKind::Identifier as u16 => {
-                // Check for SubstituteArguments directive on 'arguments' identifier
+                // Check for substitution directives on identifier nodes.
                 if self.transforms.has_transform(idx) {
-                    if let Some(TransformDirective::SubstituteArguments) = self.transforms.get(idx)
-                    {
-                        self.write("_arguments");
+                    if let Some(directive) = self.transforms.get(idx) {
+                        match directive {
+                            TransformDirective::SubstituteArguments => self.write("_arguments"),
+                            TransformDirective::SubstituteThis { capture_name } => {
+                                let name = capture_name.clone();
+                                self.write(&name)
+                            }
+                            _ => self.emit_identifier(node),
+                        }
                     } else {
                         self.emit_identifier(node);
                     }
