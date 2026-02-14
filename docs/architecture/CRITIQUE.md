@@ -890,8 +890,10 @@ Checker maintains relation caches keyed by solver types and flags, does inferenc
   * Removed checker algorithm-evaluation cache fields (`application_eval_*`, `mapped_eval_*`) from persistent `TypeCache` in `crates/tsz-checker/src/context.rs`.
   * Updated `with_cache` / `with_cache_and_options` to initialize those evaluation caches as context-local ephemeral state instead of restoring them from persisted cache blobs.
   * Updated `with_parent` context construction to initialize evaluation caches as context-local state instead of sharing parent algorithm-evaluation cache state across checker contexts.
+  * Removed constructor-access algorithm cache fields (`abstract/protected/private constructor type` sets) from persistent `TypeCache`.
+  * Updated cache-restore paths to initialize constructor-access caches as context-local state instead of restoring them from persisted cache blobs.
   * Kept live `CheckerContext` behavior intact (evaluation caches still available intra-context), while shrinking persisted cache ownership toward AST/symbol/flow concerns.
-  * Added architecture contract coverage to enforce that `TypeCache` no longer exposes application/mapped evaluation cache fields.
+  * Added architecture contract coverage to enforce that `TypeCache` no longer exposes persisted eval or constructor-access algorithm cache fields.
 
 ---
 
