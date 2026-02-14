@@ -283,6 +283,10 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !state_type_analysis_src.contains("intern(TypeKey::Enum("),
         "state_type_analysis should use solver enum_type constructor API, not TypeKey::Enum interning"
     );
+    assert!(
+        state_type_analysis_src.contains("ensure_relation_input_ready("),
+        "state_type_analysis contextual-literal precondition setup should route through ensure_relation_input_ready"
+    );
 
     let function_type_src = fs::read_to_string("src/function_type.rs")
         .expect("failed to read src/function_type.rs for architecture guard");
