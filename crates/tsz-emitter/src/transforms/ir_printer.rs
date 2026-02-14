@@ -39,6 +39,8 @@ pub struct IRPrinter<'a> {
     transforms: Option<TransformContext>,
     /// Avoid duplicate trailing comments when a sequence explicitly carries one.
     suppress_function_trailing_extraction: bool,
+    /// Forces empty function bodies to emit in multi-line style.
+    force_multiline_empty_function_body: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -94,6 +96,7 @@ impl<'a> IRPrinter<'a> {
             source_text: None,
             transforms: None,
             suppress_function_trailing_extraction: false,
+            force_multiline_empty_function_body: false,
         }
     }
 
@@ -107,6 +110,7 @@ impl<'a> IRPrinter<'a> {
             source_text: None,
             transforms: None,
             suppress_function_trailing_extraction: false,
+            force_multiline_empty_function_body: false,
         }
     }
 
@@ -120,6 +124,7 @@ impl<'a> IRPrinter<'a> {
             source_text: Some(source_text),
             transforms: None,
             suppress_function_trailing_extraction: false,
+            force_multiline_empty_function_body: false,
         }
     }
 
@@ -610,9 +615,15 @@ impl<'a> IRPrinter<'a> {
 
                 // Emit body
                 for stmt in body {
+                    let prev_force_multiline = self.force_multiline_empty_function_body;
+                    self.force_multiline_empty_function_body = matches!(
+                        stmt,
+                        IRNode::FunctionDecl { name: fn_name, .. } if fn_name == name
+                    );
                     self.write_indent();
                     self.emit_node(stmt);
                     self.write_line();
+                    self.force_multiline_empty_function_body = prev_force_multiline;
                 }
 
                 self.decrease_indent();
@@ -1465,7 +1476,7 @@ impl<'a> IRPrinter<'a> {
 
         // Empty body with no defaults: emit as single-line { } if source was single-line
         if !has_defaults && body.is_empty() {
-            if is_body_source_single_line {
+            if is_body_source_single_line && !self.force_multiline_empty_function_body {
                 self.write("{ }");
             } else {
                 self.write("{");
