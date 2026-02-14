@@ -2736,7 +2736,10 @@ impl<'a> CheckerState<'a> {
         let visible_names = self.ctx.binder.collect_visible_symbol_names_filtered(
             self.ctx.arena,
             idx,
-            tsz_binder::symbol_flags::VALUE | tsz_binder::symbol_flags::TYPE,
+            // `Cannot find name` is emitted for value-space lookup failures.
+            // Restrict spelling candidates to value-meaning symbols so type-only
+            // declarations (e.g. `type A = ...`) don't trigger TS2552 in value positions.
+            tsz_binder::symbol_flags::VALUE,
         );
 
         let name_len = name.len();
