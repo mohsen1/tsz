@@ -98,6 +98,11 @@ if ! command -v codex >/dev/null 2>&1; then
   echo "codex CLI not found in PATH" >&2
   exit 1
 fi
+CODex_BIN="$(command -v codex)"
+CODex_BIN_VERSION="$( "$CODex_BIN" --version 2>/dev/null | head -n 1 )"
+if [[ -z "$CODex_BIN_VERSION" ]]; then
+  CODex_BIN_VERSION="<version unavailable>"
+fi
 
 read_key() {
   local key="$1"
@@ -232,7 +237,8 @@ fi
 
 cd "$WORKDIR"
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting loop mode=$MODE${SESSION_TAG} workdir=$WORKDIR config=$CONFIG_FILE prompt=$PROMPT_FILE" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting loop mode=$MODE${SESSION_TAG} workdir=$WORKDIR config=$CONFIG_FILE prompt=$PROMPT_FILE model=$MODEL" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] codex=${CODex_BIN} version=${CODex_BIN_VERSION}" | tee -a "$LOG_FILE"
 
 i=0
 while true; do
@@ -263,7 +269,7 @@ while true; do
     PROMPT_TEXT="${PROMPT_TEXT} Architecture loop requirements for this iteration: (1) drive work from ${ARCH_DOC} roadmap items, (2) if you complete any roadmap item(s), update ${ARCH_DOC} in the same iteration and mark status done/progress explicitly, (3) run relevant tests for every code change and include exact test commands plus pass/fail results in your iteration summary, (4) do not mark roadmap work done without tests."
   fi
 
-  CMD=(codex exec --model "$MODEL" -C "$WORKDIR")
+  CMD=("$CODex_BIN" exec --model "$MODEL" -C "$WORKDIR")
   if [[ -n "$MODEL_REASONING_EFFORT" ]]; then
     CMD+=( -c "model_reasoning_effort=\"${MODEL_REASONING_EFFORT}\"" )
   else
@@ -308,13 +314,11 @@ while true; do
         if (( rollout_warning_count <= 5 || rollout_warning_count % 20 == 0 )); then
           echo "$line" | tee -a "$LOG_FILE"
         fi
+        if (( rollout_warning_count % 200 == 0 )); then
+          echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i suppressed rollout-path warning count=${rollout_warning_count}" | tee -a "$LOG_FILE"
+        fi
         last_output_ts="$(date +%s)"
         progress_ts="$last_output_ts"
-        if (( rollout_warning_count >= 200 )); then
-          TERMINAL_FAILURE_DETECTED="true"
-          echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i repeated rollout-path warnings without progress; treating as terminal failure (count=$rollout_warning_count)" | tee -a "$LOG_FILE"
-          break
-        fi
         continue
       fi
 
