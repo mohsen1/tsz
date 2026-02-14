@@ -18,7 +18,7 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, TypeKey, apparent_primitive_members,
+    ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, apparent_primitive_members, visitor,
 };
 
 /// The kind of completion item, matching tsserver's ScriptElementKind values.
@@ -2114,60 +2114,47 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        let key = match interner.lookup(type_id) {
-            Some(key) => key,
-            None => return,
-        };
+        if let Some(shape_id) =
+            visitor::object_shape_id(interner, type_id).or_else(|| visitor::object_with_index_shape_id(interner, type_id))
+        {
+            let shape = interner.object_shape(shape_id);
+            for prop in shape.properties.iter() {
+                let name = interner.resolve_atom(prop.name);
+                self.add_property_completion(props, interner, name, prop.type_id, prop.is_method);
+            }
+            return;
+        }
 
-        match key {
-            TypeKey::Object(shape_id) => {
-                let shape = interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
-                    let name = interner.resolve_atom(prop.name);
-                    self.add_property_completion(
-                        props,
-                        interner,
-                        name,
-                        prop.type_id,
-                        prop.is_method,
-                    );
-                }
+        if let Some(members) =
+            visitor::union_list_id(interner, type_id).or_else(|| visitor::intersection_list_id(interner, type_id))
+        {
+            let members = interner.type_list(members);
+            for &member in members.iter() {
+                self.collect_properties_for_type(member, interner, checker, visited, props);
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
-                let shape = interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
-                    let name = interner.resolve_atom(prop.name);
-                    self.add_property_completion(
-                        props,
-                        interner,
-                        name,
-                        prop.type_id,
-                        prop.is_method,
-                    );
-                }
-            }
-            TypeKey::Union(members) | TypeKey::Intersection(members) => {
-                let members = interner.type_list(members);
-                for &member in members.iter() {
-                    self.collect_properties_for_type(member, interner, checker, visited, props);
-                }
-            }
-            TypeKey::Application(app) => {
-                let app = interner.type_application(app);
-                self.collect_properties_for_type(app.base, interner, checker, visited, props);
-            }
-            TypeKey::Literal(literal) => {
-                if let Some(kind) = self.literal_intrinsic_kind(&literal) {
-                    self.collect_intrinsic_members(kind, interner, props);
-                }
-            }
-            TypeKey::TemplateLiteral(_) => {
-                self.collect_intrinsic_members(IntrinsicKind::String, interner, props);
-            }
-            TypeKey::Intrinsic(kind) => {
+            return;
+        }
+
+        if let Some(app) = visitor::application_id(interner, type_id) {
+            let app = interner.type_application(app);
+            self.collect_properties_for_type(app.base, interner, checker, visited, props);
+            return;
+        }
+
+        if let Some(literal) = visitor::literal_value(interner, type_id) {
+            if let Some(kind) = self.literal_intrinsic_kind(&literal) {
                 self.collect_intrinsic_members(kind, interner, props);
             }
-            _ => {}
+            return;
+        }
+
+        if visitor::template_literal_id(interner, type_id).is_some() {
+            self.collect_intrinsic_members(IntrinsicKind::String, interner, props);
+            return;
+        }
+
+        if let Some(kind) = visitor::intrinsic_kind(interner, type_id) {
+            self.collect_intrinsic_members(kind, interner, props);
         }
     }
 
@@ -2517,9 +2504,7 @@ impl<'a> Completions<'a> {
         let interner = self.interner?;
 
         // Look up the callable signature
-        if let Some(key) = interner.lookup(func_type)
-            && let TypeKey::Callable(callable_id) = key
-        {
+        if let Some(callable_id) = visitor::callable_shape_id(interner, func_type) {
             let callable = interner.callable_shape(callable_id);
             // Use the first call signature
             if let Some(first_sig) = callable.call_signatures.first()
