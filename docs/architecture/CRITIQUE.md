@@ -1058,6 +1058,17 @@ Reduce “tribal knowledge” and make refactors safe.
 
 * New contributors can add a type feature by touching solver + tests, without spelunking.
 
+### Status update (2026-02-14)
+
+* **Status:** In progress
+* **Completed in this iteration (Milestone 10 sub-item):**
+  * Added dedicated boundary contract doc:
+    * `docs/architecture/BOUNDARIES.md`
+  * Added dedicated contribution checklist doc:
+    * `docs/architecture/CONTRIBUTION_CHECKLIST.md`
+  * Wired architecture report artifact generation into `scripts/check-checker-boundaries.sh`:
+    * emits `artifacts/architecture/arch_guard_report.json` on each run.
+
 ---
 
 ## “First 5 PRs” (a concrete jumpstart sequence)
