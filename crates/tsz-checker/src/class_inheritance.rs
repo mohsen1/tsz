@@ -21,19 +21,17 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
 
     /// Check for circular inheritance in a class declaration
     ///
-    /// Returns Ok(()) if no cycle is detected, Err(()) if a cycle is found.
-    /// Emits appropriate diagnostic error when cycle is detected.
-    #[allow(clippy::result_unit_err)]
+    /// Returns `true` if a cycle is found and diagnostics were emitted.
     pub fn check_class_inheritance_cycle(
         &mut self,
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
-    ) -> Result<(), ()> {
+    ) -> bool {
         use tsz_scanner::SyntaxKind;
 
         let current_sym = match self.ctx.binder.get_node_symbol(class_idx) {
             Some(sym) => sym,
-            None => return Ok(()), // No symbol = no inheritance possible
+            None => return false, // No symbol = no inheritance possible
         };
 
         // Collect parent symbols from heritage clauses
@@ -60,7 +58,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                     // Check for direct self-reference
                     if parent_sym == current_sym {
                         self.error_circular_class_inheritance_for_symbol(current_sym);
-                        return Err(()); // Signal to skip type checking
+                        return true; // Signal to skip type checking
                     }
                     parent_symbols.push(parent_sym);
                 }
@@ -74,7 +72,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             for sym in cycle_symbols {
                 self.error_circular_class_inheritance_for_symbol(sym);
             }
-            return Err(());
+            return true;
         }
 
         // DEBUG: Log when we successfully register inheritance
@@ -88,7 +86,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         self.ctx
             .inheritance_graph
             .add_inheritance(current_sym, &parent_symbols);
-        Ok(())
+        false
     }
 
     /// Detect cycles using DFS traversal on the InheritanceGraph

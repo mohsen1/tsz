@@ -4075,7 +4075,7 @@ impl<'a> CheckerState<'a> {
         // This prevents stack overflow from infinite recursion in get_class_instance_type
         // Must be done BEFORE any type checking to catch cycles early
         let mut checker = ClassInheritanceChecker::new(&mut self.ctx);
-        if let Err(()) = checker.check_class_inheritance_cycle(stmt_idx, class) {
+        if checker.check_class_inheritance_cycle(stmt_idx, class) {
             return; // Cycle detected - error already emitted, skip all type checking
         }
 

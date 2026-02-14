@@ -1753,38 +1753,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             Some(TypeKey::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
-                let mut prefix_len = 0usize;
-                let mut target = None;
-                #[allow(clippy::explicit_counter_loop)]
-                for (i, elem) in elements.iter().enumerate() {
-                    if elem.rest {
-                        if var_map.contains_key(&elem.type_id) {
-                            // Count trailing elements after the variadic part, but allow optional
-                            // tail elements to be omitted when they don't match.
-                            let tail = &elements[i + 1..];
-                            let min_index = rest_start + prefix_len;
-                            let mut trailing_count = 0usize;
-                            let mut arg_index = arg_types.len();
-                            for tail_elem in tail.iter().rev() {
-                                if arg_index <= min_index {
-                                    break;
-                                }
-                                let arg_type = arg_types[arg_index - 1];
-                                let assignable =
-                                    self.checker.is_assignable_to(arg_type, tail_elem.type_id);
-                                if tail_elem.optional && !assignable {
-                                    break;
-                                }
-                                trailing_count += 1;
-                                arg_index -= 1;
-                            }
-                            target = Some((rest_start + prefix_len, elem.type_id, trailing_count));
+                elements
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, elem)| {
+                        if !elem.rest {
+                            return None;
                         }
-                        break;
-                    }
-                    prefix_len += 1;
-                }
-                target
+                        if !var_map.contains_key(&elem.type_id) {
+                            return None;
+                        }
+
+                        // Count trailing elements after the variadic part, but allow optional
+                        // tail elements to be omitted when they don't match.
+                        let tail = &elements[i + 1..];
+                        let min_index = rest_start + i;
+                        let mut trailing_count = 0usize;
+                        let mut arg_index = arg_types.len();
+                        for tail_elem in tail.iter().rev() {
+                            if arg_index <= min_index {
+                                break;
+                            }
+                            let arg_type = arg_types[arg_index - 1];
+                            let assignable =
+                                self.checker.is_assignable_to(arg_type, tail_elem.type_id);
+                            if tail_elem.optional && !assignable {
+                                break;
+                            }
+                            trailing_count += 1;
+                            arg_index -= 1;
+                        }
+                        Some((rest_start + i, elem.type_id, trailing_count))
+                    })
             }
             _ => None,
         }?;
