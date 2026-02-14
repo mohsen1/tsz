@@ -469,6 +469,14 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         assignment_checker_src.contains("check_assignable_or_report_at("),
         "assignment compatibility should route through check_assignable_or_report_at for centralized mismatch policy"
     );
+    assert!(
+        assignment_checker_src.contains("ensure_relation_input_ready("),
+        "assignment checker relation precondition setup should route through ensure_relation_input_ready"
+    );
+    assert!(
+        !assignment_checker_src.contains("ensure_application_symbols_resolved("),
+        "assignment checker should not manually orchestrate application-symbol preconditions"
+    );
 
     let type_checking_src = fs::read_to_string("src/type_checking.rs")
         .expect("failed to read src/type_checking.rs for architecture guard");
