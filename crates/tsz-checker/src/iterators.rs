@@ -45,11 +45,11 @@ use super::context::CheckerContext;
 use super::types::diagnostics::{
     Diagnostic, diagnostic_codes, diagnostic_messages, format_message,
 };
-use crate::query_boundaries::iterators as query;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::type_queries;
 
 use tsz_solver::types::Visibility;
 /// Type checker for iterators and iterables.
@@ -670,10 +670,10 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
             // Fallback: Check if object has a 'next' method that returns Promise
             if prop_name.as_ref() == "next" && prop.is_method {
                 // Check if the return type is Promise-like using Solver helper
-                if let Some(return_type) = query::function_return_type(self.ctx.types, prop.type_id)
+                if let Some(return_type) = type_queries::get_function_return_type(self.ctx.types, prop.type_id)
                 {
                     // Use Solver helper to check if return type is promise-like
-                    if query::is_promise_like(self.ctx, return_type) {
+                    if type_queries::is_promise_like(self.ctx, return_type) {
                         return true;
                     }
                 }
@@ -695,7 +695,7 @@ impl<'a, 'ctx> IteratorChecker<'a, 'ctx> {
 
     fn is_valid_for_in_target(&self, type_id: TypeId) -> bool {
         // Use Solver helper to check if type is valid for for...in loops
-        query::is_valid_for_in_target(self.ctx.types, type_id)
+        type_queries::is_valid_for_in_target(self.ctx.types, type_id)
     }
 
     fn check_expression(&mut self, idx: NodeIndex) -> TypeId {
