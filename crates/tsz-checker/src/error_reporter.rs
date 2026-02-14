@@ -1026,11 +1026,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Suppress TS2304 in files with real syntax errors (not just conflict markers)
-        // to avoid cascading noise. Conflict markers (TS1185) don't affect AST structure.
-        if self.has_syntax_parse_errors() {
-            return;
-        }
+        // Note: we do NOT suppress TS2304 at file level for syntax errors.
+        // The node-level check above handles nodes directly affected by parse errors.
+        // tsc still emits TS2304 for truly undefined names even in files with parse errors.
 
         // Check if this is an ES2015+ type that requires a specific lib
         // If so, emit TS2583 with a suggestion to change the lib
