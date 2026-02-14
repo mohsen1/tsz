@@ -2420,6 +2420,34 @@ fn test_number_index_signature_type_mismatch() {
 }
 
 #[test]
+fn test_number_index_signature_requires_numeric_property_or_index() {
+    // CRITICAL: { one: number } should NOT match { [x: number]: number }
+    // when source has no numeric keys and no index signature.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("one"),
+        TypeId::NUMBER,
+    )]);
+
+    let target_shape = ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+        }),
+        string_index: None,
+    };
+    let target = interner.object_with_index(target_shape);
+
+    assert!(!checker.is_subtype_of(source, target));
+}
+
+#[test]
 fn test_number_index_signature_method_bivariant_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
