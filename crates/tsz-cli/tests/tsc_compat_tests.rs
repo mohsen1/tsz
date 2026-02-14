@@ -1,5 +1,3 @@
-#![allow(clippy::print_stderr)]
-
 //! Integration tests that compare tsz output against tsc (TypeScript compiler) output
 //! to ensure they match character-by-character.
 //!
@@ -185,7 +183,7 @@ fn tsc_available() -> bool {
 #[test]
 fn tsc_compat_cannot_find_name_plain() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -208,7 +206,7 @@ fn tsc_compat_cannot_find_name_plain() {
 #[test]
 fn tsc_compat_cannot_find_name_pretty() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -231,7 +229,7 @@ fn tsc_compat_cannot_find_name_pretty() {
 #[test]
 fn tsc_compat_multiple_cannot_find_name_plain() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -257,7 +255,7 @@ fn tsc_compat_multiple_cannot_find_name_plain() {
 #[test]
 fn tsc_compat_multiple_cannot_find_name_pretty() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -375,7 +373,7 @@ fn compare_output_structure(tsc_output: &str, tsz_output: &str) -> Option<String
 #[test]
 fn tsc_compat_structure_type_error_plain() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -403,7 +401,7 @@ fn tsc_compat_structure_type_error_plain() {
 #[test]
 fn tsc_compat_structure_type_error_pretty() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -429,7 +427,7 @@ fn tsc_compat_structure_type_error_pretty() {
 #[test]
 fn tsc_compat_no_errors_plain() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -460,7 +458,7 @@ fn tsc_compat_no_errors_plain() {
 #[test]
 fn tsc_compat_exit_code_no_errors() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -493,7 +491,7 @@ fn tsc_compat_exit_code_no_errors() {
 #[test]
 fn tsc_compat_exit_code_with_errors() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -530,7 +528,7 @@ fn tsc_compat_exit_code_with_errors() {
 #[test]
 fn tsc_compat_line_endings_normalized() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -581,7 +579,7 @@ fn tsc_compat_line_endings_normalized() {
 #[test]
 fn tsc_compat_plain_format_structure() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -623,7 +621,7 @@ fn tsc_compat_plain_format_structure() {
 #[test]
 fn tsc_compat_pretty_format_structure() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
@@ -693,7 +691,7 @@ fn tsc_compat_pretty_format_structure() {
 #[test]
 fn tsc_compat_double_digit_line_number_pretty() {
     if !tsc_available() {
-        eprintln!("SKIP: tsc not found in PATH");
+        println!("SKIP: tsc not found in PATH");
         return;
     }
 
