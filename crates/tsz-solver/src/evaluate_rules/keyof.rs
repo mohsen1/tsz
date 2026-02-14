@@ -160,10 +160,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut key_types: Vec<TypeId> = shape
                         .properties
                         .iter()
-                        .map(|p| {
-                            self.interner()
-                                .intern(TypeKey::Literal(LiteralValue::String(p.name)))
-                        })
+                        .map(|p| self.interner().literal_string_atom(p.name))
                         .collect();
 
                     if shape.string_index.is_some() {
