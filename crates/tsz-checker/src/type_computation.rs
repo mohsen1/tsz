@@ -2201,6 +2201,14 @@ impl<'a> CheckerState<'a> {
                             &message,
                             diagnostic_codes::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
                         );
+
+                        // In destructuring assignment targets, unresolved shorthand names
+                        // are already invalid (TS18004). Don't synthesize a required
+                        // object property from this invalid entry; doing so can produce
+                        // follow-on missing-property errors (e.g. TS2741) that tsc omits.
+                        if self.ctx.in_destructuring_target {
+                            continue;
+                        }
                         TypeId::ANY
                     } else {
                         self.get_type_of_node(elem_idx)
