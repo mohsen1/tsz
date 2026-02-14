@@ -1841,6 +1841,7 @@ impl<'a> CheckerState<'a> {
                     pattern_type,
                     var_decl.initializer,
                 );
+                self.report_empty_array_destructuring_bounds(var_decl.name, var_decl.initializer);
             }
 
             // Ensure binding element identifiers get the correct inferred types.
@@ -1870,6 +1871,56 @@ impl<'a> CheckerState<'a> {
                     name_node.kind,
                 );
             }
+        }
+    }
+
+    fn report_empty_array_destructuring_bounds(
+        &mut self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) {
+        let Some(init_node) = self.ctx.arena.get(initializer_idx) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(init_lit) = self.ctx.arena.get_literal_expr(init_node) else {
+            return;
+        };
+        if !init_lit.elements.nodes.is_empty() {
+            return;
+        }
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        for (index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
+            if element_idx.is_none() {
+                continue;
+            }
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
+                continue;
+            };
+            if element_data.dot_dot_dot_token {
+                break;
+            }
+
+            self.error_at_node(
+                element_data.name,
+                &format!("Tuple type '[]' of length '0' has no element at index '{}'.", index),
+                crate::types::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+            );
         }
     }
 

@@ -619,6 +619,19 @@ impl<'a> CheckerState<'a> {
         // In ES5 mode (without downlevelIteration), array destructuring requires actual arrays.
         // Emit TS2461 if the type is not an array type.
         if self.ctx.compiler_options.target.is_es5() && !is_assignment_array_target {
+            // Nested binding patterns can be fed an over-widened union from positional
+            // destructuring inference (e.g. `[a, [b]] = [1, ["x"]]`). tsc does not report
+            // TS2461 for these cases.
+            if init_expr.is_none()
+                && tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_type)
+                    .is_some_and(|members| {
+                        members
+                            .iter()
+                            .any(|&member| self.is_array_or_tuple_type(member))
+                    })
+            {
+                return true;
+            }
             if self.is_array_or_tuple_type(resolved_type) {
                 return true;
             }
