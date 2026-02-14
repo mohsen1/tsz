@@ -377,7 +377,8 @@ impl<'a> TypeInstantiator<'a> {
                         parent_id: p.parent_id,
                     })
                     .collect();
-                self.interner.object(instantiated)
+                self.interner
+                    .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
             }
 
             // Object with index signatures: instantiate all types
@@ -414,7 +415,7 @@ impl<'a> TypeInstantiator<'a> {
                     properties: instantiated_props,
                     string_index: instantiated_string_idx,
                     number_index: instantiated_number_idx,
-                    symbol: None,
+                    symbol: shape.symbol,
                 })
             }
 
@@ -516,7 +517,9 @@ impl<'a> TypeInstantiator<'a> {
                     call_signatures: instantiated_call,
                     construct_signatures: instantiated_construct,
                     properties: instantiated_props,
-                    ..Default::default()
+                    string_index: shape.string_index.clone(),
+                    number_index: shape.number_index.clone(),
+                    symbol: shape.symbol,
                 })
             }
 

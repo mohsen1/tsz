@@ -156,6 +156,64 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn is_abstract_constructor_target(&self, ty: TypeId) -> bool {
+        let Some(callable) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty)
+        else {
+            return false;
+        };
+        if callable.construct_signatures.is_empty() {
+            return false;
+        }
+        let Some(sym_id) = callable.symbol else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        (symbol.flags & tsz_binder::symbol_flags::ABSTRACT) != 0
+    }
+
+    fn property_visibility_pair(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<(tsz_solver::Visibility, tsz_solver::Visibility)> {
+        let source_with_shape = {
+            let direct = source;
+            let resolved = self.resolve_type_for_property_access(direct);
+            let evaluated = self.judge_evaluate(resolved);
+            [direct, resolved, evaluated]
+                .into_iter()
+                .find(|candidate| {
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                })?
+        };
+        let target_with_shape = {
+            let direct = target;
+            let resolved = self.resolve_type_for_property_access(direct);
+            let evaluated = self.judge_evaluate(resolved);
+            [direct, resolved, evaluated]
+                .into_iter()
+                .find(|candidate| {
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                })?
+        };
+        let source_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, source_with_shape)?;
+        let target_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_with_shape)?;
+        let source_prop = source_shape
+            .properties
+            .iter()
+            .find(|p| p.name == property_name)?;
+        let target_prop = target_shape
+            .properties
+            .iter()
+            .find(|p| p.name == property_name)?;
+        Some((source_prop.visibility, target_prop.visibility))
+    }
+
     fn missing_single_required_property(
         &mut self,
         source: TypeId,
@@ -256,13 +314,16 @@ impl<'a> CheckerState<'a> {
                         true,
                         true,
                     );
-                    let target_sig = self.format_signature_text(
+                    let mut target_sig = self.format_signature_text(
                         &target_tparams,
                         &target_params,
                         target_return,
                         true,
                         true,
                     );
+                    if self.is_abstract_constructor_target(target) {
+                        target_sig = format!("abstract {}", target_sig);
+                    }
                     let assignable = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_sig, &target_sig],
@@ -280,13 +341,16 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 let source_str = self.format_type_for_assignability_message(source);
-                let target_sig = self.format_signature_text(
+                let mut target_sig = self.format_signature_text(
                     &target_tparams,
                     &target_params,
                     target_return,
                     true,
                     false,
                 );
+                if self.is_abstract_constructor_target(target) {
+                    target_sig = format!("abstract {}", target_sig);
+                }
                 return Some(format_message(
                     diagnostic_messages::TYPE_PROVIDES_NO_MATCH_FOR_THE_SIGNATURE,
                     &[&source_str, &target_sig],
@@ -926,6 +990,106 @@ impl<'a> CheckerState<'a> {
                     &[&prop_name],
                 );
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
+            }
+
+            SubtypeFailureReason::PropertyVisibilityMismatch {
+                property_name,
+                source_visibility,
+                target_visibility,
+            } => {
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
+                let base = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let detail = match (source_visibility, target_visibility) {
+                    (tsz_solver::Visibility::Public, tsz_solver::Visibility::Private) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                            &[&prop_name, &target_str, &source_str],
+                        )
+                    }
+                    (tsz_solver::Visibility::Private, tsz_solver::Visibility::Public) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                            &[&prop_name, &source_str, &target_str],
+                        )
+                    }
+                    (tsz_solver::Visibility::Public, tsz_solver::Visibility::Protected) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
+                            &[&prop_name, &target_str, &source_str],
+                        )
+                    }
+                    (tsz_solver::Visibility::Protected, tsz_solver::Visibility::Public) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
+                            &[&prop_name, &source_str, &target_str],
+                        )
+                    }
+                    _ => format_message(
+                        diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
+                        &[&prop_name],
+                    ),
+                };
+                let message = format!("{} {}", base, detail);
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                )
+            }
+
+            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
+                let base = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                let detail = match self.property_visibility_pair(source, target, *property_name) {
+                    Some((tsz_solver::Visibility::Public, tsz_solver::Visibility::Private)) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                            &[&prop_name, &target_str, &source_str],
+                        )
+                    }
+                    Some((tsz_solver::Visibility::Private, tsz_solver::Visibility::Public)) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                            &[&prop_name, &source_str, &target_str],
+                        )
+                    }
+                    Some((tsz_solver::Visibility::Public, tsz_solver::Visibility::Protected)) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
+                            &[&prop_name, &target_str, &source_str],
+                        )
+                    }
+                    Some((tsz_solver::Visibility::Protected, tsz_solver::Visibility::Public)) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
+                            &[&prop_name, &source_str, &target_str],
+                        )
+                    }
+                    _ => format_message(
+                        diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
+                        &[&prop_name],
+                    ),
+                };
+                let message = format!("{} {}", base, detail);
+                Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                )
             }
 
             SubtypeFailureReason::ExcessProperty {
