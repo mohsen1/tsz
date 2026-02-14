@@ -543,7 +543,7 @@ impl ParserState {
     /// Matches tsc's `nextTokenIsIdentifierOrKeywordOnSameLine`.
     /// Used by isStartOfStatement() for modifier keywords (static, public, etc.)
     /// to distinguish class-member-like context from standalone expressions.
-    fn look_ahead_next_is_identifier_or_keyword_on_same_line(&mut self) -> bool {
+    pub(super) fn look_ahead_next_is_identifier_or_keyword_on_same_line(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token(); // skip the modifier keyword
