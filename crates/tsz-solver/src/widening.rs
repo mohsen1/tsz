@@ -129,5 +129,5 @@ pub fn apply_const_assertion(db: &dyn crate::TypeDatabase, type_id: TypeId) -> T
 }
 
 #[cfg(test)]
-#[path = "tests/widening_tests.rs"]
+#[path = "../tests/widening_tests.rs"]
 mod tests;

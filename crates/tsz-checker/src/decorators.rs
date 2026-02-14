@@ -331,5 +331,5 @@ pub enum DecoratorKind {
 }
 
 #[cfg(test)]
-#[path = "tests/decorators.rs"]
+#[path = "../tests/decorators.rs"]
 mod tests;

@@ -3054,5 +3054,5 @@ impl<'a> FlowAnalyzer<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/control_flow.rs"]
+#[path = "../tests/control_flow.rs"]
 mod tests;

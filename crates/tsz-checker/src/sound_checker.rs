@@ -171,5 +171,5 @@ impl<'a> SoundFlowAnalyzer<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/sound_checker.rs"]
+#[path = "../tests/sound_checker.rs"]
 mod tests;

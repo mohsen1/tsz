@@ -788,5 +788,5 @@ pub struct SymbolIndexStats {
 }
 
 #[cfg(test)]
-#[path = "tests/symbol_index_tests.rs"]
+#[path = "../tests/symbol_index_tests.rs"]
 mod symbol_index_tests;

@@ -105,7 +105,7 @@ impl<'a> CheckerState<'a> {
                 return return_with_cleanup!(TypeId::ERROR); // Missing function/method/accessor data - propagate error
             };
 
-        let (function_is_async, function_is_generator) =
+        let (_function_is_async, function_is_generator) =
             if let Some(func) = self.ctx.arena.get_function(node) {
                 (func.is_async, func.asterisk_token)
             } else if let Some(method) = self.ctx.arena.get_method_decl(node) {

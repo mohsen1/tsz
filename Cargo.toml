@@ -159,6 +159,7 @@ trivially_copy_pass_by_ref = "allow"
 name = "tsz"
 version.workspace = true
 edition.workspace = true
+autotests = false
 description = "Core TypeScript compiler and type checker library"
 repository.workspace = true
 license.workspace = true

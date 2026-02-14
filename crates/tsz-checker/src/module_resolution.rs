@@ -174,5 +174,5 @@ pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-#[path = "tests/module_resolution.rs"]
+#[path = "../tests/module_resolution.rs"]
 mod tests;

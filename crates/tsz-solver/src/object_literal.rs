@@ -190,5 +190,5 @@ impl<'a> ObjectLiteralBuilder<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/object_literal_tests.rs"]
+#[path = "../tests/object_literal_tests.rs"]
 mod tests;

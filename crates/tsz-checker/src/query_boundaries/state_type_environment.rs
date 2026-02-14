@@ -71,5 +71,5 @@ pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Op
 }
 
 #[cfg(test)]
-#[path = "tests/state_type_environment.rs"]
+#[path = "../../tests/state_type_environment.rs"]
 mod tests;

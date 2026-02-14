@@ -28,9 +28,9 @@
 //! ```
 
 use crate::types::{IndexInfo, IndexSignature, ObjectShapeId};
+use crate::utils;
 use crate::visitor::TypeVisitor;
 use crate::{TypeDatabase, TypeId};
-use crate::utils;
 
 /// Distinguishes between string and numeric index signatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

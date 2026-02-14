@@ -835,5 +835,5 @@ impl Default for UnsoundnessAudit {
 }
 
 #[cfg(test)]
-#[path = "tests/unsoundness_audit_tests.rs"]
+#[path = "../tests/unsoundness_audit_tests.rs"]
 mod tests;

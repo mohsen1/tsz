@@ -356,5 +356,5 @@ pub fn format_ts_error_code(code: u32) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/diagnostics_tests.rs"]
+#[path = "../tests/diagnostics_tests.rs"]
 mod diagnostics_tests;

@@ -167,5 +167,5 @@ impl TypeIdExt for TypeId {
 }
 
 #[cfg(test)]
-#[path = "tests/utils_tests.rs"]
+#[path = "../tests/utils_tests.rs"]
 mod tests;

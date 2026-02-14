@@ -431,5 +431,5 @@ impl Default for TransformContext {
 }
 
 #[cfg(test)]
-#[path = "tests/transform_context.rs"]
+#[path = "../tests/transform_context.rs"]
 mod tests;

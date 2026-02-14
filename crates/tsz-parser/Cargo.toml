@@ -3,6 +3,7 @@ name = "tsz-parser"
 description = "TypeScript parser and AST types for the tsz compiler"
 version.workspace = true
 edition.workspace = true
+autotests = false
 repository.workspace = true
 license.workspace = true
 authors.workspace = true

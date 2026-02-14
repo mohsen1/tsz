@@ -683,5 +683,5 @@ impl<'a> ES5DestructuringTransformer<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/destructuring_es5.rs"]
+#[path = "../../tests/destructuring_es5.rs"]
 mod tests;

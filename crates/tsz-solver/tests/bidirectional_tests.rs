@@ -3,7 +3,7 @@
 //! These tests verify that contextual types are used properly for type inference
 //! in array literals, object literals, return statements, and arrow functions.
 
-use super::super::*;
+use super::*;
 use crate::{FunctionShape, ParamInfo, PropertyInfo, TupleElement};
 
 #[test]

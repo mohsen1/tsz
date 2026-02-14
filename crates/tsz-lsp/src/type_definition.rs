@@ -299,5 +299,5 @@ impl<'a> TypeDefinitionProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/type_definition_tests.rs"]
+#[path = "../tests/type_definition_tests.rs"]
 mod type_definition_tests;

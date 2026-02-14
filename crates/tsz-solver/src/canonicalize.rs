@@ -625,5 +625,5 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 }
 
 #[cfg(test)]
-#[path = "tests/canonicalize_tests.rs"]
+#[path = "../tests/canonicalize_tests.rs"]
 mod tests;

@@ -122,5 +122,5 @@ impl<'a> ReachabilityAnalyzer<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/reachability_analyzer.rs"]
+#[path = "../tests/reachability_analyzer.rs"]
 mod tests;

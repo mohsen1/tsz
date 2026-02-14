@@ -338,5 +338,5 @@ impl InheritanceGraph {
 }
 
 #[cfg(test)]
-#[path = "tests/inheritance_tests.rs"]
+#[path = "../tests/inheritance_tests.rs"]
 mod tests;

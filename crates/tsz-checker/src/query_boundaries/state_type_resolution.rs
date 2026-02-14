@@ -56,5 +56,5 @@ pub(crate) fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
 }
 
 #[cfg(test)]
-#[path = "tests/state_type_resolution.rs"]
+#[path = "../../tests/state_type_resolution.rs"]
 mod tests;

@@ -504,5 +504,5 @@ impl<'a> EnumES5Emitter<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/enum_es5.rs"]
+#[path = "../../tests/enum_es5.rs"]
 mod tests;

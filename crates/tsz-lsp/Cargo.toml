@@ -3,6 +3,7 @@ name = "tsz-lsp"
 description = "Language Server Protocol implementation for the tsz compiler"
 version.workspace = true
 edition.workspace = true
+autotests = false
 repository.workspace = true
 license.workspace = true
 authors.workspace = true
