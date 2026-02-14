@@ -495,15 +495,13 @@ impl<'a> CheckerState<'a> {
                     // Check if this is a weak union violation or excess property case
                     // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
                     // We should skip the TS2322 error regardless of check_excess_properties flag
-                    if self.should_report_assignability_mismatch(actual, expected, arg_idx) {
-                        if !self.should_suppress_weak_key_arg_mismatch(
-                            new_expr.expression,
-                            args,
-                            index,
-                            actual,
-                        ) {
-                            self.error_argument_not_assignable_at(actual, expected, arg_idx);
-                        }
+                    if !self.should_suppress_weak_key_arg_mismatch(
+                        new_expr.expression,
+                        args,
+                        index,
+                        actual,
+                    ) {
+                        let _ = self.check_argument_assignable_or_report(actual, expected, arg_idx);
                     }
                 }
                 TypeId::ERROR
@@ -1637,33 +1635,31 @@ impl<'a> CheckerState<'a> {
 
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
-                    if self.should_report_assignability_mismatch(actual, expected, arg_idx) {
-                        if !self.should_suppress_weak_key_arg_mismatch(
-                            callee_expr,
-                            args,
-                            index,
-                            actual,
-                        ) {
-                            // Try to elaborate: for object literal arguments, report TS2322
-                            // on specific mismatched properties instead of TS2345 on the
-                            // whole argument. This matches tsc behavior.
-                            if !self.try_elaborate_object_literal_arg_error(arg_idx, expected) {
-                                self.error_argument_not_assignable_at(actual, expected, arg_idx);
-                            }
+                    if !self.should_suppress_weak_key_arg_mismatch(
+                        callee_expr,
+                        args,
+                        index,
+                        actual,
+                    ) {
+                        // Try to elaborate: for object literal arguments, report TS2322
+                        // on specific mismatched properties instead of TS2345 on the
+                        // whole argument. This matches tsc behavior.
+                        if !self.try_elaborate_object_literal_arg_error(arg_idx, expected) {
+                            let _ =
+                                self.check_argument_assignable_or_report(actual, expected, arg_idx);
                         }
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
-                    if self.should_report_assignability_mismatch(actual, expected, last_arg) {
-                        if !self.should_suppress_weak_key_arg_mismatch(
-                            callee_expr,
-                            args,
-                            index,
-                            actual,
-                        ) {
-                            if !self.try_elaborate_object_literal_arg_error(last_arg, expected) {
-                                self.error_argument_not_assignable_at(actual, expected, last_arg);
-                            }
+                    if !self.should_suppress_weak_key_arg_mismatch(
+                        callee_expr,
+                        args,
+                        index,
+                        actual,
+                    ) {
+                        if !self.try_elaborate_object_literal_arg_error(last_arg, expected) {
+                            let _ =
+                                self.check_argument_assignable_or_report(actual, expected, last_arg);
                         }
                     }
                 }

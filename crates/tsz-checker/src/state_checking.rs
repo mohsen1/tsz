@@ -1611,17 +1611,12 @@ impl<'a> CheckerState<'a> {
                         } else if is_destructuring {
                             // For destructuring patterns, keep emitting a generic TS2322 error
                             // instead of detailed property mismatch errors (TS2326-style detail).
-                            if checker.should_report_assignability_mismatch(
+                            let _ = checker.check_assignable_or_report_generic_at(
                                 init_type,
                                 declared_type,
                                 var_decl.initializer,
-                            ) {
-                                checker.error_type_not_assignable_generic_at(
-                                    init_type,
-                                    declared_type,
-                                    decl_idx,
-                                );
-                            }
+                                decl_idx,
+                            );
                         } else if checker.check_assignable_or_report_at(
                             init_type,
                             declared_type,

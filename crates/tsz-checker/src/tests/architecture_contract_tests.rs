@@ -487,6 +487,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
             || state_checking_src.contains("check_assignable_or_report_at("),
         "state_checking assignment-style checks should route through centralized assignability gateways"
     );
+    assert!(
+        state_checking_src.contains("check_assignable_or_report_generic_at("),
+        "state_checking destructuring generic mismatch checks should route through check_assignable_or_report_generic_at"
+    );
 
     let state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
         .expect("failed to read src/state_checking_members.rs for architecture guard");
@@ -500,6 +504,13 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     assert!(
         type_computation_src.contains("check_assignable_or_report("),
         "type_computation mismatch checks should route through check_assignable_or_report"
+    );
+
+    let type_computation_complex_src = fs::read_to_string("src/type_computation_complex.rs")
+        .expect("failed to read src/type_computation_complex.rs for architecture guard");
+    assert!(
+        type_computation_complex_src.contains("check_argument_assignable_or_report("),
+        "type_computation_complex argument mismatch checks should route through check_argument_assignable_or_report"
     );
 
     let dispatch_src =
