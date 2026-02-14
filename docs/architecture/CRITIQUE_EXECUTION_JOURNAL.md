@@ -195,3 +195,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 183: removed remaining non-test emitter imports of checker `TypeCache` by introducing emitter-local `TypeCacheView` (`crates/tsz-emitter/src/type_cache_view.rs`) and migrating `usage_analyzer` / `type_printer` to consume that view.
 - [x] Migration action 184: updated `crates/tsz-cli/src/driver_resolution.rs` declaration-emit usage analysis path to build/pass `TypeCacheView` instead of passing checker `TypeCache` directly into emitter internals.
 - [x] Migration action 185: added emitter dependency-direction freeze guardrail in `scripts/arch_guard.py` to fail on non-test `tsz-emitter` imports of `tsz_checker::...`.
+- [x] Migration action 186: removed direct checker crate dependency from `crates/tsz-emitter/Cargo.toml` after emitter migration to `TypeCacheView`.
