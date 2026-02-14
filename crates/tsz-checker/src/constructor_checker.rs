@@ -184,7 +184,8 @@ impl<'a> CheckerState<'a> {
             return return_type;
         }
 
-        let mut refined_return = self.ctx.types.intersection2(return_type, base_arg_type);
+        let factory = self.ctx.types.factory();
+        let mut refined_return = factory.intersection2(return_type, base_arg_type);
 
         if let Some(base_instance_type) = self.instance_type_from_constructor_type(base_arg_type) {
             refined_return = self
@@ -267,6 +268,7 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<TypeId> {
+        let factory = self.ctx.types.factory();
         if ctor_type == TypeId::ERROR {
             return None;
         }
@@ -298,7 +300,7 @@ impl<'a> CheckerState<'a> {
                     let instance_type = if returns.len() == 1 {
                         returns[0]
                     } else {
-                        self.ctx.types.union(returns)
+                        factory.union(returns)
                     };
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
@@ -324,7 +326,7 @@ impl<'a> CheckerState<'a> {
                     let instance_type = if instance_types.len() == 1 {
                         instance_types[0]
                     } else {
-                        self.ctx.types.intersection(instance_types)
+                        factory.intersection(instance_types)
                     };
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
@@ -343,7 +345,7 @@ impl<'a> CheckerState<'a> {
                     let instance_type = if instance_types.len() == 1 {
                         instance_types[0]
                     } else {
-                        self.ctx.types.union(instance_types)
+                        factory.union(instance_types)
                     };
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
@@ -413,7 +415,7 @@ impl<'a> CheckerState<'a> {
                         updated
                     })
                     .collect();
-                self.ctx.types.callable(new_shape)
+                self.ctx.types.factory().callable(new_shape)
             }
             ConstructorReturnMergeKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
@@ -424,8 +426,9 @@ impl<'a> CheckerState<'a> {
                 new_shape.return_type = self
                     .ctx
                     .types
+                    .factory()
                     .intersection2(new_shape.return_type, base_instance_type);
-                self.ctx.types.function(new_shape)
+                self.ctx.types.factory().function(new_shape)
             }
             ConstructorReturnMergeKind::Intersection(members) => {
                 let mut updated_members = Vec::with_capacity(members.len());
@@ -439,7 +442,7 @@ impl<'a> CheckerState<'a> {
                     updated_members.push(updated);
                 }
                 if changed {
-                    self.ctx.types.intersection(updated_members)
+                    self.ctx.types.factory().intersection(updated_members)
                 } else {
                     ctor_type
                 }
@@ -471,7 +474,7 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut new_shape = (*shape).clone();
                 new_shape.properties = prop_map.into_values().collect();
-                self.ctx.types.callable(new_shape)
+                self.ctx.types.factory().callable(new_shape)
             }
             ConstructorReturnMergeKind::Intersection(members) => {
                 let mut updated_members = Vec::with_capacity(members.len());
@@ -486,7 +489,7 @@ impl<'a> CheckerState<'a> {
                     updated_members.push(updated);
                 }
                 if changed {
-                    self.ctx.types.intersection(updated_members)
+                    self.ctx.types.factory().intersection(updated_members)
                 } else {
                     ctor_type
                 }
