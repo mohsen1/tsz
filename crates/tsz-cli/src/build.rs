@@ -10,6 +10,7 @@ use tracing::{info, warn};
 use crate::args::CliArgs;
 use crate::incremental::BuildInfo;
 use crate::project_refs::{ProjectReferenceGraph, ResolvedProject};
+use tsz::checker::diagnostics::DiagnosticCategory;
 
 /// Build mode orchestrator for TypeScript project references.
 ///
@@ -75,8 +76,8 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
             // Check for errors
             let has_errors = result
                 .diagnostics
-                .iter()
-                .any(|d| d.category == tsz::checker::diagnostics::DiagnosticCategory::Error);
+               .iter()
+                .any(|d| d.category == DiagnosticCategory::Error);
 
             if has_errors {
                 all_success = false;

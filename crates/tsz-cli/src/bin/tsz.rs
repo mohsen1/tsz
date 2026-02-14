@@ -7,6 +7,7 @@ use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::time::Duration;
 
+use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz_cli::args::CliArgs;
 use tsz_cli::{driver, locale, reporter::Reporter, watch};
 
@@ -206,7 +207,7 @@ fn actual_main() -> Result<()> {
     let has_errors = result
         .diagnostics
         .iter()
-        .any(|diag| diag.category == tsz::checker::diagnostics::DiagnosticCategory::Error);
+        .any(|diag| diag.category == DiagnosticCategory::Error);
 
     if has_errors {
         // Match tsc exit codes:
@@ -360,7 +361,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
     let errors = result
         .diagnostics
         .iter()
-        .filter(|d| d.category == tsz::checker::diagnostics::DiagnosticCategory::Error)
+        .filter(|d| d.category == DiagnosticCategory::Error)
         .count();
 
     println!();

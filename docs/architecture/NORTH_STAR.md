@@ -1,8 +1,8 @@
 # TSZ North Star Architecture
 
-**Version**: 1.1
+**Version**: 1.2
 **Status**: Corrected Target Architecture (Enforced)
-**Last Updated**: January 2026
+**Last Updated**: February 2026
 
 ---
 
@@ -32,12 +32,19 @@ The following architecture corrections are mandatory and supersede any conflicti
 
 ### Execution Tracker (A-F)
 
-- [ ] A) Enforce boundary checks (forbidden imports, dependency direction, `TypeKey` leakage scans).
-- [ ] B) Remove or quarantine checker-local semantic type primitives.
-- [ ] C) Hide raw `TypeKey` behind solver factory/builders.
-- [ ] D) Route assignability diagnostics through one compatibility gateway.
-- [ ] E) Move `Lazy(DefId)` traversal/preconditions into solver visitors.
-- [ ] F) Consolidate algorithmic caches in solver with query-level invalidation behavior.
+- [x] A) Enforce boundary checks (forbidden imports, dependency direction, `TypeKey` leakage scans).
+- [x] B) Remove or quarantine checker-local semantic type primitives.
+- [x] C) Hide raw `TypeKey` behind solver factory/builders.
+- [x] D) Route assignability diagnostics through one compatibility gateway.
+- [x] E) Move `Lazy(DefId)` traversal/preconditions into solver visitors.
+- [x] F) Consolidate algorithmic caches in solver with query-level invalidation behavior.
+
+### CRITIQUE/JOURNAL Alignment
+
+- Milestone status is synchronized with `docs/architecture/CRITIQUE.md` step closures and `docs/architecture/CRITIQUE_EXECUTION_JOURNAL.md` actions through **213**, including:
+  - Type-system boundary migration in checker/scope/solver paths.
+  - `TypeKey` leak prevention plus manifest-level dependency freeze guardrails.
+  - Centralized TS2322/TS2345 routing through `assignability` query-boundary APIs.
 
 ### Key Metrics
 
