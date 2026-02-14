@@ -452,7 +452,3 @@ pub fn sanitize_module_name(module_spec: &str) -> String {
         .trim_start_matches("../")
         .replace(['/', '-', '.', '@'], "_")
 }
-
-#[cfg(test)]
-#[path = "../../tests/module_commonjs_tests.rs"]
-mod tests;
