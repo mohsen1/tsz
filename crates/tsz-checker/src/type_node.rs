@@ -972,6 +972,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 } else {
                     TypeId::ANY
                 };
+
+                // TS1268: An index signature parameter type must be 'string', 'number',
+                // 'symbol', or a template literal type.
+                let is_valid_index_type = key_type == TypeId::STRING
+                    || key_type == TypeId::NUMBER
+                    || key_type == TypeId::SYMBOL
+                    || tsz_solver::visitor::is_template_literal_type(self.ctx.types, key_type);
+                if !is_valid_index_type {
+                    if let Some(pnode) = self.ctx.arena.get(param_idx) {
+                        self.ctx.error(
+                            pnode.pos,
+                            pnode.end - pnode.pos,
+                            "An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.".to_string(),
+                            1268,
+                        );
+                    }
+                }
+
                 let value_type = if !index_sig.type_annotation.is_none() {
                     self.check(index_sig.type_annotation)
                 } else {
