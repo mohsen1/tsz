@@ -443,11 +443,16 @@ impl<'a> ES5ClassTransformer<'a> {
         // Build constructor body
         let mut ctor_body = Vec::new();
         let mut params = Vec::new();
+        let mut body_source_range = None;
         let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
 
         if let Some(ctor) = constructor_data {
             // Extract parameters
             params = self.extract_parameters(&ctor.parameters);
+            body_source_range = self
+                .arena
+                .get(ctor.body)
+                .map(|body_node| (body_node.pos, body_node.end));
 
             if self.has_extends {
                 // Derived class with explicit constructor
@@ -535,7 +540,7 @@ impl<'a> ES5ClassTransformer<'a> {
             name: self.class_name.clone(),
             parameters: params,
             body: ctor_body,
-            body_source_range: None,
+            body_source_range,
         })
     }
 

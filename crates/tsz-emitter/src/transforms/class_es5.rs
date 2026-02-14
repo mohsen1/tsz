@@ -391,4 +391,20 @@ mod tests {
         );
         assert!(output.is_empty(), "Declare class should produce no output");
     }
+
+    #[test]
+    fn test_constructor_trailing_comment_preserved() {
+        let output = emit_class(
+            r#"class C1 {
+            constructor(p3) {
+                this.p3 = p3;
+            } // OK
+        }"#,
+        );
+        assert!(
+            output.contains("} // OK"),
+            "Constructor trailing comment should be preserved: {}",
+            output
+        );
+    }
 }

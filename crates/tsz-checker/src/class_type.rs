@@ -1329,6 +1329,23 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Class constructor values always expose an implicit `prototype` property
+        // whose type is the class instance type.
+        let prototype_name = self.ctx.types.intern_string("prototype");
+        properties.insert(
+            prototype_name,
+            PropertyInfo {
+                name: prototype_name,
+                type_id: instance_type,
+                write_type: instance_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: current_sym,
+            },
+        );
+
         // Track base class constructor for inheritance
         let mut inherited_construct_signatures: Option<Vec<CallSignature>> = None;
         // Track the base expression's type when it's a type parameter.
