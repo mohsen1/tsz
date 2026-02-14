@@ -968,11 +968,15 @@ impl<'a> Printer<'a> {
         // For ES2015/ES2016 targets, use function* + yield pattern
         // For ES5, use function + __generator state machine pattern
         let use_native_generators = !self.ctx.target_es5;
-        let move_params_to_generator = use_native_generators
-            && params
-                .iter()
-                .copied()
-                .any(|p| self.param_initializer_has_top_level_await(p));
+        let params_have_top_level_await = params
+            .iter()
+            .copied()
+            .any(|p| self.param_initializer_has_top_level_await(p));
+        let move_params_to_generator = use_native_generators && params_have_top_level_await;
+        let es5_await_param_recovery = !use_native_generators
+            && params_have_top_level_await
+            && self.block_is_empty(body)
+            && self.first_await_default_param_name(params).is_some();
 
         // function name(params) {
         self.write("function");
@@ -988,6 +992,52 @@ impl<'a> Printer<'a> {
                 self.emit_function_parameters_js(params);
             }
         } else {
+            if es5_await_param_recovery {
+                self.write(") {");
+                self.write_line();
+                self.increase_indent();
+
+                self.write("return __awaiter(");
+                self.write(this_expr);
+                self.write(", arguments, void 0, function (");
+                self.emit_function_parameter_names_only(params);
+                self.write(") {");
+                self.write_line();
+                self.increase_indent();
+
+                if let Some(param_name) = self.first_await_default_param_name(params) {
+                    self.write("if (");
+                    self.write(&param_name);
+                    self.write(" === void 0) { ");
+                    self.write(&param_name);
+                    self.write(" = _a.sent(); }");
+                    self.write_line();
+                }
+
+                self.write("return __generator(this, function (_a) {");
+                self.write_line();
+                self.increase_indent();
+                self.write("switch (_a.label) {");
+                self.write_line();
+                self.increase_indent();
+                self.write("case 0: return [4 /*yield*/, ];");
+                self.write_line();
+                self.write("case 1: return [2 /*return*/];");
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
+                self.write_line();
+                self.decrease_indent();
+                self.write("});");
+                self.write_line();
+                self.decrease_indent();
+                self.write("});");
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
+                return;
+            }
+
             // ES5: apply destructuring/default transforms
             let param_transforms = self.emit_function_parameters_es5(params);
             self.write(") {");
@@ -1093,6 +1143,67 @@ impl<'a> Printer<'a> {
             return false;
         };
         init_node.kind == syntax_kind_ext::AWAIT_EXPRESSION
+    }
+
+    fn first_await_default_param_name(&self, params: &[NodeIndex]) -> Option<String> {
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.initializer.is_none() {
+                continue;
+            }
+            let Some(init_node) = self.arena.get(param.initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+                continue;
+            }
+            let Some(name_node) = self.arena.get(param.name) else {
+                continue;
+            };
+            if name_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let name = self.get_identifier_text(param.name);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    fn emit_function_parameter_names_only(&mut self, params: &[NodeIndex]) {
+        let mut first = true;
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            if param.dot_dot_dot_token {
+                self.write("...");
+            }
+            self.emit(param.name);
+        }
+    }
+
+    fn block_is_empty(&self, body: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+        block.statements.nodes.is_empty()
     }
 
     pub(super) fn emit_function_parameters_es5(
