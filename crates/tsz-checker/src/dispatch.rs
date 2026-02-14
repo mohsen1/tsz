@@ -589,19 +589,96 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 checker.check(idx)
             }
 
-            // Keyword types - handled inline for performance (these are simple constants)
-            k if k == SyntaxKind::NumberKeyword as u16 => TypeId::NUMBER,
-            k if k == SyntaxKind::StringKeyword as u16 => TypeId::STRING,
-            k if k == SyntaxKind::BooleanKeyword as u16 => TypeId::BOOLEAN,
-            k if k == SyntaxKind::VoidKeyword as u16 => TypeId::VOID,
-            k if k == SyntaxKind::AnyKeyword as u16 => TypeId::ANY,
-            k if k == SyntaxKind::NeverKeyword as u16 => TypeId::NEVER,
-            k if k == SyntaxKind::UnknownKeyword as u16 => TypeId::UNKNOWN,
-            k if k == SyntaxKind::UndefinedKeyword as u16 => TypeId::UNDEFINED,
+            // Keyword types - when recovered into value positions, TypeScript emits TS2693.
+            k if k == SyntaxKind::NumberKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("number", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::NUMBER
+                }
+            }
+            k if k == SyntaxKind::StringKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("string", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::STRING
+                }
+            }
+            k if k == SyntaxKind::BooleanKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("boolean", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::BOOLEAN
+                }
+            }
+            k if k == SyntaxKind::VoidKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("void", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::VOID
+                }
+            }
+            k if k == SyntaxKind::AnyKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("any", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::ANY
+                }
+            }
+            k if k == SyntaxKind::NeverKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("never", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::NEVER
+                }
+            }
+            k if k == SyntaxKind::UnknownKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("unknown", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::UNKNOWN
+                }
+            }
+            k if k == SyntaxKind::UndefinedKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("undefined", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::UNDEFINED
+                }
+            }
             k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
-            k if k == SyntaxKind::ObjectKeyword as u16 => TypeId::OBJECT,
-            k if k == SyntaxKind::BigIntKeyword as u16 => TypeId::BIGINT,
-            k if k == SyntaxKind::SymbolKeyword as u16 => TypeId::SYMBOL,
+            k if k == SyntaxKind::ObjectKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("object", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::OBJECT
+                }
+            }
+            k if k == SyntaxKind::BigIntKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("bigint", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::BIGINT
+                }
+            }
+            k if k == SyntaxKind::SymbolKeyword as u16 => {
+                if self.checker.is_keyword_type_used_as_value_position(idx) {
+                    self.checker.error_type_only_value_at("symbol", idx);
+                    TypeId::ERROR
+                } else {
+                    TypeId::SYMBOL
+                }
+            }
 
             // Qualified name (A.B.C) - resolve namespace member access
             k if k == syntax_kind_ext::QUALIFIED_NAME => self.checker.resolve_qualified_name(idx),

@@ -417,6 +417,25 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_malformed_this_property_annotation_does_not_emit_ts2551() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class A {
+    constructor() {
+        this.foo: any;
+    }
+}
+        "#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2551),
+        "Did not expect TS2551 in malformed syntax recovery path. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_super_property_before_super_call_reports_ts17011() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

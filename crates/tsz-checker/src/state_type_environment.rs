@@ -1483,6 +1483,41 @@ impl<'a> CheckerState<'a> {
         // First check if this is a type that needs special handling with binder resolution
         if let Some(node) = self.ctx.arena.get(idx) {
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                // Recovery path: a type reference can appear where an expression statement is expected
+                // (e.g. malformed `this.x: any;` parses through a labeled statement).
+                // In value position, primitive type keywords should emit TS2693.
+                if let Some(ext) = self.ctx.arena.get_extended(idx) {
+                    let parent = ext.parent;
+                    if !parent.is_none()
+                        && let Some(parent_node) = self.ctx.arena.get(parent)
+                        && (parent_node.kind == syntax_kind_ext::LABELED_STATEMENT
+                            || parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
+                        && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    {
+                        if let Some(name) = self.entity_name_text(type_ref.type_name)
+                            && matches!(
+                                name.as_str(),
+                                "number"
+                                    | "string"
+                                    | "boolean"
+                                    | "symbol"
+                                    | "void"
+                                    | "undefined"
+                                    | "null"
+                                    | "any"
+                                    | "unknown"
+                                    | "never"
+                                    | "object"
+                                    | "bigint"
+                            )
+                        {
+                            self.error_type_only_value_at(&name, type_ref.type_name);
+                            self.ctx.node_types.insert(idx.0, TypeId::ERROR);
+                            return TypeId::ERROR;
+                        }
+                    }
+                }
+
                 // Validate the type reference exists before lowering
                 // Check cache first - but allow re-resolution of ERROR when type params
                 // are in scope, since the ERROR may have been cached when type params
