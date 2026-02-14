@@ -2293,10 +2293,93 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
         }
 
+        // Ambient declarations still need index-signature parameter validation (TS1268).
+        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            self.check_ambient_variable_type_annotations_for_index_signatures(stmt_idx);
+        }
+
         // Check labeled statements — the inner statement should also be checked
         if node.kind == syntax_kind_ext::LABELED_STATEMENT {
             if let Some(labeled) = self.ctx.arena.get_labeled_statement(node) {
                 self.check_statement_in_ambient_context(labeled.statement);
+            }
+        }
+    }
+
+    fn check_ambient_variable_type_annotations_for_index_signatures(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) {
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+        let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node) else {
+            return;
+        };
+
+        for &list_idx in &var_stmt.declarations.nodes {
+            let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if var_decl.type_annotation.is_none() {
+                    continue;
+                }
+                let Some(type_node) = self.ctx.arena.get(var_decl.type_annotation) else {
+                    continue;
+                };
+                if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+                    continue;
+                }
+                let Some(type_lit) = self.ctx.arena.get_type_literal(type_node) else {
+                    continue;
+                };
+                for &member_idx in &type_lit.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
+                        continue;
+                    };
+                    let Some(&param_idx) = index_sig.parameters.nodes.first() else {
+                        continue;
+                    };
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
+                    let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                        continue;
+                    };
+                    if param.type_annotation.is_none() {
+                        continue;
+                    }
+                    let Some(type_node) = self.ctx.arena.get(param.type_annotation) else {
+                        continue;
+                    };
+                    let is_valid = type_node.kind == tsz_scanner::SyntaxKind::StringKeyword as u16
+                        || type_node.kind == tsz_scanner::SyntaxKind::NumberKeyword as u16
+                        || type_node.kind == tsz_scanner::SyntaxKind::SymbolKeyword as u16
+                        || type_node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE;
+                    if !is_valid && let Some((pos, end)) = self.ctx.get_node_span(param_idx) {
+                        self.ctx.error(
+                            pos,
+                            end - pos,
+                            diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT.to_string(),
+                            diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,
+                        );
+                    }
+                }
             }
         }
     }
