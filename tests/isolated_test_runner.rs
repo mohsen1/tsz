@@ -1,4 +1,3 @@
-#![allow(clippy::print_stderr)]
 //! Isolated Test Runner - Process-based test execution with resource limits
 //!
 //! This module provides a robust test runner that can:
@@ -151,7 +150,7 @@ where
 
     // Log if process isolation was requested but not available
     if config.use_process_isolation && config.verbosity > 0 {
-        eprintln!(
+        println!(
             "[isolated_test_runner] Process isolation not yet implemented for '{}'. Using thread-based execution with monitoring.",
             test_name
         );
