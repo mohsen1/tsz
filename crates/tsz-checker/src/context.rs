@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tracing::trace;
 
 use crate::control_flow::FlowGraph;
+use crate::module_resolution::module_specifier_candidates;
 use crate::types::diagnostics::Diagnostic;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
@@ -263,6 +264,9 @@ pub struct CheckerContext<'a> {
 
     /// Whether unresolved import diagnostics should be emitted by the checker.
     /// The CLI driver handles module resolution in multi-file mode.
+    ///
+    /// Checker invariant: when driver-provided resolution context is available,
+    /// checker should consume that context and avoid ad-hoc module-existence inference.
     pub report_unresolved_imports: bool,
 
     // --- Caches ---
@@ -493,6 +497,9 @@ pub struct CheckerContext<'a> {
 
     /// Resolved module paths map: (source_file_idx, specifier) -> target_file_idx.
     /// Used by get_type_of_symbol to resolve imports to their target file and symbol.
+    ///
+    /// Key invariant: all specifier lookups should use
+    /// `module_resolution::module_specifier_candidates` for canonical variants.
     pub resolved_module_paths: Option<Arc<FxHashMap<(usize, String), usize>>>,
 
     /// Current file index in multi-file mode (index into all_arenas/all_binders).
@@ -514,6 +521,9 @@ pub struct CheckerContext<'a> {
     /// Map of resolution errors: (source_file_idx, specifier) -> Error details.
     /// Populated by the driver when ModuleResolver returns a specific error.
     /// Contains structured error information (code, message) for TS2834, TS2835, TS2792, etc.
+    ///
+    /// Diagnostic-source invariant: module-not-found-family code/message selection
+    /// should come from resolver outcomes when present.
     pub resolved_module_errors: Option<Arc<FxHashMap<(usize, String), ResolutionError>>>,
 
     /// Import resolution stack for circular import detection.
@@ -1489,7 +1499,7 @@ impl<'a> CheckerContext<'a> {
         specifier: &str,
     ) -> Option<usize> {
         let paths = self.resolved_module_paths.as_ref()?;
-        for candidate in Self::module_specifier_candidates(specifier) {
+        for candidate in module_specifier_candidates(specifier) {
             if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
                 return Some(*target_idx);
             }
@@ -1497,35 +1507,10 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
-    fn module_specifier_candidates(specifier: &str) -> Vec<String> {
-        let mut candidates = Vec::with_capacity(5);
-        let mut push_unique = |value: String| {
-            if !candidates.contains(&value) {
-                candidates.push(value);
-            }
-        };
-
-        push_unique(specifier.to_string());
-
-        let trimmed = specifier.trim().trim_matches('"').trim_matches('\'');
-        if trimmed != specifier {
-            push_unique(trimmed.to_string());
-        }
-        if !trimmed.is_empty() {
-            push_unique(format!("\"{trimmed}\""));
-            push_unique(format!("'{trimmed}'"));
-            if trimmed.contains('\\') {
-                push_unique(trimmed.replace('\\', "/"));
-            }
-        }
-
-        candidates
-    }
-
     /// Returns true if an augmentation target resolves to an `export =` value without
     /// namespace/module shape (TS2671/TS2649 cases).
     pub fn module_resolves_to_non_module_entity(&self, module_specifier: &str) -> bool {
-        let candidates = Self::module_specifier_candidates(module_specifier);
+        let candidates = module_specifier_candidates(module_specifier);
 
         let lookup_cached = |binder: &BinderState, key: &str| {
             binder.module_export_equals_non_module.get(key).copied()

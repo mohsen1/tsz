@@ -3,6 +3,7 @@
 //! Extracted from state.rs: Methods for resolving type references, cross-file
 //! exports, and constructor type operations on CheckerState.
 
+use crate::module_resolution::module_specifier_candidates;
 use crate::query_boundaries::state_type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -1612,31 +1613,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn module_specifier_candidates(module_specifier: &str) -> Vec<String> {
-        let mut candidates = Vec::with_capacity(5);
-        let mut push_unique = |value: String| {
-            if !candidates.contains(&value) {
-                candidates.push(value);
-            }
-        };
-
-        push_unique(module_specifier.to_string());
-
-        let trimmed = module_specifier.trim().trim_matches('"').trim_matches('\'');
-        if trimmed != module_specifier {
-            push_unique(trimmed.to_string());
-        }
-        if !trimmed.is_empty() {
-            push_unique(format!("\"{trimmed}\""));
-            push_unique(format!("'{trimmed}'"));
-            if trimmed.contains('\\') {
-                push_unique(trimmed.replace('\\', "/"));
-            }
-        }
-
-        candidates
-    }
-
     /// Resolve a module's effective export surface.
     ///
     /// This canonicalizes module-specifier variants and ensures `export =` target
@@ -1646,7 +1622,7 @@ impl<'a> CheckerState<'a> {
         &self,
         module_specifier: &str,
     ) -> Option<tsz_binder::SymbolTable> {
-        for candidate in Self::module_specifier_candidates(module_specifier) {
+        for candidate in module_specifier_candidates(module_specifier) {
             if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
                 let mut combined = exports.clone();
                 self.merge_export_equals_members(self.ctx.binder, exports, &mut combined);

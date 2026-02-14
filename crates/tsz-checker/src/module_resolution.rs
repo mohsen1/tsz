@@ -144,6 +144,35 @@ pub fn build_module_resolution_maps(
     (resolved_module_paths, resolved_modules)
 }
 
+/// Build canonical lookup keys for a module specifier.
+///
+/// Invariant: every cross-module map lookup in checker code should go through
+/// this function to avoid divergent quoting/slash normalization behavior.
+pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
+    let mut candidates = Vec::with_capacity(5);
+    let mut push_unique = |value: String| {
+        if !candidates.contains(&value) {
+            candidates.push(value);
+        }
+    };
+
+    push_unique(specifier.to_string());
+
+    let trimmed = specifier.trim().trim_matches('"').trim_matches('\'');
+    if trimmed != specifier {
+        push_unique(trimmed.to_string());
+    }
+    if !trimmed.is_empty() {
+        push_unique(format!("\"{trimmed}\""));
+        push_unique(format!("'{trimmed}'"));
+        if trimmed.contains('\\') {
+            push_unique(trimmed.replace('\\', "/"));
+        }
+    }
+
+    candidates
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,6 +284,21 @@ mod tests {
         assert!(modules.contains("./types"));
         // Also available without ./ prefix
         assert_eq!(paths.get(&(0, "types".to_string())), Some(&1));
+    }
+
+    #[test]
+    fn test_module_specifier_candidates_trims_quotes_and_whitespace() {
+        let actual = module_specifier_candidates("  \"./foo\"  ");
+        assert!(actual.contains(&"./foo".to_string()));
+        assert!(actual.contains(&"\"./foo\"".to_string()));
+        assert!(actual.contains(&"'./foo'".to_string()));
+    }
+
+    #[test]
+    fn test_module_specifier_candidates_normalizes_backslashes() {
+        let actual = module_specifier_candidates(".\\foo\\bar");
+        assert!(actual.contains(&".\\foo\\bar".to_string()));
+        assert!(actual.contains(&"./foo/bar".to_string()));
     }
 
     #[test]
