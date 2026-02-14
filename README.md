@@ -33,13 +33,10 @@ We compare tsz JavaScript/declaration emit output against TypeScript's baseline 
 to ensure correct code generation.
 
 <!-- EMIT_START -->
-
-
 ```
-JavaScript:  [██████████░░░░░░░░░░] 46.0% (4,831/10,491 tests)
-Declaration: [██████░░░░░░░░░░░░░░] 15.8% (170/1,077 tests)
+JavaScript:  [██████████████░░░░░░] 72.6% (363 / 500 tests)
+Declaration: [█░░░░░░░░░░░░░░░░░░░] 8.3% (39 / 468 tests)
 ```
-
 <!-- EMIT_END -->
 
 ### Language Service
