@@ -1680,7 +1680,10 @@ impl<'a> CheckerState<'a> {
                                 _ => None,
                             };
                             if let Some(keyword_name) = keyword_name {
-                                self.error_type_only_value_at(keyword_name, array_type.element_type);
+                                self.error_type_only_value_at(
+                                    keyword_name,
+                                    array_type.element_type,
+                                );
                                 self.ctx.node_types.insert(idx.0, TypeId::ERROR);
                                 return TypeId::ERROR;
                             }

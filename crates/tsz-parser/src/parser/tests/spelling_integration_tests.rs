@@ -204,3 +204,13 @@ fn no_error_for_valid_declarations() {
         );
     }
 }
+
+#[test]
+fn no_ts1435_for_type_annotation_in_malformed_arrow_like_declaration() {
+    let diags = parse_and_collect_codes("var e = (x: number, y: string): void;");
+    let has_1435 = diags.iter().any(|(c, _)| *c == 1435);
+    assert!(
+        !has_1435,
+        "expected no TS1435 for type-annotation recovery path, got {diags:?}"
+    );
+}
