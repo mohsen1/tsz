@@ -513,7 +513,11 @@ impl<'a> CheckerState<'a> {
             } => {
                 // Report TS2322 instead of TS2345 for constraint violations from
                 // callback return type inference.
-                self.error_type_not_assignable_at(inferred_type, constraint_type, idx);
+                let _ = self.check_assignable_or_report_generic_at(
+                    inferred_type,
+                    constraint_type,
+                    idx,
+                );
                 return_type
             }
             CallResult::NoOverloadMatch { failures, .. } => {
@@ -1671,7 +1675,11 @@ impl<'a> CheckerState<'a> {
                 return_type,
             } => {
                 // Report TS2322 for constraint violations from callback return type inference
-                self.error_type_not_assignable_at(inferred_type, constraint_type, call_idx);
+                let _ = self.check_assignable_or_report_generic_at(
+                    inferred_type,
+                    constraint_type,
+                    call_idx,
+                );
                 return_type
             }
             CallResult::NoOverloadMatch { failures, .. } => {
