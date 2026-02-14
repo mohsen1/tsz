@@ -52,6 +52,7 @@ impl<'a> CheckerState<'a> {
         params: &[NodeIndex],
         param_types: Option<&[Option<TypeId>]>,
     ) {
+        let factory = self.ctx.types.factory();
         for (i, &param_idx) in params.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -83,7 +84,7 @@ impl<'a> CheckerState<'a> {
                     && t != TypeId::UNKNOWN
                     && t != TypeId::ERROR
                 {
-                    t = self.ctx.types.union2(t, TypeId::UNDEFINED);
+                    t = factory.union2(t, TypeId::UNDEFINED);
                 }
                 Some(t)
             } else {
@@ -566,6 +567,7 @@ impl<'a> CheckerState<'a> {
         keys: &[tsz_common::interner::Atom],
     ) -> Option<TypeId> {
         use tsz_solver::operations_property::PropertyAccessResult;
+        let factory = self.ctx.types.factory();
 
         if keys.is_empty() {
             return None;
@@ -607,7 +609,7 @@ impl<'a> CheckerState<'a> {
         if types.len() == 1 {
             Some(types[0])
         } else {
-            Some(self.ctx.types.union(types))
+            Some(factory.union(types))
         }
     }
 
@@ -638,6 +640,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         keys: &[f64],
     ) -> Option<TypeId> {
+        let factory = self.ctx.types.factory();
         if keys.is_empty() {
             return None;
         }
@@ -654,7 +657,7 @@ impl<'a> CheckerState<'a> {
         if types.len() == 1 {
             Some(types[0])
         } else {
-            Some(self.ctx.types.union(types))
+            Some(factory.union(types))
         }
     }
 
@@ -1123,6 +1126,7 @@ impl<'a> CheckerState<'a> {
         body_idx: NodeIndex,
         return_context: Option<TypeId>,
     ) -> TypeId {
+        let factory = self.ctx.types.factory();
         if body_idx.is_none() {
             return TypeId::VOID; // No body - function returns void
         }
@@ -1157,7 +1161,7 @@ impl<'a> CheckerState<'a> {
             return_types.push(TypeId::VOID);
         }
 
-        self.ctx.types.union(return_types)
+        factory.union(return_types)
     }
 
     /// Get the type of a return expression with optional contextual typing.
@@ -1523,6 +1527,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::SymbolId;
         use tsz_solver::SymbolRef;
+        let factory = self.ctx.types.factory();
 
         match query::classify_type_query(self.ctx.types, type_id) {
             query::TypeQueryKind::TypeQuery(SymbolRef(sym_id)) => {
@@ -1571,7 +1576,7 @@ impl<'a> CheckerState<'a> {
                     stack.remove(&sym_id);
                 }
 
-                self.ctx.types.application(base, args)
+                factory.application(base, args)
             }
             query::TypeQueryKind::Application { .. } | query::TypeQueryKind::Other => type_id,
         }
@@ -1707,6 +1712,7 @@ impl<'a> CheckerState<'a> {
     /// and fallback symbol resolution.
     fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
         let type_expr = type_expr.trim();
+        let factory = self.ctx.types.factory();
 
         match type_expr {
             "string" => Some(TypeId::STRING),
@@ -1754,7 +1760,7 @@ impl<'a> CheckerState<'a> {
                                 if operand == TypeId::ERROR {
                                     continue;
                                 }
-                                let keyof = self.ctx.types.keyof(operand);
+                                let keyof = factory.keyof(operand);
                                 return Some(self.judge_evaluate(keyof));
                             }
                         }
@@ -1803,6 +1809,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn type_from_jsdoc_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
+        let factory = self.ctx.types.factory();
         let mut prop_infos = Vec::with_capacity(info.properties.len());
 
         for (name, prop_type_expr) in info.properties {
@@ -1826,7 +1833,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if !prop_infos.is_empty() {
-            return Some(self.ctx.types.object(prop_infos));
+            return Some(factory.object(prop_infos));
         }
 
         if let Some(base_type_expr) = info.base_type {
@@ -2593,6 +2600,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the literal type (e.g., Literal(0), Literal("a")) of the enum member.
     /// This is used to create TypeKey::Enum(member_def_id, literal_type) for nominal typing.
     pub(crate) fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
+        let factory = self.ctx.types.factory();
         // Get the member node
         let Some(member_node) = self.ctx.arena.get(member_decl) else {
             return TypeId::ERROR;
@@ -2611,7 +2619,7 @@ impl<'a> CheckerState<'a> {
                 k if k == SyntaxKind::StringLiteral as u16 => {
                     // Get the string literal value
                     if let Some(lit) = self.ctx.arena.get_literal(init_node) {
-                        return self.ctx.types.literal_string(&lit.text);
+                        return factory.literal_string(&lit.text);
                     }
                 }
                 k if k == SyntaxKind::NumericLiteral as u16 => {
@@ -2619,18 +2627,18 @@ impl<'a> CheckerState<'a> {
                     if let Some(lit) = self.ctx.arena.get_literal(init_node) {
                         // lit.value is Option<f64>, use it if available
                         if let Some(value) = lit.value {
-                            return self.ctx.types.literal_number(value);
+                            return factory.literal_number(value);
                         }
                         // Fallback: parse from text
                         if let Ok(value) = lit.text.parse::<f64>() {
-                            return self.ctx.types.literal_number(value);
+                            return factory.literal_number(value);
                         }
                     }
                 }
                 _ => {
                     // Try to evaluate constant expression
                     if let Some(value) = self.evaluate_constant_expression(member.initializer) {
-                        return self.ctx.types.literal_number(value);
+                        return factory.literal_number(value);
                     }
                 }
             }
