@@ -349,6 +349,10 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_environment should use solver collect_enum_def_ids visitor helper for enum DefId preconditions"
     );
     assert!(
+        state_type_environment_src.contains("ensure_relation_input_ready("),
+        "state_type_environment relation precondition setup should route through ensure_relation_input_ready"
+    );
+    assert!(
         state_type_environment_src.contains("collect_type_queries("),
         "state_type_environment should use solver collect_type_queries visitor helper for type-query symbol preconditions"
     );
