@@ -2031,7 +2031,22 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check if a module name is relative (starts with ./ or ../)
     fn is_relative_module_name(&self, name: &str) -> bool {
-        name.starts_with("./") || name.starts_with("../") || name == "." || name == ".."
+        if name.starts_with("./")
+            || name.starts_with("../")
+            || name == "."
+            || name == ".."
+            || name.starts_with('/')
+        {
+            return true;
+        }
+
+        // Treat rooted drive-specifier paths (e.g. "c:/x", "c:\\x") as invalid
+        // for ambient module declarations as tsc does.
+        let bytes = name.as_bytes();
+        bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'/' || bytes[2] == b'\\')
     }
 
     fn module_augmentation_has_value_exports(&self, module_body: NodeIndex) -> bool {
