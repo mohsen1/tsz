@@ -175,13 +175,6 @@ impl<'a> CheckerState<'a> {
                     TypeSymbolResolution::NotFound => None,
                 };
                 if let Some(sym_id) = sym_id {
-                    if name == "Proxy" {
-                        tracing::debug!(
-                            sym_id = sym_id.0,
-                            name,
-                            "get_type_from_type_reference: Proxy sym_id resolved"
-                        );
-                    }
                     if self.symbol_is_namespace_only(sym_id) {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
@@ -409,14 +402,6 @@ impl<'a> CheckerState<'a> {
                 let type_id = lowering.lower_type(idx);
                 // Phase 2: Still post-process to create DefIds for types that don't have them yet
                 let result = self.ctx.maybe_create_lazy_from_resolved(type_id);
-
-                if name == "Proxy" {
-                    tracing::debug!(
-                        type_id = type_id.0,
-                        result = result.0,
-                        "get_type_from_type_reference: Proxy lowered result"
-                    );
-                }
 
                 // Ensure Application types from lib type aliases have their base
                 // registered in type_env. Due to DefId instability (get_or_create_def_id

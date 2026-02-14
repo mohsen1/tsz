@@ -563,6 +563,15 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
     }
 
+    /// Check if two types are comparable (overlap).
+    ///
+    /// Corresponds to TypeScript's `isTypeComparableTo`: returns true if source is
+    /// assignable to target OR target is assignable to source. This is the correct
+    /// check for switch/case comparability (TS2678), equality narrowing, etc.
+    pub(crate) fn is_type_comparable_to(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_to(source, target) || self.is_assignable_to(target, source)
+    }
+
     /// Check if source object literal has properties that don't exist in target.
     ///
     /// Uses TypeId-based freshness tracking (fresh object literals only).

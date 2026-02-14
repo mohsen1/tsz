@@ -4740,9 +4740,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check if the types are comparable (assignable in either direction).
         // Types are comparable if they overlap — i.e., at least one direction works.
         // For example, "a" is comparable to "a" | "b" | "c" because "a" <: union.
-        if !self.is_assignable_to(effective_case_type, switch_type)
-            && !self.is_assignable_to(switch_type, effective_case_type)
-        {
+        if !self.is_type_comparable_to(effective_case_type, switch_type) {
             // TS2678: Type 'X' is not comparable to type 'Y'
             if let Some(loc) = self.get_source_location(case_expr) {
                 let case_str = self.format_type(effective_case_type);
