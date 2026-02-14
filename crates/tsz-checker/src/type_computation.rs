@@ -678,6 +678,32 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Instantiation expressions on the left side (e.g. `fn<T> = ...`) are invalid (TS2364),
+        // but the base expression is still a value read and must participate in
+        // definite assignment checks (TS2454).
+        if let Some(node) = self.ctx.arena.get(idx)
+            && node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(node)
+            && expr_type_args
+                .type_arguments
+                .as_ref()
+                .is_some_and(|args| !args.nodes.is_empty())
+        {
+            let base_expr = expr_type_args.expression;
+            let _ = self.get_type_of_node(base_expr);
+
+            // In assignment-target context, flow nodes may attach to the outer
+            // instantiation expression rather than the inner identifier. Force
+            // definite-assignment checking for `id<T> = ...` to match tsc.
+            if let Some(base_node) = self.ctx.arena.get(base_expr)
+                && base_node.kind == SyntaxKind::Identifier as u16
+                && let Some(sym_id) = self.resolve_identifier_symbol(base_expr)
+            {
+                let declared_type = self.get_type_of_symbol(sym_id);
+                let _ = self.check_flow_usage(idx, declared_type, sym_id);
+            }
+        }
+
         // For non-identifier assignment targets (property access, element access, etc.),
         // we need the declared type without control-flow narrowing.
         // Example: After `if (foo[x] === undefined)`, when checking `foo[x] = 1`,
