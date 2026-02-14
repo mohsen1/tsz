@@ -494,7 +494,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let resolved = self.resolve_lazy_type(spread_type);
-            if self.is_array_or_tuple_type(resolved) {
+            if self.is_array_or_tuple_type(resolved) || self.has_numeric_index_signature(resolved) {
                 return true;
             }
 
