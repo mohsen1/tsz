@@ -28,6 +28,13 @@ pub(crate) fn index_access_types(
     tsz_solver::type_queries::get_index_access_types(db, type_id)
 }
 
+pub(crate) fn object_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
+    tsz_solver::type_queries::get_object_shape(db, type_id)
+}
+
 pub(crate) fn lazy_def_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
