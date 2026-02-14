@@ -1449,6 +1449,30 @@ impl<'a> CheckerState<'a> {
                                 ),
                                 diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
                             );
+
+                            // tsc also reports the corresponding missing-member diagnostic
+                            // when a required private/protected instance member is absent.
+                            if let Some(required_member_name) =
+                                self.first_non_public_instance_member_name(base_class_data)
+                                && self
+                                    .find_member_in_class_chain(
+                                        _class_idx,
+                                        &required_member_name,
+                                        false,
+                                        0,
+                                        false,
+                                    )
+                                    .is_none()
+                            {
+                                self.error_at_node(
+                                    type_idx,
+                                    &format!(
+                                        "Property '{}' is missing in type '{}' but required in type '{}'.",
+                                        required_member_name, class_name, interface_name
+                                    ),
+                                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                                );
+                            }
                         }
                         continue;
                     }
@@ -1937,6 +1961,21 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn first_non_public_instance_member_name(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Option<String> {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_info) = self.extract_class_member_info(member_idx, false) else {
+                continue;
+            };
+            if !member_info.is_static && member_info.visibility != MemberVisibility::Public {
+                return Some(member_info.name);
+            }
+        }
+        None
     }
 
     /// Find a member by name in a class, searching up the inheritance chain.
