@@ -1030,7 +1030,7 @@ impl Parser {
     #[wasm_bindgen(js_name = debugTypeLowering)]
     pub fn debug_type_lowering(&self, interface_name: &str) -> String {
         use parser::syntax_kind_ext;
-        use solver::{TypeKey, TypeLowering};
+        use solver::{TypeData, TypeLowering};
 
         let arena = self.parser.get_arena();
         let mut result = Vec::new();
@@ -1069,7 +1069,7 @@ impl Parser {
         // Inspect the result
         if let Some(key) = self.type_interner.lookup(type_id) {
             result.push(format!("Type key: {:?}", key));
-            if let TypeKey::Object(shape_id) = key {
+            if let TypeData::Object(shape_id) = key {
                 let shape = self.type_interner.object_shape(shape_id);
                 result.push(format!(
                     "Object shape properties: {}",

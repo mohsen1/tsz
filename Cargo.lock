@@ -1479,7 +1479,6 @@ dependencies = [
  "smallvec",
  "tracing",
  "tsz-binder",
- "tsz-checker",
  "tsz-common",
  "tsz-parser",
  "tsz-scanner",

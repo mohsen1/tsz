@@ -34,7 +34,8 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
-    TypeLowering, TypeParamInfo, TypeSubstitution, instantiate_type,
+    TypeLowering, TypeParamInfo, TypePredicate, TypeSubstitution, Visibility, instantiate_type,
+    types::ParamInfo,
 };
 
 // =============================================================================

@@ -675,7 +675,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let env = self.ctx.type_env.borrow();
         let binder = self.ctx.binder;
 
         // Helper to check if a symbol is a class (for nominal subtyping)
@@ -687,15 +686,18 @@ impl<'a> CheckerState<'a> {
                 false
             }
         };
-        let relation_result = is_subtype_with_resolver(
-            self.ctx.types,
-            &*env,
-            source,
-            target,
-            flags,
-            &self.ctx.inheritance_graph,
-            Some(&is_class_fn),
-        );
+        let relation_result = {
+            let env = self.ctx.type_env.borrow();
+            is_subtype_with_resolver(
+                self.ctx.types,
+                &*env,
+                source,
+                target,
+                flags,
+                &self.ctx.inheritance_graph,
+                Some(&is_class_fn),
+            )
+        };
 
         if relation_result.depth_exceeded {
             self.error_at_current_node(

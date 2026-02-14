@@ -334,7 +334,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             // Uppercase<T>, Lowercase<T>, etc. should canonicalize nested type parameters
             TypeKey::StringIntrinsic { kind, type_arg } => {
                 let c_arg = self.canonicalize(type_arg);
-                self.interner.string_intrinsic(*kind, c_arg)
+                self.interner.string_intrinsic(kind, c_arg)
             }
 
             // Other types: preserve as-is (will be handled as needed)

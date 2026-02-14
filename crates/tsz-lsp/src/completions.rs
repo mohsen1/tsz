@@ -2114,8 +2114,8 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(shape_id) =
-            visitor::object_shape_id(interner, type_id).or_else(|| visitor::object_with_index_shape_id(interner, type_id))
+        if let Some(shape_id) = visitor::object_shape_id(interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(interner, type_id))
         {
             let shape = interner.object_shape(shape_id);
             for prop in shape.properties.iter() {
@@ -2125,8 +2125,8 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(members) =
-            visitor::union_list_id(interner, type_id).or_else(|| visitor::intersection_list_id(interner, type_id))
+        if let Some(members) = visitor::union_list_id(interner, type_id)
+            .or_else(|| visitor::intersection_list_id(interner, type_id))
         {
             let members = interner.type_list(members);
             for &member in members.iter() {

@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
                         default: None,
                         is_const: false,
                     };
-                    let ty = factory.type_param(info);
+                    let ty = factory.type_param(info.clone());
                     jsdoc_type_param_types.insert(name, ty);
                     jsdoc_type_params.push(info);
                 }

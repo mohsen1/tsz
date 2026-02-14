@@ -300,6 +300,7 @@ impl<'a> CheckerState<'a> {
         // If that fails to find a match, we run a second pass that re-collects arguments
         // per candidate signature with signature-specific contextual types. This helps
         // avoid false TS2345/TS2322 when the union contextual type is too lossy.
+        let factory = self.ctx.types.factory();
 
         // Create a union of all overload signatures for contextual typing
         let signature_types: Vec<TypeId> = signatures
@@ -322,7 +323,7 @@ impl<'a> CheckerState<'a> {
         let union_contextual = if signature_types.len() == 1 {
             signature_types[0]
         } else {
-            factory.union(signature_types)
+            factory.union(signature_types.clone())
         };
 
         let ctx_helper = ContextualTypeContext::with_expected_and_options(

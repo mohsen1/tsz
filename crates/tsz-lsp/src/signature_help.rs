@@ -673,8 +673,7 @@ impl<'a> SignatureHelpProvider<'a> {
         if let Some(shape_id) = visitor::callable_shape_id(self.interner, type_id) {
             let shape = self.interner.callable_shape(shape_id);
             let mut sigs = Vec::new();
-            let include_call =
-                call_kind == CallKind::Call || call_kind == CallKind::TaggedTemplate;
+            let include_call = call_kind == CallKind::Call || call_kind == CallKind::TaggedTemplate;
             let include_construct = call_kind == CallKind::New;
 
             if include_call {

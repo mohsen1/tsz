@@ -15,8 +15,8 @@ use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
     ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, SymbolRef, TemplateLiteralId,
-    TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId,
-    TypeKey, TypeListId, TypeParamInfo, Variance,
+    StringIntrinsicKind, TemplateSpan, TupleElement, TupleListId, TypeApplication,
+    TypeApplicationId, TypeData, TypeId, TypeKey, TypeListId, TypeParamInfo, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -93,6 +93,11 @@ pub trait TypeDatabase {
     fn readonly_type(&self, inner: TypeId) -> TypeId;
     fn keyof(&self, inner: TypeId) -> TypeId;
     fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId;
+    fn this_type(&self) -> TypeId;
+    fn no_infer(&self, inner: TypeId) -> TypeId;
+    fn unique_symbol(&self, symbol: SymbolRef) -> TypeId;
+    fn infer(&self, info: TypeParamInfo) -> TypeId;
+    fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
 
     /// Get the base class type for a symbol (class/interface).
     /// Returns the TypeId of the extends clause, or None if the symbol doesn't extend anything.
@@ -310,6 +315,26 @@ impl TypeDatabase for TypeInterner {
 
     fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
         TypeInterner::index_access(self, object_type, index_type)
+    }
+
+    fn this_type(&self) -> TypeId {
+        TypeInterner::this_type(self)
+    }
+
+    fn no_infer(&self, inner: TypeId) -> TypeId {
+        TypeInterner::no_infer(self, inner)
+    }
+
+    fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
+        TypeInterner::unique_symbol(self, symbol)
+    }
+
+    fn infer(&self, info: TypeParamInfo) -> TypeId {
+        TypeInterner::infer(self, info)
+    }
+
+    fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+        TypeInterner::string_intrinsic(self, kind, type_arg)
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
@@ -1230,6 +1255,26 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.index_access(object_type, index_type)
     }
 
+    fn this_type(&self) -> TypeId {
+        self.interner.this_type()
+    }
+
+    fn no_infer(&self, inner: TypeId) -> TypeId {
+        self.interner.no_infer(inner)
+    }
+
+    fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
+        self.interner.unique_symbol(symbol)
+    }
+
+    fn infer(&self, info: TypeParamInfo) -> TypeId {
+        self.interner.infer(info)
+    }
+
+    fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+        self.interner.string_intrinsic(kind, type_arg)
+    }
+
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {
         // Delegate to the interner
         self.interner.get_class_base_type(symbol_id)
@@ -1873,6 +1918,26 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
 
     fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
         self.query_cache.index_access(object_type, index_type)
+    }
+
+    fn this_type(&self) -> TypeId {
+        self.query_cache.this_type()
+    }
+
+    fn no_infer(&self, inner: TypeId) -> TypeId {
+        self.query_cache.no_infer(inner)
+    }
+
+    fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
+        self.query_cache.unique_symbol(symbol)
+    }
+
+    fn infer(&self, info: TypeParamInfo) -> TypeId {
+        self.query_cache.infer(info)
+    }
+
+    fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+        self.query_cache.string_intrinsic(kind, type_arg)
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {

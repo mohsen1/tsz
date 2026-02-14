@@ -1794,7 +1794,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let content = get_jsdoc_content(comment, source_text);
-            for (name, typedef_info) in Self::parse_jsdoc_typedefs(content) {
+            for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
                 if name != type_expr {
                     continue;
                 }
