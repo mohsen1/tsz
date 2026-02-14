@@ -248,4 +248,11 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !queries_src.contains("self.ctx.types.intern(TypeKey::TypeParameter("),
         "type_checking_queries should use solver type_param constructor API, not direct TypeKey::TypeParameter interning"
     );
+
+    let state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
+        .expect("failed to read src/state_checking_members.rs for architecture guard");
+    assert!(
+        !state_checking_members_src.contains("TypeKey::TypeParameter"),
+        "state_checking_members should use solver type_param constructor API, not TypeKey::TypeParameter"
+    );
 }
