@@ -3467,6 +3467,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
         options.checker.no_implicit_returns = true;
         options.checker.strict_null_checks = true;
         options.checker.strict_function_types = true;
+        options.checker.strict_bind_call_apply = true;
         options.checker.strict_property_initialization = true;
         options.checker.no_implicit_this = true;
         options.checker.use_unknown_in_catch_variables = true;
