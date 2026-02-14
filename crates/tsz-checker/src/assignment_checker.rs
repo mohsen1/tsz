@@ -12,7 +12,9 @@
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::CheckerState;
-use crate::types::diagnostics::{Diagnostic, DiagnosticCategory, diagnostic_codes};
+use crate::types::diagnostics::{
+    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
+};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::flags::node_flags;
@@ -363,7 +365,10 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        if !is_const && !is_readonly && left_type != TypeId::ANY {
+        let blocked_generic_index_write =
+            !is_const && !is_readonly && self.check_generic_indexed_write_restriction(left_idx);
+
+        if !is_const && !is_readonly && !blocked_generic_index_write && left_type != TypeId::ANY {
             self.check_assignment_compatibility(
                 left_idx,
                 right_idx,
@@ -382,6 +387,49 @@ impl<'a> CheckerState<'a> {
         }
 
         right_type
+    }
+
+    fn check_generic_indexed_write_restriction(&mut self, left_idx: NodeIndex) -> bool {
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return false;
+        };
+        if left_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(left_node) else {
+            return false;
+        };
+        if self
+            .get_literal_index_from_node(access.name_or_argument)
+            .is_some()
+        {
+            return false;
+        }
+
+        let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
+        self.ctx.skip_flow_narrowing = true;
+        let object_type_raw = self.get_type_of_node(access.expression);
+        let object_type = self.resolve_type_query_type(object_type_raw);
+        self.ctx.skip_flow_narrowing = prev_skip_narrowing;
+
+        if object_type == TypeId::ERROR || object_type == TypeId::ANY {
+            return false;
+        }
+        if !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, object_type) {
+            return false;
+        }
+
+        let object_type_str = self.format_type(object_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
+            &[&object_type_str],
+        );
+        self.error_at_node(
+            left_idx,
+            &message,
+            diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
+        );
+        true
     }
 
     // =========================================================================
