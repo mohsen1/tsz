@@ -5,7 +5,7 @@
 
 #![allow(clippy::print_stderr)]
 
-use crate::checker::types::diagnostics::diagnostic_codes;
+use crate::checker::diagnostics::diagnostic_codes;
 use crate::parser::ParserState;
 
 /// Test that throw with line break reports TS1109

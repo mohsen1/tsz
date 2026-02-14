@@ -8,7 +8,7 @@ use tsz_solver::TypeInterner;
 
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 
-fn collect_diagnostics(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+fn collect_diagnostics(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -31,7 +31,7 @@ fn collect_diagnostics(source: &str) -> Vec<crate::checker::types::Diagnostic> {
     checker.ctx.diagnostics.clone()
 }
 
-fn collect_diagnostics_with_libs(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+fn collect_diagnostics_with_libs(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 

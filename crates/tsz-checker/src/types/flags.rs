@@ -4,6 +4,7 @@
 
 /// Flags that describe the kind of a type.
 /// Matches TypeScript's TypeFlags enum in src/compiler/types.ts
+#[allow(dead_code)]
 pub mod type_flags {
     // Primitive types
     pub const ANY: u32 = 1 << 0;
@@ -90,6 +91,7 @@ pub mod type_flags {
 
 /// Additional flags for object types.
 /// Matches TypeScript's ObjectFlags enum in src/compiler/types.ts
+#[allow(dead_code)]
 pub mod object_flags {
     pub const CLASS: u32 = 1 << 0;
     pub const INTERFACE: u32 = 1 << 1;
@@ -114,6 +116,7 @@ pub mod object_flags {
 }
 
 /// Flags for function signatures.
+#[allow(dead_code)]
 pub mod signature_flags {
     pub const NONE: u32 = 0;
     pub const HAS_REST_PARAMETER: u32 = 1 << 0;

@@ -1,6 +1,6 @@
 //! Tests for contextual typing and type inference
 
-use crate::checker::types::Diagnostic;
+use crate::checker::diagnostics::Diagnostic;
 use crate::test_fixtures::TestContext;
 
 /// Helper function to check source and return diagnostics

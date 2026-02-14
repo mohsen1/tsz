@@ -161,10 +161,6 @@ impl<'a> CheckerState<'a> {
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
             if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
-                self.ctx
-                    .relation_cache
-                    .borrow_mut()
-                    .insert(cache_key, cached);
                 return cached;
             }
         }
@@ -188,10 +184,6 @@ impl<'a> CheckerState<'a> {
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
             self.ctx.types.insert_assignability_cache(cache_key, result);
-            self.ctx
-                .relation_cache
-                .borrow_mut()
-                .insert(cache_key, result);
         }
 
         trace!(
@@ -264,10 +256,6 @@ impl<'a> CheckerState<'a> {
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
             if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
-                self.ctx
-                    .relation_cache
-                    .borrow_mut()
-                    .insert(cache_key, cached);
                 return cached;
             }
         }
@@ -291,10 +279,6 @@ impl<'a> CheckerState<'a> {
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
             self.ctx.types.insert_assignability_cache(cache_key, result);
-            self.ctx
-                .relation_cache
-                .borrow_mut()
-                .insert(cache_key, result);
         }
 
         trace!(

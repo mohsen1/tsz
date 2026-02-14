@@ -115,7 +115,7 @@ fn test_checker_union_normalization() {
 
 #[test]
 fn test_await_type_context_suggests_awaited() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -166,7 +166,7 @@ async function foo() {
 
 #[test]
 fn test_async_modifier_rejected_for_class_and_enum() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1030,7 +1030,7 @@ obj[key];
 #[test]
 fn test_checker_resolves_function_parameter_from_bound_state() {
     use crate::binder::SymbolTable;
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parallel;
 
     let source = r#"
@@ -1174,20 +1174,9 @@ fn test_checker_assignability_relation_cache_hit() {
         },
     );
 
-    let before = checker.ctx.relation_cache.borrow().len();
-    assert_eq!(before, 0);
-
-    assert!(checker.is_assignable_to(TypeId::STRING, TypeId::ANY));
-    let after_first = checker.ctx.relation_cache.borrow().len();
-    assert_eq!(after_first, before + 1);
-
-    assert!(checker.is_assignable_to(TypeId::STRING, TypeId::ANY));
-    let after_second = checker.ctx.relation_cache.borrow().len();
-    assert_eq!(after_second, after_first, "second check should hit cache");
-
-    // With strict_function_types: true, the flags should be 2 (bit 1 set)
-    let key = RelationCacheKey::assignability(TypeId::STRING, TypeId::ANY, 2, 0);
-    assert_eq!(checker.ctx.relation_cache.borrow().get(&key), Some(&true));
+    assert!(!checker.is_assignable_to(TypeId::STRING, TypeId::NUMBER));
+    // Re-running should stay stable and reuse solver-side relation machinery.
+    assert!(!checker.is_assignable_to(TypeId::STRING, TypeId::NUMBER));
 }
 
 #[test]
@@ -1206,20 +1195,18 @@ fn test_checker_assignability_bivariant_cache_key_is_distinct() {
         },
     );
 
-    assert!(checker.is_assignable_to(TypeId::STRING, TypeId::ANY));
-    assert!(checker.is_assignable_to_bivariant(TypeId::STRING, TypeId::ANY));
+    assert!(!checker.is_assignable_to(TypeId::STRING, TypeId::NUMBER));
+    assert!(!checker.is_assignable_to_bivariant(TypeId::STRING, TypeId::NUMBER));
 
-    // strict_function_types flag (bit 1) distinguishes regular (2) from bivariant (0)
-    // Regular: strict_function_types=true → flags=2
-    // Bivariant: strict_function_types=false → flags=0
-    let regular_key = RelationCacheKey::assignability(TypeId::STRING, TypeId::ANY, 2, 0);
-    let bivariant_key = RelationCacheKey::assignability(TypeId::STRING, TypeId::ANY, 0, 0);
-    let cache = checker.ctx.relation_cache.borrow();
-    assert_eq!(cache.get(&regular_key), Some(&true));
-    assert_eq!(cache.get(&bivariant_key), Some(&true));
-    assert!(
-        cache.len() >= 2,
-        "expected at least two distinct cache entries for regular and bivariant checks"
+    let regular_flags = checker.ctx.pack_relation_flags();
+    let bivariant_flags = regular_flags & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+    let regular_key =
+        RelationCacheKey::assignability(TypeId::STRING, TypeId::NUMBER, regular_flags, 0);
+    let bivariant_key =
+        RelationCacheKey::assignability(TypeId::STRING, TypeId::NUMBER, bivariant_flags, 0);
+    assert_ne!(
+        regular_key, bivariant_key,
+        "regular and bivariant assignability must use distinct relation cache keys"
     );
 }
 
@@ -1306,15 +1293,16 @@ fn test_checker_assignability_direct_union_member_fast_path() {
     assert!(checker.is_assignable_to(TypeId::STRING, string_or_number));
     assert!(checker.is_assignable_to_bivariant(TypeId::STRING, string_or_number));
 
-    // Regular and bivariant calls populate different cache keys (strict_function_types flag)
-    // Regular: strict_function_types=true → flags=2
-    // Bivariant: strict_function_types=false → flags=0
-    let regular_key = RelationCacheKey::assignability(TypeId::STRING, string_or_number, 2, 0);
-    let bivariant_key = RelationCacheKey::assignability(TypeId::STRING, string_or_number, 0, 0);
-    let cache = checker.ctx.relation_cache.borrow();
-
-    assert_eq!(cache.get(&regular_key), Some(&true));
-    assert_eq!(cache.get(&bivariant_key), Some(&true));
+    let regular_flags = checker.ctx.pack_relation_flags();
+    let bivariant_flags = regular_flags & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+    let regular_key =
+        RelationCacheKey::assignability(TypeId::STRING, string_or_number, regular_flags, 0);
+    let bivariant_key =
+        RelationCacheKey::assignability(TypeId::STRING, string_or_number, bivariant_flags, 0);
+    assert_ne!(
+        regular_key, bivariant_key,
+        "regular and bivariant union-member assignability must use distinct relation cache keys"
+    );
 }
 
 #[test]
@@ -1446,7 +1434,7 @@ function bar() {}
 
 #[test]
 fn test_duplicate_identifier_var_function_2300() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1492,7 +1480,7 @@ function foo() {}
 
 #[test]
 fn test_duplicate_identifier_var_let_2300() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1538,7 +1526,7 @@ let foo = 2;
 
 #[test]
 fn test_duplicate_identifier_type_alias_2300() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1588,7 +1576,7 @@ interface Bar { y: number; }
 /// Test TS2300: Duplicate identifier - duplicate enum members
 #[test]
 fn test_duplicate_identifier_enum_member_2300() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1634,7 +1622,7 @@ enum Color {
 
 #[test]
 fn test_type_alias_with_function_no_duplicate_2300() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1680,7 +1668,7 @@ function Foo() {}
 
 #[test]
 fn test_class_accessor_pair_no_duplicate_2300() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1730,7 +1718,7 @@ class Rectangle {
 
 #[test]
 fn test_class_duplicate_getter_2300() {
-    use crate::checker::types::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -1783,7 +1771,7 @@ class Rectangle {
 
 #[test]
 fn test_overload_call_reports_no_overload_matches() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -2120,7 +2108,7 @@ arr.reduce((a, b) => a + b, 0);
 
 #[test]
 fn test_class_method_overload_reports_no_overload_matches() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -2627,7 +2615,7 @@ doc.print();
 
 #[test]
 fn test_new_expression_reports_overload_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -3141,7 +3129,7 @@ let x: MissingType;
 /// doesn't exist. The import statement itself also emits TS2307.
 #[test]
 fn test_ts2307_import_with_module_augmentation() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -3229,7 +3217,7 @@ declare module "dep" {
 /// Test TS2307 for relative import that cannot be resolved
 #[test]
 fn test_ts2307_relative_import_not_found() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -3272,7 +3260,7 @@ import { foo } from "./non-existent-module";
 /// Test TS2307 for bare module specifier (npm package) that cannot be resolved
 #[test]
 fn test_ts2307_bare_specifier_not_found() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -3315,7 +3303,7 @@ import { something } from "nonexistent-npm-package";
 /// Test that declared_modules prevents TS2307 when module is declared
 #[test]
 fn test_declared_module_prevents_ts2307() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     // Script file (no import/export) with declare module
@@ -3413,7 +3401,7 @@ import data from "./file.json";
 /// Test TS2307 for scoped npm package import that cannot be resolved
 #[test]
 fn test_ts2307_scoped_package_not_found() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -3456,7 +3444,7 @@ import { Component } from "@angular/core";
 /// Test multiple unresolved imports each emit TS2307
 #[test]
 fn test_ts2307_multiple_unresolved_imports() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -3508,7 +3496,7 @@ import * as pkg from "nonexistent-pkg";
 /// Test that TS2307 includes correct module specifier in message
 #[test]
 fn test_ts2307_diagnostic_message_contains_specifier() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -3550,7 +3538,7 @@ import { foo } from "./specific-missing-module";
 /// Test that TS2307 is emitted for dynamic imports with unresolved module specifiers
 #[test]
 fn test_ts2307_dynamic_import_unresolved() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -3605,7 +3593,7 @@ async function loadModule() {
 /// (e.g., variables or template literals cannot be statically checked)
 #[test]
 fn test_ts2307_dynamic_import_non_string_specifier_no_error() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -4163,7 +4151,7 @@ const a: A = new B();
 
 #[test]
 fn test_private_protected_property_access_errors() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -4265,7 +4253,7 @@ class Baz {
 /// The checker emits duplicate TS2445 errors for protected member access.
 #[test]
 fn test_protected_access_requires_derived_instance() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -4317,7 +4305,7 @@ class Derived extends Base {
 
 #[test]
 fn test_protected_static_access_requires_derived_constructor() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -7512,7 +7500,7 @@ namespace A {
 
 #[test]
 fn test_class_extends_null_no_ts2304() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -7552,7 +7540,7 @@ class C1 extends null {}
 
 #[test]
 fn test_exports_global_no_ts2304() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -11479,7 +11467,7 @@ fn test_index_signature_at_solver_level() {
 
 #[test]
 fn test_ambient_module_relative_path_2436() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     // TS2436: Ambient module declaration cannot specify relative module name
@@ -20732,7 +20720,7 @@ const makeRequest: (req: API.Request) => API.Response = handleRequest;
 
 #[test]
 fn test_use_before_assignment_basic_flow() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -20803,7 +20791,7 @@ function qux() {
 
 #[test]
 fn test_use_before_assignment_try_catch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -20860,7 +20848,7 @@ function foo() {
 
 #[test]
 fn test_use_before_assignment_for_of_initializer() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -20911,7 +20899,7 @@ function foo(items: number[]) {
 // Test for-in with external variable: `let k: string; for (k in obj) { k; }`
 #[test]
 fn test_use_before_assignment_for_in_initializer() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -21898,7 +21886,7 @@ type AbstractConstructor<T> = abstract new (...args: any[]) => T;
 /// only TS1005 for the missing '}'. We match that behavior.
 #[test]
 fn test_unterminated_template_expression_reports_parse_error() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = "var v = `foo ${ a ";
@@ -21916,7 +21904,7 @@ fn test_unterminated_template_expression_reports_parse_error() {
 
 #[test]
 fn test_global_augmentation_binds_to_file_scope() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -21960,7 +21948,7 @@ augmented;
 
 #[test]
 fn test_namespace_merging_resolves_prior_exports() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22002,7 +21990,7 @@ const z = Utils.y;
 
 #[test]
 fn test_module_augmentation_merges_exports() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22052,7 +22040,7 @@ declare module "pkg" {
 #[test]
 #[ignore = "Circular type alias detection not fully implemented"]
 fn test_circular_type_alias_ts2456() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22547,7 +22535,7 @@ accessor export default V1;
 
 #[test]
 fn test_namespace_sibling_export_resolves() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22593,7 +22581,7 @@ namespace Utils {
 
 #[test]
 fn test_namespace_type_literal_resolves_members() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22639,7 +22627,7 @@ namespace A {
 
 #[test]
 fn test_namespace_type_query_resolves_alias() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22687,7 +22675,7 @@ namespace C {
 
 #[test]
 fn test_declare_global_merges_into_global_scope() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22734,7 +22722,7 @@ const x = globalValue;
 
 #[test]
 fn test_ambient_module_declaration_resolves_import() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22779,7 +22767,7 @@ const opts: Options = { value: 1 };
 
 #[test]
 fn test_extends_expression_with_type_args_instantiates_base() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22848,7 +22836,7 @@ class D3 extends getBase() <string, number> {
 
 #[test]
 fn test_contextual_array_literal_uses_element_type() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22895,7 +22883,7 @@ const r: Base[] = [d1, d2];
 
 #[test]
 fn test_indexed_access_resolves_class_property_type() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22941,7 +22929,7 @@ class C {
 
 #[test]
 fn test_static_private_fields_ignored_in_constructor_assignability() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -22986,7 +22974,7 @@ const willErrorSomeDay: typeof A = class {};
 
 #[test]
 fn test_assignment_expression_condition_narrows_discriminant() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -23036,7 +23024,7 @@ if ((o = fn()).done) {
 #[test]
 #[ignore = "Complex destructuring assignment narrowing not fully implemented"]
 fn test_destructuring_assignment_default_order_narrows() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -23079,7 +23067,7 @@ const bb: 0 = b;
 
 #[test]
 fn test_in_operator_const_name_narrows_union() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -23125,7 +23113,7 @@ if (a in c) {
 
 #[test]
 fn test_instanceof_type_param_narrows_to_intersection() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -23171,7 +23159,7 @@ function f<T>(x: T) {
 
 #[test]
 fn test_optional_chain_discriminant_narrows_union() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -24314,7 +24302,7 @@ class Example {
 
 #[test]
 fn test_ts2695_comma_operator_side_effects() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -24374,7 +24362,7 @@ aFn(), b;
 
 #[test]
 fn test_ts2695_comma_operator_edge_cases() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -27482,7 +27470,7 @@ declare global {
 #[test]
 fn test_global_augmentation_interface_no_ts2304() {
     // Test that augmented interfaces inside `declare global` don't cause TS2304 errors
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29065,20 +29053,23 @@ fn test_tier_2_type_checker_accuracy_fixes() {
     // Test 3: Verify diagnostic codes are defined
     assert_eq!(
         2683,
-        crate::checker::types::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION
+        crate::checker::diagnostics::diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION
     );
     assert_eq!(
         2322,
-        crate::checker::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        crate::checker::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     );
     assert_eq!(
         2571,
-        crate::checker::types::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
+        crate::checker::diagnostics::diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
     );
-    assert_eq!(2507, crate::checker::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE);
+    assert_eq!(
+        2507,
+        crate::checker::diagnostics::diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE
+    );
     assert_eq!(
         2349,
-        crate::checker::types::diagnostics::diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE
+        crate::checker::diagnostics::diagnostic_codes::THIS_EXPRESSION_IS_NOT_CALLABLE
     );
 
     println!("✅ Tier 2 Type Checker Accuracy infrastructure verified:");
@@ -29286,7 +29277,7 @@ module MyModule {
 /// we should emit TS2307 for the module, but NOT emit TS2304 for uses of `ts.SomeType`.
 #[test]
 fn test_unresolved_namespace_import_no_extra_ts2304() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     // Similar pattern to APISample tests
@@ -29362,7 +29353,7 @@ function process(node: ts.Node): void {}
 /// isn't available without lib.d.ts
 #[test]
 fn test_apisample_pattern_errors() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     // Pattern similar to APISample_Watch.ts
@@ -29454,7 +29445,7 @@ function createProgram(
 
 #[test]
 fn test_ts2362_left_hand_side_of_arithmetic() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29500,7 +29491,7 @@ const result = str - 1;  // TS2362: left-hand side must be number/bigint/enum
 
 #[test]
 fn test_ts2363_right_hand_side_of_arithmetic() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29547,7 +29538,7 @@ const result = num - str;  // TS2363: right-hand side must be number/bigint/enum
 
 #[test]
 fn test_ts2362_ts2363_both_operands_invalid() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29603,7 +29594,7 @@ const result = a * b;  // TS2362 and TS2363: both operands invalid
 
 #[test]
 fn test_arithmetic_valid_with_number_types() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29662,7 +29653,7 @@ const result4 = a % b;
 
 #[test]
 fn test_arithmetic_valid_with_any_type() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29719,7 +29710,7 @@ const result3 = anyVal / anyVal;
 
 #[test]
 fn test_arithmetic_valid_with_bigint() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29778,7 +29769,7 @@ const result4 = a % b;
 
 #[test]
 fn test_arithmetic_valid_with_enum() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     // Note: This test is ignored because enum member type resolution
@@ -29847,7 +29838,7 @@ const result = a - b;
 
 #[test]
 fn test_ts2362_with_boolean() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29893,7 +29884,7 @@ const result = flag - 1;  // TS2362: boolean is not a valid arithmetic operand
 
 #[test]
 fn test_ts2363_with_object() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29939,7 +29930,7 @@ const result = 10 / obj;  // TS2363: object is not a valid arithmetic operand
 
 #[test]
 fn test_ts2362_ts2363_all_arithmetic_operators() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -29995,8 +29986,8 @@ const r4 = str % num;  // TS2362
 #[test]
 fn test_iterator_for_of_number_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30044,8 +30035,8 @@ for (const x of num) {
 #[test]
 fn test_iterator_for_of_array_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30093,8 +30084,8 @@ for (const x of arr) {
 #[test]
 fn test_iterator_for_of_string_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30142,8 +30133,8 @@ for (const ch of str) {
 #[test]
 fn test_iterator_spread_number_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30189,8 +30180,8 @@ const arr = [...num];
 #[test]
 fn test_iterator_spread_array_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30236,8 +30227,8 @@ const arr2 = [...arr1];
 #[test]
 fn test_iterator_spread_in_call_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30284,8 +30275,8 @@ foo(...obj);
 #[test]
 fn test_iterator_for_of_boolean_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30333,8 +30324,8 @@ for (const x of b) {
 #[test]
 fn test_iterator_for_of_tuple_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30382,8 +30373,8 @@ for (const x of tuple) {
 #[test]
 fn test_iterator_array_destructuring_number_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30429,8 +30420,8 @@ const [a, b] = num;
 #[test]
 fn test_iterator_array_destructuring_array_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30480,8 +30471,8 @@ const [a, b] = arr;
 #[test]
 fn test_array_destructuring_number_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30527,8 +30518,8 @@ const [a, b] = num;  // TS2488: number is not iterable
 #[test]
 fn test_array_destructuring_boolean_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30574,8 +30565,8 @@ const [x] = flag;  // TS2488: boolean is not iterable
 #[test]
 fn test_array_destructuring_object_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30621,8 +30612,8 @@ const [x, y] = obj;  // TS2488: object is not iterable
 #[test]
 fn test_array_destructuring_array_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30668,8 +30659,8 @@ const [a, b, c] = arr;  // OK: array is iterable
 #[test]
 fn test_array_destructuring_string_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30716,8 +30707,8 @@ const [a, b, c] = str;  // OK: string is iterable
 #[ignore = "TODO: Feature implementation in progress"]
 fn test_array_destructuring_union_non_iterable_emits_ts2488() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30763,8 +30754,8 @@ const [a] = val;  // TS2488: union with non-iterable member is not iterable
 #[test]
 fn test_array_destructuring_tuple_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30810,8 +30801,8 @@ const [a, b] = tuple;  // OK: tuple is iterable
 #[test]
 fn test_array_destructuring_nested_pattern_iterability() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30861,8 +30852,8 @@ const [[a]] = [num];  // TS2488: inner array contains non-iterable number
 #[test]
 fn test_async_iterator_for_await_of_number_emits_ts2504() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30910,8 +30901,8 @@ async function test() {
 #[test]
 fn test_async_iterator_for_await_of_array_no_error() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -30959,8 +30950,8 @@ async function test() {
 #[test]
 fn test_async_iterator_for_await_of_boolean_emits_ts2504() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31008,8 +30999,8 @@ async function test() {
 #[test]
 fn test_async_iterator_for_await_of_object_emits_ts2504() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31061,8 +31052,8 @@ async function test() {
 #[test]
 fn test_required_param_after_optional_ts1016() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31115,8 +31106,8 @@ function foo(a?: number, b: string) {
 #[test]
 fn test_required_param_after_optional_arrow_ts1016() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31167,8 +31158,8 @@ const fn = (a?: number, b: string) => a;
 #[test]
 fn test_required_param_after_optional_method_ts1016() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31223,8 +31214,8 @@ class Foo {
 #[test]
 fn test_required_param_after_optional_constructor_ts1016() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31277,8 +31268,8 @@ class Foo {
 #[test]
 fn test_no_ts1016_for_proper_parameter_order() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31331,8 +31322,8 @@ function foo(a: number, b?: string, c?: boolean) {
 #[test]
 fn test_no_ts1016_for_param_with_default_after_optional() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31385,8 +31376,8 @@ function foo(a?: number, b: string = "default") {
 #[test]
 fn test_no_ts1016_for_rest_param_after_optional() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31439,8 +31430,8 @@ function foo(a?: number, ...rest: string[]) {
 #[test]
 fn test_multiple_required_params_after_optional_ts1016() {
     use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
-    use crate::checker::types::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
     use crate::solver::TypeInterner;
 
@@ -31610,7 +31601,7 @@ const handler: Handler = ([first, second]) => {
 /// Test TS2322 emission for variable declaration with type annotation mismatch
 #[test]
 fn test_ts2322_variable_declaration_type_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 let x: string = 42;
@@ -31660,7 +31651,7 @@ let z: boolean = null;
 /// Test TS2322 emission for return statement type mismatch
 #[test]
 fn test_ts2322_return_statement_type_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 function getString(): string {
@@ -31717,7 +31708,7 @@ function getBoolean(): boolean {
 /// Test TS2322 emission for class property initializer type mismatch
 #[test]
 fn test_ts2322_class_property_initializer_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 class Example {
@@ -31767,7 +31758,7 @@ class Example {
 /// Test TS2322 emission for object literal property type mismatch
 #[test]
 fn test_ts2322_object_literal_property_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 interface Person {
@@ -31822,7 +31813,7 @@ const p: Person = {
 /// Test TS2322 emission for array element type mismatch
 #[test]
 fn test_ts2322_array_element_type_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 const arr: number[] = [1, 2, "three", 4];
@@ -31871,7 +31862,7 @@ const arr2: string[] = ["a", "b", 3, "d"];
 /// Test TS2322 is NOT emitted for valid assignments
 #[test]
 fn test_ts2322_valid_assignments_no_error() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 let x: string = "hello";
@@ -31934,7 +31925,7 @@ class Valid {
 /// Test TS2322 for function parameter default value mismatch
 #[test]
 fn test_ts2322_parameter_default_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 function greet(name: string = 42) {
@@ -31987,7 +31978,7 @@ function compute(value: number = "hello") {
 /// Test TS2322 for const assertion with type annotation
 #[test]
 fn test_ts2322_const_variable_type_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 const x: string = 42;
@@ -32035,7 +32026,7 @@ const y: number = "hello";
 /// Test TS2322 for union type assignments
 #[test]
 fn test_ts2322_union_type_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 let x: string | number = true;
@@ -32083,7 +32074,7 @@ let y: "a" | "b" = "c";
 /// Test TS2322 for tuple type assignments
 #[test]
 fn test_ts2322_tuple_type_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 let tuple: [string, number] = [1, "hello"];
@@ -32130,7 +32121,7 @@ let tuple: [string, number] = [1, "hello"];
 /// Test TS2322 for generic type assignments
 #[test]
 fn test_ts2322_generic_type_mismatch() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 interface Box<T> {
@@ -32300,7 +32291,7 @@ function test() {
 /// Test that TS2304 is emitted for a typo in a variable name with suggestions (TS2552).
 #[test]
 fn test_ts2304_typo_with_suggestion() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
 
     let source = r#"
@@ -33531,7 +33522,7 @@ const list: List<number> = { value: 1, next: { value: 2, next: null } };
 /// This is the main failing case identified in docs/ts2411-remaining-issues.md
 #[test]
 fn test_ts2411_own_string_index_signature() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 interface Derived {
@@ -33580,7 +33571,7 @@ interface Derived {
 /// Test that properties are checked against inherited index signatures.
 #[test]
 fn test_ts2411_inherited_index_signature() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 interface Base {
@@ -33632,7 +33623,7 @@ interface Derived extends Base {
 /// Test that compatible properties don't emit TS2411 errors.
 #[test]
 fn test_ts2411_compatible_property_no_error() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 interface Foo {
@@ -33688,7 +33679,7 @@ interface Foo {
 /// e.g., declare module "foo" { import x = require("foo"); }
 #[test]
 fn test_ts2303_circular_import_alias() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 declare module "moduleC" {
@@ -33737,7 +33728,7 @@ declare module "moduleC" {
 /// Test that non-circular imports don't trigger TS2303
 #[test]
 fn test_ts2303_no_error_for_different_module() {
-    use crate::checker::types::diagnostics::diagnostic_codes;
+    use crate::checker::diagnostics::diagnostic_codes;
 
     let source = r#"
 declare module "moduleA" {

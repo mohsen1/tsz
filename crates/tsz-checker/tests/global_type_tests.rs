@@ -17,7 +17,7 @@ use tsz_solver::TypeInterner;
 
 /// Helper function to create a checker without lib.d.ts and check source code.
 /// This creates the checker with the parser's arena directly to ensure proper node resolution.
-fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     check_without_lib_with_options(source, CheckerOptions::default())
 }
 
@@ -25,7 +25,7 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
 fn check_without_lib_with_options(
     source: &str,
     options: CheckerOptions,
-) -> Vec<crate::checker::types::Diagnostic> {
+) -> Vec<crate::checker::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -223,7 +223,7 @@ const r = new Promise<number>((resolve) => resolve(1));
 
 /// Helper function to create a checker WITH lib.d.ts and check source code.
 /// This creates the checker with the parser's arena directly and loads lib files.
-fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     use std::sync::Arc;
 
     let ctx = TestContext::new(); // This loads lib files
