@@ -3734,6 +3734,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // tsc suppresses the function-expression TS7011 in common cases where the
+        // same closure already has implicit-any parameter errors (TS7006/TS7019).
+        // Avoid double-reporting for unnamed function expressions/arrow functions.
+        if name.is_none() && self.has_untyped_value_parameters(fallback_node) {
+            return;
+        }
+
         let return_text = self.implicit_any_return_display(return_type);
         if let Some(name) = name {
             self.error_at_node_msg(
@@ -3748,6 +3755,43 @@ impl<'a> CheckerState<'a> {
                 &[&return_text],
             );
         }
+    }
+
+    fn has_untyped_value_parameters(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        let has_untyped = |param_idx: NodeIndex| {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                return false;
+            };
+            if !param.type_annotation.is_none() {
+                return false;
+            }
+            let name = self.parameter_name_for_error(param.name);
+            if name.is_empty() {
+                return true;
+            }
+            name != "this"
+        };
+
+        if let Some(func) = self.ctx.arena.get_function(node) {
+            return func.parameters.nodes.iter().copied().any(has_untyped);
+        }
+        if let Some(method) = self.ctx.arena.get_method_decl(node) {
+            return method.parameters.nodes.iter().copied().any(has_untyped);
+        }
+        if let Some(sig) = self.ctx.arena.get_signature(node)
+            && let Some(params) = sig.parameters.as_ref()
+        {
+            return params.nodes.iter().copied().any(has_untyped);
+        }
+
+        false
     }
 
     /// Check overload compatibility: implementation must be assignable to all overload signatures.

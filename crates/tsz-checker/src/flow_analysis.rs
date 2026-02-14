@@ -36,6 +36,7 @@ use rustc_hash::FxHashSet;
 use std::rc::Rc;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -1970,6 +1971,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For source-file globals, skip TS2454 when the usage occurs inside a
+        // function-like body. The variable may be assigned before invocation.
+        if self.is_source_file_global_var_decl(decl_id) && self.is_inside_function_like(idx) {
+            return false;
+        }
+
         // Walk up the parent chain to check:
         // 1. Skip definite assignment checks in ambient declarations (declare const/let)
         // 2. Anchor checks to a function-like or source-file container
@@ -2020,6 +2027,66 @@ impl<'a> CheckerState<'a> {
 
         // Only check definite assignment when we can anchor to a container scope.
         found_container_scope
+    }
+
+    fn is_source_file_global_var_decl(&self, decl_id: NodeIndex) -> bool {
+        let Some(info) = self.ctx.arena.node_info(decl_id) else {
+            return false;
+        };
+        let mut current = info.parent;
+        for _ in 0..50 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || node.kind == syntax_kind_ext::CONSTRUCTOR
+                || node.kind == syntax_kind_ext::GET_ACCESSOR
+                || node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                return false;
+            }
+            let Some(next) = self.ctx.arena.node_info(current).map(|n| n.parent) else {
+                return false;
+            };
+            current = next;
+            if current.is_none() {
+                return false;
+            }
+        }
+        false
+    }
+
+    fn is_inside_function_like(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..50 {
+            let Some(info) = self.ctx.arena.node_info(current) else {
+                return false;
+            };
+            current = info.parent;
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || node.kind == syntax_kind_ext::CONSTRUCTOR
+                || node.kind == syntax_kind_ext::GET_ACCESSOR
+                || node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                return false;
+            }
+        }
+        false
     }
 
     /// Check if a node is a for-in/for-of initializer (assignment target).
