@@ -266,11 +266,11 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
-    /// Instantiate a TypeKey.
-    fn instantiate_key(&mut self, key: &TypeKey) -> TypeId {
+    /// Instantiate a TypeData.
+    fn instantiate_key(&mut self, key: &TypeData) -> TypeId {
         match key {
             // Type parameters get substituted
-            TypeKey::TypeParameter(info) => {
+            TypeData::TypeParameter(info) => {
                 if self.is_shadowed(info.name) {
                     return self.interner.intern(key.clone());
                 }
@@ -283,27 +283,27 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Intrinsics don't change
-            TypeKey::Intrinsic(_) | TypeKey::Literal(_) | TypeKey::Error => {
+            TypeData::Intrinsic(_) | TypeData::Literal(_) | TypeData::Error => {
                 self.interner.intern(key.clone())
             }
 
             // Lazy types might resolve to something that needs substitution
-            TypeKey::Lazy(_)
-            | TypeKey::Recursive(_)
-            | TypeKey::BoundParameter(_)
-            | TypeKey::TypeQuery(_)
-            | TypeKey::UniqueSymbol(_)
-            | TypeKey::ModuleNamespace(_) => self.interner.intern(key.clone()),
+            TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_) => self.interner.intern(key.clone()),
 
             // Enum types: instantiate the member type (structural part)
             // The DefId (nominal identity) stays the same
-            TypeKey::Enum(def_id, member_type) => {
+            TypeData::Enum(def_id, member_type) => {
                 let instantiated_member = self.instantiate(*member_type);
                 self.interner.enum_type(*def_id, instantiated_member)
             }
 
             // Application: instantiate base and args
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner.type_application(*app_id);
                 let base = self.instantiate(app.base);
                 let args: Vec<TypeId> = app.args.iter().map(|&arg| self.instantiate(arg)).collect();
@@ -311,7 +311,7 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // This type: substitute with concrete this_type if provided
-            TypeKey::ThisType => {
+            TypeData::ThisType => {
                 if let Some(this_type) = self.this_type {
                     this_type
                 } else {
@@ -320,7 +320,7 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Union: instantiate all members
-            TypeKey::Union(members) => {
+            TypeData::Union(members) => {
                 let members = self.interner.type_list(*members);
                 let instantiated: Vec<TypeId> =
                     members.iter().map(|&m| self.instantiate(m)).collect();
@@ -328,7 +328,7 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Intersection: instantiate all members
-            TypeKey::Intersection(members) => {
+            TypeData::Intersection(members) => {
                 let members = self.interner.type_list(*members);
                 let instantiated: Vec<TypeId> =
                     members.iter().map(|&m| self.instantiate(m)).collect();
@@ -336,13 +336,13 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Array: instantiate element type
-            TypeKey::Array(elem) => {
+            TypeData::Array(elem) => {
                 let instantiated_elem = self.instantiate(*elem);
                 self.interner.array(instantiated_elem)
             }
 
             // Tuple: instantiate all elements
-            TypeKey::Tuple(elements) => {
+            TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(*elements);
                 let instantiated: Vec<TupleElement> = elements
                     .iter()
@@ -357,7 +357,7 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Object: instantiate all property types
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
                 let instantiated: Vec<PropertyInfo> = shape
                     .properties
@@ -378,7 +378,7 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Object with index signatures: instantiate all types
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
                 let instantiated_props: Vec<PropertyInfo> = shape
                     .properties
@@ -417,7 +417,7 @@ impl<'a> TypeInstantiator<'a> {
 
             // Function: instantiate params and return type
             // Note: Type params in the function create a new scope - don't substitute those
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(*shape_id);
                 let shadowed_len = self.shadowed.len();
                 let saved_visiting = if !shape.type_params.is_empty() {
@@ -482,7 +482,7 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Callable: instantiate all signatures and properties
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(*shape_id);
                 let instantiated_call: Vec<CallSignature> = shape
                     .call_signatures
@@ -520,10 +520,10 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Conditional: instantiate all parts
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(*cond_id);
                 if cond.is_distributive
-                    && let Some(TypeKey::TypeParameter(info)) =
+                    && let Some(TypeData::TypeParameter(info)) =
                         self.interner.lookup(cond.check_type)
                     && !self.is_shadowed(info.name)
                     && let Some(substituted) = self.substitution.get(info.name)
@@ -560,7 +560,7 @@ impl<'a> TypeInstantiator<'a> {
                         }
                         return self.interner.union(results);
                     }
-                    if let Some(TypeKey::Union(members)) = self.interner.lookup(substituted) {
+                    if let Some(TypeData::Union(members)) = self.interner.lookup(substituted) {
                         let members = self.interner.type_list(members);
                         // Limit distribution to prevent OOM with large unions
                         // (e.g., string literal unions with thousands of members)
@@ -608,7 +608,7 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Mapped: instantiate constraint and template
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(*mapped_id);
                 let shadowed_len = self.shadowed.len();
                 let saved = self.visiting.clone();
@@ -666,7 +666,7 @@ impl<'a> TypeInstantiator<'a> {
 
             // Index access: instantiate both parts and evaluate immediately
             // Task #46: Meta-type reduction for O(1) equality
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 let inst_obj = self.instantiate(*obj);
                 let inst_idx = self.instantiate(*idx);
                 // Don't eagerly evaluate if either part still contains type parameters.
@@ -684,7 +684,7 @@ impl<'a> TypeInstantiator<'a> {
 
             // KeyOf: instantiate the operand and evaluate immediately
             // Task #46: Meta-type reduction for O(1) equality
-            TypeKey::KeyOf(operand) => {
+            TypeData::KeyOf(operand) => {
                 let inst_operand = self.instantiate(*operand);
                 // Don't eagerly evaluate if the operand still contains type parameters.
                 // This prevents premature evaluation of `keyof T` where T is an inference
@@ -700,13 +700,13 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // ReadonlyType: instantiate the operand
-            TypeKey::ReadonlyType(operand) => {
+            TypeData::ReadonlyType(operand) => {
                 let inst_operand = self.instantiate(*operand);
                 self.interner.readonly_type(inst_operand)
             }
 
             // NoInfer: preserve wrapper, instantiate inner
-            TypeKey::NoInfer(inner) => {
+            TypeData::NoInfer(inner) => {
                 let inst_inner = self.instantiate(*inner);
                 self.interner.no_infer(inst_inner)
             }
@@ -714,7 +714,7 @@ impl<'a> TypeInstantiator<'a> {
             // Template literal: instantiate embedded types
             // After substitution, if any type span becomes a union of string literals,
             // we trigger evaluation to expand the template literal into a union of strings.
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(*spans);
                 let mut instantiated: Vec<TemplateSpan> = Vec::with_capacity(spans.len());
                 let mut needs_evaluation = false;
@@ -730,13 +730,13 @@ impl<'a> TypeInstantiator<'a> {
                             // - The string intrinsic type
                             if let Some(key) = self.interner.lookup(inst_type) {
                                 match key {
-                                    TypeKey::Union(_)
-                                    | TypeKey::Literal(LiteralValue::String(_))
-                                    | TypeKey::Literal(LiteralValue::Number(_))
-                                    | TypeKey::Literal(LiteralValue::Boolean(_))
-                                    | TypeKey::Intrinsic(IntrinsicKind::String)
-                                    | TypeKey::Intrinsic(IntrinsicKind::Number)
-                                    | TypeKey::Intrinsic(IntrinsicKind::Boolean) => {
+                                    TypeData::Union(_)
+                                    | TypeData::Literal(LiteralValue::String(_))
+                                    | TypeData::Literal(LiteralValue::Number(_))
+                                    | TypeData::Literal(LiteralValue::Boolean(_))
+                                    | TypeData::Intrinsic(IntrinsicKind::String)
+                                    | TypeData::Intrinsic(IntrinsicKind::Number)
+                                    | TypeData::Intrinsic(IntrinsicKind::Boolean) => {
                                         needs_evaluation = true;
                                     }
                                     _ => {}
@@ -761,17 +761,17 @@ impl<'a> TypeInstantiator<'a> {
             // StringIntrinsic: instantiate the type argument
             // After substitution, if the type argument becomes a concrete type that can
             // be evaluated (like a string literal or union), trigger evaluation.
-            TypeKey::StringIntrinsic { kind, type_arg } => {
+            TypeData::StringIntrinsic { kind, type_arg } => {
                 let inst_arg = self.instantiate(*type_arg);
                 let string_intrinsic = self.interner.string_intrinsic(*kind, inst_arg);
 
                 // Check if we can evaluate the result
                 if let Some(key) = self.interner.lookup(inst_arg) {
                     match key {
-                        TypeKey::Union(_)
-                        | TypeKey::Literal(LiteralValue::String(_))
-                        | TypeKey::TemplateLiteral(_)
-                        | TypeKey::Intrinsic(IntrinsicKind::String) => {
+                        TypeData::Union(_)
+                        | TypeData::Literal(LiteralValue::String(_))
+                        | TypeData::TemplateLiteral(_)
+                        | TypeData::Intrinsic(IntrinsicKind::String) => {
                             crate::evaluate::evaluate_type(self.interner, string_intrinsic)
                         }
                         _ => string_intrinsic,
@@ -782,7 +782,7 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Infer: keep as-is unless explicitly substituting inference variables
-            TypeKey::Infer(info) => {
+            TypeData::Infer(info) => {
                 if self.substitute_infer
                     && !self.is_shadowed(info.name)
                     && let Some(substituted) = self.substitution.get(info.name)

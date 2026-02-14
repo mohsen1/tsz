@@ -208,7 +208,7 @@ impl<'a> TracerSubtypeChecker<'a> {
         // Apparent primitive shape check (for checking primitives against object interfaces)
         if let Some(ref shape) = self.apparent_primitive_shape_for_key(&source_key) {
             match &target_key {
-                TypeKey::Object(t_shape_id) => {
+                TypeData::Object(t_shape_id) => {
                     let t_shape = self.interner.object_shape(*t_shape_id);
                     return self.check_object_with_tracer(
                         &shape.properties,
@@ -218,7 +218,7 @@ impl<'a> TracerSubtypeChecker<'a> {
                         tracer,
                     );
                 }
-                TypeKey::ObjectWithIndex(t_shape_id) => {
+                TypeData::ObjectWithIndex(t_shape_id) => {
                     let t_shape = self.interner.object_shape(*t_shape_id);
                     return self.check_object_with_index_with_tracer(
                         shape, &t_shape, source, target, tracer,
@@ -230,33 +230,33 @@ impl<'a> TracerSubtypeChecker<'a> {
 
         // Structural checks
         match (&source_key, &target_key) {
-            (TypeKey::Intrinsic(s), TypeKey::Intrinsic(t)) => {
+            (TypeData::Intrinsic(s), TypeData::Intrinsic(t)) => {
                 self.check_intrinsic_with_tracer(*s, *t, source, target, tracer)
             }
 
-            (TypeKey::Literal(lit), TypeKey::Intrinsic(t)) => {
+            (TypeData::Literal(lit), TypeData::Intrinsic(t)) => {
                 self.check_literal_to_intrinsic_with_tracer(lit, *t, source, target, tracer)
             }
 
-            (TypeKey::Literal(s), TypeKey::Literal(t)) => s == t,
+            (TypeData::Literal(s), TypeData::Literal(t)) => s == t,
 
-            (TypeKey::Union(members_id), _) => {
+            (TypeData::Union(members_id), _) => {
                 self.check_union_source_with_tracer(*members_id, target, &target_key, tracer)
             }
 
-            (_, TypeKey::Union(members_id)) => {
+            (_, TypeData::Union(members_id)) => {
                 self.check_union_target_with_tracer(source, &source_key, *members_id, tracer)
             }
 
-            (TypeKey::Intersection(members_id), _) => {
+            (TypeData::Intersection(members_id), _) => {
                 self.check_intersection_source_with_tracer(*members_id, target, tracer)
             }
 
-            (_, TypeKey::Intersection(members_id)) => {
+            (_, TypeData::Intersection(members_id)) => {
                 self.check_intersection_target_with_tracer(source, *members_id, tracer)
             }
 
-            (TypeKey::Function(source_func_id), TypeKey::Function(target_func_id)) => self
+            (TypeData::Function(source_func_id), TypeData::Function(target_func_id)) => self
                 .check_function_with_tracer(
                     *source_func_id,
                     *target_func_id,
@@ -265,10 +265,10 @@ impl<'a> TracerSubtypeChecker<'a> {
                     tracer,
                 ),
 
-            (TypeKey::Tuple(source_list_id), TypeKey::Tuple(target_list_id)) => self
+            (TypeData::Tuple(source_list_id), TypeData::Tuple(target_list_id)) => self
                 .check_tuple_with_tracer(*source_list_id, *target_list_id, source, target, tracer),
 
-            (TypeKey::Object(s_shape_id), TypeKey::Object(t_shape_id)) => {
+            (TypeData::Object(s_shape_id), TypeData::Object(t_shape_id)) => {
                 let s_shape = self.interner.object_shape(*s_shape_id);
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 self.check_object_with_tracer(
@@ -280,25 +280,25 @@ impl<'a> TracerSubtypeChecker<'a> {
                 )
             }
 
-            (TypeKey::Object(s_shape_id), TypeKey::ObjectWithIndex(t_shape_id)) => {
+            (TypeData::Object(s_shape_id), TypeData::ObjectWithIndex(t_shape_id)) => {
                 let s_shape = self.interner.object_shape(*s_shape_id);
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 self.check_object_with_index_with_tracer(&s_shape, &t_shape, source, target, tracer)
             }
 
-            (TypeKey::ObjectWithIndex(s_shape_id), TypeKey::ObjectWithIndex(t_shape_id)) => {
+            (TypeData::ObjectWithIndex(s_shape_id), TypeData::ObjectWithIndex(t_shape_id)) => {
                 let s_shape = self.interner.object_shape(*s_shape_id);
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 self.check_object_with_index_with_tracer(&s_shape, &t_shape, source, target, tracer)
             }
 
-            (TypeKey::ObjectWithIndex(s_shape_id), TypeKey::Object(t_shape_id)) => {
+            (TypeData::ObjectWithIndex(s_shape_id), TypeData::Object(t_shape_id)) => {
                 let s_shape = self.interner.object_shape(*s_shape_id);
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 self.check_object_with_index_with_tracer(&s_shape, &t_shape, source, target, tracer)
             }
 
-            (TypeKey::Array(source_elem), TypeKey::Array(target_elem)) => {
+            (TypeData::Array(source_elem), TypeData::Array(target_elem)) => {
                 // Arrays are covariant
                 self.check_subtype_with_tracer(*source_elem, *target_elem, tracer)
             }
@@ -326,7 +326,7 @@ impl<'a> TracerSubtypeChecker<'a> {
     /// Get apparent primitive shape for a type key.
     /// Returns an ObjectShape for primitives that have apparent methods (e.g., String.prototype methods).
     /// Currently returns None as apparent shapes are not yet implemented.
-    fn apparent_primitive_shape_for_key(&self, _key: &TypeKey) -> Option<ObjectShape> {
+    fn apparent_primitive_shape_for_key(&self, _key: &TypeData) -> Option<ObjectShape> {
         // TODO: Return apparent shapes for primitives (String, Number, etc.)
         // For example, string has { toString(): string, valueOf(): string, ... }
         None
@@ -405,7 +405,7 @@ impl<'a> TracerSubtypeChecker<'a> {
         &mut self,
         members_id: TypeListId,
         target: TypeId,
-        _target_key: &TypeKey,
+        _target_key: &TypeData,
         tracer: &mut T,
     ) -> bool {
         let members = self.interner.type_list(members_id);
@@ -421,7 +421,7 @@ impl<'a> TracerSubtypeChecker<'a> {
     fn check_union_target_with_tracer<T: SubtypeTracer>(
         &mut self,
         source: TypeId,
-        _source_key: &TypeKey,
+        _source_key: &TypeData,
         members_id: TypeListId,
         tracer: &mut T,
     ) -> bool {

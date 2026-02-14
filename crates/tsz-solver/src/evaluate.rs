@@ -229,7 +229,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Recursion guard for self-referential mapped/application types.
                 // Per TypeScript behavior, recursive mapped types evaluate to empty objects.
                 let key = self.interner.lookup(type_id);
-                if matches!(key, Some(TypeKey::Mapped(_))) {
+                if matches!(key, Some(TypeData::Mapped(_))) {
                     let empty = self.interner.object(vec![]);
                     self.cache.insert(type_id, empty);
                     return empty;
@@ -285,8 +285,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // aren't expanded to their underlying function/object types
         // Note: Ref(SymbolRef) was migrated to Lazy(DefId) in Phase 4.2
         let def_id = match base_key {
-            TypeKey::Lazy(def_id) => Some(def_id),
-            TypeKey::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
             _ => None,
         };
 
@@ -413,49 +413,49 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
-            TypeKey::TypeParameter(ref info) => {
+            TypeData::TypeParameter(ref info) => {
                 if !seen.contains(&info.name) {
                     seen.insert(info.name);
                     params.push(info.clone());
                 }
             }
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in &shape.properties {
                     self.collect_type_params(prop.type_id, seen, params);
                 }
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 for param in &shape.params {
                     self.collect_type_params(param.type_id, seen, params);
                 }
                 self.collect_type_params(shape.return_type, seen, params);
             }
-            TypeKey::Union(members) | TypeKey::Intersection(members) => {
+            TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
                     self.collect_type_params(member, seen, params);
                 }
             }
-            TypeKey::Array(elem) => {
+            TypeData::Array(elem) => {
                 self.collect_type_params(elem, seen, params);
             }
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(cond_id);
                 self.collect_type_params(cond.check_type, seen, params);
                 self.collect_type_params(cond.extends_type, seen, params);
                 self.collect_type_params(cond.true_type, seen, params);
                 self.collect_type_params(cond.false_type, seen, params);
             }
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 self.collect_type_params(app.base, seen, params);
                 for &arg in &app.args {
                     self.collect_type_params(arg, seen, params);
                 }
             }
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(mapped_id);
                 // Note: mapped.type_param is the iteration variable (e.g., K in "K in keyof T")
                 // We should NOT add it directly - the outer type param (T) is found in the constraint.
@@ -469,18 +469,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     self.collect_type_params(name_type, seen, params);
                 }
             }
-            TypeKey::KeyOf(operand) => {
+            TypeData::KeyOf(operand) => {
                 // Extract type params from the operand of keyof
                 // e.g., keyof T -> extract T
                 self.collect_type_params(operand, seen, params);
             }
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 // Extract type params from both object and index
                 // e.g., T[K] -> extract T and K
                 self.collect_type_params(obj, seen, params);
                 self.collect_type_params(idx, seen, params);
             }
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 // Extract type params from template literal interpolations
                 let spans = self.interner.template_list(spans);
                 for span in spans.iter() {
@@ -504,7 +504,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return arg;
         };
         match key {
-            TypeKey::TypeQuery(sym_ref) => {
+            TypeData::TypeQuery(sym_ref) => {
                 // Resolve the TypeQuery to get the actual type, or pass through if unresolved
                 if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
                     match self.resolver.resolve_lazy(def_id, self.interner) {
@@ -519,26 +519,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
             }
-            TypeKey::Application(_) => {
+            TypeData::Application(_) => {
                 // Use evaluate() to ensure depth limits are enforced
                 self.evaluate(arg)
             }
-            TypeKey::Lazy(def_id) => {
+            TypeData::Lazy(def_id) => {
                 // Resolve Lazy types in type arguments (Phase 4.3)
                 // This helps with generic instantiation accuracy
                 self.resolver
                     .resolve_lazy(def_id, self.interner)
                     .unwrap_or(arg)
             }
-            TypeKey::Conditional(_) => {
+            TypeData::Conditional(_) => {
                 // Use evaluate() to ensure depth limits are enforced
                 self.evaluate(arg)
             }
-            TypeKey::Mapped(_) => {
+            TypeData::Mapped(_) => {
                 // Use evaluate() to ensure depth limits are enforced
                 self.evaluate(arg)
             }
-            TypeKey::TemplateLiteral(_) => {
+            TypeData::TemplateLiteral(_) => {
                 // Use evaluate() to ensure depth limits are enforced
                 self.evaluate(arg)
             }
@@ -585,17 +585,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         matches!(
             key,
-            TypeKey::TypeParameter(_)
-                | TypeKey::Infer(_) // Type parameter for conditional types
-                | TypeKey::Conditional(_)
-                | TypeKey::Mapped(_)
-                | TypeKey::IndexAccess(_, _)
-                | TypeKey::KeyOf(_)
-                | TypeKey::TypeQuery(_)
-                | TypeKey::TemplateLiteral(_)
-                | TypeKey::ReadonlyType(_)
-                | TypeKey::StringIntrinsic { .. }
-                | TypeKey::ThisType // Context-dependent polymorphic type
+            TypeData::TypeParameter(_)
+                | TypeData::Infer(_) // Type parameter for conditional types
+                | TypeData::Conditional(_)
+                | TypeData::Mapped(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::ReadonlyType(_)
+                | TypeData::StringIntrinsic { .. }
+                | TypeData::ThisType // Context-dependent polymorphic type
                                     // Note: Lazy and Application are REMOVED (Task #37)
                                     // They are now handled by the Canonicalizer (Task #32)
         )
@@ -761,26 +761,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     // Visitor Pattern Implementation (North Star Rule 2)
     // =========================================================================
 
-    /// Visit a TypeKey and return its evaluated form.
+    /// Visit a TypeData and return its evaluated form.
     ///
     /// This is the visitor dispatch method that routes to specific visit_* methods.
     /// The visiting.remove() and cache.insert() are handled in evaluate() for symmetry.
-    fn visit_type_key(&mut self, type_id: TypeId, key: &TypeKey) -> TypeId {
+    fn visit_type_key(&mut self, type_id: TypeId, key: &TypeData) -> TypeId {
         match key {
-            TypeKey::Conditional(cond_id) => self.visit_conditional(*cond_id),
-            TypeKey::IndexAccess(obj, idx) => self.visit_index_access(*obj, *idx),
-            TypeKey::Mapped(mapped_id) => self.visit_mapped(*mapped_id),
-            TypeKey::KeyOf(operand) => self.visit_keyof(*operand),
-            TypeKey::TypeQuery(symbol) => self.visit_type_query(symbol.0, type_id),
-            TypeKey::Application(app_id) => self.visit_application(*app_id),
-            TypeKey::TemplateLiteral(spans) => self.visit_template_literal(*spans),
-            TypeKey::Lazy(def_id) => self.visit_lazy(*def_id, type_id),
-            TypeKey::StringIntrinsic { kind, type_arg } => {
+            TypeData::Conditional(cond_id) => self.visit_conditional(*cond_id),
+            TypeData::IndexAccess(obj, idx) => self.visit_index_access(*obj, *idx),
+            TypeData::Mapped(mapped_id) => self.visit_mapped(*mapped_id),
+            TypeData::KeyOf(operand) => self.visit_keyof(*operand),
+            TypeData::TypeQuery(symbol) => self.visit_type_query(symbol.0, type_id),
+            TypeData::Application(app_id) => self.visit_application(*app_id),
+            TypeData::TemplateLiteral(spans) => self.visit_template_literal(*spans),
+            TypeData::Lazy(def_id) => self.visit_lazy(*def_id, type_id),
+            TypeData::StringIntrinsic { kind, type_arg } => {
                 self.visit_string_intrinsic(*kind, *type_arg)
             }
-            TypeKey::Intersection(list_id) => self.visit_intersection(*list_id),
-            TypeKey::Union(list_id) => self.visit_union(*list_id),
-            TypeKey::NoInfer(inner) => {
+            TypeData::Intersection(list_id) => self.visit_intersection(*list_id),
+            TypeData::Union(list_id) => self.visit_union(*list_id),
+            TypeData::NoInfer(inner) => {
                 // NoInfer<T> evaluates to T (strip wrapper, evaluate inner)
                 self.evaluate(*inner)
             }
