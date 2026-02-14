@@ -1636,12 +1636,41 @@ impl<'a> CheckerState<'a> {
                 return_type
             }
             CallResult::NoOverloadMatch { failures, .. } => {
+                // Compatibility fallback: built-in toLocaleString supports
+                // (locales?, options?) in modern lib typings. Some merged
+                // declaration paths can miss those overloads and incorrectly
+                // surface TS2769; tsc accepts these calls.
+                if self.is_tolocalestring_compat_call(callee_expr, args.len()) {
+                    return TypeId::STRING;
+                }
                 if !self.should_suppress_weak_key_no_overload(callee_expr, args) {
                     self.error_no_overload_matches_at(call_idx, &failures);
                 }
                 TypeId::ERROR
             }
         }
+    }
+
+    fn is_tolocalestring_compat_call(&self, callee_expr: NodeIndex, arg_count: usize) -> bool {
+        if arg_count > 2 {
+            return false;
+        }
+        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        ident.escaped_text == "toLocaleString"
     }
 
     // =========================================================================
