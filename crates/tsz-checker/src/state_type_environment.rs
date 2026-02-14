@@ -12,7 +12,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::types::Visibility;
-use tsz_solver::visitor::{lazy_def_id, walk_referenced_types};
+use tsz_solver::visitor::{collect_referenced_types, lazy_def_id};
 
 impl<'a> CheckerState<'a> {
     /// Get type of object literal.
@@ -893,11 +893,8 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> bool {
-        let mut reachable = Vec::new();
-        walk_referenced_types(self.ctx.types, type_id, |current| reachable.push(current));
-
         let mut fully_resolved = true;
-        for current in reachable {
+        for current in collect_referenced_types(self.ctx.types, type_id) {
             if !visited.insert(current) {
                 continue;
             }

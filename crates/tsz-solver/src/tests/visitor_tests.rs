@@ -818,3 +818,20 @@ fn test_collect_type_queries_transitive_and_unique() {
 
     assert_eq!(symbols, vec![s1, s2]);
 }
+
+#[test]
+fn test_collect_referenced_types_transitive_and_unique() {
+    let interner = TypeInterner::new();
+    let lazy = interner.lazy(DefId(7));
+    let nested = interner.intersection(vec![TypeId::NUMBER, lazy]);
+    let root = interner.union(vec![TypeId::STRING, nested, nested]);
+
+    let reachable = collect_referenced_types(&interner, root);
+
+    assert!(reachable.contains(&root));
+    assert!(reachable.contains(&TypeId::STRING));
+    assert!(reachable.contains(&TypeId::NUMBER));
+    assert!(reachable.contains(&lazy));
+    assert!(reachable.contains(&nested));
+    assert_eq!(reachable.len(), 5);
+}
