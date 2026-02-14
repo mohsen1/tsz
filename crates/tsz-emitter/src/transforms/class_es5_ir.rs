@@ -444,11 +444,13 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut ctor_body = Vec::new();
         let mut params = Vec::new();
         let mut body_source_range = None;
+        let mut trailing_comment = None;
         let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
 
         if let Some(ctor) = constructor_data {
             // Extract parameters
             params = self.extract_parameters(&ctor.parameters);
+            trailing_comment = self.extract_trailing_comment_for_method(ctor.body);
             // ES5 class-lowered constructors should follow TypeScript's normalized
             // multi-line function body formatting, not original source single-line shape.
             body_source_range = None;
@@ -535,12 +537,21 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        Some(IRNode::FunctionDecl {
+        let ctor_fn = IRNode::FunctionDecl {
             name: self.class_name.clone(),
             parameters: params,
             body: ctor_body,
             body_source_range,
-        })
+        };
+
+        if let Some(comment) = trailing_comment {
+            Some(IRNode::Sequence(vec![
+                ctor_fn,
+                IRNode::TrailingComment(comment),
+            ]))
+        } else {
+            Some(ctor_fn)
+        }
     }
 
     /// Emit derived class constructor body with super() transformation
