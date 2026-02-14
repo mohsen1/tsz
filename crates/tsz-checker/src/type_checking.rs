@@ -4037,6 +4037,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Ambient declarations (`declare ...` or declarations nested in ambient
+            // contexts) are not checked by noUnusedLocals.
+            if self.is_ambient_declaration(decl_idx) {
+                continue;
+            }
+
             // Skip catch clause variables — TSC exempts them from unused checking
             if self.is_catch_clause_variable(decl_idx) {
                 continue;
