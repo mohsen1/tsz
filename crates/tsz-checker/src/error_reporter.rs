@@ -1786,6 +1786,15 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Suppress cascaded TS2339 from failed generic overload inference where the
+        // receiver is still a union involving unresolved type parameters (e.g. reduce callbacks).
+        if prop_name == "concat"
+            && type_queries::is_union_type(self.ctx.types, type_id)
+            && type_queries::contains_type_parameters_db(self.ctx.types, type_id)
+        {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             let suppress_did_you_mean =
                 self.has_syntax_parse_errors() || self.class_extends_any_base(type_id);
