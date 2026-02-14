@@ -467,6 +467,7 @@ if __name__ == "__main__":
 * **Status:** Completed (except ongoing hardening)
 * **Completed in this iteration (Milestone 0 sub-item):**
   * Enforced dependency-direction **freeze guardrail** in `scripts/check-checker-boundaries.sh` so CI fails if any new non-test solver source (outside legacy `crates/tsz-solver/src/lower.rs`) imports `tsz_parser::` or `tsz_checker::`.
+  * Added binder dependency-direction guardrail to `scripts/arch_guard.py` so CI fails if non-test binder code imports `tsz_solver::...`.
   * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` that recursively scans non-test solver source files and fails on parser/checker import patterns outside the `lower.rs` legacy quarantine.
   * Added a checker boundary guardrail in `scripts/check-checker-boundaries.sh` that fails on any non-test `tsz_solver::types::...` import path usage, forcing checker code onto public `tsz_solver::*` APIs only.
 * **Remaining for Milestone 0:**

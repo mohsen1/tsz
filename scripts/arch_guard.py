@@ -60,6 +60,12 @@ CHECKS = [
         },
     ),
     (
+        "Binder dependency direction freeze",
+        ROOT / "crates" / "tsz-binder",
+        re.compile(r"\btsz_solver::\b"),
+        {"exclude_dirs": {"tests"}},
+    ),
+    (
         "Solver TypeKey construction must stay in interner",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\.intern\(TypeKey::"),
