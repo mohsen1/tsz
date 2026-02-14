@@ -561,6 +561,12 @@ fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
             && !context_src.contains("private_constructor_types: parent.private_constructor_types.clone()"),
         "with_parent should keep constructor-access caches context-local"
     );
+
+    assert!(
+        !context_src.contains("contains_infer_types_true:")
+            && !context_src.contains("contains_infer_types_false:"),
+        "CheckerContext should not retain contains_infer_types memo caches; infer-shape queries should stay solver-owned"
+    );
 }
 
 #[test]
