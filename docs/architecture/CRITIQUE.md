@@ -742,6 +742,9 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
 * **Completed in this iteration (Milestone 3 sub-item, follow-up):**
   * Removed remaining manual application-symbol precondition loops in `crates/tsz-checker/src/type_computation_complex.rs` constructor/call resolution paths and routed both through centralized relation precondition helpers.
   * Added architecture contract coverage to prevent `type_computation_complex` from reintroducing direct `ensure_application_symbols_resolved(...)` orchestration.
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Migrated assignment precondition setup in `crates/tsz-checker/src/assignment_checker.rs` from direct `ensure_application_symbols_resolved(...)` calls to centralized `ensure_relation_input_ready(...)`.
+  * Added architecture contract coverage to prevent assignment checker from reintroducing direct application-symbol precondition orchestration.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
 

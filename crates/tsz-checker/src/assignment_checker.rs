@@ -382,8 +382,8 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.contextual_type = prev_context;
 
-        self.ensure_application_symbols_resolved(right_type);
-        self.ensure_application_symbols_resolved(left_type);
+        self.ensure_relation_input_ready(right_type);
+        self.ensure_relation_input_ready(left_type);
 
         if is_array_destructuring {
             // TS2488: Array destructuring assignments require an iterable RHS.
@@ -677,8 +677,8 @@ impl<'a> CheckerState<'a> {
 
         self.ctx.contextual_type = prev_context;
 
-        self.ensure_application_symbols_resolved(right_type);
-        self.ensure_application_symbols_resolved(left_type);
+        self.ensure_relation_input_ready(right_type);
+        self.ensure_relation_input_ready(left_type);
 
         let is_readonly = if !is_const {
             self.check_readonly_assignment(left_idx, expr_idx)
