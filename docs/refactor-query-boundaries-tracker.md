@@ -8,7 +8,7 @@ Goal: reduce checker complexity while preserving exact `tsc` behavior.
 
 1. Centralize checker-side predicates into solver queries
 Status: In progress
-Notes: Significant migration done in `type_checking`, `type_computation`, `state_type_analysis`, `state_type_resolution`, `state_type_environment`, `class_type`, `assignability_checker`, `constructor_checker`, `call_checker`, `callable_type`, `iterable_checker`, `object_type`, `promise_checker`, `union_type`.
+Notes: Significant migration done in `type_checking`, `type_checking_utilities`, `type_computation`, `state_checking`, `state_type_analysis`, `state_type_resolution`, `state_type_environment`, `class_type`, `assignability_checker`, `constructor_checker`, `call_checker`, `callable_type`, `iterable_checker`, `iterators`, `object_type`, `promise_checker`, `union_type`.
 
 2. Remove direct `TypeKey` matching in checker hot paths
 Status: In progress
@@ -68,6 +68,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/dispatch.rs`
 - `query_boundaries/state_type_resolution.rs`
 - `query_boundaries/state_type_environment.rs`
+- `query_boundaries/state_checking.rs`
 - `query_boundaries/callable_type.rs`
 - `query_boundaries/union_type.rs`
 - plus existing: `class.rs`, `diagnostics.rs`, `state.rs`

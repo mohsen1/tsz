@@ -6,6 +6,7 @@
 use crate::EnclosingClassInfo;
 use crate::error_handler::ErrorHandler;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
+use crate::query_boundaries::state_checking as query;
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
 use rustc_hash::FxHashSet;
@@ -1840,9 +1841,7 @@ impl<'a> CheckerState<'a> {
             // Track destructured binding groups for correlated narrowing.
             // Only needed for union source types where narrowing one property affects others.
             let resolved_for_union = self.evaluate_type_for_assignability(pattern_type);
-            if tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_for_union)
-                .is_some()
-            {
+            if query::union_members(self.ctx.types, resolved_for_union).is_some() {
                 // Check if this is a const declaration
                 let is_const = if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
                     if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
@@ -2028,11 +2027,6 @@ impl<'a> CheckerState<'a> {
         parent_type: TypeId,
         element_data: &tsz_parser::parser::node::BindingElementData,
     ) -> TypeId {
-        use tsz_solver::type_queries::{
-            get_array_element_type, get_object_shape, get_tuple_elements, get_union_members,
-            unwrap_readonly_deep,
-        };
-
         // Resolve Application/Lazy types to their concrete form so that
         // union members, object shapes, and tuple elements are accessible.
         let parent_type = self.evaluate_type_for_assignability(parent_type);
@@ -2044,29 +2038,30 @@ impl<'a> CheckerState<'a> {
             }
 
             // For union types of tuples/arrays, resolve element type from each member
-            if let Some(members) = get_union_members(self.ctx.types, parent_type) {
+            if let Some(members) = query::union_members(self.ctx.types, parent_type) {
                 let mut elem_types = Vec::new();
                 for member in members {
-                    let member = unwrap_readonly_deep(self.ctx.types, member);
+                    let member = query::unwrap_readonly_deep(self.ctx.types, member);
                     if element_data.dot_dot_dot_token {
-                        let elem_type =
-                            if let Some(elem) = get_array_element_type(self.ctx.types, member) {
-                                self.ctx.types.array(elem)
-                            } else if let Some(elems) = get_tuple_elements(self.ctx.types, member) {
-                                let rest_elem = elems
-                                    .iter()
-                                    .find(|e| e.rest)
-                                    .or_else(|| elems.last())
-                                    .map(|e| e.type_id)
-                                    .unwrap_or(TypeId::ANY);
-                                self.ctx.types.array(rest_elem)
-                            } else {
-                                continue;
-                            };
+                        let elem_type = if let Some(elem) =
+                            query::array_element_type(self.ctx.types, member)
+                        {
+                            self.ctx.types.array(elem)
+                        } else if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
+                            let rest_elem = elems
+                                .iter()
+                                .find(|e| e.rest)
+                                .or_else(|| elems.last())
+                                .map(|e| e.type_id)
+                                .unwrap_or(TypeId::ANY);
+                            self.ctx.types.array(rest_elem)
+                        } else {
+                            continue;
+                        };
                         elem_types.push(elem_type);
-                    } else if let Some(elem) = get_array_element_type(self.ctx.types, member) {
+                    } else if let Some(elem) = query::array_element_type(self.ctx.types, member) {
                         elem_types.push(elem);
-                    } else if let Some(elems) = get_tuple_elements(self.ctx.types, member) {
+                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
                         if let Some(e) = elems.get(element_index) {
                             elem_types.push(e.type_id);
                         }
@@ -2082,14 +2077,14 @@ impl<'a> CheckerState<'a> {
             }
 
             // Unwrap readonly wrappers for destructuring element access
-            let array_like = unwrap_readonly_deep(self.ctx.types, parent_type);
+            let array_like = query::unwrap_readonly_deep(self.ctx.types, parent_type);
 
             // Rest element: ...rest
             if element_data.dot_dot_dot_token {
                 let elem_type =
-                    if let Some(elem) = get_array_element_type(self.ctx.types, array_like) {
+                    if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
                         elem
-                    } else if let Some(elems) = get_tuple_elements(self.ctx.types, array_like) {
+                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
                         // Best-effort: if the tuple has a rest element, use it; otherwise, fall back to last.
                         elems
                             .iter()
@@ -2103,9 +2098,9 @@ impl<'a> CheckerState<'a> {
                 return self.ctx.types.array(elem_type);
             }
 
-            return if let Some(elem) = get_array_element_type(self.ctx.types, array_like) {
+            return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
                 elem
-            } else if let Some(elems) = get_tuple_elements(self.ctx.types, array_like) {
+            } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
                 elems
                     .get(element_index)
                     .map(|e| e.type_id)
@@ -2155,10 +2150,10 @@ impl<'a> CheckerState<'a> {
         if let Some(prop_name_str) = property_name {
             // Look up the property type in the parent type.
             // For union types, resolve the property in each member and union the results.
-            if let Some(members) = get_union_members(self.ctx.types, parent_type) {
+            if let Some(members) = query::union_members(self.ctx.types, parent_type) {
                 let mut prop_types = Vec::new();
                 for member in members {
-                    if let Some(shape) = get_object_shape(self.ctx.types, member) {
+                    if let Some(shape) = query::object_shape(self.ctx.types, member) {
                         for prop in shape.properties.as_slice() {
                             if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str
                             {
@@ -2175,7 +2170,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.ctx.types.union(prop_types)
                 }
-            } else if let Some(shape) = get_object_shape(self.ctx.types, parent_type) {
+            } else if let Some(shape) = query::object_shape(self.ctx.types, parent_type) {
                 // Find the property by comparing names
                 for prop in shape.properties.as_slice() {
                     if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str {
@@ -2209,10 +2204,10 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use tsz_solver::{freshness, type_queries};
+        use tsz_solver::freshness;
 
         // Excess property checks do not apply to type parameters (even with constraints).
-        if type_queries::is_type_parameter(self.ctx.types, target) {
+        if query::is_type_parameter(self.ctx.types, target) {
             return;
         }
 
@@ -2229,7 +2224,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the properties of source type using type_queries
-        let Some(source_shape) = type_queries::get_object_shape(self.ctx.types, source) else {
+        let Some(source_shape) = query::object_shape(self.ctx.types, source) else {
             return;
         };
 
@@ -2237,13 +2232,12 @@ impl<'a> CheckerState<'a> {
         let resolved_target = self.resolve_type_for_property_access(target);
 
         // Handle union targets first using type_queries
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, resolved_target) {
+        if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
 
             for &member in members.iter() {
                 let resolved_member = self.resolve_type_for_property_access(member);
-                let Some(shape) = type_queries::get_object_shape(self.ctx.types, resolved_member)
-                else {
+                let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
                     continue;
                 };
 
@@ -2307,8 +2301,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Handle object targets using type_queries
-        if let Some(target_shape) = type_queries::get_object_shape(self.ctx.types, resolved_target)
-        {
+        if let Some(target_shape) = query::object_shape(self.ctx.types, resolved_target) {
             let target_props = target_shape.properties.as_slice();
 
             // Empty object {} accepts any properties - no excess property check needed.
