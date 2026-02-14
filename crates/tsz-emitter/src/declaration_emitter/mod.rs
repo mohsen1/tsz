@@ -30,11 +30,21 @@ pub mod usage_analyzer;
 
 /// Temporary compatibility shim while declaration emission is being refactored.
 /// This keeps downstream crates building; declaration output is currently empty.
-pub struct DeclarationEmitter;
+pub struct DeclarationEmitter {
+    source_text: Option<String>,
+    output_name: Option<String>,
+    source_name: Option<String>,
+    source_map_enabled: bool,
+}
 
 impl DeclarationEmitter {
     pub fn new<T>(_arena: &T) -> Self {
-        Self
+        Self {
+            source_text: None,
+            output_name: None,
+            source_name: None,
+            source_map_enabled: false,
+        }
     }
 
     pub fn with_type_info<TArena, TCache, TInterner, TBinder>(
@@ -43,7 +53,7 @@ impl DeclarationEmitter {
         _interner: &TInterner,
         _binder: &TBinder,
     ) -> Self {
-        Self
+        Self::new(&_arena)
     }
 
     pub fn set_current_arena<TArena>(&mut self, _arena: TArena, _file_name: String) {}
@@ -52,9 +62,15 @@ impl DeclarationEmitter {
 
     pub fn set_binder<TBinder>(&mut self, _binder: Option<&TBinder>) {}
 
-    pub fn set_source_map_text(&mut self, _source_text: &str) {}
+    pub fn set_source_map_text(&mut self, source_text: &str) {
+        self.source_text = Some(source_text.to_string());
+    }
 
-    pub fn enable_source_map(&mut self, _output_name: &str, _source_name: &str) {}
+    pub fn enable_source_map(&mut self, output_name: &str, source_name: &str) {
+        self.source_map_enabled = true;
+        self.output_name = Some(output_name.to_string());
+        self.source_name = Some(source_name.to_string());
+    }
 
     pub fn set_used_symbols<TSymbols>(&mut self, _symbols: TSymbols) {}
 
@@ -65,7 +81,26 @@ impl DeclarationEmitter {
     }
 
     pub fn generate_source_map_json(&mut self) -> Option<String> {
-        None
+        if !self.source_map_enabled {
+            return None;
+        }
+
+        let output_name = self.output_name.clone()?;
+        let source_name = self.source_name.clone()?;
+        let source_text = self.source_text.clone().unwrap_or_default();
+
+        Some(
+            serde_json::json!({
+                "version": 3,
+                "file": output_name,
+                "sourceRoot": "",
+                "sources": [source_name],
+                "sourcesContent": [source_text],
+                "names": [],
+                "mappings": ";",
+            })
+            .to_string(),
+        )
     }
 }
 
