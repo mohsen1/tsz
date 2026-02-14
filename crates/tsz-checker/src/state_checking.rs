@@ -2744,6 +2744,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Namespace imports (`import * as ns`) are immutable views of module exports.
+        // Any assignment to an existing property should report TS2540.
+        if self.is_namespace_import_binding(access.expression) {
+            self.error_readonly_property_at(&prop_name, target_idx);
+            return true;
+        }
+
         // Check if the property is readonly in the object type (solver types)
         if self.is_property_readonly(obj_type, &prop_name) {
             // Special case: readonly properties can be assigned in constructors
@@ -2852,6 +2859,40 @@ impl<'a> CheckerState<'a> {
         };
         use tsz_binder::symbol_flags;
         symbol.flags & symbol_flags::ENUM != 0
+    }
+
+    /// Check whether an expression resolves to a namespace import binding (`import * as ns`).
+    fn is_namespace_import_binding(&self, object_expr: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let object_expr = self.skip_parentheses(object_expr);
+        let Some(sym_id) = self.resolve_identifier_symbol(object_expr) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+            return false;
+        }
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                return true;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(decl_idx) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(ext.parent)
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::NAMESPACE_IMPORT)
+        })
     }
 
     /// Check if a readonly property assignment is allowed in the current constructor context.
