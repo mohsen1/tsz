@@ -368,6 +368,9 @@ pub struct CheckerContext<'a> {
     /// Set by the driver before type checking to suppress noise-sensitive diagnostics
     /// (e.g., TS2695 for comma operators in malformed JSON files).
     pub has_parse_errors: bool,
+    /// Whether the source file has real syntax errors (not just conflict markers TS1185).
+    /// Used to suppress TS2304 only when there are genuine parse errors.
+    pub has_syntax_parse_errors: bool,
 
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,
@@ -684,6 +687,7 @@ impl<'a> CheckerContext<'a> {
             destructured_bindings: FxHashMap::default(),
             next_binding_group_id: 0,
             has_parse_errors: false,
+            has_syntax_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -808,6 +812,7 @@ impl<'a> CheckerContext<'a> {
             destructured_bindings: FxHashMap::default(),
             next_binding_group_id: 0,
             has_parse_errors: false,
+            has_syntax_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -923,6 +928,7 @@ impl<'a> CheckerContext<'a> {
             destructured_bindings: FxHashMap::default(),
             next_binding_group_id: 0,
             has_parse_errors: false,
+            has_syntax_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -1041,6 +1047,7 @@ impl<'a> CheckerContext<'a> {
             destructured_bindings: FxHashMap::default(),
             next_binding_group_id: 0,
             has_parse_errors: false,
+            has_syntax_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -1158,6 +1165,7 @@ impl<'a> CheckerContext<'a> {
             destructured_bindings: FxHashMap::default(),
             next_binding_group_id: 0,
             has_parse_errors: false,
+            has_syntax_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -1294,6 +1302,7 @@ impl<'a> CheckerContext<'a> {
             destructured_bindings: FxHashMap::default(),
             next_binding_group_id: 0,
             has_parse_errors: false,
+            has_syntax_parse_errors: false,
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),

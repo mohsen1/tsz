@@ -992,9 +992,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Also suppress TS2304 in files with parse errors to avoid cascading noise
-        // Example: `( y = 1 ; 2 )` has parse error on `;`, but `y` is valid identifier
-        if self.has_parse_errors() {
+        // Suppress TS2304 in files with real syntax errors (not just conflict markers)
+        // to avoid cascading noise. Conflict markers (TS1185) don't affect AST structure.
+        if self.has_syntax_parse_errors() {
             return;
         }
 

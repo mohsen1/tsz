@@ -2483,6 +2483,8 @@ fn collect_diagnostics(
             }
             checker.ctx.resolved_modules = Some(resolved_modules);
             checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
+            checker.ctx.has_syntax_parse_errors =
+                file.parse_diagnostics.iter().any(|d| d.code != 1185);
             let mut file_diagnostics = Vec::new();
             for parse_diagnostic in &file.parse_diagnostics {
                 file_diagnostics.push(parse_diagnostic_to_checker(
@@ -2724,6 +2726,7 @@ fn check_file_for_parallel(
     checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
     checker.ctx.resolved_modules = Some(resolved_modules);
     checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
+    checker.ctx.has_syntax_parse_errors = file.parse_diagnostics.iter().any(|d| d.code != 1185);
 
     // Collect parse diagnostics
     let mut file_diagnostics: Vec<Diagnostic> = file
