@@ -588,7 +588,7 @@ impl TypeInterner {
     /// Otherwise, creates a new TypeId and stores the key.
     ///
     /// This uses a lock-free pattern with DashMap for concurrent access.
-    pub fn intern(&self, key: TypeKey) -> TypeId {
+    pub fn intern(&self, key: TypeData) -> TypeId {
         if let Some(id) = self.get_intrinsic_id(&key) {
             return id;
         }
@@ -639,7 +639,7 @@ impl TypeInterner {
     /// Look up the TypeKey for a given TypeId.
     ///
     /// This uses lock-free DashMap access with lazy shard initialization.
-    pub fn lookup(&self, id: TypeId) -> Option<TypeKey> {
+    pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
         if id.is_intrinsic() || id.is_error() {
             return self.get_intrinsic_key(id);
         }
@@ -740,7 +740,7 @@ impl TypeInterner {
         id
     }
 
-    fn get_intrinsic_id(&self, key: &TypeKey) -> Option<TypeId> {
+    fn get_intrinsic_id(&self, key: &TypeData) -> Option<TypeId> {
         match key {
             TypeKey::Intrinsic(kind) => Some(kind.to_type_id()),
             TypeKey::Error => Some(TypeId::ERROR),
@@ -751,7 +751,7 @@ impl TypeInterner {
         }
     }
 
-    fn get_intrinsic_key(&self, id: TypeId) -> Option<TypeKey> {
+    fn get_intrinsic_key(&self, id: TypeId) -> Option<TypeData> {
         match id {
             TypeId::NONE => Some(TypeKey::Error),
             TypeId::ERROR => Some(TypeKey::Error),
