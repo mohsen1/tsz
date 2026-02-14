@@ -93,7 +93,16 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings || echo "Clippy warnings found (not failing build)"
 
       - name: Checker boundary guardrail
-        run: ./scripts/check-checker-boundaries.sh
+        run: |
+          mkdir -p target/architecture-reports
+          python3 scripts/arch_guard.py --json-report target/architecture-reports/arch-guard.json
+
+      - name: Upload architecture guard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-guard-report
+          path: target/architecture-reports/arch-guard.json
 
   # ─── Build (needed for conformance + wasm tests) ──────────────────────────
   build:

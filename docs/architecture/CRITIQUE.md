@@ -471,7 +471,7 @@ if __name__ == "__main__":
   * Added a checker boundary guardrail in `scripts/check-checker-boundaries.sh` that fails on any non-test `tsz_solver::types::...` import path usage, forcing checker code onto public `tsz_solver::*` APIs only.
 * **Remaining for Milestone 0:**
   * Complete the `lower.rs` migration so solver has zero parser/checker crate imports.
-  * Add/standardize architecture report generation in CI artifacts.
+  * Add/standardize architecture report generation in CI artifacts. **Completed in this iteration.**
   * Keep parity harness skeleton aligned with the roadmap deliverables.
 
 # Milestone 1 — Unify the type system (one `TypeId` world)
@@ -1022,7 +1022,7 @@ If you want the fastest path to momentum, do these in order:
 
 ### Execution status for first five PRs
 
-- [ ] PR 1: Add CI architecture guard + report
+- [x] PR 1: Add CI architecture guard + report
 - [ ] PR 2: Add solver TypeFactory module (thin wrapper over intern for now)
 - [ ] PR 3: Migrate 1–2 checker modules off `TypeKey`
 - [ ] PR 4: Make `TypeKey` crate-private and fix fallout

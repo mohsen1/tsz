@@ -4,6 +4,7 @@ import re
 import argparse
 import json
 import sys
+from pathlib import Path
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -103,6 +104,12 @@ def main() -> int:
         action="store_true",
         help="Emit machine-readable output instead of human-readable diagnostics.",
     )
+    parser.add_argument(
+        "--json-report",
+        metavar="PATH",
+        default="",
+        help="Write machine-readable report to this path (still exits non-zero on failures).",
+    )
     args = parser.parse_args()
 
     failures = []
@@ -115,12 +122,19 @@ def main() -> int:
         if hits:
             failures.append((name, hits))
 
+    payload = {
+        "status": "failed" if failures else "passed",
+        "total_hits": total_hits,
+        "failures": [{"name": name, "hits": hits} for name, hits in failures],
+    }
+
+    if args.json_report:
+        report_path = Path(args.json_report)
+        if report_path.parent != Path("."):
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
     if args.json:
-        payload = {
-            "status": "failed" if failures else "passed",
-            "total_hits": total_hits,
-            "failures": [{"name": name, "hits": hits} for name, hits in failures],
-        }
         print(json.dumps(payload, indent=2))
         return 0 if not failures else 1
 
