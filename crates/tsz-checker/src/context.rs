@@ -1436,24 +1436,12 @@ impl<'a> CheckerContext<'a> {
     pub fn get_resolution_error(&self, specifier: &str) -> Option<&ResolutionError> {
         let errors = self.resolved_module_errors.as_ref()?;
 
-        if let Some(error) = errors.get(&(self.current_file_idx, specifier.to_string())) {
-            return Some(error);
-        }
-
-        let normalized = specifier.trim_matches('"').trim_matches('\'');
-        if normalized != specifier {
-            if let Some(error) = errors.get(&(self.current_file_idx, normalized.to_string())) {
+        for candidate in module_specifier_candidates(specifier) {
+            if let Some(error) = errors.get(&(self.current_file_idx, candidate)) {
                 return Some(error);
             }
         }
-
-        let quoted = format!("\"{}\"", normalized);
-        if let Some(error) = errors.get(&(self.current_file_idx, quoted)) {
-            return Some(error);
-        }
-
-        let single_quoted = format!("'{}'", normalized);
-        errors.get(&(self.current_file_idx, single_quoted))
+        None
     }
 
     /// Set the current file index.

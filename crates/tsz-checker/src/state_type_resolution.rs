@@ -2176,31 +2176,6 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         export_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
-        let module_specifier_candidates = |specifier: &str| -> Vec<String> {
-            let mut candidates = Vec::with_capacity(5);
-            let mut push_unique = |value: String| {
-                if !candidates.contains(&value) {
-                    candidates.push(value);
-                }
-            };
-
-            push_unique(specifier.to_string());
-
-            let trimmed = specifier.trim().trim_matches('"').trim_matches('\'');
-            if trimmed != specifier {
-                push_unique(trimmed.to_string());
-            }
-            if !trimmed.is_empty() {
-                push_unique(format!("\"{trimmed}\""));
-                push_unique(format!("'{trimmed}'"));
-                if trimmed.contains('\\') {
-                    push_unique(trimmed.replace('\\', "/"));
-                }
-            }
-
-            candidates
-        };
-
         let symbol_export_named_member =
             |symbol: &tsz_binder::Symbol, member_name: &str| -> Option<tsz_binder::SymbolId> {
                 if let Some(exports) = symbol.exports.as_ref()
