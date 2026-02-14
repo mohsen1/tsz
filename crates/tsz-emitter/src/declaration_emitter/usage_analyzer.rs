@@ -978,13 +978,6 @@ impl<'a> UsageAnalyzer<'a> {
         eprintln!("[DEBUG] walk_type_id: collected {} types", all_types.len());
         eprintln!("[DEBUG] walk_type_id: all_types = {:?}", all_types);
 
-        // Print TypeKeys for debugging
-        for &tid in &all_types {
-            if let Some(key) = self.type_interner.lookup(tid) {
-                eprintln!("[DEBUG] walk_type_id: TypeId({:?}) = {:?}", tid, key);
-            }
-        }
-
         // Debug: Print def_to_symbol map
         eprintln!(
             "[DEBUG] walk_type_id: def_to_symbol map = {:?}",
