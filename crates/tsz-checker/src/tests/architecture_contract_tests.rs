@@ -500,6 +500,13 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "parameter initializer assignability should route through check_assignable_or_report"
     );
 
+    let state_type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
+        .expect("failed to read src/state_type_resolution.rs for architecture guard");
+    assert!(
+        state_type_resolution_src.contains("ensure_relation_input_ready("),
+        "state_type_resolution relation precondition setup should route through ensure_relation_input_ready"
+    );
+
     let state_checking_src = fs::read_to_string("src/state_checking.rs")
         .expect("failed to read src/state_checking.rs for architecture guard");
     assert!(

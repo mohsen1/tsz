@@ -2732,7 +2732,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn constructor_types_from_type(&mut self, type_id: TypeId) -> Vec<TypeId> {
         use rustc_hash::FxHashSet;
 
-        self.ensure_application_symbols_resolved(type_id);
+        self.ensure_relation_input_ready(type_id);
         let mut ctor_types = Vec::new();
         let mut visited = FxHashSet::default();
         self.collect_constructor_types_from_type_inner(type_id, &mut ctor_types, &mut visited);
@@ -2806,7 +2806,7 @@ impl<'a> CheckerState<'a> {
     ) -> rustc_hash::FxHashMap<Atom, tsz_solver::PropertyInfo> {
         use rustc_hash::{FxHashMap, FxHashSet};
 
-        self.ensure_application_symbols_resolved(type_id);
+        self.ensure_relation_input_ready(type_id);
         let mut props = FxHashMap::default();
         let mut visited = FxHashSet::default();
         self.collect_static_properties_from_type_inner(type_id, &mut props, &mut visited);
