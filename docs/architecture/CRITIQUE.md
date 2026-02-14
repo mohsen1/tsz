@@ -16,7 +16,7 @@ To keep this actionable, treat each major heading below as a checkpoint you can 
 
 - [ ] A) Establish hard boundary checks (forbidden imports, solver/lexer direction, TypeKey leakage scan).
 - [ ] B) Remove checker-local semantic typing primitives or quarantine them behind a non-default legacy surface.
-- [ ] C) Hide raw `TypeKey` behind solver constructors.
+- [x] C) Hide raw `TypeKey` behind solver constructors.
 - [ ] D) Route all TS2322/TS2345/TS2416-like compatibility checks through one gateway.
 - [ ] E) Move `Lazy(DefId)`-resolution and type-shape preconditions into solver visitors.
 - [ ] F) Add query-level cache/invalidations and connect checker to the query outputs.
@@ -581,8 +581,10 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Migrated checker non-test code from solver-internal module paths (`tsz_solver::types::...`) to public solver exports (`tsz_solver::...`) across relation flags, symbol refs, visibility, intrinsic/index helpers, and index signatures.
   * Strengthened architecture contract coverage to fail if non-test checker source imports `tsz_solver::types::...`, preventing new solver-internal module coupling.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Added a solver-side enforcement rule that direct `.intern(TypeKey::...)` construction is quarantined to `tsz-solver/src/intern.rs`.
+  * Added an architecture contract test in checker coverage to enforce the same invariant continuously.
 * **Remaining for Milestone 2:**
-  * Migrate remaining checker `TypeKey` construction/import sites.
   * Keep tightening guard patterns as solver constructor surface expands (for example, forbid additional raw interner access patterns beyond `TypeKey`).
 
 ---
