@@ -2480,16 +2480,11 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|sig| {
                 {
-                    let key = self.ctx.types.lookup(sig.return_type);
                     let app_info = query::get_application_info(self.ctx.types, sig.return_type)
-                        .map(|(base, args)| {
-                            let base_key = self.ctx.types.lookup(base);
-                            format!("base={:?} base_key={:?} args={:?}", base, base_key, args)
-                        })
+                        .map(|(base, args)| format!("base={:?} args={:?}", base, args))
                         .unwrap_or_default();
                     tracing::trace!(
                         ?sig.return_type,
-                        ?key,
                         %app_info,
                         type_params_count = sig.type_params.len(),
                         "apply_type_args_to_ctor: BEFORE instantiation"
@@ -2510,16 +2505,11 @@ impl<'a> CheckerState<'a> {
                 }
                 let result = self.instantiate_constructor_signature(sig, &args);
                 {
-                    let key = self.ctx.types.lookup(result.return_type);
                     let app_info = query::get_application_info(self.ctx.types, result.return_type)
-                        .map(|(base, args)| {
-                            let base_key = self.ctx.types.lookup(base);
-                            format!("base={:?} base_key={:?} args={:?}", base, base_key, args)
-                        })
+                        .map(|(base, args)| format!("base={:?} args={:?}", base, args))
                         .unwrap_or_default();
                     tracing::trace!(
                         ?result.return_type,
-                        ?key,
                         %app_info,
                         "apply_type_args_to_ctor: AFTER instantiation"
                     );
@@ -2686,17 +2676,11 @@ impl<'a> CheckerState<'a> {
             }
         }
         let expr_type = self.get_type_of_node(expr_idx);
-        let expr_key = self.ctx.types.lookup(expr_type);
-        tracing::debug!(?expr_type, ?expr_key, "base_constructor_type: expr_type");
+        tracing::debug!(?expr_type, "base_constructor_type: expr_type");
 
         // Evaluate application types to get the actual intersection type
         let evaluated_type = self.evaluate_application_type(expr_type);
-        let eval_key = self.ctx.types.lookup(evaluated_type);
-        tracing::debug!(
-            ?evaluated_type,
-            ?eval_key,
-            "base_constructor_type: evaluated_type"
-        );
+        tracing::debug!(?evaluated_type, "base_constructor_type: evaluated_type");
 
         let ctor_types = self.constructor_types_from_type(evaluated_type);
         tracing::debug!(?ctor_types, "base_constructor_type: ctor_types");

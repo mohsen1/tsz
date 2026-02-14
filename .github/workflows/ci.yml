@@ -92,6 +92,9 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings || echo "Clippy warnings found (not failing build)"
 
+      - name: Checker boundary guardrail
+        run: ./scripts/check-checker-boundaries.sh
+
   # ─── Build (needed for conformance + wasm tests) ──────────────────────────
   build:
     name: Build
