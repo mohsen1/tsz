@@ -646,6 +646,26 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn namespace_var_flag_from_directive(directive: &EmitDirective) -> Option<bool> {
+        match directive {
+            EmitDirective::ES5Namespace {
+                should_declare_var, ..
+            } => Some(*should_declare_var),
+            EmitDirective::Chain(items) => {
+                for item in items {
+                    if let Some(flag) = Self::namespace_var_flag_from_directive(item) {
+                        return Some(flag);
+                    }
+                }
+                None
+            }
+            EmitDirective::CommonJSExport { inner, .. } => {
+                Self::namespace_var_flag_from_directive(inner.as_ref())
+            }
+            _ => None,
+        }
+    }
+
     /// Apply a transform directive to a node.
     /// This is called when a node has an entry in the TransformContext.
     fn apply_transform(&mut self, node: &Node, idx: NodeIndex) {
@@ -724,8 +744,7 @@ impl<'a> Printer<'a> {
                         self.declared_namespace_names.insert(ns_name);
                     }
                 }
-                let mut ns_emitter =
-                    NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
                 ns_emitter.set_indent_level(self.writer.indent_level());
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
@@ -772,6 +791,23 @@ impl<'a> Printer<'a> {
                     });
 
                 if !skip {
+                    if node.kind == syntax_kind_ext::MODULE_DECLARATION && !is_default {
+                        let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                        ns_emitter.set_indent_level(self.writer.indent_level());
+                        if let Some(text) = self.source_text_for_map() {
+                            ns_emitter.set_source_text(text);
+                        }
+                        if let Some(should_declare_var) =
+                            Self::namespace_var_flag_from_directive(inner.as_ref())
+                        {
+                            ns_emitter.set_should_declare_var(should_declare_var);
+                        }
+                        let output = ns_emitter.emit_exported_namespace(idx);
+                        self.write(output.trim_end_matches('\n'));
+                        self.skip_comments_for_erased_node(node);
+                        return;
+                    }
+
                     // For non-default function declarations, the preamble already
                     // emitted `exports.X = X;` (function declarations are hoisted).
                     // Skip the per-statement export to avoid duplicates.
@@ -1005,7 +1041,7 @@ impl<'a> Printer<'a> {
                     ns_emitter.set_source_text(text);
                 }
                 ns_emitter.set_should_declare_var(*should_declare_var);
-                let output = ns_emitter.emit_namespace(*namespace_node);
+                let output = ns_emitter.emit_exported_namespace(*namespace_node);
                 self.write(output.trim_end_matches('\n'));
                 // Advance comment cursor past comments inside the namespace body,
                 // since the sub-emitter already handled them.
@@ -1201,6 +1237,23 @@ impl<'a> Printer<'a> {
                 is_default,
                 inner,
             } => {
+                if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
+                    let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    ns_emitter.set_indent_level(self.writer.indent_level());
+                    if let Some(text) = self.source_text_for_map() {
+                        ns_emitter.set_source_text(text);
+                    }
+                    if let Some(should_declare_var) =
+                        Self::namespace_var_flag_from_directive(inner.as_ref())
+                    {
+                        ns_emitter.set_should_declare_var(should_declare_var);
+                    }
+                    let output = ns_emitter.emit_exported_namespace(idx);
+                    self.write(output.trim_end_matches('\n'));
+                    self.skip_comments_for_erased_node(node);
+                    return;
+                }
+
                 let export_name = names.first().copied();
                 self.emit_commonjs_export(names.as_ref(), *is_default, |this| {
                     if index == 0 {
