@@ -524,7 +524,12 @@ impl Runner {
                 .or_else(|| options.get("checkjs"))
                 .map(|v| v == "true")
                 .unwrap_or(false);
-            if is_js_file && !check_js {
+            let allow_js = options
+                .get("allowJs")
+                .or_else(|| options.get("allowjs"))
+                .map(|v| v == "true")
+                .unwrap_or(false);
+            if is_js_file && !check_js && !allow_js {
                 all_codes.clear();
                 all_fingerprints.clear();
             }
