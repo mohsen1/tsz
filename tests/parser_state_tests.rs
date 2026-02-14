@@ -6,7 +6,7 @@
 //! - Error recovery and diagnostics
 //! - Edge cases and performance
 
-use crate::checker::types::diagnostics::diagnostic_codes;
+use crate::checker::diagnostics::diagnostic_codes;
 use crate::parser::ParserState;
 use crate::parser::syntax_kind_ext;
 use crate::scanner::SyntaxKind;

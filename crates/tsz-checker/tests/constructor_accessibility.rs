@@ -114,7 +114,7 @@ fn test_no_errors(source: &str) {
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.category == crate::checker::types::DiagnosticCategory::Error)
+        .filter(|d| d.category == crate::checker::diagnostics::DiagnosticCategory::Error)
         .collect();
 
     assert!(

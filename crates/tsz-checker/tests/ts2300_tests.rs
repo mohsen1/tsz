@@ -11,7 +11,7 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 /// Helper function to check source and return diagnostics.
-fn check(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+fn check(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     let lib_files = crate::test_fixtures::load_lib_files_for_test();
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

@@ -94,7 +94,7 @@ pub mod type_literal_checker;
 pub mod type_node;
 pub mod type_parameter;
 pub mod type_query;
-pub mod types;
+mod types;
 pub mod union_type;
 pub mod diagnostics {
     pub use crate::types::diagnostics::{
@@ -147,6 +147,9 @@ mod value_usage_tests;
 #[cfg(test)]
 #[path = "../tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests;
+#[cfg(test)]
+#[path = "tests/architecture_contract_tests.rs"]
+mod architecture_contract_tests_src;
 #[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;

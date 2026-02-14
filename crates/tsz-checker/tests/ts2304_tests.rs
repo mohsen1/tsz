@@ -15,7 +15,7 @@ use tsz_solver::TypeInterner;
 /// Helper function to check source with lib.es5.d.ts and return diagnostics.
 /// Loads lib files to avoid TS2318 errors for missing global types.
 /// Creates the checker with the parser's arena directly to ensure proper node resolution.
-fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+fn check_without_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     // We still need lib files to avoid TS2318 errors for global types
     // The "without lib" name is a misnomer - we need basic global types
     let lib_files = crate::test_fixtures::load_lib_files_for_test();
@@ -63,7 +63,7 @@ fn check_without_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
 }
 
 /// Helper function to check source WITH lib.es5.d.ts and return diagnostics.
-fn check_with_lib(source: &str) -> Vec<crate::checker::types::Diagnostic> {
+fn check_with_lib(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
     // Load lib.es5.d.ts which contains actual type definitions
     let lib_files = crate::test_fixtures::load_lib_files_for_test();
 
