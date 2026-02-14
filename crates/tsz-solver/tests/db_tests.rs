@@ -85,6 +85,7 @@ fn query_cache_caches_evaluate_and_subtype() {
     assert_eq!(db.eval_cache_len(), 1);
     assert_eq!(db.evaluate_type(TypeId::STRING), TypeId::STRING);
     assert_eq!(db.eval_cache_len(), 1);
+    assert_eq!(db.property_cache_len(), 0);
 
     assert!(db.is_subtype_of(TypeId::STRING, TypeId::UNKNOWN));
     assert_eq!(db.subtype_cache_len(), 1);

@@ -145,12 +145,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(sym) = ref_symbol(self.interner, source) {
-            let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
-                self.resolver.resolve_lazy(def_id, self.interner)
-            } else {
-                #[allow(deprecated)]
-                self.resolver.resolve_ref(sym, self.interner)
-            };
+            let resolved = self.resolver.resolve_symbol_ref(sym, self.interner);
             if let Some(resolved) = resolved {
                 return self.check_subtype(resolved, TypeId::OBJECT).is_true();
             }
@@ -227,12 +222,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(sym) = ref_symbol(self.interner, source) {
-            let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
-                self.resolver.resolve_lazy(def_id, self.interner)
-            } else {
-                #[allow(deprecated)]
-                self.resolver.resolve_ref(sym, self.interner)
-            };
+            let resolved = self.resolver.resolve_symbol_ref(sym, self.interner);
             if let Some(resolved) = resolved {
                 return self.is_callable_type(resolved);
             }

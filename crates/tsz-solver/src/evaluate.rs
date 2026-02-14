@@ -506,17 +506,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match key {
             TypeData::TypeQuery(sym_ref) => {
                 // Resolve the TypeQuery to get the actual type, or pass through if unresolved
-                if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
-                    match self.resolver.resolve_lazy(def_id, self.interner) {
-                        Some(resolved) => resolved,
-                        None => arg,
-                    }
-                } else {
-                    #[allow(deprecated)]
-                    match self.resolver.resolve_ref(sym_ref, self.interner) {
-                        Some(resolved) => resolved,
-                        None => arg,
-                    }
+                match self.resolver.resolve_symbol_ref(sym_ref, self.interner) {
+                    Some(resolved) => resolved,
+                    None => arg,
                 }
             }
             TypeData::Application(_) => {
@@ -824,8 +816,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Fallback to legacy Ref resolution
-        #[allow(deprecated)]
-        if let Some(resolved) = self.resolver.resolve_ref(symbol, self.interner) {
+        if let Some(resolved) = self.resolver.resolve_symbol_ref(symbol, self.interner) {
             return resolved;
         }
 

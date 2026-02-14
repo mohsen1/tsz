@@ -258,12 +258,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 .resolver()
                 .resolve_lazy(def_id, self.evaluator.interner())?
         } else {
-            #[allow(deprecated)]
-            let r = self
-                .evaluator
+            self.evaluator
                 .resolver()
-                .resolve_ref(symbol_ref, self.evaluator.interner())?;
-            r
+                .resolve_symbol_ref(symbol_ref, self.evaluator.interner())?
         };
         if resolved == self.object_type {
             Some(

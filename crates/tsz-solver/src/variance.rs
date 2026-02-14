@@ -381,9 +381,11 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
             }
         }
 
-        // Fallback: Use deprecated resolve_ref for legacy symbols
-        #[allow(deprecated)]
-        if let Some(resolved) = self.db.resolve_ref(symbol_ref, self.db.as_type_database()) {
+        // Fallback: resolve legacy symbols when DefId is unavailable.
+        if let Some(resolved) = self
+            .db
+            .resolve_symbol_ref(symbol_ref, self.db.as_type_database())
+        {
             let current_polarity = self.get_current_polarity();
             self.visit_with_polarity(resolved, current_polarity);
         }

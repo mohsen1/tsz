@@ -123,16 +123,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(s_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
-            #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(s_sym, self.interner);
-            r
+            self.resolver.resolve_symbol_ref(s_sym, self.interner)
         };
         let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(t_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
-            #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(t_sym, self.interner);
-            r
+            self.resolver.resolve_symbol_ref(t_sym, self.interner)
         };
         let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
 
@@ -243,16 +239,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(s_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
-            #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(s_sym, self.interner);
-            r
+            self.resolver.resolve_symbol_ref(s_sym, self.interner)
         };
         let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(t_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
-            #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(t_sym, self.interner);
-            r
+            self.resolver.resolve_symbol_ref(t_sym, self.interner)
         };
         self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved)
     }
@@ -270,9 +262,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
-            #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(sym, self.interner);
-            r
+            self.resolver.resolve_symbol_ref(sym, self.interner)
         };
         match resolved {
             Some(s_resolved) => self.check_subtype(s_resolved, target),
@@ -293,9 +283,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
-            #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(sym, self.interner);
-            r
+            self.resolver.resolve_symbol_ref(sym, self.interner)
         };
         match resolved {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
@@ -313,9 +301,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
-            #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(sym, self.interner);
-            r
+            self.resolver.resolve_symbol_ref(sym, self.interner)
         };
         match resolved {
             Some(s_resolved) => self.check_subtype(s_resolved, target),
@@ -333,9 +319,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
-            #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(sym, self.interner);
-            r
+            self.resolver.resolve_symbol_ref(sym, self.interner)
         };
         match resolved {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
@@ -550,9 +534,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let body = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
                 self.resolver.resolve_lazy(def_id, self.interner)?
             } else {
-                #[allow(deprecated)]
-                let r = self.resolver.resolve_ref(symbol, self.interner)?;
-                r
+                self.resolver.resolve_symbol_ref(symbol, self.interner)?
             };
             (params, body)
         } else if let Some(def_id) = lazy_def_id(self.interner, app.base) {
@@ -730,13 +712,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Handle legacy SymbolRef-based types (old API)
         if let Some(symbol) = ref_symbol(self.interner, operand) {
             // Try to resolve the ref and get keys from the resolved type
-            let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
-                self.resolver.resolve_lazy(def_id, self.interner)?
-            } else {
-                #[allow(deprecated)]
-                let r = self.resolver.resolve_ref(symbol, self.interner)?;
-                r
-            };
+            let resolved = self.resolver.resolve_symbol_ref(symbol, self.interner)?;
             if resolved == operand {
                 return None; // Avoid infinite recursion
             }

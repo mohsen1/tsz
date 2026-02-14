@@ -117,12 +117,9 @@ where
 
     // Handle legacy SymbolRef-based types (old API)
     if let Some(symbol) = ref_symbol(interner, type_id) {
-        if let Some(def_id) = resolver.symbol_to_def_id(symbol) {
-            resolver.resolve_lazy(def_id, interner).unwrap_or(type_id)
-        } else {
-            #[allow(deprecated)]
-            resolver.resolve_ref(symbol, interner).unwrap_or(type_id)
-        }
+        resolver
+            .resolve_symbol_ref(symbol, interner)
+            .unwrap_or(type_id)
     } else {
         type_id
     }

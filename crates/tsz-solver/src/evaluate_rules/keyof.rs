@@ -119,13 +119,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 TypeData::ReadonlyType(inner) => self.recurse_keyof(inner),
                 TypeData::TypeQuery(sym) => {
                     // Resolve typeof query before computing keyof
-                    let resolved = if let Some(def_id) = self.resolver().symbol_to_def_id(sym) {
-                        self.resolver().resolve_lazy(def_id, self.interner())
-                    } else {
-                        #[allow(deprecated)]
-                        let r = self.resolver().resolve_ref(sym, self.interner());
-                        r
-                    };
+                    let resolved = self.resolver().resolve_symbol_ref(sym, self.interner());
                     if let Some(resolved) = resolved {
                         self.recurse_keyof(resolved)
                     } else {

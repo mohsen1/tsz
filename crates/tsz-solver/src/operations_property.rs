@@ -2166,9 +2166,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let body_type = if let Some(inner_def_id) = self.db.symbol_to_def_id(symbol_ref) {
             self.db.resolve_lazy(inner_def_id, self.interner())
         } else {
-            #[allow(deprecated)]
-            let r = self.db.resolve_ref(symbol_ref, self.interner());
-            r
+            self.db.resolve_symbol_ref(symbol_ref, self.interner())
         };
 
         let Some(body_type) = body_type else {

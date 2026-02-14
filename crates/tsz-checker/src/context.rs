@@ -2690,7 +2690,6 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     ///
     /// Phase 4.2: TypeData::Ref is removed, but we keep this for compatibility.
     /// Converts SymbolRef to SymbolId and looks up in cache.
-    #[allow(deprecated)]
     fn resolve_ref(
         &self,
         symbol: tsz_solver::SymbolRef,
@@ -2765,7 +2764,6 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// Get type parameters for a symbol reference (deprecated).
     ///
     /// Type parameters are embedded in the type itself rather than stored separately.
-    #[allow(deprecated)]
     fn get_type_params(
         &self,
         _symbol: tsz_solver::SymbolRef,
