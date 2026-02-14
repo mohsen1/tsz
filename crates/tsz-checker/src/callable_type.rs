@@ -13,9 +13,9 @@
 //! This module extends CheckerState with utilities for callable type
 //! operations, providing cleaner APIs for function type checking.
 
+use crate::query_boundaries::callable_type as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{get_call_signatures, get_callable_shape, has_call_signatures};
 
 // =============================================================================
 // Callable Type Utilities
@@ -30,14 +30,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Call signatures allow a type to be called as a function.
     pub fn has_call_signature(&self, type_id: TypeId) -> bool {
-        has_call_signatures(self.ctx.types, type_id)
+        query::has_call_signatures(self.ctx.types, type_id)
     }
 
     /// Get the number of call signatures for a callable type.
     ///
     /// Multiple call signatures indicate function overloading.
     pub fn call_signature_count(&self, type_id: TypeId) -> usize {
-        get_call_signatures(self.ctx.types, type_id).map_or(0, |sigs| sigs.len())
+        query::call_signatures(self.ctx.types, type_id).map_or(0, |sigs| sigs.len())
     }
 
     /// Check if a callable type is overloaded.
@@ -56,7 +56,7 @@ impl<'a> CheckerState<'a> {
     /// Some callable types (like Function) have additional properties
     /// beyond their call signatures.
     pub fn callable_has_properties(&self, type_id: TypeId) -> bool {
-        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+        if let Some(shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
             !shape.properties.is_empty()
         } else {
             false
@@ -67,7 +67,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the callable has a string or number index signature.
     pub fn callable_has_index_signature(&self, type_id: TypeId) -> bool {
-        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+        if let Some(shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
             shape.string_index.is_some() || shape.number_index.is_some()
         } else {
             false
@@ -82,7 +82,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the callable has type parameters.
     pub fn is_generic_callable(&self, type_id: TypeId) -> bool {
-        if let Some(shape) = get_callable_shape(self.ctx.types, type_id) {
+        if let Some(shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
             // Check if any call signature has type parameters
             shape
                 .call_signatures

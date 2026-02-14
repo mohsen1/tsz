@@ -3,6 +3,7 @@
 //! Extracted from state.rs: Methods for resolving type references, cross-file
 //! exports, and constructor type operations on CheckerState.
 
+use crate::query_boundaries::state_type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -897,10 +898,7 @@ impl<'a> CheckerState<'a> {
                     // type directly instead of Lazy wrapper. The Lazy type causes issues with flow
                     // analysis - it returns ANY instead of the proper type. For regular interfaces
                     // (Object without index signatures), return Lazy to preserve error formatting.
-                    if tsz_solver::type_queries::is_object_with_index_type(
-                        self.ctx.types,
-                        structural_type,
-                    ) {
+                    if query::is_object_with_index_type(self.ctx.types, structural_type) {
                         self.ctx.leave_recursion();
                         return structural_type;
                     } else {
@@ -2441,7 +2439,6 @@ impl<'a> CheckerState<'a> {
         type_arguments: Option<&NodeList>,
     ) -> TypeId {
         use tsz_solver::CallableShape;
-        use tsz_solver::type_queries::get_callable_shape;
 
         let Some(type_arguments) = type_arguments else {
             return ctor_type;
@@ -2460,7 +2457,7 @@ impl<'a> CheckerState<'a> {
             return ctor_type;
         }
 
-        let Some(shape) = get_callable_shape(self.ctx.types, ctor_type) else {
+        let Some(shape) = query::callable_shape_for_type(self.ctx.types, ctor_type) else {
             return ctor_type;
         };
         let mut matching: Vec<&tsz_solver::CallSignature> = shape
@@ -2570,7 +2567,6 @@ impl<'a> CheckerState<'a> {
         type_arguments: Option<&NodeList>,
     ) -> TypeId {
         use tsz_solver::CallableShape;
-        use tsz_solver::type_queries::{SignatureTypeKind, classify_for_signatures};
 
         let Some(type_arguments) = type_arguments else {
             return callee_type;
@@ -2589,8 +2585,8 @@ impl<'a> CheckerState<'a> {
             return callee_type;
         }
 
-        match classify_for_signatures(self.ctx.types, callee_type) {
-            SignatureTypeKind::Callable(shape_id) => {
+        match query::classify_for_signatures(self.ctx.types, callee_type) {
+            query::SignatureTypeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
 
                 // Find call signatures that match the type argument count
@@ -2645,7 +2641,7 @@ impl<'a> CheckerState<'a> {
                 };
                 self.ctx.types.callable(new_shape)
             }
-            SignatureTypeKind::Function(shape_id) => {
+            query::SignatureTypeKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
                 if shape.type_params.len() != type_args.len() {
                     return callee_type;
@@ -2745,8 +2741,6 @@ impl<'a> CheckerState<'a> {
         ctor_types: &mut Vec<TypeId>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        use tsz_solver::type_queries::{ConstructorTypeKind, classify_constructor_type};
-
         if matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
             return;
         }
@@ -2756,49 +2750,49 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        match classify_constructor_type(self.ctx.types, evaluated) {
-            ConstructorTypeKind::Callable => {
+        match query::classify_constructor_type(self.ctx.types, evaluated) {
+            query::ConstructorTypeKind::Callable => {
                 ctor_types.push(evaluated);
             }
-            ConstructorTypeKind::Function(shape_id) => {
+            query::ConstructorTypeKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
                 if shape.is_constructor {
                     ctor_types.push(evaluated);
                 }
             }
-            ConstructorTypeKind::Members(members) => {
+            query::ConstructorTypeKind::Members(members) => {
                 for member in members {
                     self.collect_constructor_types_from_type_inner(member, ctor_types, visited);
                 }
             }
-            ConstructorTypeKind::Inner(inner) => {
+            query::ConstructorTypeKind::Inner(inner) => {
                 self.collect_constructor_types_from_type_inner(inner, ctor_types, visited);
             }
-            ConstructorTypeKind::Constraint(constraint) => {
+            query::ConstructorTypeKind::Constraint(constraint) => {
                 if let Some(constraint) = constraint {
                     self.collect_constructor_types_from_type_inner(constraint, ctor_types, visited);
                 }
             }
-            ConstructorTypeKind::NeedsTypeEvaluation => {
+            query::ConstructorTypeKind::NeedsTypeEvaluation => {
                 let expanded = self.evaluate_type_with_env(evaluated);
                 if expanded != evaluated {
                     self.collect_constructor_types_from_type_inner(expanded, ctor_types, visited);
                 }
             }
-            ConstructorTypeKind::NeedsApplicationEvaluation => {
+            query::ConstructorTypeKind::NeedsApplicationEvaluation => {
                 let expanded = self.evaluate_application_type(evaluated);
                 if expanded != evaluated {
                     self.collect_constructor_types_from_type_inner(expanded, ctor_types, visited);
                 }
             }
-            ConstructorTypeKind::TypeQuery(sym_ref) => {
+            query::ConstructorTypeKind::TypeQuery(sym_ref) => {
                 // typeof X - get the type of the symbol X and collect constructors from it
                 use tsz_binder::SymbolId;
                 let sym_id = SymbolId(sym_ref.0);
                 let sym_type = self.get_type_of_symbol(sym_id);
                 self.collect_constructor_types_from_type_inner(sym_type, ctor_types, visited);
             }
-            ConstructorTypeKind::NotConstructor => {}
+            query::ConstructorTypeKind::NotConstructor => {}
         }
     }
 
@@ -2821,8 +2815,6 @@ impl<'a> CheckerState<'a> {
         props: &mut rustc_hash::FxHashMap<Atom, tsz_solver::PropertyInfo>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        use tsz_solver::type_queries::{StaticPropertySource, get_static_property_source};
-
         if matches!(type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
             return;
         }
@@ -2832,33 +2824,33 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        match get_static_property_source(self.ctx.types, evaluated) {
-            StaticPropertySource::Properties(properties) => {
+        match query::static_property_source(self.ctx.types, evaluated) {
+            query::StaticPropertySource::Properties(properties) => {
                 for prop in properties {
                     props.entry(prop.name).or_insert(prop);
                 }
             }
-            StaticPropertySource::RecurseMembers(members) => {
+            query::StaticPropertySource::RecurseMembers(members) => {
                 for member in members {
                     self.collect_static_properties_from_type_inner(member, props, visited);
                 }
             }
-            StaticPropertySource::RecurseSingle(inner) => {
+            query::StaticPropertySource::RecurseSingle(inner) => {
                 self.collect_static_properties_from_type_inner(inner, props, visited);
             }
-            StaticPropertySource::NeedsEvaluation => {
+            query::StaticPropertySource::NeedsEvaluation => {
                 let expanded = self.evaluate_type_with_env(evaluated);
                 if expanded != evaluated {
                     self.collect_static_properties_from_type_inner(expanded, props, visited);
                 }
             }
-            StaticPropertySource::NeedsApplicationEvaluation => {
+            query::StaticPropertySource::NeedsApplicationEvaluation => {
                 let expanded = self.evaluate_application_type(evaluated);
                 if expanded != evaluated {
                     self.collect_static_properties_from_type_inner(expanded, props, visited);
                 }
             }
-            StaticPropertySource::None => {}
+            query::StaticPropertySource::None => {}
         }
     }
 
@@ -2909,14 +2901,12 @@ impl<'a> CheckerState<'a> {
         number_index: &mut Option<tsz_solver::IndexSignature>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
-        use tsz_solver::type_queries::{BaseInstanceMergeKind, classify_for_base_instance_merge};
-
         if !visited.insert(base_instance_type) {
             return;
         }
 
-        match classify_for_base_instance_merge(self.ctx.types, base_instance_type) {
-            BaseInstanceMergeKind::Object(base_shape_id) => {
+        match query::classify_for_base_instance_merge(self.ctx.types, base_instance_type) {
+            query::BaseInstanceMergeKind::Object(base_shape_id) => {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 for base_prop in base_shape.properties.iter() {
                     properties
@@ -2930,7 +2920,7 @@ impl<'a> CheckerState<'a> {
                     Self::merge_index_signature(number_index, idx.clone());
                 }
             }
-            BaseInstanceMergeKind::Intersection(members) => {
+            query::BaseInstanceMergeKind::Intersection(members) => {
                 for member in members {
                     self.merge_base_instance_properties_inner(
                         member,
@@ -2941,7 +2931,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
-            BaseInstanceMergeKind::Union(members) => {
+            query::BaseInstanceMergeKind::Union(members) => {
                 use rustc_hash::FxHashMap;
                 let mut common_props: Option<FxHashMap<Atom, tsz_solver::PropertyInfo>> = None;
                 let mut common_string_index: Option<tsz_solver::IndexSignature> = None;
@@ -3054,7 +3044,7 @@ impl<'a> CheckerState<'a> {
                     Self::merge_index_signature(number_index, idx);
                 }
             }
-            BaseInstanceMergeKind::Other => {}
+            query::BaseInstanceMergeKind::Other => {}
         }
     }
 
