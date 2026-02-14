@@ -1015,7 +1015,6 @@ impl<'a> CheckerState<'a> {
         func_idx: NodeIndex,
     ) -> Vec<(String, Option<TypeId>)> {
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_solver::TypeKey;
 
         // Collect enclosing type parameter node indices (inner-to-outer order)
         let mut enclosing_param_indices: Vec<Vec<NodeIndex>> = Vec::new();
@@ -1104,7 +1103,7 @@ impl<'a> CheckerState<'a> {
                     default: None,
                     is_const: false,
                 };
-                let type_id = self.ctx.types.intern(TypeKey::TypeParameter(info));
+                let type_id = self.ctx.types.type_param(info);
 
                 // Only add if not already in scope (inner scope should shadow outer)
                 if !self.ctx.type_parameter_scope.contains_key(&name) {
