@@ -1441,17 +1441,10 @@ impl<'a> CheckerState<'a> {
                         if let Some(base_class_data) = self.ctx.arena.get_class(interface_node)
                             && self.class_has_private_or_protected_members(base_class_data)
                         {
-                            self.error_at_node(
-                                type_idx,
-                                &format!(
-                                    "Class '{}' incorrectly implements class '{}'. Did you mean to extend '{}' and inherit its members as a subclass?",
-                                    class_name, interface_name, interface_name
-                                ),
-                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
+                            let mut message = format!(
+                                "Class '{}' incorrectly implements class '{}'. Did you mean to extend '{}' and inherit its members as a subclass?",
+                                class_name, interface_name, interface_name
                             );
-
-                            // tsc also reports the corresponding missing-member diagnostic
-                            // when a required private/protected instance member is absent.
                             if let Some(required_member_name) =
                                 self.first_non_public_instance_member_name(base_class_data)
                                 && self
@@ -1464,15 +1457,17 @@ impl<'a> CheckerState<'a> {
                                     )
                                     .is_none()
                             {
-                                self.error_at_node(
-                                    type_idx,
-                                    &format!(
-                                        "Property '{}' is missing in type '{}' but required in type '{}'.",
-                                        required_member_name, class_name, interface_name
-                                    ),
-                                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                                );
+                                message.push(' ');
+                                message.push_str(&format!(
+                                    "Property '{}' is missing in type '{}' but required in type '{}'.",
+                                    required_member_name, class_name, interface_name
+                                ));
                             }
+                            self.error_at_node(
+                                type_idx,
+                                &message,
+                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
+                            );
                         }
                         continue;
                     }
