@@ -891,11 +891,11 @@ impl ScannerState {
                     // In TypeScript, \uXXXX can start an identifier
                     // e.g., \u0041 is 'A', so `let \u0041 = 1;` is valid
                     let escaped_ch = self.peek_unicode_escape();
-                    if let Some(code_point) = escaped_ch {
-                        if is_identifier_start(code_point) {
-                            self.scan_identifier_with_escapes();
-                            return self.token;
-                        }
+                    if let Some(code_point) = escaped_ch
+                        && is_identifier_start(code_point)
+                    {
+                        self.scan_identifier_with_escapes();
+                        return self.token;
                     }
                     // Not a valid unicode escape - treat as unknown
                     self.pos += 1;
@@ -1067,10 +1067,10 @@ impl ScannerState {
                                 {
                                     let hex = self.substring(hex_start, self.pos);
                                     self.pos += 1;
-                                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                        if let Some(c) = char::from_u32(code) {
-                                            result.push(c);
-                                        }
+                                    if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                        && let Some(c) = char::from_u32(code)
+                                    {
+                                        result.push(c);
                                     }
                                 } else {
                                     result.push('\\');
@@ -1079,11 +1079,11 @@ impl ScannerState {
                             } else if self.pos + 4 <= self.end {
                                 // \uHHHH
                                 let hex = self.substring(self.pos, self.pos + 4);
-                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                    && let Some(c) = char::from_u32(code)
+                                {
                                     self.pos += 4;
-                                    if let Some(c) = char::from_u32(code) {
-                                        result.push(c);
-                                    }
+                                    result.push(c);
                                 } else {
                                     result.push('\\');
                                     result.push('u');
@@ -1238,10 +1238,10 @@ impl ScannerState {
                                 {
                                     let hex = self.substring(hex_start, self.pos);
                                     self.pos += 1;
-                                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                        if let Some(c) = char::from_u32(code) {
-                                            result.push(c);
-                                        }
+                                    if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                        && let Some(c) = char::from_u32(code)
+                                    {
+                                        result.push(c);
                                     }
                                 } else {
                                     self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
@@ -1251,11 +1251,11 @@ impl ScannerState {
                             } else if self.pos + 4 <= self.end {
                                 // \uHHHH
                                 let hex = self.substring(self.pos, self.pos + 4);
-                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                if let Ok(code) = u32::from_str_radix(&hex, 16)
+                                    && let Some(c) = char::from_u32(code)
+                                {
                                     self.pos += 4;
-                                    if let Some(c) = char::from_u32(code) {
-                                        result.push(c);
-                                    }
+                                    result.push(c);
                                 } else {
                                     self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
                                     result.push('\\');
@@ -1501,12 +1501,12 @@ impl ScannerState {
             let ch = self.char_code_unchecked(self.pos);
             if ch == CharacterCodes::BACKSLASH {
                 // Check if this is a unicode escape that produces an identifier part
-                if let Some(code_point) = self.peek_unicode_escape() {
-                    if is_identifier_part(code_point) {
-                        // Switch to allocation mode and continue scanning with escapes
-                        self.continue_identifier_with_escapes(start);
-                        return;
-                    }
+                if let Some(code_point) = self.peek_unicode_escape()
+                    && is_identifier_part(code_point)
+                {
+                    // Switch to allocation mode and continue scanning with escapes
+                    self.continue_identifier_with_escapes(start);
+                    return;
                 }
                 // Invalid escape or not an identifier part - stop here
                 break;
@@ -1543,16 +1543,14 @@ impl ScannerState {
             let ch = self.char_code_unchecked(self.pos);
             if ch == CharacterCodes::BACKSLASH {
                 // Check for unicode escape
-                if let Some(code_point) = self.peek_unicode_escape() {
-                    if is_identifier_part(code_point) {
-                        // Consume the escape and add the character
-                        if let Some(c) =
-                            char::from_u32(self.scan_unicode_escape_value().unwrap_or(0))
-                        {
-                            result.push(c);
-                        }
-                        continue;
+                if let Some(code_point) = self.peek_unicode_escape()
+                    && is_identifier_part(code_point)
+                {
+                    // Consume the escape and add the character
+                    if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
+                        result.push(c);
                     }
+                    continue;
                 }
                 // Invalid escape or not an identifier part - stop here
                 break;
@@ -1616,10 +1614,10 @@ impl ScannerState {
         let mut result = String::new();
 
         // Process initial unicode escape
-        if let Some(ch) = self.scan_unicode_escape_value() {
-            if let Some(c) = char::from_u32(ch) {
-                result.push(c);
-            }
+        if let Some(ch) = self.scan_unicode_escape_value()
+            && let Some(c) = char::from_u32(ch)
+        {
+            result.push(c);
         }
 
         // Continue scanning identifier parts
@@ -1627,15 +1625,13 @@ impl ScannerState {
             let ch = self.char_code_unchecked(self.pos);
             if ch == CharacterCodes::BACKSLASH {
                 // Another unicode escape in identifier
-                if let Some(code_point) = self.peek_unicode_escape() {
-                    if is_identifier_part(code_point) {
-                        if let Some(c) =
-                            char::from_u32(self.scan_unicode_escape_value().unwrap_or(0))
-                        {
-                            result.push(c);
-                        }
-                        continue;
+                if let Some(code_point) = self.peek_unicode_escape()
+                    && is_identifier_part(code_point)
+                {
+                    if let Some(c) = char::from_u32(self.scan_unicode_escape_value().unwrap_or(0)) {
+                        result.push(c);
                     }
+                    continue;
                 }
                 break;
             }
@@ -2702,7 +2698,7 @@ impl ScannerState {
     fn is_conflict_marker_trivia(&self) -> bool {
         let pos = self.pos;
         // Must be at start of line (pos == 0 or preceded by line break)
-        if pos > 0 && !is_line_break(self.char_code_unchecked(pos - 1) as u32) {
+        if pos > 0 && !is_line_break(self.char_code_unchecked(pos - 1)) {
             return false;
         }
         // Must have room for 7 characters
@@ -2718,9 +2714,9 @@ impl ScannerState {
         }
         // For `=======`: no additional check needed
         // For `<<<<<<<`, `>>>>>>>`, `|||||||`: must be followed by a space
-        ch as u32 == CharacterCodes::EQUALS
+        ch == CharacterCodes::EQUALS
             || (pos + Self::MERGE_CONFLICT_MARKER_LENGTH < self.end
-                && self.char_code_unchecked(pos + Self::MERGE_CONFLICT_MARKER_LENGTH) as u32
+                && self.char_code_unchecked(pos + Self::MERGE_CONFLICT_MARKER_LENGTH)
                     == CharacterCodes::SPACE)
     }
 
@@ -2737,18 +2733,18 @@ impl ScannerState {
         });
 
         let ch = self.char_code_unchecked(self.pos);
-        if ch as u32 == CharacterCodes::LESS_THAN || ch as u32 == CharacterCodes::GREATER_THAN {
+        if ch == CharacterCodes::LESS_THAN || ch == CharacterCodes::GREATER_THAN {
             // `<<<<<<<` or `>>>>>>>`: skip to end of line
-            while self.pos < self.end && !is_line_break(self.char_code_unchecked(self.pos) as u32) {
+            while self.pos < self.end && !is_line_break(self.char_code_unchecked(self.pos)) {
                 self.pos += 1;
             }
         } else {
             // `|||||||` or `=======`: skip until next `=======` or `>>>>>>>` marker
             while self.pos < self.end {
-                let current_char = self.char_code_unchecked(self.pos) as u32;
+                let current_char = self.char_code_unchecked(self.pos);
                 if (current_char == CharacterCodes::EQUALS
                     || current_char == CharacterCodes::GREATER_THAN)
-                    && current_char != ch as u32
+                    && current_char != ch
                     && self.is_conflict_marker_trivia()
                 {
                     break;
