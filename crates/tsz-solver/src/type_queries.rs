@@ -41,10 +41,26 @@ pub use crate::type_queries_extended::*;
 ///
 /// Returns true for TypeKey::Callable and TypeKey::Function types.
 pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(
-        db.lookup(type_id),
-        Some(TypeKey::Callable(_) | TypeKey::Function(_))
-    )
+    match db.lookup(type_id) {
+        Some(TypeKey::Callable(_) | TypeKey::Function(_)) => true,
+        Some(TypeKey::Intrinsic(crate::types::IntrinsicKind::Function)) => true,
+        // Type applications preserve callability of their base.
+        Some(TypeKey::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            is_callable_type(db, app.base)
+        }
+        // Intersections are callable when at least one constituent is callable.
+        Some(TypeKey::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| is_callable_type(db, member)),
+        // Unions are callable only when all members are callable.
+        Some(TypeKey::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            !members.is_empty() && members.iter().all(|&member| is_callable_type(db, member))
+        }
+        _ => false,
+    }
 }
 
 /// Check if a type is invokable (has call signatures, not just construct signatures).
