@@ -301,6 +301,14 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !assignability_checker_src.contains("classify_for_traversal("),
         "assignability_checker should use solver visitor helpers instead of traversal classification"
     );
+    assert!(
+        assignability_checker_src.contains("resolve_and_insert_def_type("),
+        "assignability_checker should use centralized DefId resolution helper for type_env preconditions"
+    );
+    assert!(
+        !assignability_checker_src.contains("env.insert_def("),
+        "assignability_checker should not insert DefId mappings directly; use centralized helper"
+    );
 
     let state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
         .expect("failed to read src/state_type_environment.rs for architecture guard");
