@@ -332,7 +332,11 @@ impl<'a> CheckerState<'a> {
 
         let mut original_node_types = std::mem::take(&mut self.ctx.node_types);
 
-        // Collect argument types ONCE with union contextual type
+        // Collect argument types ONCE with union contextual type.
+        // Diagnostics produced during this pass are speculative: if no overload
+        // matches, TypeScript reports the overload failure and suppresses these
+        // nested callback/body diagnostics.
+        let first_pass_diagnostics_checkpoint = self.ctx.diagnostics.len();
         self.ctx.node_types = Default::default();
         let arg_types = self.collect_call_argument_types_with_context(
             args,
@@ -488,6 +492,12 @@ impl<'a> CheckerState<'a> {
 
             self.ctx.diagnostics.truncate(diagnostics_checkpoint);
         }
+
+        // No overload matched: drop speculative diagnostics from overload argument
+        // collection and keep only overload-level diagnostics.
+        self.ctx
+            .diagnostics
+            .truncate(first_pass_diagnostics_checkpoint);
 
         // Restore original state if no overload matched
         self.ctx.node_types = original_node_types;

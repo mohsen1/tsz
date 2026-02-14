@@ -3240,6 +3240,30 @@ impl<'a> CheckerState<'a> {
         if ctor.body.is_none() {
             self.check_parameter_properties(&ctor.parameters.nodes);
         }
+        // TS1187: Parameter properties cannot use binding patterns in constructors.
+        for &param_idx in &ctor.parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !self.has_parameter_property_modifier(&param.modifiers) {
+                continue;
+            }
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            {
+                self.error_at_node(
+                    param_idx,
+                    diagnostic_messages::A_PARAMETER_PROPERTY_MAY_NOT_BE_DECLARED_USING_A_BINDING_PATTERN,
+                    diagnostic_codes::A_PARAMETER_PROPERTY_MAY_NOT_BE_DECLARED_USING_A_BINDING_PATTERN,
+                );
+            }
+        }
 
         // Check parameter type annotations for parameter properties in function types
         // TSC suppresses TS7006 for private constructors in ambient (declare) classes
