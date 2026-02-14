@@ -29,11 +29,37 @@ def collect_largest_rs_files(limit: int = 10) -> list[tuple[str, int]]:
     return rows[:limit]
 
 
+def collect_largest_by_crate() -> list[tuple[str, str, int]]:
+    targets = {
+        "tsz-checker": "crates/tsz-checker",
+        "tsz-solver": "crates/tsz-solver",
+        "tsz-lsp": "crates/tsz-lsp",
+        "tsz-emitter": "crates/tsz-emitter",
+    }
+    rows: list[tuple[str, str, int]] = []
+    for crate_name, crate_root in targets.items():
+        root = ROOT / crate_root
+        largest_file = ""
+        largest_lines = -1
+        for path in root.rglob("*.rs"):
+            try:
+                line_count = sum(1 for _ in path.open("r", encoding="utf-8", errors="ignore"))
+            except OSError:
+                continue
+            if line_count > largest_lines:
+                largest_lines = line_count
+                largest_file = path.relative_to(ROOT).as_posix()
+        if largest_file:
+            rows.append((crate_name, largest_file, largest_lines))
+    return rows
+
+
 def render_markdown(payload: dict) -> str:
     status = payload.get("status", "unknown")
     total_hits = payload.get("total_hits", 0)
     failures = payload.get("failures", [])
     largest_files = collect_largest_rs_files()
+    largest_by_crate = collect_largest_by_crate()
 
     lines: list[str] = []
     lines.append("# Architecture Guard Report")
@@ -49,6 +75,14 @@ def render_markdown(payload: dict) -> str:
     lines.append("|---|---:|")
     for rel, line_count in largest_files:
         lines.append(f"| `{rel}` | {line_count} |")
+    lines.append("")
+
+    lines.append("## Largest file per core crate")
+    lines.append("")
+    lines.append("| Crate | File | Lines |")
+    lines.append("|---|---|---:|")
+    for crate_name, rel, line_count in largest_by_crate:
+        lines.append(f"| `{crate_name}` | `{rel}` | {line_count} |")
     lines.append("")
 
     lines.append("## Guard failures")
