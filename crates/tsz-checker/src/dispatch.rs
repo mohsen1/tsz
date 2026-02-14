@@ -144,7 +144,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
 
             if bare_yield_requires_error {
-                self.checker.error_type_not_assignable_with_reason_at(
+                let _ = self.checker.check_assignable_or_report(
                     yielded_type,
                     expected_yield_type,
                     error_node,
