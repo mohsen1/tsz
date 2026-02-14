@@ -2639,6 +2639,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         match prop_name {
             "apply" | "call" | "bind" => self.method_result(TypeId::ANY),
             "toString" => self.method_result(TypeId::STRING),
+            "name" => PropertyAccessResult::Success {
+                type_id: TypeId::STRING,
+                write_type: None,
+                from_index_signature: false,
+            },
             "length" => PropertyAccessResult::Success {
                 type_id: TypeId::NUMBER,
                 write_type: None,
