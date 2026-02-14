@@ -900,21 +900,11 @@ impl<'a> CheckerState<'a> {
         visited.extend(collect_referenced_types(self.ctx.types, type_id));
 
         for def_id in collect_lazy_def_ids(self.ctx.types, type_id) {
-            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                // Use get_type_of_symbol (not type_reference_symbol_type) because
-                // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
-                // which insert_type_env_symbol rejects as a self-recursive alias.
-                // We need the concrete structural type for TypeEnvironment resolution.
-                let resolved = self.get_type_of_symbol(sym_id);
-                fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
-            }
+            fully_resolved &= self.resolve_lazy_def_for_type_env(def_id);
         }
 
         for def_id in collect_enum_def_ids(self.ctx.types, type_id) {
-            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                let resolved = self.type_reference_symbol_type(sym_id);
-                fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
-            }
+            fully_resolved &= self.resolve_enum_def_for_type_env(def_id);
         }
 
         for symbol_ref in collect_type_queries(self.ctx.types, type_id) {
@@ -927,6 +917,28 @@ impl<'a> CheckerState<'a> {
         }
 
         fully_resolved
+    }
+
+    fn resolve_lazy_def_for_type_env(&mut self, def_id: tsz_solver::DefId) -> bool {
+        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+            // Use get_type_of_symbol (not type_reference_symbol_type) because
+            // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
+            // which insert_type_env_symbol rejects as a self-recursive alias.
+            // We need the concrete structural type for TypeEnvironment resolution.
+            let resolved = self.get_type_of_symbol(sym_id);
+            self.insert_type_env_symbol(sym_id, resolved)
+        } else {
+            true
+        }
+    }
+
+    fn resolve_enum_def_for_type_env(&mut self, def_id: tsz_solver::DefId) -> bool {
+        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+            let resolved = self.type_reference_symbol_type(sym_id);
+            self.insert_type_env_symbol(sym_id, resolved)
+        } else {
+            true
+        }
     }
 
     /// Create a TypeEnvironment populated with resolved symbol types.

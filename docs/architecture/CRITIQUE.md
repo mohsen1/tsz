@@ -635,6 +635,13 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
   * Added focused regression tests:
     * checker architecture contract assertions that `error_reporter` uses the boundary helper and no longer defines recursive traversal helper
     * checker diagnostics boundary behavior test for depth-limited, transitive property-name collection
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Centralized `DefId` precondition resolution in `state_type_environment` for application-symbol resolution by introducing dedicated helpers:
+    * `resolve_lazy_def_for_type_env(...)`
+    * `resolve_enum_def_for_type_env(...)`
+  * Migrated `ensure_application_symbols_resolved_inner` lazy/enum loops to call these helpers instead of duplicating `DefId -> SymbolId -> resolve -> insert` orchestration inline.
+  * Added focused regression tests:
+    * checker architecture contract assertions that `state_type_environment` keeps using the dedicated lazy/enum DefId helper path.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
 
