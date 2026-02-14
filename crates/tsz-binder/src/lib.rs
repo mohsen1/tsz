@@ -10,7 +10,6 @@
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use tsz_common::interner::Atom;
 use tsz_parser::NodeIndex;
 
 pub mod lib_loader;
@@ -137,8 +136,6 @@ pub struct Symbol {
     pub flags: u32,
     /// Escaped name of the symbol
     pub escaped_name: String,
-    /// Interned symbol identity for hot lookup paths.
-    pub name_atom: Atom,
     /// Declarations associated with this symbol
     pub declarations: Vec<NodeIndex>,
     /// First value declaration of the symbol
@@ -169,11 +166,10 @@ pub struct Symbol {
 
 impl Symbol {
     /// Create a new symbol with the given flags and name.
-    pub fn new(id: SymbolId, flags: u32, name: String, name_atom: Atom) -> Self {
+    pub fn new(id: SymbolId, flags: u32, name: String) -> Self {
         Symbol {
             flags,
             escaped_name: name,
-            name_atom,
             declarations: Vec::new(),
             value_declaration: NodeIndex::NONE,
             parent: SymbolId::NONE,
@@ -305,7 +301,7 @@ impl SymbolArena {
     /// Allocate a new symbol and return its ID.
     pub fn alloc(&mut self, flags: u32, name: String) -> SymbolId {
         let id = SymbolId(self.base_offset + self.symbols.len() as u32);
-        self.symbols.push(Symbol::new(id, flags, name, Atom::NONE));
+        self.symbols.push(Symbol::new(id, flags, name));
         id
     }
 
@@ -408,7 +404,6 @@ impl SymbolArena {
                     SymbolId(id as u32),
                     0,
                     String::new(), // Empty placeholder
-                    Atom::NONE,
                 ));
             }
         }
