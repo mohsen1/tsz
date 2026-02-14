@@ -59,6 +59,16 @@ fn test_interner_lazy_and_type_param_constructors() {
 }
 
 #[test]
+fn test_interner_type_query_constructor() {
+    let interner = TypeInterner::new();
+    let query = interner.type_query(SymbolRef(7));
+    assert_eq!(
+        interner.lookup(query),
+        Some(TypeKey::TypeQuery(SymbolRef(7)))
+    );
+}
+
+#[test]
 fn test_interner_fresh_object_distinct_from_non_fresh() {
     let interner = TypeInterner::new();
     let prop = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);

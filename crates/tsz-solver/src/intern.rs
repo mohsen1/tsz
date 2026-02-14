@@ -3122,6 +3122,11 @@ impl TypeInterner {
         self.intern(TypeKey::TypeParameter(info))
     }
 
+    /// Intern a type query (`typeof value`) marker.
+    pub fn type_query(&self, symbol: SymbolRef) -> TypeId {
+        self.intern(TypeKey::TypeQuery(symbol))
+    }
+
     /// Intern a generic type application
     pub fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         let app_id = self.intern_application(TypeApplication { base, args });

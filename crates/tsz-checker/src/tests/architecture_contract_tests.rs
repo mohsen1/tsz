@@ -262,4 +262,19 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !control_flow_narrowing_src.contains("intern(TypeKey::Lazy("),
         "control_flow_narrowing should use solver lazy constructor API, not direct TypeKey::Lazy interning"
     );
+
+    let state_type_analysis_src = fs::read_to_string("src/state_type_analysis.rs")
+        .expect("failed to read src/state_type_analysis.rs for architecture guard");
+    assert!(
+        !state_type_analysis_src.contains("intern(TypeKey::TypeQuery("),
+        "state_type_analysis should use solver type_query constructor API, not TypeKey::TypeQuery"
+    );
+    assert!(
+        !state_type_analysis_src.contains("intern(TypeKey::TypeParameter("),
+        "state_type_analysis should use solver type_param constructor API, not TypeKey::TypeParameter"
+    );
+    assert!(
+        !state_type_analysis_src.contains("intern(tsz_solver::TypeKey::Lazy("),
+        "state_type_analysis should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+    );
 }
