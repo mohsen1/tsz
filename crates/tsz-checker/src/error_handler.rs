@@ -304,16 +304,7 @@ impl<'a> ErrorHandler for CheckerState<'a> {
     // =========================================================================
 
     fn emit_type_not_assignable(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
-        // Error type suppression: don't emit ERROR type errors
-        if source == TypeId::ERROR || target == TypeId::ERROR {
-            return;
-        }
-        // UNKNOWN type suppression: prevents cascade errors from unresolved types
-        if source == TypeId::UNKNOWN || target == TypeId::UNKNOWN {
-            return;
-        }
-
-        self.error_type_not_assignable_at(source, target, idx);
+        let _ = self.check_assignable_or_report(source, target, idx);
     }
 
     fn emit_type_not_assignable_with_reason(
@@ -323,16 +314,7 @@ impl<'a> ErrorHandler for CheckerState<'a> {
         _reason: &str,
         idx: NodeIndex,
     ) {
-        // Error type suppression
-        if source == TypeId::ERROR || target == TypeId::ERROR {
-            return;
-        }
-        // UNKNOWN type suppression: prevents cascade errors from unresolved types
-        if source == TypeId::UNKNOWN || target == TypeId::UNKNOWN {
-            return;
-        }
-
-        self.error_type_not_assignable_with_reason_at(source, target, idx);
+        let _ = self.check_assignable_or_report(source, target, idx);
     }
 
     // =========================================================================
