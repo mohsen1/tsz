@@ -2210,6 +2210,7 @@ impl<'a> Printer<'a> {
             .map(|n| self.skip_trivia_forward(n.pos, n.end))
             .unwrap_or(node.end);
 
+        let mut deferred_reference_comments: Vec<(String, bool)> = Vec::new();
         if let Some(text) = self.source_text {
             while self.comment_emit_idx < self.all_comments.len() {
                 let c_end = self.all_comments[self.comment_emit_idx].end;
@@ -2218,9 +2219,15 @@ impl<'a> Printer<'a> {
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                    self.write_comment(comment_text);
-                    if c_trailing {
-                        self.write_line();
+                    let is_reference_comment =
+                        comment_text.trim_start().starts_with("/// <reference");
+                    if self.ctx.is_commonjs() && is_reference_comment {
+                        deferred_reference_comments.push((comment_text.to_string(), c_trailing));
+                    } else {
+                        self.write_comment(comment_text);
+                        if c_trailing {
+                            self.write_line();
+                        }
                     }
                     self.comment_emit_idx += 1;
                 } else {
@@ -2300,6 +2307,15 @@ impl<'a> Printer<'a> {
                 self.write(name);
                 self.write(";");
                 self.write_line();
+            }
+        }
+
+        if !deferred_reference_comments.is_empty() {
+            for (comment, has_trailing_new_line) in deferred_reference_comments {
+                self.write_comment(&comment);
+                if has_trailing_new_line {
+                    self.write_line();
+                }
             }
         }
 

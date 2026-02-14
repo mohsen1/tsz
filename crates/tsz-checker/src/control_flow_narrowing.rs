@@ -2259,19 +2259,20 @@ impl<'a> FlowAnalyzer<'a> {
                 self.interner.reference(symbol_ref)
             };
 
-            // ArrayBufferView<T = ArrayBufferLike> should use its default type argument
-            // when used as a type-predicate target (`arg is ArrayBufferView`).
-            if let Some(type_params) = self.interner.get_type_params(symbol_ref)
-                && !type_params.is_empty()
-                && type_params.iter().all(|param| param.default.is_some())
-            {
-                let default_args: Vec<TypeId> = type_params
-                    .into_iter()
-                    .filter_map(|param| param.default)
-                    .collect();
-                if default_args.len() > 0 {
-                    view_type = self.interner.application(view_type, default_args);
-                }
+            // ArrayBuffer.isView narrows to ArrayBufferView with the default
+            // type argument (`ArrayBufferLike`) in TypeScript's lib.
+            if let Some(array_buffer_like_sym) = self.binder.get_global_type("ArrayBufferLike") {
+                let array_buffer_like_ref = SymbolRef(array_buffer_like_sym.0);
+                let array_buffer_like =
+                    if let Some(def_id) = self.interner.symbol_to_def_id(array_buffer_like_ref) {
+                        self.interner.intern(TypeKey::Lazy(def_id))
+                    } else {
+                        self.interner.reference(array_buffer_like_ref)
+                    };
+
+                view_type = self
+                    .interner
+                    .application(view_type, vec![array_buffer_like]);
             }
 
             type_id = Some(view_type);
