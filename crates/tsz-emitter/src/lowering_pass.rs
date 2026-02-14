@@ -1558,8 +1558,10 @@ impl<'a> LoweringPass<'a> {
         let end = node.end as usize;
 
         self.arena.source_files.iter().any(|sf| {
-            if end <= sf.text.len() && start < end {
-                let slice = &sf.text[start..end];
+            if start < sf.text.len() && start < end {
+                let window_start = start.saturating_sub(8);
+                let window_end = (end + 8).min(sf.text.len());
+                let slice = &sf.text[window_start..window_end];
                 slice.contains("): =>") || slice.contains("):=>")
             } else {
                 false
@@ -2950,6 +2952,63 @@ mod tests {
         assert!(
             transforms.len() >= 2,
             "Expected transforms for class and nested arrow function"
+        );
+    }
+
+    #[test]
+    fn test_malformed_arrow_recovery_not_lowered_to_es5_function() {
+        let source = "var v = (a): => {\n\n};";
+        let (arena, root) = parse(source);
+        let mut ctx = EmitContext::default();
+        ctx.target_es5 = true;
+
+        let lowering = LoweringPass::new(&arena, &ctx);
+        let transforms = lowering.run(root);
+
+        let root_node = arena.get(root).expect("expected source file node");
+        let source_file = arena
+            .get_source_file(root_node)
+            .expect("expected source file data");
+        let stmt_idx = *source_file
+            .statements
+            .nodes
+            .first()
+            .expect("expected statement");
+        let stmt_node = arena
+            .get(stmt_idx)
+            .expect("expected variable statement node");
+        let var_stmt = arena
+            .get_variable(stmt_node)
+            .expect("expected variable statement data");
+        let decl_list_idx = *var_stmt
+            .declarations
+            .nodes
+            .first()
+            .expect("expected declaration list");
+        let decl_list_node = arena
+            .get(decl_list_idx)
+            .expect("expected declaration list node");
+        let decl_list = arena
+            .get_variable(decl_list_node)
+            .expect("expected declaration list data");
+        let decl_idx = *decl_list
+            .declarations
+            .nodes
+            .first()
+            .expect("expected variable declaration");
+        let decl_node = arena.get(decl_idx).expect("expected declaration node");
+        let decl = arena
+            .get_variable_declaration(decl_node)
+            .expect("expected variable declaration data");
+        let arrow_idx = decl.initializer;
+
+        assert!(
+            !arrow_idx.is_none(),
+            "expected malformed arrow function initializer"
+        );
+        assert!(
+            transforms.get(arrow_idx).is_none(),
+            "malformed recovery arrow must not be lowered"
         );
     }
 }
