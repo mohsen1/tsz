@@ -1850,8 +1850,72 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.try_elaborate_array_literal_elements(arg_idx, param_type)
             }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.try_elaborate_function_arg_return_error(arg_idx, param_type)
+            }
             _ => false,
         }
+    }
+
+    fn try_elaborate_function_arg_return_error(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(arg_node) else {
+            return false;
+        };
+
+        let Some(expected_return_type) = self.first_callable_return_type(param_type) else {
+            return false;
+        };
+
+        let Some(body_node) = self.ctx.arena.get(func.body) else {
+            return false;
+        };
+
+        match body_node.kind {
+            // Expression-bodied arrow function: () => ({ ... })
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                self.try_elaborate_object_literal_arg_error(func.body, expected_return_type)
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let Some(paren) = self.ctx.arena.get_parenthesized(body_node) else {
+                    return false;
+                };
+                self.try_elaborate_object_literal_arg_error(paren.expression, expected_return_type)
+            }
+            _ => false,
+        }
+    }
+
+    fn first_callable_return_type(&self, ty: TypeId) -> Option<TypeId> {
+        use tsz_solver::type_queries::{
+            get_callable_shape, get_function_shape, get_type_application,
+        };
+
+        if let Some(shape) = get_function_shape(self.ctx.types, ty) {
+            return Some(shape.return_type);
+        }
+
+        if let Some(shape) = get_callable_shape(self.ctx.types, ty) {
+            return shape.call_signatures.first().map(|sig| sig.return_type);
+        }
+
+        if let Some(app) = get_type_application(self.ctx.types, ty) {
+            return self.first_callable_return_type(app.base);
+        }
+
+        None
     }
 
     /// Elaborate object literal property type mismatches with TS2322.
