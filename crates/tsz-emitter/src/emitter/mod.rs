@@ -2056,6 +2056,8 @@ impl<'a> Printer<'a> {
             let mut prev_end: Option<u32> = None;
             for &stmt_idx in &source.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    let stmt_token_end =
+                        self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
                     let mut is_erased = false;
 
                     // Check if statement is a type-only declaration (erased in JS)
@@ -2083,9 +2085,9 @@ impl<'a> Printer<'a> {
                         // use prev_end to also strip leading trivia (comments between
                         // the previous statement and this erased declaration).
                         let range_start = prev_end.unwrap_or(stmt_node.pos);
-                        erased_ranges.push((range_start, stmt_node.end));
+                        erased_ranges.push((range_start, stmt_token_end));
                     }
-                    prev_end = Some(stmt_node.end);
+                    prev_end = Some(stmt_token_end);
                 }
             }
             if !erased_ranges.is_empty() {
@@ -2291,7 +2293,7 @@ impl<'a> Printer<'a> {
                     // erased statement so they are not attached to the next emitted node.
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_end = self.all_comments[self.comment_emit_idx].end;
-                        if c_end <= actual_start {
+                        if c_end <= stmt_node.end {
                             self.comment_emit_idx += 1;
                         } else {
                             break;

@@ -257,7 +257,7 @@ impl<'a> IRPrinter<'a> {
                 let is_multiline = if let Some((pos, end)) = source_range {
                     !self.is_single_line_range(*pos, *end)
                 } else {
-                    // Default to single-line when no source info
+                    // Default to single-line when no source info.
                     false
                 };
 
@@ -384,7 +384,15 @@ impl<'a> IRPrinter<'a> {
                 self.write("return");
                 if let Some(e) = expr {
                     self.write(" ");
-                    self.emit_node(e);
+                    if let IRNode::ObjectLiteral {
+                        properties,
+                        source_range: None,
+                    } = &**e
+                    {
+                        self.emit_object_literal_multiline(properties);
+                    } else {
+                        self.emit_node(e);
+                    }
                 }
                 self.write(";");
             }
@@ -1420,6 +1428,27 @@ impl<'a> IRPrinter<'a> {
             }
             self.emit_node(node);
         }
+    }
+
+    fn emit_object_literal_multiline(&mut self, properties: &[IRProperty]) {
+        if properties.is_empty() {
+            self.write("{}");
+            return;
+        }
+        self.write("{");
+        self.write_line();
+        self.indent_level += 1;
+        for (i, prop) in properties.iter().enumerate() {
+            self.write_indent();
+            self.emit_property(prop);
+            if i < properties.len() - 1 {
+                self.write(",");
+            }
+            self.write_line();
+        }
+        self.indent_level -= 1;
+        self.write_indent();
+        self.write("}");
     }
 
     fn emit_parameters(&mut self, params: &[IRParam]) {
