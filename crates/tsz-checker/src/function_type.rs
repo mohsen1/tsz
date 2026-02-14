@@ -448,12 +448,11 @@ impl<'a> CheckerState<'a> {
                     self.ctx.compiler_options.target,
                     ScriptTarget::ES3 | ScriptTarget::ES5
                 );
-                let missing_promise_for_target = if is_function_declaration {
-                    !self.ctx.has_name_in_lib("Promise")
-                } else {
-                    !self.ctx.has_promise_constructor_in_scope()
-                };
-                if is_es5_or_lower && missing_promise_for_target {
+                let should_check_promise_constructor =
+                    !is_function_declaration || has_type_annotation;
+                let missing_promise_for_target = !self.ctx.has_promise_constructor_in_scope();
+                if is_es5_or_lower && should_check_promise_constructor && missing_promise_for_target
+                {
                     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
                     let diagnostic_node = if async_node_idx.is_none() {
                         idx
