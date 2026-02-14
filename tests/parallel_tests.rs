@@ -1,5 +1,3 @@
-#![allow(clippy::print_stderr)]
-
 use super::*;
 
 #[test]
@@ -507,16 +505,16 @@ function runApp() {
 
     // Print diagnostics for debugging
     if result.diagnostic_count > 0 {
-        eprintln!("\n=== DIAGNOSTICS ({}) ===", result.diagnostic_count);
+        println!("\n=== DIAGNOSTICS ({}) ===", result.diagnostic_count);
         for file_result in &result.file_results {
             for diag in &file_result.diagnostics {
-                eprintln!(
+                println!(
                     "  [{}:{}] code={}: {}",
                     file_result.file_name, diag.start, diag.code, diag.message_text
                 );
             }
         }
-        eprintln!("=== END DIAGNOSTICS ===\n");
+        println!("=== END DIAGNOSTICS ===\n");
     }
 
     assert_eq!(stats.file_count, 4);
@@ -524,13 +522,13 @@ function runApp() {
 
     // Debug: print diagnostics if there are any
     if result.diagnostic_count > 0 {
-        eprintln!("\n=== DIAGNOSTICS ({}) ===", result.diagnostic_count);
+        println!("\n=== DIAGNOSTICS ({}) ===", result.diagnostic_count);
         for file_result in &result.file_results {
             for diag in &file_result.diagnostics {
-                eprintln!("  [{}:{}] {}", diag.file, diag.start, diag.message_text);
+                println!("  [{}:{}] {}", diag.file, diag.start, diag.message_text);
             }
         }
-        eprintln!("=== END DIAGNOSTICS ===\n");
+        println!("=== END DIAGNOSTICS ===\n");
     }
 
     assert_eq!(result.diagnostic_count, 0);
