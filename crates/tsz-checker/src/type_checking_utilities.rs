@@ -1490,6 +1490,35 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if a parameter node has an inline `/** @type {T} */` JSDoc annotation.
+    ///
+    /// In TypeScript, parameters can have inline JSDoc type annotations like:
+    ///   `function foo(/** @type {string} */ msg, /** @type {number} */ count)`
+    /// These annotations suppress TS7006 because the parameter type is provided via JSDoc.
+    pub(crate) fn param_has_inline_jsdoc_type(&self, param_idx: NodeIndex) -> bool {
+        
+
+        let sf = match self.ctx.arena.source_files.first() {
+            Some(sf) => sf,
+            None => return false,
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+
+        let param_node = match self.ctx.arena.get(param_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        // Look for a JSDoc comment that ends right before or overlaps the parameter position
+        if let Some(content) = self.try_leading_jsdoc(comments, param_node.pos, source_text) {
+            // Check if the JSDoc contains @type {something}
+            return content.contains("@type");
+        }
+
+        false
+    }
+
     /// Check if a JSDoc comment has a `@param {type}` annotation for the given parameter name.
     ///
     /// Returns true if the JSDoc contains `@param {someType} paramName`.

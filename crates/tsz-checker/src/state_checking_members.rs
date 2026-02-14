@@ -4172,14 +4172,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let Some(param) = self.ctx.arena.get_parameter(param_node) else {
                 continue;
             };
-            // Check if JSDoc provides a @param type for this parameter
+            // Check if JSDoc provides a @param type for this parameter,
+            // or if the parameter has an inline /** @type {T} */ annotation
             let has_jsdoc_param = if param.type_annotation.is_none() {
-                if let Some(ref jsdoc) = func_decl_jsdoc {
+                let from_func_jsdoc = if let Some(ref jsdoc) = func_decl_jsdoc {
                     let pname = self.parameter_name_for_error(param.name);
                     Self::jsdoc_has_param_type(jsdoc, &pname)
                 } else {
                     false
-                }
+                };
+                from_func_jsdoc || self.param_has_inline_jsdoc_type(param_idx)
             } else {
                 false
             };

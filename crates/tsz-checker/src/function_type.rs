@@ -273,14 +273,16 @@ impl<'a> CheckerState<'a> {
                 // yet available (they're set during check_variable_declaration). The closure
                 // will be re-evaluated with contextual types during the checking phase.
                 //
-                // JSDoc @param {type} annotations also suppress TS7006 in JS files
+                // JSDoc @param {type} annotations also suppress TS7006 in JS files.
+                // Also check for inline /** @type {T} */ annotations on the parameter itself.
                 let has_jsdoc_param = if !has_contextual_type && param.type_annotation.is_none() {
-                    if let Some(ref jsdoc) = func_jsdoc {
+                    let from_func_jsdoc = if let Some(ref jsdoc) = func_jsdoc {
                         let pname = self.parameter_name_for_error(param.name);
                         Self::jsdoc_has_param_type(jsdoc, &pname)
                     } else {
                         false
-                    }
+                    };
+                    from_func_jsdoc || self.param_has_inline_jsdoc_type(param_idx)
                 } else {
                     false
                 };
