@@ -1,7 +1,8 @@
 //! Parser state - expression parsing methods
 
 use super::state::{
-    CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR, ParserState,
+    CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR,
+    CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
 };
 use crate::parser::{NodeIndex, NodeList, node::*, node_flags, syntax_kind_ext};
 use tsz_common::interner::Atom;
@@ -209,6 +210,25 @@ impl ParserState {
                 // Line break before => means this is not an arrow function (ASI applies)
                 false
             } else if self.is_token(SyntaxKind::ColonToken) {
+                let in_conditional_true =
+                    (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0;
+                if in_conditional_true {
+                    // In `a ? (): T => x : y`, the `:` is often the enclosing conditional
+                    // separator. When the next token is an identifier, prefer conditional
+                    // parsing and let later contexts recover the arrow shape if needed.
+                    let after_colon_snapshot = self.scanner.save_state();
+                    let after_colon_token = {
+                        self.next_token();
+                        self.token()
+                    };
+                    self.scanner.restore_state(after_colon_snapshot);
+                    self.current_token = SyntaxKind::ColonToken;
+                    if after_colon_token == SyntaxKind::Identifier {
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = current;
+                        return false;
+                    }
+                }
                 // (): is definitely an arrow function with a return type annotation.
                 // Empty parens () are never a valid expression, so ():
                 // can only appear as arrow function parameters + return type.
@@ -245,6 +265,21 @@ impl ParserState {
             // Line break before => means this is not an arrow function (ASI applies)
             false
         } else if self.is_token(SyntaxKind::ColonToken) {
+            let in_conditional_true = (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0;
+            if in_conditional_true {
+                let after_colon_snapshot = self.scanner.save_state();
+                let after_colon_token = {
+                    self.next_token();
+                    self.token()
+                };
+                self.scanner.restore_state(after_colon_snapshot);
+                self.current_token = SyntaxKind::ColonToken;
+                if after_colon_token == SyntaxKind::Identifier {
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current;
+                    return false;
+                }
+            }
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();
 
@@ -281,8 +316,30 @@ impl ParserState {
 
         // Check if => is immediately after identifier (no line break)
         // If there's a line break, ASI applies and this is not an arrow function
-        let is_arrow = !self.scanner.has_preceding_line_break()
-            && self.is_token(SyntaxKind::EqualsGreaterThanToken);
+        let is_arrow = if self.scanner.has_preceding_line_break() {
+            false
+        } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+            true
+        } else if self.is_token(SyntaxKind::ColonToken)
+            && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) == 0
+        {
+            // Support single-parameter typed arrows in lookahead: `x: T => expr`.
+            // Avoid this branch inside a conditional true arm to prevent stealing the
+            // `:` that commonly belongs to the surrounding conditional expression.
+            let saved_arena_len = self.arena.nodes.len();
+            let saved_diagnostics_len = self.parse_diagnostics.len();
+
+            self.next_token();
+            let _ = self.parse_type();
+            let result = !self.scanner.has_preceding_line_break()
+                && self.is_token(SyntaxKind::EqualsGreaterThanToken);
+
+            self.arena.nodes.truncate(saved_arena_len);
+            self.parse_diagnostics.truncate(saved_diagnostics_len);
+            result
+        } else {
+            false
+        };
 
         self.scanner.restore_state(snapshot);
         self.current_token = current;

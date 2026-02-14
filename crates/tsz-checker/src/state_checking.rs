@@ -331,7 +331,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check function declaration for JS grammar errors.
-    fn check_js_grammar_function(
+    pub(crate) fn check_js_grammar_function(
         &mut self,
         func_idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,

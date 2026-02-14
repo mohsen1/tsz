@@ -467,11 +467,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
             // Function expression
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
+                if self.checker.is_js_file() {
+                    self.checker.check_js_grammar_function(idx, node);
+                }
                 self.checker.get_type_of_function(idx)
             }
 
             // Arrow function
-            k if k == syntax_kind_ext::ARROW_FUNCTION => self.checker.get_type_of_function(idx),
+            k if k == syntax_kind_ext::ARROW_FUNCTION => {
+                if self.checker.is_js_file() {
+                    self.checker.check_js_grammar_function(idx, node);
+                }
+                self.checker.get_type_of_function(idx)
+            }
 
             // Array literal
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
