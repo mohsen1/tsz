@@ -72,7 +72,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Helper to recursively evaluate keyof while respecting depth limits.
     /// Creates a KeyOf type and evaluates it through the main evaluate() method.
     fn recurse_keyof(&mut self, operand: TypeId) -> TypeId {
-        let keyof = self.interner().intern(TypeKey::KeyOf(operand));
+        let keyof = self.interner().keyof(operand);
         self.evaluate(keyof)
     }
 
@@ -135,12 +135,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 TypeKey::TypeParameter(param) | TypeKey::Infer(param) => {
                     if let Some(constraint) = param.constraint {
                         if constraint == evaluated_operand {
-                            self.interner().intern(TypeKey::KeyOf(operand))
+                            self.interner().keyof(operand)
                         } else {
                             self.recurse_keyof(constraint)
                         }
                     } else {
-                        self.interner().intern(TypeKey::KeyOf(operand))
+                        self.interner().keyof(operand)
                     }
                 }
                 TypeKey::Object(shape_id) => {
@@ -217,7 +217,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     if let Some(kind) = self.apparent_literal_kind(&literal) {
                         self.apparent_primitive_keyof(kind)
                     } else {
-                        self.interner().intern(TypeKey::KeyOf(operand))
+                        self.interner().keyof(operand)
                     }
                 }
                 TypeKey::TemplateLiteral(_) => self.apparent_primitive_keyof(IntrinsicKind::String),
@@ -235,7 +235,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         None => {
                             // Keep as deferred KeyOf if resolution fails
-                            self.interner().intern(TypeKey::KeyOf(operand))
+                            self.interner().keyof(operand)
                         }
                     }
                 }
@@ -247,7 +247,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     self.recurse_keyof(evaluated)
                 }
                 // For other types (type parameters, etc.), keep as KeyOf (deferred)
-                _ => self.interner().intern(TypeKey::KeyOf(operand)),
+                _ => self.interner().keyof(operand),
             }
         }
     }
