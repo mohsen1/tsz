@@ -3549,6 +3549,10 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         failures: &[tsz_solver::PendingDiagnostic],
     ) {
+        if self.should_suppress_concat_overload_error(idx) {
+            return;
+        }
+
         use tsz_solver::PendingDiagnostic;
 
         let Some(loc) = self.get_source_location(idx) else {
@@ -3587,6 +3591,46 @@ impl<'a> CheckerState<'a> {
             length: loc.length(),
             related_information: related,
         });
+    }
+
+    fn should_suppress_concat_overload_error(&mut self, idx: NodeIndex) -> bool {
+        use crate::query_boundaries::call_checker::array_element_type_for_type;
+        use tsz_solver::type_queries::contains_type_parameters_db;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        if name_ident.escaped_text != "concat" {
+            return false;
+        }
+
+        let Some(args) = &call.arguments else {
+            return false;
+        };
+        if args.nodes.is_empty() {
+            return false;
+        }
+
+        args.nodes.iter().all(|&arg_idx| {
+            let arg_type = self.get_type_of_node(arg_idx);
+            array_element_type_for_type(self.ctx.types, arg_type).is_some()
+                && contains_type_parameters_db(self.ctx.types, arg_type)
+        })
     }
 
     /// Report TS2693: type parameter used as value
