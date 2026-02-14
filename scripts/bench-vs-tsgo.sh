@@ -753,12 +753,10 @@ async function process$i<T extends Record<string, unknown>>(
     
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
-            const result = await Promise.race([
-                Promise.resolve(input),
-                new Promise<never>((_, reject) => 
-                    setTimeout(() => reject(new Error('timeout')), timeout)
-                )
-            ]);
+            const result = await Promise.resolve(input);
+            if (timeout < 0) {
+                throw new Error('timeout');
+            }
             return { ok: true, value: result };
         } catch (e) {
             if (attempt === retries - 1) {
@@ -771,6 +769,66 @@ async function process$i<T extends Record<string, unknown>>(
 
 EOF
     done
+}
+
+generate_typed_arrays_file() {
+    local output="$1"
+
+    cat > "$output" << 'HEADER'
+// Typed array benchmark fixture used by bench-vs-tsgo.sh.
+// Keep this strict/explicit so all compilers can parse and type-check it.
+
+function createTypedArrayInstancesFromLength(length: number) {
+    const typedArrays = [];
+    typedArrays[0] = new Int8Array(length);
+    typedArrays[1] = new Uint8Array(length);
+    typedArrays[2] = new Int16Array(length);
+    typedArrays[3] = new Uint16Array(length);
+    typedArrays[4] = new Int32Array(length);
+    typedArrays[5] = new Uint32Array(length);
+    typedArrays[6] = new Float32Array(length);
+    typedArrays[7] = new Float64Array(length);
+    typedArrays[8] = new Uint8ClampedArray(length);
+    return typedArrays;
+}
+
+function createTypedArrayInstancesFromArrayLike(obj: ArrayLike<number>) {
+    const typedArrays = [];
+    typedArrays[0] = new Int8Array(obj);
+    typedArrays[1] = new Uint8Array(obj);
+    typedArrays[2] = new Int16Array(obj);
+    typedArrays[3] = new Uint16Array(obj);
+    typedArrays[4] = new Int32Array(obj);
+    typedArrays[5] = new Uint32Array(obj);
+    typedArrays[6] = new Float32Array(obj);
+    typedArrays[7] = new Float64Array(obj);
+    typedArrays[8] = new Uint8ClampedArray(obj);
+    return typedArrays;
+}
+
+function createTypedArraysFromMapFn(
+    obj: ArrayLike<number>,
+    mapFn: (n: number, v: number) => number
+) {
+    const typedArrays = [];
+    typedArrays[0] = Int8Array.from(obj, mapFn);
+    typedArrays[1] = Uint8Array.from(obj, mapFn);
+    typedArrays[2] = Int16Array.from(obj, mapFn);
+    typedArrays[3] = Uint16Array.from(obj, mapFn);
+    typedArrays[4] = Int32Array.from(obj, mapFn);
+    typedArrays[5] = Uint32Array.from(obj, mapFn);
+    typedArrays[6] = Float32Array.from(obj, mapFn);
+    typedArrays[7] = Float64Array.from(obj, mapFn);
+    typedArrays[8] = Uint8ClampedArray.from(obj, mapFn);
+    return typedArrays;
+}
+
+const values: number[] = [1, 2, 3, 4];
+const mapped = createTypedArraysFromMapFn(values, (n, i) => n + i);
+const fromLength = createTypedArrayInstancesFromLength(128);
+const fromArrayLike = createTypedArrayInstancesFromArrayLike(values);
+const sampleCount = mapped.length + fromLength.length + fromArrayLike.length;
+HEADER
 }
 
 generate_union_file() {
@@ -1304,19 +1362,14 @@ EOF
 
 EOF
 
-    # Generate if-else chain with type guards
+    # Generate many branch checks without relying on final-else narrowing.
     echo "function processWithIf(e: Entity): string {" >> "$output"
     for ((i=0; i<branch_count; i++)); do
-        if [ $i -eq 0 ]; then
-            echo "    if (e.kind === 'type$i') {" >> "$output"
-        elif [ $i -eq $((branch_count - 1)) ]; then
-            echo "    } else {" >> "$output"
-        else
-            echo "    } else if (e.kind === 'type$i') {" >> "$output"
-        fi
+        echo "    if (e.kind === 'type$i') {" >> "$output"
         echo "        return e.data$i;" >> "$output"
+        echo "    }" >> "$output"
     done
-    echo "    }" >> "$output"
+    echo "    return processEntity(e);" >> "$output"
     echo "}" >> "$output"
     
     # Type guard functions
@@ -1661,9 +1714,13 @@ main() {
         # SMALL FILES (50-200 lines) - Quick iteration
         # ═══════════════════════════════════════════════════════════════════════════
         print_subheader "Small Files (50-200 lines) - Startup Overhead Test"
+
+        local typed_arrays_file="$TEMP_DIR/typedArrays.bench.ts"
+        generate_typed_arrays_file "$typed_arrays_file"
+        run_benchmark "typedArrays.ts" "$typed_arrays_file"
+        echo
         
         local small_files=(
-            "TypeScript/tests/cases/compiler/typedArrays.ts"
             "TypeScript/tests/cases/compiler/privacyVar.ts"
         )
         
