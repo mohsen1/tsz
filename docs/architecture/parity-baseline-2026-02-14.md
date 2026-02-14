@@ -59,3 +59,18 @@ Codes reported as not emitted by `tsz` in this slice:
 1. Reduce false positives centered on `TS2322`, `TS2345`, `TS2769`.
 2. Raise coverage of partially implemented `TS2322` and `TS2304`.
 3. Implement high-impact missing diagnostics starting with `TS2693`, `TS2741`, `TS2461`, `TS2488`, `TS2705`.
+
+## Post-Refactor Verification (2026-02-14)
+
+After checker boundary migration steps (query-boundary routing + guardrails), reran:
+
+```bash
+./scripts/conformance.sh run --offset 0 --max 500 --workers 16
+```
+
+Result remained stable:
+
+- Passed: `438/499` (`87.8%`)
+- Skipped: `1`
+- Crashed: `0`
+- Timeout: `0`
