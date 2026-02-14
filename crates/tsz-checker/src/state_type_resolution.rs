@@ -175,6 +175,13 @@ impl<'a> CheckerState<'a> {
                     TypeSymbolResolution::NotFound => None,
                 };
                 if let Some(sym_id) = sym_id {
+                    if name == "Proxy" {
+                        tracing::debug!(
+                            sym_id = sym_id.0,
+                            name,
+                            "get_type_from_type_reference: Proxy sym_id resolved"
+                        );
+                    }
                     if self.symbol_is_namespace_only(sym_id) {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
@@ -313,6 +320,16 @@ impl<'a> CheckerState<'a> {
                                     if let Some(iface) = self.ctx.arena.get_interface(node)
                                         && let Some(ref tpl) = iface.type_parameters
                                     {
+                                        // Verify name matches to prevent NodeIndex collisions
+                                        if let Some(iface_name_node) =
+                                            self.ctx.arena.get(iface.name)
+                                            && let Some(iface_ident) =
+                                                self.ctx.arena.get_identifier(iface_name_node)
+                                            && self.ctx.arena.resolve_identifier_text(iface_ident)
+                                                != name
+                                        {
+                                            continue;
+                                        }
                                         let (params, updates) =
                                             self.push_type_parameters(&Some(tpl.clone()));
                                         self.pop_type_parameters(updates);
@@ -324,6 +341,16 @@ impl<'a> CheckerState<'a> {
                                     }
 
                                     if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                                        // Verify name matches to prevent NodeIndex collisions
+                                        if let Some(alias_name_node) =
+                                            self.ctx.arena.get(type_alias.name)
+                                            && let Some(alias_ident) =
+                                                self.ctx.arena.get_identifier(alias_name_node)
+                                            && self.ctx.arena.resolve_identifier_text(alias_ident)
+                                                != name
+                                        {
+                                            continue;
+                                        }
                                         let (params, updates) =
                                             self.push_type_parameters(&type_alias.type_parameters);
                                         self.pop_type_parameters(updates);
@@ -382,6 +409,15 @@ impl<'a> CheckerState<'a> {
                 let type_id = lowering.lower_type(idx);
                 // Phase 2: Still post-process to create DefIds for types that don't have them yet
                 let result = self.ctx.maybe_create_lazy_from_resolved(type_id);
+
+                if name == "Proxy" {
+                    tracing::debug!(
+                        type_id = type_id.0,
+                        result = result.0,
+                        result_key = ?self.ctx.types.lookup(result),
+                        "get_type_from_type_reference: Proxy lowered result"
+                    );
+                }
 
                 // Ensure Application types from lib type aliases have their base
                 // registered in type_env. Due to DefId instability (get_or_create_def_id
@@ -819,6 +855,14 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn type_reference_symbol_type(&mut self, sym_id: SymbolId) -> TypeId {
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            tracing::debug!(
+                sym_id = sym_id.0,
+                name = %symbol.escaped_name,
+                flags = symbol.flags,
+                "type_reference_symbol_type: ENTRY"
+            );
+        }
         // Recursion depth check: prevents stack overflow from circular
         // interface/class type references (e.g. I<T extends I<T>>)
         if !self.ctx.enter_recursion() {
@@ -912,16 +956,28 @@ impl<'a> CheckerState<'a> {
 
             // For type aliases, resolve the body type using the correct arena
             if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
-                let decl_idx = if !symbol.value_declaration.is_none() {
-                    symbol.value_declaration
-                } else {
-                    symbol
-                        .declarations
-                        .first()
-                        .copied()
-                        .unwrap_or(NodeIndex::NONE)
-                };
-                if !decl_idx.is_none() {
+                // When a type alias name collides with a global value declaration
+                // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
+                // the merged symbol's value_declaration may point to the var decl.
+                // Search declarations[] to find the actual type alias declaration first.
+                let has_type_alias_decl = symbol.declarations.iter().any(|&d| {
+                    self.ctx
+                        .arena
+                        .get(d)
+                        .and_then(|n| {
+                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                                // Verify name matches to prevent NodeIndex collisions
+                                let type_alias = self.ctx.arena.get_type_alias(n)?;
+                                let name = self.ctx.arena.get_identifier_text(type_alias.name)?;
+                                Some(name == symbol.escaped_name.as_str())
+                            } else {
+                                Some(false)
+                            }
+                        })
+                        .unwrap_or(false)
+                }) || !symbol.value_declaration.is_none()
+                    || !symbol.declarations.is_empty();
+                if has_type_alias_decl {
                     // Get the correct arena for the symbol (lib arena or current arena)
                     // Phase 4.3: Return structural type directly for type alias type references
                     //
@@ -958,6 +1014,17 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         use tsz_solver::TypeLowering;
+
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            tracing::debug!(
+                sym_id = sym_id.0,
+                name = %symbol.escaped_name,
+                flags = symbol.flags,
+                num_decls = symbol.declarations.len(),
+                has_value_decl = !symbol.value_declaration.is_none(),
+                "type_reference_symbol_type_with_params: ENTRY"
+            );
+        }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             // For classes, use class_instance_type_with_params_from_symbol which
@@ -1139,15 +1206,42 @@ impl<'a> CheckerState<'a> {
 
             // For type aliases, get body type and params together
             if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
-                let decl_idx = if !symbol.value_declaration.is_none() {
-                    symbol.value_declaration
-                } else {
-                    symbol
-                        .declarations
-                        .first()
-                        .copied()
-                        .unwrap_or(NodeIndex::NONE)
-                };
+                // When a type alias name collides with a global value declaration
+                // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
+                // the merged symbol's value_declaration points to the var decl, not the
+                // type alias. We must search declarations[] to find the actual type alias.
+                let decl_idx = symbol
+                    .declarations
+                    .iter()
+                    .copied()
+                    .find(|&d| {
+                        self.ctx
+                            .arena
+                            .get(d)
+                            .and_then(|n| {
+                                if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                                    // Verify name matches to prevent NodeIndex collisions
+                                    let type_alias = self.ctx.arena.get_type_alias(n)?;
+                                    let name =
+                                        self.ctx.arena.get_identifier_text(type_alias.name)?;
+                                    Some(name == symbol.escaped_name.as_str())
+                                } else {
+                                    Some(false)
+                                }
+                            })
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or_else(|| {
+                        if !symbol.value_declaration.is_none() {
+                            symbol.value_declaration
+                        } else {
+                            symbol
+                                .declarations
+                                .first()
+                                .copied()
+                                .unwrap_or(NodeIndex::NONE)
+                        }
+                    });
 
                 if !decl_idx.is_none() {
                     // Try user arena first (fast path for user-defined type aliases)

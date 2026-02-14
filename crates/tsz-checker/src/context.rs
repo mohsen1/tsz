@@ -2863,6 +2863,18 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
             // Look up the cached type for this symbol (constructor type for classes)
             if let Some(&ty) = self.symbol_types.get(&sym_id) {
+                tracing::trace!(
+                    def_id = def_id.0,
+                    sym_id = sym_id.0,
+                    type_id = ty.0,
+                    name = self
+                        .binder
+                        .symbols
+                        .get(sym_id)
+                        .map(|s| s.escaped_name.as_str())
+                        .unwrap_or("?"),
+                    "resolve_lazy: found in symbol_types cache"
+                );
                 return Some(ty);
             }
         }
@@ -2871,10 +2883,16 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // (generic lib interfaces like PromiseLike<T>, Map<K,V>, Set<T>, etc.)
         if let Ok(env) = self.type_env.try_borrow() {
             if let Some(body) = env.get_def(def_id) {
+                tracing::trace!(
+                    def_id = def_id.0,
+                    type_id = body.0,
+                    "resolve_lazy: found in type_env"
+                );
                 return Some(body);
             }
         }
 
+        tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
         None
     }
 

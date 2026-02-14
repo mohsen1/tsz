@@ -1446,6 +1446,58 @@ impl<'a> CheckerState<'a> {
         // Fast path: if this is a known cross-file symbol, skip the namespace guard
         // (which would check the wrong symbol in the current binder) and go straight
         // to cross-file delegation.
+        //
+        // TYPE_ALIAS + value merge fix: When a user-defined type alias (e.g., `type Proxy<T>`)
+        // has the same name as a global value (`declare var Proxy: ProxyConstructor`), the
+        // merged symbol has both TYPE_ALIAS and value flags, and symbol_arenas may point to
+        // the lib arena. Delegating to the lib arena loses the type alias declaration (which
+        // lives in the user arena), causing property access on the instantiated type to fail.
+        // If the type alias declaration exists in the current arena, handle it locally.
+        {
+            let sym_found = self.get_symbol_globally(sym_id);
+            let has_type_alias = sym_found
+                .map(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
+                .unwrap_or(false);
+            if has_type_alias {
+                let symbol = sym_found.unwrap();
+                tracing::debug!(
+                    sym_id = sym_id.0,
+                    name = %symbol.escaped_name,
+                    num_decls = symbol.declarations.len(),
+                    arena_len = self.ctx.arena.len(),
+                    "delegate_cross_arena: checking TYPE_ALIAS in current arena"
+                );
+                let has_type_alias_in_current_arena = symbol.declarations.iter().any(|&d| {
+                    self.ctx
+                        .arena
+                        .get(d)
+                        .and_then(|n| {
+                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                                // Verify the name matches to prevent NodeIndex collisions:
+                                // A lib NodeIndex may accidentally map to a different
+                                // TYPE_ALIAS_DECLARATION in the user arena.
+                                let type_alias = self.ctx.arena.get_type_alias(n)?;
+                                let name_node = self.ctx.arena.get(type_alias.name)?;
+                                let ident = self.ctx.arena.get_identifier(name_node)?;
+                                let name = self.ctx.arena.resolve_identifier_text(ident);
+                                Some(name == symbol.escaped_name.as_str())
+                            } else {
+                                Some(false)
+                            }
+                        })
+                        .unwrap_or(false)
+                });
+                tracing::debug!(
+                    sym_id = sym_id.0,
+                    name = %symbol.escaped_name,
+                    has_type_alias_in_current_arena,
+                    "delegate_cross_arena: TYPE_ALIAS check result"
+                );
+                if has_type_alias_in_current_arena {
+                    return None; // Handle locally, don't delegate to lib arena
+                }
+            }
+        }
         let is_known_cross_file = self
             .ctx
             .cross_file_symbol_targets
@@ -2347,12 +2399,38 @@ impl<'a> CheckerState<'a> {
 
         // Type alias - resolve using checker's get_type_from_type_node to properly resolve symbols
         if flags & symbol_flags::TYPE_ALIAS != 0 {
-            // Get the type node from the type alias declaration
-            let decl_idx = if !value_decl.is_none() {
-                value_decl
-            } else {
-                declarations.first().copied().unwrap_or(NodeIndex::NONE)
-            };
+            // When a type alias name collides with a global value declaration
+            // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
+            // the merged symbol's value_declaration points to the var decl, not the
+            // type alias. We must search declarations[] to find the actual type alias.
+            let decl_idx = declarations
+                .iter()
+                .copied()
+                .find(|&d| {
+                    self.ctx
+                        .arena
+                        .get(d)
+                        .and_then(|n| {
+                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                                // Verify name matches to prevent NodeIndex collisions
+                                let type_alias = self.ctx.arena.get_type_alias(n)?;
+                                let name_node = self.ctx.arena.get(type_alias.name)?;
+                                let ident = self.ctx.arena.get_identifier(name_node)?;
+                                let name = self.ctx.arena.resolve_identifier_text(ident);
+                                Some(name == escaped_name)
+                            } else {
+                                Some(false)
+                            }
+                        })
+                        .unwrap_or(false)
+                })
+                .unwrap_or_else(|| {
+                    if !value_decl.is_none() {
+                        value_decl
+                    } else {
+                        declarations.first().copied().unwrap_or(NodeIndex::NONE)
+                    }
+                });
             if !decl_idx.is_none()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
                 && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
