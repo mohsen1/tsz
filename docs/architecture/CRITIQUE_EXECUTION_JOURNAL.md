@@ -103,3 +103,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migrated `type_checking_utilities.rs` `TypeKey::KeyOf` direct interning to `types.keyof(...)` constructor API.
 - [x] Migrated query-boundary tests to checker-safe constructor APIs by replacing `TypeKey::TypeParameter` and `TypeKey::KeyOf` calls with `types.type_param(...)` / `types.keyof(...)`.
 - [x] Migrated `enum_member_cache_tests.rs` to avoid `TypeKey` construction/inspection by using `type_queries::get_enum_def_id(...)` for enum-member assertions.
+- [x] Added `TypeInterner::this_type()` and migrated `lower.rs` constructor paths (`ThisType`, `TypeParameter`, `IndexAccess`, `Lazy`, `TypeQuery`, `KeyOf`, `ReadonlyType`) to public helpers.
