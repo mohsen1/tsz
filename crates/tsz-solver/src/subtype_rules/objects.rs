@@ -837,7 +837,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             return SubtypeResult::False;
         }
-
         self.check_properties_against_index_signatures(source, target)
     }
 

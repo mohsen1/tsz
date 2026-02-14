@@ -51,6 +51,7 @@ jobs:
       - name: Run benchmark comparison
         env:
           BASE_REF: ${{ github.base_ref || inputs.base_ref || 'main' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           TSZ_PERF_TARGET_DIR: ${{ github.workspace }}/target-perf
           TSZ_PERF_BENCHES: 'phase_timing_bench,real_world_bench'
           TSZ_PERF_SAMPLE_SIZE: '15'
