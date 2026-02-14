@@ -3,8 +3,6 @@
 //! This module handles type reification: converting the Solver's internal TypeId
 //! representation into printable TypeScript syntax for declaration emit (.d.ts files).
 
-#![allow(clippy::print_stderr)]
-
 use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_solver::TypeInterner;
