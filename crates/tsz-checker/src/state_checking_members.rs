@@ -2565,9 +2565,18 @@ impl<'a> CheckerState<'a> {
         // TS7008: Member implicitly has an 'any' type
         // Report this error when noImplicitAny is enabled and the property has no type annotation
         // AND no initializer (if there's an initializer, TypeScript can infer the type)
+        // TSC suppresses this for private members in ambient (declare) classes
+        let is_private_in_ambient = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.is_declared)
+            .unwrap_or(false)
+            && self.has_private_modifier(&prop.modifiers);
         if self.ctx.no_implicit_any()
             && prop.type_annotation.is_none()
             && prop.initializer.is_none()
+            && !is_private_in_ambient
             && let Some(member_name) = self.get_property_name(prop.name)
         {
             use crate::types::diagnostics::diagnostic_codes;
@@ -2713,6 +2722,15 @@ impl<'a> CheckerState<'a> {
         self.check_parameter_properties(&method.parameters.nodes);
 
         // Check parameter type annotations for parameter properties in function types
+        // TSC suppresses TS7006 for private members in ambient (declare) classes
+        // since private members are excluded from .d.ts output.
+        let skip_implicit_any = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.is_declared)
+            .unwrap_or(false)
+            && self.has_private_modifier(&method.modifiers);
         for &param_idx in &method.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -2720,7 +2738,9 @@ impl<'a> CheckerState<'a> {
                 if !param.type_annotation.is_none() {
                     self.check_type_for_parameter_properties(param.type_annotation);
                 }
-                self.maybe_report_implicit_any_parameter(param, false);
+                if !skip_implicit_any {
+                    self.maybe_report_implicit_any_parameter(param, false);
+                }
             }
         }
 
@@ -2762,7 +2782,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(false);
             let is_ambient_file = self.ctx.file_name.ends_with(".d.ts");
 
-            if (is_ambient_class || is_ambient_file) && !is_async {
+            if (is_ambient_class || is_ambient_file) && !is_async && !skip_implicit_any {
                 let method_name = self.get_property_name(method.name);
                 self.maybe_report_implicit_any_return(
                     method_name,
@@ -2840,7 +2860,8 @@ impl<'a> CheckerState<'a> {
             // Abstract method or method overload signature
             // Report TS7010 for abstract methods without return type annotation
             // Async methods infer Promise<void>, not 'any', so they should NOT trigger TS7010
-            if !is_async {
+            // Private members in ambient classes are excluded (not visible in .d.ts)
+            if !is_async && !skip_implicit_any {
                 let method_name = self.get_property_name(method.name);
                 self.maybe_report_implicit_any_return(
                     method_name,
@@ -2904,6 +2925,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check parameter type annotations for parameter properties in function types
+        // TSC suppresses TS7006 for private constructors in ambient (declare) classes
+        let skip_implicit_any_ctor = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.is_declared)
+            .unwrap_or(false)
+            && self.has_private_modifier(&ctor.modifiers);
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -2911,7 +2940,9 @@ impl<'a> CheckerState<'a> {
                 if !param.type_annotation.is_none() {
                     self.check_type_for_parameter_properties(param.type_annotation);
                 }
-                self.maybe_report_implicit_any_parameter(param, false);
+                if !skip_implicit_any_ctor {
+                    self.maybe_report_implicit_any_parameter(param, false);
+                }
             }
         }
 
@@ -3068,10 +3099,19 @@ impl<'a> CheckerState<'a> {
         // Parameter properties are only allowed in constructors, not in accessors
         self.check_parameter_properties(&accessor.parameters.nodes);
 
+        // TSC suppresses TS7006/TS7010 for private accessors in ambient (declare) classes
+        let skip_implicit_any_accessor = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.is_declared)
+            .unwrap_or(false)
+            && self.has_private_modifier(&accessor.modifiers);
+
         // Check getter parameters for TS7006 here.
         // Setter parameters are checked in check_setter_parameter() below, which also
         // validates other setter constraints (no initializer, no rest parameter).
-        if is_getter {
+        if is_getter && !skip_implicit_any_accessor {
             for &param_idx in &accessor.parameters.nodes {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -3086,7 +3126,10 @@ impl<'a> CheckerState<'a> {
             // Check if a paired getter exists — if so, setter parameter type is
             // inferred from the getter return type (contextually typed, no TS7006)
             let has_paired_getter = self.setter_has_paired_getter(member_idx, &accessor);
-            self.check_setter_parameter(&accessor.parameters.nodes, has_paired_getter);
+            self.check_setter_parameter(
+                &accessor.parameters.nodes,
+                has_paired_getter || skip_implicit_any_accessor,
+            );
         }
 
         // Check accessor body
@@ -3108,7 +3151,8 @@ impl<'a> CheckerState<'a> {
                 let is_ambient_file = self.ctx.file_name.ends_with(".d.ts");
                 let is_async = self.has_async_modifier(&accessor.modifiers);
 
-                if (is_ambient_class || is_ambient_file) && !is_async {
+                if (is_ambient_class || is_ambient_file) && !is_async && !skip_implicit_any_accessor
+                {
                     let accessor_name = self.get_property_name(accessor.name);
                     self.maybe_report_implicit_any_return(
                         accessor_name,
