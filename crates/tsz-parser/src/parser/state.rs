@@ -872,6 +872,18 @@ impl ParserState {
 
         // Spelling / space suggestion (TS1435).
         if let Some(suggestion) = spelling::suggest_keyword(&expression_text) {
+            // Suppress cascading TS1435 in malformed type-annotation contexts
+            // (e.g. `var f = (x: number, y: string);`).
+            if suggestion == "string" {
+                let source = self.scanner.source_text().as_bytes();
+                let mut i = pos as usize;
+                while i > 0 && source[i - 1].is_ascii_whitespace() {
+                    i -= 1;
+                }
+                if i > 0 && source[i - 1] == b':' {
+                    return;
+                }
+            }
             self.parse_error_at(
                 pos,
                 len,
