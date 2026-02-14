@@ -8,7 +8,7 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 use crate::context::CheckerOptions;
-use crate::{diagnostics::diagnostic_codes, CheckerState};
+use crate::{CheckerState, diagnostics::diagnostic_codes};
 
 fn compile_with_options(
     source: &str,
@@ -100,7 +100,10 @@ fn test_ts2322_check_js_false_suppresses_jsdoc_mismatch() {
         },
     );
 
-    assert_eq!(count_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE), 0);
+    assert_eq!(
+        count_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        0
+    );
     assert_eq!(count_code(&diags, 2345), 0);
 }
 
@@ -135,4 +138,113 @@ fn test_target_sensitive_check_js_strictness_stability() {
     assert!(count_code(&strict, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE) >= 1);
     assert!(count_code(&strict, 2345) == 0);
     assert!(count_code(&loose, 2345) == 0);
+}
+
+#[test]
+fn test_check_js_true_enables_js_file_type_checks_only() {
+    let source = r#"
+        const fromJsDoc = "bad";
+        /** @type {number} */
+        let n = fromJsDoc;
+    "#;
+
+    let strict_check = compile_with_options(
+        source,
+        "numbers.js",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let strict_no_check = compile_with_options(
+        source,
+        "numbers.js",
+        CheckerOptions {
+            check_js: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        count_code(
+            &strict_check,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ) >= 1
+    );
+    assert_eq!(
+        count_code(
+            &strict_no_check,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        0
+    );
+}
+
+#[test]
+fn test_js_file_routing_prefers_2322_over_2345_for_assignment() {
+    let source = r#"
+        /** @type {number} */
+        let value: number;
+        value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "assign.js",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert_eq!(
+        count_code(
+            &diagnostics,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        1
+    );
+    assert_eq!(count_code(&diagnostics, 2345), 0);
+}
+
+#[test]
+fn test_target_sensitive_strictness_effect_on_jsdoc_error_classification() {
+    let strict_source = r#"
+        // @ts-check
+        /** @type {string} */
+        const value = null;
+    "#;
+    let loose_source = r#"
+        // @ts-check
+        /** @type {string} */
+        const value = null;
+    "#;
+
+    let strict = compile_with_options(
+        strict_source,
+        "doc.js",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let loose = compile_with_options(
+        loose_source,
+        "doc.js",
+        CheckerOptions {
+            check_js: true,
+            strict: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(count_code(&strict, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE) >= 1);
+    assert_eq!(count_code(&strict, 2345), 0);
+    assert_eq!(
+        count_code(&loose, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        0
+    );
+    assert_eq!(count_code(&loose, 2345), 0);
 }

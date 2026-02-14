@@ -3194,4 +3194,74 @@ mod tests {
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "500µs");
     }
+
+    #[test]
+    fn re_scan_less_than_token_recognizes_closing_tag() {
+        let source = "</tag>".to_string();
+        let mut scanner = ScannerState::new(source, true);
+
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::LessThanToken);
+
+        let token = scanner.re_scan_less_than_token();
+        assert_eq!(token, SyntaxKind::LessThanSlashToken);
+        assert_eq!(scanner.get_token_value(), "</");
+    }
+
+    #[test]
+    fn scan_hash_token_promotes_to_private_identifier_directly() {
+        let source = "#myField".to_string();
+        let mut scanner = ScannerState::new(source, true);
+
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::PrivateIdentifier);
+        assert_eq!(scanner.get_token_value(), "#myField");
+    }
+
+    #[test]
+    fn scan_recognizes_regex_at_file_start_via_rescan() {
+        let mut scanner = ScannerState::new("/foo/gim".to_string(), true);
+        let token = scanner.scan();
+
+        assert_eq!(token, SyntaxKind::SlashToken);
+        let rescanned = scanner.re_scan_slash_token();
+        assert_eq!(rescanned, SyntaxKind::RegularExpressionLiteral);
+        assert_eq!(scanner.get_token_value(), "/foo/gim");
+        assert_eq!(scanner.get_token_end(), 8);
+    }
+
+    #[test]
+    fn re_scan_hash_token_keeps_plain_hash_when_no_identifier_follows() {
+        let source = "#".to_string();
+        let mut scanner = ScannerState::new(source, true);
+
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::HashToken);
+
+        let token = scanner.re_scan_hash_token();
+        assert_eq!(token, SyntaxKind::HashToken);
+    }
+
+    #[test]
+    fn scan_distinguishes_division_and_regular_expression_tokenization() {
+        let mut scanner = ScannerState::new("value = 42 / 2;".to_string(), true);
+
+        let _ = scanner.scan(); // value
+        let _ = scanner.scan(); // =
+        assert_eq!(scanner.scan(), SyntaxKind::NumericLiteral);
+        assert_eq!(scanner.scan(), SyntaxKind::SlashToken);
+        assert_eq!(scanner.scan(), SyntaxKind::NumericLiteral);
+    }
+
+    #[test]
+    fn scanner_set_text_slice_scan_window() {
+        let mut scanner = ScannerState::new("const ignored = 1;".to_string(), true);
+        scanner.set_text("x = 99 + 1".to_string(), Some(4), Some(2));
+        scanner.reset_token_state(4);
+
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NumericLiteral);
+        assert_eq!(scanner.get_token_value(), "99");
+        assert_eq!(scanner.get_token_end(), 6);
+    }
 }
