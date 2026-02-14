@@ -72,8 +72,52 @@ resolve_tsz_binary() {
     done
 
     log_error "tsz binary not found in known target directories"
-    log_info "Build it with: CARGO_TARGET_DIR=.target cargo build --release -p tsz-cli --bin tsz"
-    exit 1
+    return 1
+}
+
+rebuild_tsz_binary() {
+    log_step "Building tsz binary..."
+    (
+        cd "$ROOT_DIR"
+        CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-.target}" cargo build --release -p tsz-cli --bin tsz
+    )
+    log_success "tsz binary built"
+}
+
+ensure_tsz_binary() {
+    if ! resolve_tsz_binary; then
+        rebuild_tsz_binary
+        resolve_tsz_binary || {
+            log_error "Failed to resolve tsz binary after build"
+            exit 1
+        }
+        return 0
+    fi
+
+    local tsz_bin="$TSZ_BIN"
+    local stale=0
+
+    # Rebuild automatically when emitter/checker/cli sources changed after the binary.
+    if find \
+        "$ROOT_DIR/src" \
+        "$ROOT_DIR/crates/tsz-cli/src" \
+        "$ROOT_DIR/crates/tsz-emitter/src" \
+        "$ROOT_DIR/crates/tsz-checker/src" \
+        "$ROOT_DIR/crates/tsz-solver/src" \
+        "$ROOT_DIR/Cargo.toml" \
+        "$ROOT_DIR/Cargo.lock" \
+        -type f -newer "$tsz_bin" 2>/dev/null | grep -q .; then
+        stale=1
+    fi
+
+    if [[ "$stale" -eq 1 ]]; then
+        log_info "Detected stale tsz binary; rebuilding"
+        rebuild_tsz_binary
+        resolve_tsz_binary || {
+            log_error "Failed to resolve tsz binary after rebuild"
+            exit 1
+        }
+    fi
 }
 
 # Build TypeScript runner
@@ -117,7 +161,7 @@ main() {
         die "TypeScript baselines not found. Run: ./scripts/setup-ts-submodule.sh"
     fi
 
-    resolve_tsz_binary
+    ensure_tsz_binary
     build_runner
 
     log_step "Running emit tests..."

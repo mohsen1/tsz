@@ -53,14 +53,6 @@ interface TestCase {
   noEmitHelpers: boolean;
 }
 
-function isUnsupportedEmitBaseline(testPath: string | null, baselineFile: string): boolean {
-  // Parser error-recovery suites intentionally contain invalid syntax and are
-  // not stable emit parity signals for this harness.
-  if (baselineFile.startsWith('parserX_')) return true;
-  if (!testPath) return false;
-  return testPath.includes('/ErrorRecovery/') || testPath.includes('/parser/ecmascript5/ErrorRecovery/');
-}
-
 interface TestResult {
   name: string;
   jsMatch: boolean | null;
@@ -301,7 +293,6 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
 
     if (!baseline.source || !baseline.js) return null;
     if (dtsOnly && !baseline.dts) return null;
-    if (isUnsupportedEmitBaseline(baseline.testPath, baselineFile)) return null;
 
     const variant = extractVariantFromFilename(baselineFile);
 
