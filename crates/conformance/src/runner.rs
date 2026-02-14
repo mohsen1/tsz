@@ -254,7 +254,7 @@ impl Runner {
                         Err(e) => {
                             stats.total.fetch_add(1, Ordering::SeqCst);
                             stats.failed.fetch_add(1, Ordering::SeqCst);
-                            eprintln!("FAIL {} (ERROR: {})", rel_path, e);
+                            println!("FAIL {} (ERROR: {})", rel_path, e);
                         }
                     }
                 }

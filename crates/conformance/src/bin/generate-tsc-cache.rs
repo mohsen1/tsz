@@ -176,7 +176,7 @@ fn main() -> Result<()> {
             }
             Err(e) => {
                 if verbose {
-                    eprintln!("✗ Error processing {}: {}", path.display(), e);
+                    println!("✗ Error processing {}: {}", path.display(), e);
                 }
                 errors.fetch_add(1, Ordering::SeqCst);
             }

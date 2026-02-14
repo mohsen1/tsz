@@ -127,7 +127,7 @@ impl TsServerClient {
 
         let json = serde_json::to_string(&request)?;
         if self.verbose {
-            eprintln!("-> {}", json);
+            println!("-> {}", json);
         }
 
         writeln!(self.stdin, "{}", json)?;
@@ -156,7 +156,7 @@ impl TsServerClient {
             }
 
             if self.verbose {
-                eprintln!("<- {}", line);
+                println!("<- {}", line);
             }
 
             // Try to parse as JSON
@@ -308,7 +308,7 @@ fn main() -> Result<()> {
             }
             Err(e) => {
                 if args.verbose {
-                    eprintln!("✗ Error processing {}: {}", path.display(), e);
+                    println!("✗ Error processing {}: {}", path.display(), e);
                 }
                 errors += 1;
 
@@ -322,7 +322,7 @@ fn main() -> Result<()> {
         let elapsed = file_start.elapsed();
         if elapsed > Duration::from_secs(RESPONSE_TIMEOUT_SECS) {
             if args.verbose {
-                eprintln!(
+                println!(
                     "⚠ File {} took {:.1}s, restarting tsserver",
                     path.display(),
                     elapsed.as_secs_f64()
