@@ -942,10 +942,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             .object_shape(crate::types::ObjectShapeId(target_shape_id));
 
         // ObjectWithIndex with index signatures is not a weak type
-        if let Some(TypeData::ObjectWithIndex(_)) = self.interner.lookup(target) {
-            if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
-                return false;
-            }
+        if let Some(TypeData::ObjectWithIndex(_)) = self.interner.lookup(target)
+            && (target_shape.string_index.is_some() || target_shape.number_index.is_some())
+        {
+            return false;
         }
 
         let target_props = target_shape.properties.as_slice();
@@ -1314,25 +1314,25 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // 5. Handle Lazy types (recursive resolution)
-        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(source) {
-            if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
-                // Guard against non-progressing lazy resolution (e.g. DefId -> same Lazy type),
-                // which would otherwise recurse forever.
-                if resolved == source {
-                    return None;
-                }
-                return self.private_brand_assignability_override(resolved, target);
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(source)
+            && let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
+        {
+            // Guard against non-progressing lazy resolution (e.g. DefId -> same Lazy type),
+            // which would otherwise recurse forever.
+            if resolved == source {
+                return None;
             }
+            return self.private_brand_assignability_override(resolved, target);
         }
 
-        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target) {
-            if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
-                // Same non-progress guard for target-side lazy resolution.
-                if resolved == target {
-                    return None;
-                }
-                return self.private_brand_assignability_override(source, resolved);
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
+            && let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
+        {
+            // Same non-progress guard for target-side lazy resolution.
+            if resolved == target {
+                return None;
             }
+            return self.private_brand_assignability_override(source, resolved);
         }
 
         // 6. Base case: Extract and compare object shapes
@@ -1393,10 +1393,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     .binary_search_by_key(&source_prop.name, |p| p.name)
                     .ok()
                     .map(|idx| &target_shape.properties[idx])
+                    && target_prop.visibility == Visibility::Public
                 {
-                    if target_prop.visibility == Visibility::Public {
-                        return Some(false);
-                    }
+                    return Some(false);
                 }
             }
         }
@@ -1420,23 +1419,23 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Special case: Source union -> Target enum
         // When assigning a union to an enum, ALL enum members in the union must match the target enum.
         // This handles cases like: (EnumA | EnumB) assigned to EnumC
-        if let Some((t_def, _)) = visitor::enum_components(self.interner, target) {
-            if type_queries::is_union_type(self.interner, source) {
-                let union_members = type_queries::get_union_members(self.interner, source)?;
+        if let Some((t_def, _)) = visitor::enum_components(self.interner, target)
+            && type_queries::is_union_type(self.interner, source)
+        {
+            let union_members = type_queries::get_union_members(self.interner, source)?;
 
-                // Check if any union member is an enum with a different DefId
-                for &member in union_members.iter() {
-                    if let Some((member_def, _)) = visitor::enum_components(self.interner, member) {
-                        if member_def != t_def {
-                            // Found an enum in the source union with a different DefId than target
-                            // This makes the union NOT assignable to the target enum
-                            return Some(false);
-                        }
-                    }
+            // Check if any union member is an enum with a different DefId
+            for &member in union_members.iter() {
+                if let Some((member_def, _)) = visitor::enum_components(self.interner, member)
+                    && member_def != t_def
+                {
+                    // Found an enum in the source union with a different DefId than target
+                    // This makes the union NOT assignable to the target enum
+                    return Some(false);
                 }
-                // All enums in the union match the target enum DefId.
-                // Fall through to structural check to verify non-enum union members.
             }
+            // All enums in the union match the target enum DefId.
+            // Fall through to structural check to verify non-enum union members.
         }
 
         // BUG FIX: String enums SHOULD be assignable to string (like numeric enums are to number)
@@ -1449,15 +1448,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let (Some((s_def, _)), Some((t_def, _))) = (
             visitor::enum_components(self.interner, source),
             visitor::enum_components(self.interner, target),
-        ) {
-            if s_def == t_def && source != target {
-                // Same enum DefId but different TypeIds
-                // Check if both are literal enum members (not union-based enums)
-                if self.is_literal_enum_member(source) && self.is_literal_enum_member(target) {
-                    // Both are enum literals with same DefId but different values
-                    // Nominal rule: E.A is NOT assignable to E.B
-                    return Some(false);
-                }
+        ) && s_def == t_def
+            && source != target
+        {
+            // Same enum DefId but different TypeIds
+            // Check if both are literal enum members (not union-based enums)
+            if self.is_literal_enum_member(source) && self.is_literal_enum_member(target) {
+                // Both are enum literals with same DefId but different values
+                // Nominal rule: E.A is NOT assignable to E.B
+                return Some(false);
             }
         }
 

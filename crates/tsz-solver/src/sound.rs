@@ -278,23 +278,21 @@ impl<'a> SoundLawyer<'a> {
         let target_key = self.db.lookup(target)?;
 
         // Check for Array<S> -> Array<T> where S <: T but S != T
-        if let (TypeData::Array(s_elem), TypeData::Array(t_elem)) = (&source_key, &target_key) {
-            if s_elem != t_elem {
-                // Different element types - this is potentially unsafe covariance
-                let mut checker = SubtypeChecker::with_resolver(self.db, self.env);
-                checker.strict_function_types = true;
+        if let (TypeData::Array(s_elem), TypeData::Array(t_elem)) = (&source_key, &target_key)
+            && s_elem != t_elem
+        {
+            // Different element types - this is potentially unsafe covariance
+            let mut checker = SubtypeChecker::with_resolver(self.db, self.env);
+            checker.strict_function_types = true;
 
-                // Only flag if S <: T (covariant direction)
-                // If neither is subtype, it's already an error
-                if checker.is_subtype_of(*s_elem, *t_elem)
-                    && !checker.is_subtype_of(*t_elem, *s_elem)
-                {
-                    return Some(
-                        SoundDiagnostic::new(SoundDiagnosticCode::MutableArrayCovariance)
-                            .with_arg(format!("{:?}", s_elem))
-                            .with_arg(format!("{:?}", t_elem)),
-                    );
-                }
+            // Only flag if S <: T (covariant direction)
+            // If neither is subtype, it's already an error
+            if checker.is_subtype_of(*s_elem, *t_elem) && !checker.is_subtype_of(*t_elem, *s_elem) {
+                return Some(
+                    SoundDiagnostic::new(SoundDiagnosticCode::MutableArrayCovariance)
+                        .with_arg(format!("{:?}", s_elem))
+                        .with_arg(format!("{:?}", t_elem)),
+                );
             }
         }
 

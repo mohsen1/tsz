@@ -1046,23 +1046,23 @@ impl<'a> InferenceContext<'a> {
         };
 
         // Case 1: Target is a TypeParameter we're inferring (Lower Bound: source <: T)
-        if let Some(TypeData::TypeParameter(ref param_info)) = target_key {
-            if let Some(var) = self.find_type_param(param_info.name) {
-                // Add source as a lower bound candidate for this type parameter
-                self.add_candidate(var, source, priority);
-                return Ok(());
-            }
+        if let Some(TypeData::TypeParameter(ref param_info)) = target_key
+            && let Some(var) = self.find_type_param(param_info.name)
+        {
+            // Add source as a lower bound candidate for this type parameter
+            self.add_candidate(var, source, priority);
+            return Ok(());
         }
 
         // Case 2: Source is a TypeParameter we're inferring (Upper Bound: T <: target)
         // CRITICAL: This handles contravariance! When function parameters are swapped,
         // the TypeParameter moves to source position and becomes an upper bound.
-        if let Some(TypeData::TypeParameter(ref param_info)) = source_key {
-            if let Some(var) = self.find_type_param(param_info.name) {
-                // T <: target, so target is an UPPER bound
-                self.add_upper_bound(var, target);
-                return Ok(());
-            }
+        if let Some(TypeData::TypeParameter(ref param_info)) = source_key
+            && let Some(var) = self.find_type_param(param_info.name)
+        {
+            // T <: target, so target is an UPPER bound
+            self.add_upper_bound(var, target);
+            return Ok(());
         }
 
         // Case 3: Structural recursion - match based on type structure
@@ -1326,12 +1326,12 @@ impl<'a> InferenceContext<'a> {
                 "Inferring from type predicates"
             );
 
-            if targets_match && source_pred.asserts == target_pred.asserts {
-                if let (Some(source_ty), Some(target_ty)) =
+            if targets_match
+                && source_pred.asserts == target_pred.asserts
+                && let (Some(source_ty), Some(target_ty)) =
                     (source_pred.type_id, target_pred.type_id)
-                {
-                    self.infer_from_types(source_ty, target_ty, priority)?;
-                }
+            {
+                self.infer_from_types(source_ty, target_ty, priority)?;
             }
         }
 
@@ -1463,13 +1463,12 @@ impl<'a> InferenceContext<'a> {
             || matches!(source_key, Some(TypeData::Intrinsic(IntrinsicKind::String)))
         {
             for span in spans.iter() {
-                if let TemplateSpan::Type(type_id) = span {
-                    if let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id) {
-                        if let Some(var) = self.find_type_param(param_info.name) {
-                            // Source is `any` or `string`, so infer that for all variables
-                            self.add_candidate(var, source, priority);
-                        }
-                    }
+                if let TemplateSpan::Type(type_id) = span
+                    && let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                    && let Some(var) = self.find_type_param(param_info.name)
+                {
+                    // Source is `any` or `string`, so infer that for all variables
+                    self.add_candidate(var, source, priority);
                 }
             }
             return Ok(());
@@ -1491,13 +1490,13 @@ impl<'a> InferenceContext<'a> {
         }
 
         // For literal string types, perform the actual pattern matching
-        if let Some(source_str) = self.extract_string_literal(source) {
-            if let Some(captures) = self.match_template_pattern(&source_str, &spans) {
-                // Convert captured strings to literal types and add as candidates
-                for (infer_var, captured_string) in captures {
-                    let literal_type = self.interner.literal_string(&captured_string);
-                    self.add_candidate(infer_var, literal_type, priority);
-                }
+        if let Some(source_str) = self.extract_string_literal(source)
+            && let Some(captures) = self.match_template_pattern(&source_str, &spans)
+        {
+            // Convert captured strings to literal types and add as candidates
+            for (infer_var, captured_string) in captures {
+                let literal_type = self.interner.literal_string(&captured_string);
+                self.add_candidate(infer_var, literal_type, priority);
             }
         }
 
@@ -1550,30 +1549,29 @@ impl<'a> InferenceContext<'a> {
 
                 TemplateSpan::Type(type_id) => {
                     // Check if this is an infer variable
-                    if let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id) {
-                        if let Some(var) = self.find_type_param(param_info.name) {
-                            if is_last {
-                                // Last span: capture all remaining text (greedy)
-                                let captured = source[pos..].to_string();
+                    if let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id)
+                        && let Some(var) = self.find_type_param(param_info.name)
+                    {
+                        if is_last {
+                            // Last span: capture all remaining text (greedy)
+                            let captured = source[pos..].to_string();
+                            bindings.push((var, captured));
+                            pos = source.len();
+                        } else {
+                            // Non-last span: capture until next literal anchor (non-greedy)
+                            // Find the next text span to use as an anchor
+                            if let Some(anchor_text) = self.find_next_text_anchor(spans, i) {
+                                let anchor = self.interner.resolve_atom(anchor_text).to_string();
+                                // Find the first occurrence of the anchor (non-greedy)
+                                let capture_end = source[pos..].find(&anchor)? + pos;
+                                let captured = source[pos..capture_end].to_string();
                                 bindings.push((var, captured));
-                                pos = source.len();
+                                pos = capture_end;
                             } else {
-                                // Non-last span: capture until next literal anchor (non-greedy)
-                                // Find the next text span to use as an anchor
-                                if let Some(anchor_text) = self.find_next_text_anchor(spans, i) {
-                                    let anchor =
-                                        self.interner.resolve_atom(anchor_text).to_string();
-                                    // Find the first occurrence of the anchor (non-greedy)
-                                    let capture_end = source[pos..].find(&anchor)? + pos;
-                                    let captured = source[pos..capture_end].to_string();
-                                    bindings.push((var, captured));
-                                    pos = capture_end;
-                                } else {
-                                    // No text anchor found (e.g., `${infer A}${infer B}`)
-                                    // Capture empty string for non-greedy match and continue
-                                    bindings.push((var, String::new()));
-                                    // pos remains unchanged - next infer var starts here
-                                }
+                                // No text anchor found (e.g., `${infer A}${infer B}`)
+                                // Capture empty string for non-greedy match and continue
+                                bindings.push((var, String::new()));
+                                // pos remains unchanged - next infer var starts here
                             }
                         }
                     }
@@ -1645,14 +1643,14 @@ impl<'a> InferenceContext<'a> {
                         }
                     }
                 }
-            } else if let Some(&upper) = filtered_upper_bounds.first() {
-                if !self.is_subtype(result, upper) {
-                    return Err(InferenceError::BoundsViolation {
-                        var,
-                        lower: result,
-                        upper,
-                    });
-                }
+            } else if let Some(&upper) = filtered_upper_bounds.first()
+                && !self.is_subtype(result, upper)
+            {
+                return Err(InferenceError::BoundsViolation {
+                    var,
+                    lower: result,
+                    upper,
+                });
             }
         }
 
@@ -1714,14 +1712,14 @@ impl<'a> InferenceContext<'a> {
                         }
                     }
                 }
-            } else if let Some(&upper) = filtered_upper_bounds.first() {
-                if !is_subtype(result, upper) {
-                    return Err(InferenceError::BoundsViolation {
-                        var,
-                        lower: result,
-                        upper,
-                    });
-                }
+            } else if let Some(&upper) = filtered_upper_bounds.first()
+                && !is_subtype(result, upper)
+            {
+                return Err(InferenceError::BoundsViolation {
+                    var,
+                    lower: result,
+                    upper,
+                });
             }
         }
 
@@ -3660,12 +3658,12 @@ impl<'a> InferenceContext<'a> {
 
             for &upper in &info.upper_bounds {
                 // Only follow naked type parameter upper bounds (not List<T>, etc.)
-                if let Some(TypeData::TypeParameter(param_info)) = self.interner.lookup(upper) {
-                    if let Some(&upper_var) = var_for_param.get(&param_info.name) {
-                        let upper_root = self.table.find(upper_var);
-                        // Add edge: root extends upper_root
-                        graph.entry(root).or_default().insert(upper_root);
-                    }
+                if let Some(TypeData::TypeParameter(param_info)) = self.interner.lookup(upper)
+                    && let Some(&upper_var) = var_for_param.get(&param_info.name)
+                {
+                    let upper_root = self.table.find(upper_var);
+                    // Add edge: root extends upper_root
+                    graph.entry(root).or_default().insert(upper_root);
                 }
             }
         }
@@ -3808,34 +3806,33 @@ impl<'a> InferenceContext<'a> {
         exclude_param: Atom,
     ) -> Result<bool, InferenceError> {
         // Check if 'upper' is a type parameter we are inferring
-        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(upper) {
-            if info.name != exclude_param {
-                if let Some(upper_var) = self.find_type_param(info.name) {
-                    let upper_root = self.table.find(upper_var);
+        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(upper)
+            && info.name != exclude_param
+            && let Some(upper_var) = self.find_type_param(info.name)
+        {
+            let upper_root = self.table.find(upper_var);
 
-                    // Don't propagate to self
-                    if var_root == upper_root {
-                        return Ok(false);
-                    }
+            // Don't propagate to self
+            if var_root == upper_root {
+                return Ok(false);
+            }
 
-                    // Get candidates from the subtype (var)
-                    let var_candidates = self.table.probe_value(var_root).candidates.clone();
+            // Get candidates from the subtype (var)
+            let var_candidates = self.table.probe_value(var_root).candidates.clone();
 
-                    // Add them to the supertype (upper)
-                    let mut changed = false;
-                    for candidate in var_candidates {
-                        // Use Circular priority to indicate this came from propagation
-                        if self.add_candidate_if_new(
-                            upper_root,
-                            candidate.type_id,
-                            InferencePriority::Circular,
-                        ) {
-                            changed = true;
-                        }
-                    }
-                    return Ok(changed);
+            // Add them to the supertype (upper)
+            let mut changed = false;
+            for candidate in var_candidates {
+                // Use Circular priority to indicate this came from propagation
+                if self.add_candidate_if_new(
+                    upper_root,
+                    candidate.type_id,
+                    InferencePriority::Circular,
+                ) {
+                    changed = true;
                 }
             }
+            return Ok(changed);
         }
         Ok(false)
     }

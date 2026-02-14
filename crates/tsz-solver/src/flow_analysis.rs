@@ -78,10 +78,10 @@ impl FlowFacts {
 
         // Intersection for type narrowings (must be narrowed in all paths)
         for (var, ty) in &self.type_narrowings {
-            if let Some(other_ty) = other.type_narrowings.get(var) {
-                if ty == other_ty {
-                    result.type_narrowings.insert(var.clone(), *ty);
-                }
+            if let Some(other_ty) = other.type_narrowings.get(var)
+                && ty == other_ty
+            {
+                result.type_narrowings.insert(var.clone(), *ty);
             }
         }
 

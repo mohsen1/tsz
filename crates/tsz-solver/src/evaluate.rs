@@ -817,10 +817,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let symbol = SymbolRef(symbol_ref);
 
         // Try to resolve via DefId (type alias, interface, class)
-        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
-            if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
-                return resolved;
-            }
+        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol)
+            && let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner)
+        {
+            return resolved;
         }
 
         // Fallback to legacy Ref resolution

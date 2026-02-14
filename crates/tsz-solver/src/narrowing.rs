@@ -269,13 +269,12 @@ impl<'a> NarrowingContext<'a> {
             // 1. Handle Lazy types (DefId-based, not SymbolRef)
             // If we have a TypeResolver, try to resolve Lazy types through it first
             if let Some(def_id) = lazy_def_id(self.db, type_id) {
-                if let Some(resolver) = self.resolver {
-                    if let Some(resolved) =
+                if let Some(resolver) = self.resolver
+                    && let Some(resolved) =
                         resolver.resolve_lazy(def_id, self.db.as_type_database())
-                    {
-                        type_id = resolved;
-                        continue;
-                    }
+                {
+                    type_id = resolved;
+                    continue;
                 }
                 // Fallback to database evaluation if no resolver or resolution failed
                 type_id = self.db.evaluate_type(type_id);
@@ -1262,17 +1261,17 @@ impl<'a> NarrowingContext<'a> {
         };
 
         // Check standard object shape
-        if let Some(shape_id) = object_shape_id(self.db, resolved_type) {
-            if check_shape(shape_id) {
-                return true;
-            }
+        if let Some(shape_id) = object_shape_id(self.db, resolved_type)
+            && check_shape(shape_id)
+        {
+            return true;
         }
 
         // Check object with index shape (CRITICAL for interfaces/classes)
-        if let Some(shape_id) = object_with_index_shape_id(self.db, resolved_type) {
-            if check_shape(shape_id) {
-                return true;
-            }
+        if let Some(shape_id) = object_with_index_shape_id(self.db, resolved_type)
+            && check_shape(shape_id)
+        {
+            return true;
         }
 
         // Check intersection members
@@ -1609,13 +1608,11 @@ impl<'a> NarrowingContext<'a> {
                 }
                 // For other cases (e.g., excluding BOOLEAN from TRUE),
                 // let the final is_assignable_to check handle it below
-            } else if source_type == TypeId::BOOLEAN_FALSE {
-                if is_excluding_false {
-                    // Excluding false from false -> return never
-                    return TypeId::NEVER;
-                }
-                // For other cases, let the final is_assignable_to check handle it below
+            } else if source_type == TypeId::BOOLEAN_FALSE && is_excluding_false {
+                // Excluding false from false -> return never
+                return TypeId::NEVER;
             }
+            // For other cases, let the final is_assignable_to check handle it below
             // CRITICAL: Do NOT return source_type here.
             // Fall through to the standard is_assignable_to check below.
             // This handles edge cases like narrow_excluding_type(TRUE, BOOLEAN) -> NEVER
@@ -2390,10 +2387,10 @@ impl<'a> NarrowingContext<'a> {
         // Handle literals - check if they're falsy
         // This correctly handles `0` vs `1`, `""` vs `"a"`, `NaN` vs other numbers,
         // `true` vs `false`, etc.
-        if let Some(_lit) = literal_value(self.db, resolved) {
-            if self.is_definitely_falsy(resolved) {
-                return type_id;
-            }
+        if let Some(_lit) = literal_value(self.db, resolved)
+            && self.is_definitely_falsy(resolved)
+        {
+            return type_id;
         }
 
         TypeId::NEVER
@@ -2484,16 +2481,16 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Handle Type Parameters (check constraint)
-        if let Some(info) = type_param_info(self.db, resolved) {
-            if let Some(constraint) = info.constraint {
-                let narrowed_constraint = self.narrow_by_truthiness(constraint);
-                if narrowed_constraint == TypeId::NEVER {
-                    return TypeId::NEVER;
-                }
-                // If constraint narrowed, intersect source with it
-                if narrowed_constraint != constraint {
-                    return self.db.intersection2(source_type, narrowed_constraint);
-                }
+        if let Some(info) = type_param_info(self.db, resolved)
+            && let Some(constraint) = info.constraint
+        {
+            let narrowed_constraint = self.narrow_by_truthiness(constraint);
+            if narrowed_constraint == TypeId::NEVER {
+                return TypeId::NEVER;
+            }
+            // If constraint narrowed, intersect source with it
+            if narrowed_constraint != constraint {
+                return self.db.intersection2(source_type, narrowed_constraint);
             }
         }
 
@@ -2654,14 +2651,14 @@ impl<'a> NarrowingContext<'a> {
 
         // Handle Type Parameters: check if constraint is definitely an array
         // e.g., if T extends string[] and we check !Array.isArray(x), then x is never
-        if let Some(info) = type_param_info(self.db, source_type) {
-            if let Some(constraint) = info.constraint {
-                // If the constraint is definitely an array, then T is definitely an array.
-                // So !Array.isArray(T) is NEVER.
-                let narrowed_constraint = self.narrow_excluding_array(constraint);
-                if narrowed_constraint == TypeId::NEVER {
-                    return TypeId::NEVER;
-                }
+        if let Some(info) = type_param_info(self.db, source_type)
+            && let Some(constraint) = info.constraint
+        {
+            // If the constraint is definitely an array, then T is definitely an array.
+            // So !Array.isArray(T) is NEVER.
+            let narrowed_constraint = self.narrow_excluding_array(constraint);
+            if narrowed_constraint == TypeId::NEVER {
+                return TypeId::NEVER;
             }
         }
 

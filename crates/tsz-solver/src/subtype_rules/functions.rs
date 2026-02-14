@@ -376,23 +376,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 InferencePriority::ReturnType,
             );
         }
-        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type) {
-            if !self.is_uninformative_contextual_inference_input(target_this) {
-                let _ = infer_ctx.infer_from_types(
-                    target_this,
-                    source_this,
-                    InferencePriority::NakedTypeVariable,
-                );
-            }
+        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type)
+            && !self.is_uninformative_contextual_inference_input(target_this)
+        {
+            let _ = infer_ctx.infer_from_types(
+                target_this,
+                source_this,
+                InferencePriority::NakedTypeVariable,
+            );
         }
         if let (Some(source_pred), Some(target_pred)) =
             (&source.type_predicate, &target.type_predicate)
             && let (Some(source_ty), Some(target_ty)) = (source_pred.type_id, target_pred.type_id)
+            && !self.is_uninformative_contextual_inference_input(target_ty)
         {
-            if !self.is_uninformative_contextual_inference_input(target_ty) {
-                let _ =
-                    infer_ctx.infer_from_types(target_ty, source_ty, InferencePriority::ReturnType);
-            }
+            let _ = infer_ctx.infer_from_types(target_ty, source_ty, InferencePriority::ReturnType);
         }
 
         let inferred = infer_ctx.resolve_all_with_constraints().unwrap_or_default();
@@ -536,14 +534,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 InferencePriority::ReturnType,
             );
         }
-        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type) {
-            if !self.is_uninformative_contextual_inference_input(source_this) {
-                let _ = infer_ctx.infer_from_types(
-                    source_this,
-                    target_this,
-                    InferencePriority::NakedTypeVariable,
-                );
-            }
+        if let (Some(source_this), Some(target_this)) = (source.this_type, target.this_type)
+            && !self.is_uninformative_contextual_inference_input(source_this)
+        {
+            let _ = infer_ctx.infer_from_types(
+                source_this,
+                target_this,
+                InferencePriority::NakedTypeVariable,
+            );
         }
         if let (Some(source_pred), Some(target_pred)) =
             (&source.type_predicate, &target.type_predicate)
@@ -783,16 +781,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Check parameter compatibility
                 if !self.are_parameters_compatible_impl(s_effective, t_effective, is_method) {
                     // Trace: Parameter type mismatch
-                    if let Some(tracer) = &mut self.tracer {
-                        if !tracer.on_mismatch_dyn(
+                    if let Some(tracer) = &mut self.tracer
+                        && !tracer.on_mismatch_dyn(
                             crate::diagnostics::SubtypeFailureReason::ParameterTypeMismatch {
                                 param_index: i,
                                 source_param: s_param.type_id,
                                 target_param: t_param.type_id,
                             },
-                        ) {
-                            return SubtypeResult::False;
-                        }
+                        )
+                    {
+                        return SubtypeResult::False;
                     }
                     return SubtypeResult::False;
                 }
@@ -914,13 +912,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             // If source has type parameters and target doesn't, try instantiating
             // Example: <V>(x: V) => {value: V} should be assignable to (x: number) => {value: number}
-            if !s_sig.type_params.is_empty() && t_fn.type_params.is_empty() {
-                if self
+            if !s_sig.type_params.is_empty()
+                && t_fn.type_params.is_empty()
+                && self
                     .try_instantiate_generic_callable_to_function(s_sig, &t_fn)
                     .is_true()
-                {
-                    return SubtypeResult::True;
-                }
+            {
+                return SubtypeResult::True;
             }
         }
         SubtypeResult::False

@@ -67,29 +67,29 @@ impl<'a> ElementAccessEvaluator<'a> {
         }
 
         // 2. Check for Tuple out of bounds
-        if let Some(TypeData::Tuple(elements)) = self.interner.lookup(evaluated_object) {
-            if let Some(index) = literal_index {
-                let tuple_elements = self.interner.tuple_list(elements);
+        if let Some(TypeData::Tuple(elements)) = self.interner.lookup(evaluated_object)
+            && let Some(index) = literal_index
+        {
+            let tuple_elements = self.interner.tuple_list(elements);
 
-                // Check bounds if no rest element
-                let has_rest = tuple_elements.iter().any(|e| e.rest);
-                if !has_rest && index >= tuple_elements.len() {
-                    return ElementAccessResult::IndexOutOfBounds {
-                        type_id: evaluated_object,
-                        index,
-                        length: tuple_elements.len(),
-                    };
-                }
+            // Check bounds if no rest element
+            let has_rest = tuple_elements.iter().any(|e| e.rest);
+            if !has_rest && index >= tuple_elements.len() {
+                return ElementAccessResult::IndexOutOfBounds {
+                    type_id: evaluated_object,
+                    index,
+                    length: tuple_elements.len(),
+                };
             }
         }
 
         // 3. Check for index signature (if not a specific property access)
-        if result_type == TypeId::UNDEFINED {
-            if self.should_report_no_index_signature(evaluated_object, index_type) {
-                return ElementAccessResult::NoIndexSignature {
-                    type_id: evaluated_object,
-                };
-            }
+        if result_type == TypeId::UNDEFINED
+            && self.should_report_no_index_signature(evaluated_object, index_type)
+        {
+            return ElementAccessResult::NoIndexSignature {
+                type_id: evaluated_object,
+            };
         }
 
         ElementAccessResult::Success(result_type)
@@ -146,10 +146,11 @@ impl<'a> ElementAccessEvaluator<'a> {
                 }
                 // For number index, we can fallback to string index if present
                 checker.reset();
-                if checker.is_subtype_of(index_type, TypeId::NUMBER) {
-                    if shape.number_index.is_none() && shape.string_index.is_none() {
-                        return true;
-                    }
+                if checker.is_subtype_of(index_type, TypeId::NUMBER)
+                    && shape.number_index.is_none()
+                    && shape.string_index.is_none()
+                {
+                    return true;
                 }
                 false
             }

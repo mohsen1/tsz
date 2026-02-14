@@ -1239,13 +1239,12 @@ pub fn apply_contextual_type(
     // When contextual type is a union like string | number, we should preserve literal types
     if let Some(expr_key) = interner.lookup(expr_type) {
         // Literal types should be preserved when context is a union
-        if matches!(expr_key, TypeData::Literal(_)) {
-            if let Some(ctx_key) = interner.lookup(ctx_type) {
-                if matches!(ctx_key, TypeData::Union(_)) {
-                    // Preserve the literal type - it's more specific than the union
-                    return expr_type;
-                }
-            }
+        if matches!(expr_key, TypeData::Literal(_))
+            && let Some(ctx_key) = interner.lookup(ctx_type)
+            && matches!(ctx_key, TypeData::Union(_))
+        {
+            // Preserve the literal type - it's more specific than the union
+            return expr_type;
         }
     }
 

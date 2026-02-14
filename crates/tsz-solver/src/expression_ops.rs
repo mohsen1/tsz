@@ -239,15 +239,15 @@ fn widen_literals(interner: &dyn TypeDatabase, types: &[TypeId]) -> Vec<TypeId> 
     types
         .iter()
         .map(|&ty| {
-            if let Some(key) = interner.lookup(ty) {
-                if let crate::types::TypeData::Literal(ref lit) = key {
-                    return match lit {
-                        crate::types::LiteralValue::String(_) => TypeId::STRING,
-                        crate::types::LiteralValue::Number(_) => TypeId::NUMBER,
-                        crate::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
-                        crate::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
-                    };
-                }
+            if let Some(key) = interner.lookup(ty)
+                && let crate::types::TypeData::Literal(ref lit) = key
+            {
+                return match lit {
+                    crate::types::LiteralValue::String(_) => TypeId::STRING,
+                    crate::types::LiteralValue::Number(_) => TypeId::NUMBER,
+                    crate::types::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
+                    crate::types::LiteralValue::BigInt(_) => TypeId::BIGINT,
+                };
             }
             ty // Non-literal types are preserved
         })

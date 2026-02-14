@@ -195,26 +195,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // We use the def_to_symbol bridge to map DefIds back to SymbolIds, then
         // use the existing InheritanceGraph for O(1) nominal subtype checking.
         // =======================================================================
-        if let Some(graph) = self.inheritance_graph {
-            if let (Some(s_sym), Some(t_sym)) = (
+        if let Some(graph) = self.inheritance_graph
+            && let (Some(s_sym), Some(t_sym)) = (
                 self.resolver.def_to_symbol_id(s_def),
                 self.resolver.def_to_symbol_id(t_def),
-            ) {
-                if let Some(is_class) = self.is_class_symbol {
-                    // Check if both symbols are classes (not interfaces or type aliases)
-                    let s_is_class = is_class(SymbolRef(s_sym.0));
-                    let t_is_class = is_class(SymbolRef(t_sym.0));
+            )
+            && let Some(is_class) = self.is_class_symbol
+        {
+            // Check if both symbols are classes (not interfaces or type aliases)
+            let s_is_class = is_class(SymbolRef(s_sym.0));
+            let t_is_class = is_class(SymbolRef(t_sym.0));
 
-                    if s_is_class && t_is_class {
-                        // Both are classes - use nominal inheritance check
-                        if graph.is_derived_from(s_sym, t_sym) {
-                            // O(1) bitset check: source is a subclass of target
-                            self.def_guard.leave(def_pair);
-                            return SubtypeResult::True;
-                        }
-                        // Not a subclass - fall through to structural check below
-                    }
+            if s_is_class && t_is_class {
+                // Both are classes - use nominal inheritance check
+                if graph.is_derived_from(s_sym, t_sym) {
+                    // O(1) bitset check: source is a subclass of target
+                    self.def_guard.leave(def_pair);
+                    return SubtypeResult::True;
                 }
+                // Not a subclass - fall through to structural check below
             }
         }
 
