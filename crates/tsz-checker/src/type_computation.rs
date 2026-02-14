@@ -1941,6 +1941,34 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        if result_type.is_none()
+            && let Some(index) = literal_index
+        {
+            let property_name = index.to_string();
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            result_type = match result {
+                PropertyAccessResult::Success { type_id, .. } => {
+                    use_index_signature_check = false;
+                    Some(type_id)
+                }
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    use_index_signature_check = false;
+                    Some(property_type.unwrap_or(TypeId::ERROR))
+                }
+                PropertyAccessResult::IsUnknown => {
+                    use_index_signature_check = false;
+                    self.error_property_not_exist_at(
+                        &property_name,
+                        object_type_for_access,
+                        access.name_or_argument,
+                    );
+                    Some(TypeId::ERROR)
+                }
+                PropertyAccessResult::PropertyNotFound { .. } => None,
+            };
+        }
+
         let mut result_type = result_type.unwrap_or_else(|| {
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
