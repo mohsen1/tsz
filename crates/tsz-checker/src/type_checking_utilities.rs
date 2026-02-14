@@ -177,6 +177,21 @@ impl<'a> CheckerState<'a> {
         query::widened_literal_type(self.ctx.types, type_id).unwrap_or(type_id)
     }
 
+    /// Widen a mutable binding initializer type (let/var semantics).
+    ///
+    /// In addition to primitive literal widening, TypeScript widens enum member
+    /// initializers (`let x = E.A`) to the parent enum type (`E`), not the
+    /// specific member.
+    pub(crate) fn widen_initializer_type_for_mutable_binding(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+        {
+            return self.get_type_of_symbol(symbol.parent);
+        }
+        self.widen_literal_type(type_id)
+    }
+
     /// Map an expanded argument index back to the original argument node index.
     ///
     /// This handles spread arguments that expand to multiple elements.

@@ -690,8 +690,7 @@ impl<'a> CheckerState<'a> {
             // For mutable bindings (let/var), widen literals to their primitive type
             // For const bindings, preserve literal types (unless in array/object context)
             if !self.is_const_variable_declaration(idx) {
-                // let/var: widen literals
-                return self.widen_literal_type(init_type);
+                return self.widen_initializer_type_for_mutable_binding(init_type);
             }
 
             // const: preserve literal type
