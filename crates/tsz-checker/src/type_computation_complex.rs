@@ -1880,6 +1880,7 @@ impl<'a> CheckerState<'a> {
             {
                 use tsz_binder::lib_loader;
                 if lib_loader::is_es2015_plus_type(name)
+                    && !(name == "Promise" && self.ctx.has_promise_constructor_in_scope())
                     && !self.ctx.compiler_options.target.supports_es2015()
                 {
                     self.error_type_only_value_at(name, idx);
@@ -1940,8 +1941,12 @@ impl<'a> CheckerState<'a> {
                     ScriptTarget::ES3 | ScriptTarget::ES5
                 );
                 if is_es5_or_lower && lib_loader::is_es2015_plus_type(name) {
-                    self.error_type_only_value_at(name, idx);
-                    return TypeId::ERROR;
+                    if name == "Promise" && self.ctx.has_promise_constructor_in_scope() {
+                        // Promise is explicitly available via es2015.promise lib.
+                    } else {
+                        self.error_type_only_value_at(name, idx);
+                        return TypeId::ERROR;
+                    }
                 }
             }
             if is_merged_interface_value {
@@ -1958,6 +1963,7 @@ impl<'a> CheckerState<'a> {
                 {
                     use tsz_binder::lib_loader;
                     if lib_loader::is_es2015_plus_type(name)
+                        && !(name == "Promise" && self.ctx.has_promise_constructor_in_scope())
                         && self.ctx.compiler_options.target.is_es5()
                     {
                         self.error_type_only_value_at(name, idx);

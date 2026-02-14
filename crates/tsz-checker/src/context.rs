@@ -2445,6 +2445,11 @@ impl<'a> CheckerContext<'a> {
     /// Used for TS2705: "An async function in ES5 requires the Promise constructor."
     pub fn has_promise_constructor_in_scope(&self) -> bool {
         use tsz_binder::symbol_flags;
+        // Fast-path: if PromiseConstructor type is present in loaded libs/scope,
+        // treat Promise constructor as available even if VALUE flags were not merged.
+        if self.has_name_in_lib("PromiseConstructor") {
+            return true;
+        }
         // Check if Promise exists as a VALUE symbol (not just a TYPE)
         let check_symbol_has_value =
             |sym_id: tsz_binder::SymbolId, binder: &tsz_binder::BinderState| -> bool {
