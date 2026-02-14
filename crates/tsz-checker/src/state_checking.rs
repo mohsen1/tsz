@@ -14,6 +14,7 @@ use std::time::Instant;
 use tracing::{Level, span};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -3022,6 +3023,24 @@ impl<'a> CheckerState<'a> {
                         type_idx
                     };
 
+                // TS2562: Base class expressions cannot reference class type parameters.
+                // This applies to `extends` expressions that include type positions
+                // (e.g., call type arguments like `extends base<T>()`), but should not
+                // flag same-named value symbols.
+                if is_class_declaration
+                    && is_extends_clause
+                    && let Some(type_param_ref) = self.find_class_type_param_ref_in_base_expression(
+                        expr_idx,
+                        class_type_param_names,
+                    )
+                {
+                    self.error_at_node(
+                        type_param_ref,
+                        crate::types::diagnostics::diagnostic_messages::BASE_CLASS_EXPRESSIONS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                        crate::types::diagnostics::diagnostic_codes::BASE_CLASS_EXPRESSIONS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                    );
+                }
+
                 // Try to resolve the heritage symbol
                 if let Some(heritage_sym) = self.resolve_heritage_symbol(expr_idx) {
                     let type_args = self
@@ -3436,6 +3455,171 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Find a reference to an enclosing class type parameter inside a base class expression.
+    ///
+    /// This traverses the runtime expression tree and only inspects embedded type nodes
+    /// (e.g., call/new type arguments, type assertions). It intentionally skips nested
+    /// function/class expression scopes to avoid shadowing false positives.
+    fn find_class_type_param_ref_in_base_expression(
+        &self,
+        expr_idx: NodeIndex,
+        class_type_param_names: &[String],
+    ) -> Option<NodeIndex> {
+        if expr_idx.is_none() || class_type_param_names.is_empty() {
+            return None;
+        }
+
+        let mut stack = vec![expr_idx];
+        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
+
+        while let Some(current) = stack.pop() {
+            if current.is_none() || !visited.insert(current) {
+                continue;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                continue;
+            };
+
+            // Nested function/class expressions introduce their own type parameter
+            // scopes and should not be treated as references to the outer class.
+            if matches!(
+                node.kind,
+                syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+            ) {
+                continue;
+            }
+
+            if node.is_type_node() {
+                if let Some(found) =
+                    self.find_class_type_param_ref_in_type_node(current, class_type_param_names)
+                {
+                    return Some(found);
+                }
+                continue;
+            }
+
+            for child_idx in self.ctx.arena.get_children(current) {
+                if !child_idx.is_none() {
+                    stack.push(child_idx);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find a reference to one of `class_type_param_names` inside a type node.
+    fn find_class_type_param_ref_in_type_node(
+        &self,
+        type_idx: NodeIndex,
+        class_type_param_names: &[String],
+    ) -> Option<NodeIndex> {
+        if type_idx.is_none() || class_type_param_names.is_empty() {
+            return None;
+        }
+
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return None;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
+                    if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        && class_type_param_names.contains(&ident.escaped_text)
+                    {
+                        return Some(type_ref.type_name);
+                    }
+
+                    if let Some(type_args) = &type_ref.type_arguments {
+                        for &arg_idx in &type_args.nodes {
+                            if let Some(found) = self.find_class_type_param_ref_in_type_node(
+                                arg_idx,
+                                class_type_param_names,
+                            ) {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                let Some(func_type) = self.ctx.arena.get_function_type(node) else {
+                    return None;
+                };
+
+                let own_params = self.collect_type_parameter_names(&func_type.type_parameters);
+                let filtered: Vec<String> = class_type_param_names
+                    .iter()
+                    .filter(|name| !own_params.contains(*name))
+                    .cloned()
+                    .collect();
+
+                let names_to_check: &[String] = if own_params.is_empty() {
+                    class_type_param_names
+                } else if filtered.is_empty() {
+                    return None;
+                } else {
+                    &filtered
+                };
+
+                for &param_idx in &func_type.parameters.nodes {
+                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        && let Some(found) = self.find_class_type_param_ref_in_type_node(
+                            param.type_annotation,
+                            names_to_check,
+                        )
+                    {
+                        return Some(found);
+                    }
+                }
+
+                self.find_class_type_param_ref_in_type_node(
+                    func_type.type_annotation,
+                    names_to_check,
+                )
+            }
+            _ => {
+                for child_idx in self.ctx.arena.get_children(type_idx) {
+                    if let Some(found) = self
+                        .find_class_type_param_ref_in_type_node(child_idx, class_type_param_names)
+                    {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// Collect type parameter names from a type parameter list.
+    fn collect_type_parameter_names(
+        &self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) -> Vec<String> {
+        let Some(list) = type_parameters else {
+            return Vec::new();
+        };
+
+        let mut names = Vec::new();
+        for &param_idx in &list.nodes {
+            if let Some(node) = self.ctx.arena.get(param_idx)
+                && let Some(param) = self.ctx.arena.get_type_parameter(node)
+                && let Some(name_node) = self.ctx.arena.get(param.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                names.push(ident.escaped_text.clone());
+            }
+        }
+        names
     }
 
     /// TS2449/TS2450: Check if a class or enum referenced in a heritage clause
