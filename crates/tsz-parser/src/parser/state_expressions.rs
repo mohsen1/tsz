@@ -13,6 +13,12 @@ impl ParserState {
 
     /// Parse an expression (including comma operator)
     pub fn parse_expression(&mut self) -> NodeIndex {
+        // Clear the decorator context when parsing Expression, as it should be
+        // unambiguous when parsing a decorator's parenthesized sub-expression.
+        // This matches tsc's parseExpression() behavior.
+        let saved_flags = self.context_flags;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_IN_DECORATOR;
+
         let start_pos = self.token_pos();
         let mut left = self.parse_assignment_expression();
 
@@ -40,6 +46,7 @@ impl ParserState {
             );
         }
 
+        self.context_flags = saved_flags;
         left
     }
 
