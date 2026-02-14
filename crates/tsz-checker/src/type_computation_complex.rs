@@ -11,6 +11,7 @@ use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
 /// Check if an AST node is contextually sensitive (requires contextual typing).
@@ -2517,6 +2518,29 @@ impl<'a> CheckerState<'a> {
             let message = format_message(msg_template, &[name]);
             self.error_at_node(idx, &message, code);
 
+            // TS2729 companion for static property initializers:
+            // in `X.Y`, when `X` is in TDZ, tsc also reports that `Y` is used
+            // before initialization at the property name site.
+            if self.is_in_static_property_initializer_ast_context(idx)
+                && let Some(ext) = self.ctx.arena.get_extended(idx)
+                && !ext.parent.is_none()
+                && let Some(parent) = self.ctx.arena.get(ext.parent)
+                && parent.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.ctx.arena.get_access_expr(parent)
+                && access.expression == idx
+                && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                self.error_at_node(
+                    access.name_or_argument,
+                    &format!(
+                        "Property '{}' is used before its initialization.",
+                        name_ident.escaped_text
+                    ),
+                    diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+                );
+            }
+
             // TS2538: When a variable is used before declaration in a computed property,
             // it has implicit type 'any', which cannot be used as an index type.
             // Emit this additional error for computed property contexts.
@@ -2535,6 +2559,30 @@ impl<'a> CheckerState<'a> {
             }
         }
         is_tdz
+    }
+
+    /// Returns true when `usage_idx` is lexically inside a static class property
+    /// initializer (`static x = ...`).
+    fn is_in_static_property_initializer_ast_context(&self, usage_idx: NodeIndex) -> bool {
+        let mut current = usage_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            if ext.parent.is_none() {
+                break;
+            }
+            let parent = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                if let Some(prop) = self.ctx.arena.get_property_decl(parent_node) {
+                    return !prop.initializer.is_none()
+                        && self.has_static_modifier(&prop.modifiers);
+                }
+                return false;
+            }
+            current = parent;
+        }
+        false
     }
 
     /// Resolve the value-side type from a symbol's value declaration node.
