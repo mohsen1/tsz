@@ -1444,28 +1444,10 @@ impl<'a> CheckerState<'a> {
                         if let Some(base_class_data) = self.ctx.arena.get_class(interface_node)
                             && self.class_has_private_or_protected_members(base_class_data)
                         {
-                            let mut message = format!(
+                            let message = format!(
                                 "Class '{}' incorrectly implements class '{}'. Did you mean to extend '{}' and inherit its members as a subclass?",
                                 class_name, interface_name, interface_name
                             );
-                            if let Some(required_member_name) =
-                                self.first_non_public_instance_member_name(base_class_data)
-                                && self
-                                    .find_member_in_class_chain(
-                                        _class_idx,
-                                        &required_member_name,
-                                        false,
-                                        0,
-                                        false,
-                                    )
-                                    .is_none()
-                            {
-                                message.push(' ');
-                                message.push_str(&format!(
-                                    "Property '{}' is missing in type '{}' but required in type '{}'.",
-                                    required_member_name, class_name, interface_name
-                                ));
-                            }
                             self.error_at_node(
                                 type_idx,
                                 &message,
@@ -1959,21 +1941,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
-    }
-
-    fn first_non_public_instance_member_name(
-        &mut self,
-        class_data: &tsz_parser::parser::node::ClassData,
-    ) -> Option<String> {
-        for &member_idx in &class_data.members.nodes {
-            let Some(member_info) = self.extract_class_member_info(member_idx, false) else {
-                continue;
-            };
-            if !member_info.is_static && member_info.visibility != MemberVisibility::Public {
-                return Some(member_info.name);
-            }
-        }
-        None
     }
 
     /// Find a member by name in a class, searching up the inheritance chain.
