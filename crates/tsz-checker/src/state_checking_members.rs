@@ -3836,28 +3836,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a node is a valid const initializer in an ambient context.
     /// Valid initializers are string literals, numeric literals, or negative numeric literals.
     fn is_valid_const_initializer(&self, init_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(init_idx) else {
-            return false;
-        };
-        match node.kind {
-            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
-                || k == tsz_scanner::SyntaxKind::NumericLiteral as u16 =>
-            {
-                true
-            }
-            // Allow negative numeric literals: -1, -3.14, etc.
-            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
-                    if unary.operator == tsz_scanner::SyntaxKind::MinusToken as u16 {
-                        if let Some(operand) = self.ctx.arena.get(unary.operand) {
-                            return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16;
-                        }
-                    }
-                }
-                false
-            }
-            _ => false,
-        }
+        self.is_valid_ambient_const_initializer(init_idx)
     }
 
     /// Check a break statement for validity.
