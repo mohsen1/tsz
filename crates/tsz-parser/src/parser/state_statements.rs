@@ -1690,6 +1690,7 @@ impl ParserState {
     pub(crate) fn parse_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
         let mut seen_readonly = false;
+        let mut seen_accessibility = false;
 
         while self.is_parameter_modifier() {
             let mod_start = self.token_pos();
@@ -1727,6 +1728,13 @@ impl ParserState {
                     | SyntaxKind::PrivateKeyword
                     | SyntaxKind::ProtectedKeyword
             ) {
+                if seen_accessibility {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token(
+                        "Accessibility modifier already seen.",
+                        diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+                    );
+                }
                 // TS1029: Accessibility modifier must come before readonly
                 if seen_readonly {
                     use tsz_common::diagnostics::diagnostic_codes;
@@ -1735,6 +1743,7 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
+                seen_accessibility = true;
             } else if mod_kind == SyntaxKind::ReadonlyKeyword {
                 seen_readonly = true;
             }
