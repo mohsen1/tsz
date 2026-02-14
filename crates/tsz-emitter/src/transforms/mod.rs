@@ -27,9 +27,6 @@
 //! | `enum_es5` | ✅ Migrated | Uses `EnumES5Transformer` + `IRPrinter` |
 //! | `destructuring_es5` | ✅ Migrated | Uses `ES5DestructuringTransformer` |
 //! | `spread_es5` | ✅ Migrated | Uses `SpreadES5Transformer` |
-//! | `optional_chain` | ✅ Migrated | Uses IR nodes |
-//! | `generators` | ✅ Migrated | Uses `GeneratorTransformer` |
-//! | `decorators` | ✅ Migrated | Uses IR nodes |
 //! | `namespace_es5` | ✅ Migrated | Uses `NamespaceES5Transformer` + `IRPrinter` |
 //! | `class_es5` | ✅ Migrated | Uses `ES5ClassTransformer` + `IRPrinter` |
 //! | `async_es5` | ✅ Migrated | Uses `AsyncES5Transformer` + `IRPrinter` |
