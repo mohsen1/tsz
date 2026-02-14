@@ -3605,7 +3605,7 @@ mod tests {
         assert_eq!(diag_count, 0, "unexpected parser diagnostics: {diag_count}");
 
         let (parser, root) = parse_source("const bad = `head${1 + 2`;\nconst ok = 1;");
-        assert!(parser.get_diagnostics().len() > 0);
+        assert!(!parser.get_diagnostics().is_empty());
         let sf = parser
             .get_arena()
             .get_source_file_at(root)

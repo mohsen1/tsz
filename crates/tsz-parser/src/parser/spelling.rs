@@ -157,8 +157,8 @@ fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
     let mut previous = vec![0.0_f64; s2_len + 1];
     let mut current = vec![0.0_f64; s2_len + 1];
 
-    for i in 0..=s2_len {
-        previous[i] = i as f64;
+    for (i, prev) in previous.iter_mut().enumerate().take(s2_len + 1) {
+        *prev = i as f64;
     }
 
     for i in 1..=s1_len {
@@ -177,8 +177,8 @@ fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
         current[0] = i as f64;
         let mut col_min = i as f64;
 
-        for j in 1..min_j {
-            current[j] = big;
+        for (_, current_j) in current.iter_mut().take(min_j).enumerate().skip(1) {
+            *current_j = big;
         }
 
         for j in min_j..=max_j {
@@ -207,8 +207,13 @@ fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
             col_min = f64::min(col_min, dist);
         }
 
-        for j in (max_j + 1)..=s2_len {
-            current[j] = big;
+        for (_, current_j) in current
+            .iter_mut()
+            .take(s2_len + 1)
+            .enumerate()
+            .skip(max_j + 1)
+        {
+            *current_j = big;
         }
 
         if col_min > max {

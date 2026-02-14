@@ -633,7 +633,7 @@ pub struct ForInOfData {
 }
 
 /// Data for debugger/empty statements (no data needed, use token)
-
+///
 /// Data for template expressions
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TemplateExprData {
