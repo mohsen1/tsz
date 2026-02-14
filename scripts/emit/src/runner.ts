@@ -285,6 +285,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
 
   // Read and parse baseline files in parallel
   const readLimit = pLimit(64);
+  const directivesCache = new Map<string, Record<string, unknown>>();
   const results = await Promise.all(jsFiles.map(baselineFile => readLimit(async () => {
     const baselinePath = path.join(BASELINES_DIR, baselineFile);
     const baselineContent = await fs.promises.readFile(baselinePath, 'utf-8');
@@ -297,11 +298,19 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
 
     let directives: Record<string, unknown> = {};
     if (baseline.testPath) {
-      const testFilePath = path.join(TS_DIR, baseline.testPath);
-      try {
-        const testFileContent = await fs.promises.readFile(testFilePath, 'utf-8');
-        directives = parseSourceDirectives(testFileContent);
-      } catch {}
+      const cached = directivesCache.get(baseline.testPath);
+      if (cached) {
+        directives = cached;
+      } else {
+        const testFilePath = path.join(TS_DIR, baseline.testPath);
+        try {
+          const testFileContent = await fs.promises.readFile(testFilePath, 'utf-8');
+          directives = parseSourceDirectives(testFileContent);
+          directivesCache.set(baseline.testPath, directives);
+        } catch {
+          directivesCache.set(baseline.testPath, directives);
+        }
+      }
     }
 
     const target = variant.target ? parseTarget(variant.target)
