@@ -15,6 +15,7 @@ Modes:
 Options:
   --session N     Session id for parallel loops (also supports --session=N)
                   In conformance mode, session ids shard work by quarter using --offset/--max.
+                  Also remaps workdir to sibling session dir (e.g. tsz-1 -> tsz-3).
   --config FILE   YAML config file (default: scripts/codex-loop.yaml)
   --prompt-file   Explicit prompt file override
   -h, --help      Show this help
@@ -118,7 +119,7 @@ APPROVAL_MODE="${APPROVAL_MODE:-full-auto}"
 ASK_FOR_APPROVAL="${ASK_FOR_APPROVAL:-}"
 BYPASS="${BYPASS:-false}"
 SLEEP_SECS="${SLEEP_SECS:-2}"
-WORKDIR="${WORKDIR:-$(pwd)}"
+WORKDIR="${WORKDIR:-.}"
 DEFAULT_MODE="${DEFAULT_MODE:-conformance}"
 CONF_QUARTERS="${CONF_QUARTERS:-4}"
 CONF_TOTAL_FAILURES="${CONF_TOTAL_FAILURES:-3101}"
@@ -129,6 +130,26 @@ if ! [[ "$CONF_QUARTERS" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "$CONF_TOTAL_FAILURES" =~ ^[1-9][0-9]*$ ]]; then
   echo "Invalid conformance_total_failures in config: $CONF_TOTAL_FAILURES" >&2
+  exit 1
+fi
+
+if [[ "$WORKDIR" == "~/"* ]]; then
+  WORKDIR="${HOME}/${WORKDIR#~/}"
+fi
+if [[ "$WORKDIR" != /* ]]; then
+  WORKDIR="$(pwd)/$WORKDIR"
+fi
+
+if [[ -n "$SESSION_ID" ]]; then
+  if [[ "$WORKDIR" =~ ^(.+)-[0-9]+$ ]]; then
+    WORKDIR="${BASH_REMATCH[1]}-${SESSION_ID}"
+  else
+    WORKDIR="${WORKDIR}-${SESSION_ID}"
+  fi
+fi
+
+if [[ ! -d "$WORKDIR" ]]; then
+  echo "Workdir not found: $WORKDIR" >&2
   exit 1
 fi
 
@@ -178,7 +199,7 @@ fi
 
 cd "$WORKDIR"
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting loop mode=$MODE${SESSION_TAG} config=$CONFIG_FILE prompt=$PROMPT_FILE" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting loop mode=$MODE${SESSION_TAG} workdir=$WORKDIR config=$CONFIG_FILE prompt=$PROMPT_FILE" | tee -a "$LOG_FILE"
 
 i=0
 while true; do
