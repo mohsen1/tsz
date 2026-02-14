@@ -2854,7 +2854,7 @@ fn types_are_comparable_inner(
     }
 
     // Check object property overlap
-    types_have_common_properties(db, source, target)
+    types_have_common_properties(db, source, target, depth)
 }
 
 /// Check if a base primitive type is comparable to a literal or other form of that primitive.
@@ -2890,39 +2890,64 @@ fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -
 }
 
 /// Check if two types share at least one common property name.
-fn types_have_common_properties(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
-    // Helper to get property names from an object/callable type
-    fn get_property_names(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<Atom> {
+fn types_have_common_properties(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+    depth: u32,
+) -> bool {
+    // Helper to get properties from an object/callable type
+    fn get_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId)> {
         match db.lookup(type_id) {
             Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
-                shape.properties.iter().map(|p| p.name).collect()
+                shape
+                    .properties
+                    .iter()
+                    .map(|p| (p.name, p.type_id))
+                    .collect()
             }
             Some(TypeKey::Callable(callable_id)) => {
                 let shape = db.callable_shape(callable_id);
-                shape.properties.iter().map(|p| p.name).collect()
+                shape
+                    .properties
+                    .iter()
+                    .map(|p| (p.name, p.type_id))
+                    .collect()
             }
             Some(TypeKey::Intersection(list_id)) => {
                 let members = db.type_list(list_id);
-                let mut names = Vec::new();
+                let mut props = Vec::new();
                 for &member in members.iter() {
-                    names.extend(get_property_names(db, member));
+                    props.extend(get_properties(db, member));
                 }
-                names
+                props
             }
             _ => Vec::new(),
         }
     }
 
-    let source_names = get_property_names(db, source);
-    let target_names = get_property_names(db, target);
+    let source_props = get_properties(db, source);
+    let target_props = get_properties(db, target);
 
-    if source_names.is_empty() || target_names.is_empty() {
+    if source_props.is_empty() || target_props.is_empty() {
         return false;
     }
 
-    // Check if any source property exists in target
-    use rustc_hash::FxHashSet;
-    let target_set: FxHashSet<Atom> = target_names.into_iter().collect();
-    source_names.iter().any(|name| target_set.contains(name))
+    // Consider overlap only when a shared property has comparable types.
+    // Name-only matching is too permissive and suppresses valid TS2352 cases
+    // on incompatible generic instantiations.
+    use rustc_hash::FxHashMap;
+    let mut target_by_name: FxHashMap<Atom, Vec<TypeId>> = FxHashMap::default();
+    for (name, ty) in target_props {
+        target_by_name.entry(name).or_default().push(ty);
+    }
+
+    source_props.iter().any(|(source_name, source_ty)| {
+        target_by_name.get(source_name).is_some_and(|target_tys| {
+            target_tys
+                .iter()
+                .any(|target_ty| types_are_comparable_inner(db, *source_ty, *target_ty, depth + 1))
+        })
+    })
 }
