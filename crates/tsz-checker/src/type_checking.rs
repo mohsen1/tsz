@@ -2218,6 +2218,32 @@ impl<'a> CheckerState<'a> {
         (parent_node.flags as u32) & node_flags::CONST != 0
     }
 
+    /// Check if an initializer is a valid const initializer for ambient contexts.
+    /// Valid initializers are string literals, numeric literals, or negative numeric literals.
+    pub(crate) fn is_valid_ambient_const_initializer(&self, init_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                || k == tsz_scanner::SyntaxKind::NumericLiteral as u16 =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    if unary.operator == tsz_scanner::SyntaxKind::MinusToken as u16 {
+                        if let Some(operand) = self.ctx.arena.get(unary.operand) {
+                            return operand.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16;
+                        }
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a class declaration has the declare modifier (is ambient).
     ///
     /// ## Parameters
