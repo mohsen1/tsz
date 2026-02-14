@@ -79,6 +79,8 @@ pub trait TypeDatabase {
     fn mapped(&self, mapped: MappedType) -> TypeId;
     fn reference(&self, symbol: SymbolRef) -> TypeId;
     fn lazy(&self, def_id: DefId) -> TypeId;
+    fn bound_parameter(&self, index: u32) -> TypeId;
+    fn recursive(&self, depth: u32) -> TypeId;
     fn type_param(&self, info: TypeParamInfo) -> TypeId;
     fn type_query(&self, symbol: SymbolRef) -> TypeId;
     fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId;
@@ -262,6 +264,14 @@ impl TypeDatabase for TypeInterner {
 
     fn lazy(&self, def_id: DefId) -> TypeId {
         TypeInterner::lazy(self, def_id)
+    }
+
+    fn bound_parameter(&self, index: u32) -> TypeId {
+        TypeInterner::bound_parameter(self, index)
+    }
+
+    fn recursive(&self, depth: u32) -> TypeId {
+        TypeInterner::recursive(self, depth)
     }
 
     fn type_param(&self, info: TypeParamInfo) -> TypeId {
@@ -1046,6 +1056,14 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.lazy(def_id)
     }
 
+    fn bound_parameter(&self, index: u32) -> TypeId {
+        self.interner.bound_parameter(index)
+    }
+
+    fn recursive(&self, depth: u32) -> TypeId {
+        self.interner.recursive(depth)
+    }
+
     fn type_param(&self, info: TypeParamInfo) -> TypeId {
         self.interner.type_param(info)
     }
@@ -1627,6 +1645,14 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
 
     fn lazy(&self, def_id: DefId) -> TypeId {
         self.query_cache.lazy(def_id)
+    }
+
+    fn bound_parameter(&self, index: u32) -> TypeId {
+        self.query_cache.bound_parameter(index)
+    }
+
+    fn recursive(&self, depth: u32) -> TypeId {
+        self.query_cache.recursive(depth)
     }
 
     fn type_param(&self, info: TypeParamInfo) -> TypeId {

@@ -107,7 +107,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             // Handle Type Parameters -> De Bruijn indices
             TypeKey::TypeParameter(info) => {
                 if let Some(index) = self.find_param_index(info.name) {
-                    self.interner.intern(TypeKey::BoundParameter(index))
+                    self.interner.bound_parameter(index)
                 } else {
                     // Free variable (shouldn't happen in valid code)
                     type_id
@@ -354,7 +354,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
     fn canonicalize_type_alias(&mut self, def_id: DefId) -> TypeId {
         // Check for cycles (mutual recursion or self-reference)
         if let Some(depth) = self.get_recursion_depth(def_id) {
-            return self.interner.intern(TypeKey::Recursive(depth));
+            return self.interner.recursive(depth);
         }
 
         // Push to stack for cycle detection
