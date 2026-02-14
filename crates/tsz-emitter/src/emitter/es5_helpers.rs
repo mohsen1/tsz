@@ -339,17 +339,9 @@ impl<'a> Printer<'a> {
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
 
-        let single_computed_only = first_computed_idx == 0 && elements.len() == 1;
-        if single_computed_only {
-            self.write("(");
-            self.increase_indent();
-            self.write(&temp_var);
-            self.write(" = ");
-        } else {
-            self.write("(");
-            self.write(&temp_var);
-            self.write(" = ");
-        }
+        self.write("(");
+        self.write(&temp_var);
+        self.write(" = ");
 
         // Emit initial non-computed properties as the object literal
         if first_computed_idx > 0 {
@@ -361,27 +353,14 @@ impl<'a> Printer<'a> {
         // Emit remaining properties as assignments
         for i in first_computed_idx..elements.len() {
             let prop_idx = elements[i];
-            if single_computed_only {
-                self.write(",");
-                self.write_line();
-            } else {
-                self.write(", ");
-            }
+            self.write(", ");
             self.emit_property_assignment_es5(prop_idx, &temp_var);
         }
 
         // Return the temp variable
-        if single_computed_only {
-            self.write(",");
-            self.write_line();
-            self.write(&temp_var);
-            self.decrease_indent();
-            self.write(")");
-        } else {
-            self.write(", ");
-            self.write(&temp_var);
-            self.write(")");
-        }
+        self.write(", ");
+        self.write(&temp_var);
+        self.write(")");
     }
 
     /// Emit object literal with spread using __assign pattern

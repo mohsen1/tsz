@@ -1281,6 +1281,7 @@ impl ParserState {
             // Unary operators
             SyntaxKind::PlusToken
             | SyntaxKind::MinusToken
+            | SyntaxKind::AsteriskToken
             | SyntaxKind::TildeToken
             | SyntaxKind::ExclamationToken
             | SyntaxKind::PlusPlusToken

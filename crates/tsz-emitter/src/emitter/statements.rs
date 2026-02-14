@@ -318,6 +318,15 @@ impl<'a> Printer<'a> {
         } else {
             false
         };
+        let needs_legacy_asterisk_padding = self
+            .arena
+            .get(expr_stmt.expression)
+            .and_then(|expr_node| self.arena.get_unary_expr(expr_node))
+            .is_some_and(|unary| unary.operator == SyntaxKind::AsteriskToken as u16);
+
+        if needs_legacy_asterisk_padding {
+            self.write_space();
+        }
 
         if needs_parens {
             self.write("(");
