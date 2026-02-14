@@ -57,6 +57,16 @@ impl<'db> TypeFactory<'db> {
     }
 
     #[inline]
+    pub fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.db.union2(left, right)
+    }
+
+    #[inline]
+    pub fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
+        self.db.union3(first, second, third)
+    }
+
+    #[inline]
     pub fn intersection(&self, members: Vec<TypeId>) -> TypeId {
         self.db.intersection(members)
     }
