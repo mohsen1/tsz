@@ -67,9 +67,11 @@ impl<'a> CheckerState<'a> {
                 query::TypeArgumentExtractionKind::Other => return,
             };
 
+        let got = type_args_list.nodes.len();
+        let expected = type_params.len();
+
         if type_params.is_empty() {
             // TS2558: Expected 0 type arguments, but got N.
-            let got = type_args_list.nodes.len();
             if got > 0 {
                 self.error_at_node_msg(
                     call_idx,
@@ -77,6 +79,16 @@ impl<'a> CheckerState<'a> {
                     &["0", &got.to_string()],
                 );
             }
+            return;
+        }
+
+        if got != expected {
+            // TS2558: Expected N type arguments, but got M.
+            self.error_at_node_msg(
+                call_idx,
+                crate::types::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                &[&expected.to_string(), &got.to_string()],
+            );
             return;
         }
 
