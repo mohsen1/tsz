@@ -17,6 +17,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tracing::{Level, debug, span};
 use tsz_common::common::ScriptTarget;
+use tsz_common::interner::{Atom, Interner};
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1391,8 +1392,9 @@ impl BinderState {
         // Phase 1: Clone all lib symbols into local arena, building remap maps
         // Maps: (lib_binder_ptr, old_id) -> new_id
         let mut lib_symbol_remap: FxHashMap<(usize, SymbolId), SymbolId> = FxHashMap::default();
-        // Maps: symbol name -> new_id (for merging same-name symbols)
-        let mut merged_by_name: FxHashMap<String, SymbolId> = FxHashMap::default();
+        // Maps: interned symbol name -> new_id (for merging same-name symbols)
+        let mut name_interner = Interner::new();
+        let mut merged_by_name: FxHashMap<Atom, SymbolId> = FxHashMap::default();
 
         for lib_ctx in lib_contexts.iter() {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
@@ -1405,7 +1407,8 @@ impl BinderState {
                 };
 
                 // Check if a symbol with this name already exists (cross-lib merging)
-                let new_id = if let Some(&existing_id) = merged_by_name.get(&lib_sym.escaped_name) {
+                let name_atom = name_interner.intern(&lib_sym.escaped_name);
+                let new_id = if let Some(&existing_id) = merged_by_name.get(&name_atom) {
                     // Symbol already exists - check if we can merge
                     if let Some(existing_sym) = self.symbols.get(existing_id) {
                         if Self::can_merge_symbols(existing_sym.flags, lib_sym.flags) {
@@ -1421,8 +1424,10 @@ impl BinderState {
                                     if seen.insert(decl.0) {
                                         existing_mut.declarations.push(decl);
                                         // Track which arena this specific declaration belongs to
-                                        self.declaration_arenas
-                                            .insert((existing_id, decl), Arc::clone(&lib_ctx.arena));
+                                        self.declaration_arenas.insert(
+                                            (existing_id, decl),
+                                            Arc::clone(&lib_ctx.arena),
+                                        );
                                     }
                                 }
                                 // Update value_declaration if not set
@@ -1436,7 +1441,7 @@ impl BinderState {
                         } else {
                             // Cannot merge - allocate new (shadowing)
                             let new_id = self.symbols.alloc_from(lib_sym);
-                            merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
+                            merged_by_name.insert(name_atom, new_id);
                             // Track declaration arenas for new symbol
                             for &decl in &lib_sym.declarations {
                                 self.declaration_arenas
@@ -1447,7 +1452,7 @@ impl BinderState {
                     } else {
                         // Shouldn't happen - allocate new
                         let new_id = self.symbols.alloc_from(lib_sym);
-                        merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
+                        merged_by_name.insert(name_atom, new_id);
                         // Track declaration arenas for new symbol
                         for &decl in &lib_sym.declarations {
                             self.declaration_arenas
@@ -1458,7 +1463,7 @@ impl BinderState {
                 } else {
                     // New symbol - allocate in local arena
                     let new_id = self.symbols.alloc_from(lib_sym);
-                    merged_by_name.insert(lib_sym.escaped_name.clone(), new_id);
+                    merged_by_name.insert(name_atom, new_id);
                     // Track declaration arenas for new symbol
                     for &decl in &lib_sym.declarations {
                         self.declaration_arenas
