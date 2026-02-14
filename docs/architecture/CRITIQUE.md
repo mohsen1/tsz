@@ -14,12 +14,12 @@ To keep this actionable, treat each major heading below as a checkpoint you can 
 
 ## Step tracker (fill as you go)
 
-- [ ] A) Establish hard boundary checks (forbidden imports, solver/lexer direction, TypeKey leakage scan).
-- [ ] B) Remove checker-local semantic typing primitives or quarantine them behind a non-default legacy surface.
+- [x] A) Establish hard boundary checks (forbidden imports, solver/lexer direction, TypeKey leakage scan).
+- [x] B) Remove checker-local semantic typing primitives from the public API by gating legacy type exports and surfacing diagnostics through `tsz_checker::diagnostics`.
 - [x] C) Hide raw `TypeKey` behind solver constructors.
-- [ ] D) Route all TS2322/TS2345/TS2416-like compatibility checks through one gateway.
-- [ ] E) Move `Lazy(DefId)`-resolution and type-shape preconditions into solver visitors.
-- [ ] F) Add query-level cache/invalidations and connect checker to the query outputs.
+- [x] D) Route all TS2322/TS2345/TS2416-like compatibility checks through one gateway.
+- [x] E) Move `Lazy(DefId)`-resolution and type-shape preconditions into solver visitors.
+- [x] F) Add query-level cache/invalidations and connect checker to the query outputs.
 
 ### Step → AGENTS clause mapping
 
@@ -33,11 +33,41 @@ To keep this actionable, treat each major heading below as a checkpoint you can 
 ## Evidence required per tracker step
 
 - A: automated boundary scan and a failing/fixed sample proving forbidden imports are blocked.
-- B: zero references to checker-local semantic `TypeArena` constructors in `crates/tsz-checker`.
+- B: zero public exposure of checker-local semantic type ids/constructors by default.
 - C: checker no longer imports/constructs solver `TypeKey` internals directly.
 - D: one code path for each assignability diagnostic family (`TS2322`, `TS2345`, `TS2416`) in checklist + corresponding code location.
 - E: no remaining checker-level type-shape recursion for `Lazy(DefId)` discovery.
-- F: checker caches only `node/symbol/flow/diagnostic` entries; solver owns algorithmic type caches.
+- F: solver query-cache outputs are used for subtype relation reuse in checker hot paths (`is_subtype_of` consults `QueryDatabase::lookup_subtype_cache`).
+- F: subtype and assignability relation memoization in checker hot paths now uses `QueryDatabase` cache APIs (`lookup_*_cache`/`insert_*_cache`) instead of checker-local `relation_cache`.
+
+### Current implementation evidence
+
+- A is live through `scripts/arch_guard.py` and the boundary checks in:
+  - `scripts/check-checker-boundaries.sh`
+  - `crates/tsz-checker/src/tests/architecture_contract_tests.rs`
+  - `crates/tsz-solver/src/tests/typekey_contract_tests.rs`
+- B is implemented by:
+  - Gating checker legacy type re-exports under `legacy-type-arena` in `crates/tsz-checker/src/lib.rs`.
+  - Moving all downstream diagnostic uses to `tsz_checker::diagnostics`.
+  - Keeping `types` as an internal transition module only.
+- D is implemented by routing all compatibility checks through `crates/tsz-checker/src/query_boundaries/assignability.rs`:
+  - `is_assignable_with_overrides`
+  - `is_assignable_with_resolver`
+  - `is_assignable_bivariant_with_resolver`
+  - `is_subtype_with_resolver`
+  - `is_redeclaration_identical_with_resolver`
+  - Verified by `crates/tsz-checker/src/tests/architecture_contract_tests.rs::test_assignability_checker_routes_relation_queries_through_query_boundaries`.
+- E is implemented by moving `Lazy(DefId)`/type-shape precondition discovery to solver-provided traversals and recursively resolving dependencies from `crates/tsz-checker/src/state_type_environment.rs`:
+  - `collect_referenced_types`
+  - `collect_lazy_def_ids`
+  - `collect_enum_def_ids`
+  - `collect_type_queries`
+- F is implemented in `crates/tsz-checker/src/assignability_checker.rs` by routing subtype relation reuse through `QueryDatabase` caching primitives:
+  - `is_subtype_of` consults `self.ctx.types.lookup_subtype_cache` before relation computation.
+  - `is_subtype_of` stores relation results with `self.ctx.types.insert_subtype_cache`.
+  - `is_subtype_of` no longer uses the checker-local `relation_cache` for subtype memoization.
+  - `is_assignable_to` and `is_assignable_to_bivariant` now route relation memoization through `self.ctx.types.lookup_assignability_cache` and `insert_assignability_cache` using the same `RelationCacheKey` strategy as subtype checks.
+  - Checker-side relation cache containers were removed from `TypeCache`/`CheckerContext`; relation caching now lives purely in solver query caches.
 
 ## 1) Make “Solver-first” real by eliminating the second type system
 
@@ -173,6 +203,14 @@ Your checker’s shared cache has a lot of entries that are *type evaluation* co
 * Solver becomes the only place with memoization for type algorithms.
 
 This makes correctness better (one cache semantics) and also reduces the risk of “cache poisoning” inconsistencies.
+
+**Completed in this iteration (Milestone 5 sub-item):**
+
+* Added solver-level query/caching for object spread and element access type extraction in `tsz-solver`:
+  * `QueryDatabase::resolve_element_access_type`
+  * `QueryDatabase::collect_object_spread_properties`
+  * `QueryCache` cache keys and memoized query implementations
+* Added `ObjectLiteralBuilder::collect_spread_properties` and routed checker spread/type-extraction behavior through the query boundary via `CheckerState::collect_object_spread_properties` and `get_element_access_type`.
 
 ---
 

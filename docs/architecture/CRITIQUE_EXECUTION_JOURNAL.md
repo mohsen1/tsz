@@ -98,6 +98,16 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [ ] Migration action 095: incremental boundary migration artifact recorded.
 - [ ] Migration action 096: incremental boundary migration artifact recorded.
 - [ ] Migration action 097: incremental boundary migration artifact recorded.
+- [x] Migration action 098: routed assignability, bivariant, subtype, and redeclaration-compatible relation probes through `src/query_boundaries/assignability.rs`, plus added migration regression coverage.
+- [x] Migration action 099: implemented transitive precondition expansion in `crates/tsz-checker/src/state_type_environment.rs` by recursively processing `collect_referenced_types`, `collect_lazy_def_ids`, `collect_enum_def_ids`, and `collect_type_queries`.
+- [x] Migration action 100: marked CRITIQUE Step E complete with explicit evidence in `docs/architecture/CRITIQUE.md` for recursive `Lazy(DefId)` and type-shape precondition resolution.
+- [x] Migration action 101: wired `CheckerState::is_subtype_of` to consult and populate `QueryDatabase::lookup_subtype_cache`/`insert_subtype_cache`, connecting checker subtype relation checks to solver query-cache outputs.
+- [x] Migration action 102: removed checker-local `relation_cache` reads/writes from `is_subtype_of` and `is_assignable_to` hot paths in `crates/tsz-checker/src/assignability_checker.rs`.
+- [x] Migration action 103: switched `is_assignable_to` and `is_assignable_to_bivariant` to query-database assignability cache (`lookup_assignability_cache`/`insert_assignability_cache`) while preserving existing resolver/override behavior.
+- [x] Migration action 104: marked CRITIQUE Step F complete and updated evidence in `docs/architecture/CRITIQUE.md` for query-level relation cache ownership.
+- [x] Migration action 105: removed checker-local relation cache storage from `TypeCache` and `CheckerContext`, making relation memoization owned by solver `QueryDatabase` caches only.
+- [x] Migration action 106: added `QueryDatabase::resolve_element_access_type` and `QueryDatabase::collect_object_spread_properties` cache-backed implementations in `tsz-solver`.
+- [x] Migration action 107: added `ObjectLiteralBuilder::collect_spread_properties` and kept checker object-literal spread/element-access typing routed through solver query boundaries.
 - [x] Migrated  JSDoc template type-param construction to solver  API.
 - [x] Migrated `function_type.rs` JSDoc template TypeParam construction from `intern(TypeKey::TypeParameter(...))` to `types.type_param(...)` to enforce solver-constructor-only path.
 - [x] Migrated `type_checking_utilities.rs` `TypeKey::KeyOf` direct interning to `types.keyof(...)` constructor API.
@@ -105,3 +115,5 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migrated `enum_member_cache_tests.rs` to avoid `TypeKey` construction/inspection by using `type_queries::get_enum_def_id(...)` for enum-member assertions.
 - [x] Added `TypeInterner::this_type()` and migrated `lower.rs` constructor paths (`ThisType`, `TypeParameter`, `IndexAccess`, `Lazy`, `TypeQuery`, `KeyOf`, `ReadonlyType`) to public helpers.
 - [x] Added `TypeInterner` helpers (`no_infer`, `unique_symbol`, `infer`, `string_intrinsic`) and migrated the remaining direct `TypeKey` constructions in `tsz-solver/src/lower.rs` to constructor APIs.
+- [x] Added migration-state evidence in `docs/architecture/CRITIQUE.md` marking hard boundary step A as live and exposing the remaining B-blocker to prevent false-positive completion.
+- [x] Gate-checked checker legacy type API exposure (`Type`/`TypeId` re-exports behind `legacy-type-arena`) and shifted diagnostics consumers to `tsz_checker::diagnostics`.
