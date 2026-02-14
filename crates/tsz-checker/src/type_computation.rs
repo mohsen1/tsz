@@ -979,16 +979,33 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // For ||/&& and ??, propagate contextual type from the left operand
-                // to the right operand. This enables contextual typing of callbacks:
-                //   declare let f: null | ((x: string) => void);
-                //   let g = f || (x => { ... }); // x should be typed as string
+                // For &&, the right operand gets the contextual type of the whole
+                // expression (inherited from parent, e.g. assignment target).
+                // For || and ??, the right operand gets the outer contextual type
+                // if available, falling back to the left type (minus nullish).
+                // This enables contextual typing of callbacks:
+                //   let x: (a: string) => string;
+                //   x = y && (a => a);           // a: string from assignment context
+                //   let g = f || (x => { ... }); // x: string from left type fallback
+                if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
+                    // && passes outer contextual type to the right operand only.
+                    // The left operand gets no contextual type.
+                    let prev_context = self.ctx.contextual_type;
+                    self.ctx.contextual_type = None;
+                    let left_type = self.get_type_of_node(left_idx);
+                    self.ctx.contextual_type = prev_context;
+                    let right_type = self.get_type_of_node(right_idx);
+
+                    type_stack.push(left_type);
+                    type_stack.push(right_type);
+                    stack.push((node_idx, true));
+                    continue;
+                }
                 if op_kind == SyntaxKind::BarBarToken as u16
                     || op_kind == SyntaxKind::QuestionQuestionToken as u16
-                    || op_kind == SyntaxKind::AmpersandAmpersandToken as u16
                 {
                     let left_type = self.get_type_of_node(left_idx);
-                    // Use left type (minus null/undefined) as contextual type for right
+                    // Right operand: use left type (minus nullish) as contextual type
                     let prev_context = self.ctx.contextual_type;
                     let non_nullish = self.ctx.types.remove_nullish(left_type);
                     if non_nullish != TypeId::NEVER && non_nullish != TypeId::UNKNOWN {
@@ -997,7 +1014,21 @@ impl<'a> CheckerState<'a> {
                     let right_type = self.get_type_of_node(right_idx);
                     self.ctx.contextual_type = prev_context;
 
-                    // Now push both types and the operator for the visited path
+                    type_stack.push(left_type);
+                    type_stack.push(right_type);
+                    stack.push((node_idx, true));
+                    continue;
+                }
+
+                // For comma operator: left gets no contextual type,
+                // right gets the outer contextual type
+                if op_kind == SyntaxKind::CommaToken as u16 {
+                    let prev_context = self.ctx.contextual_type;
+                    self.ctx.contextual_type = None;
+                    let left_type = self.get_type_of_node(left_idx);
+                    self.ctx.contextual_type = prev_context;
+                    let right_type = self.get_type_of_node(right_idx);
+
                     type_stack.push(left_type);
                     type_stack.push(right_type);
                     stack.push((node_idx, true));
