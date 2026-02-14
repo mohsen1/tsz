@@ -74,3 +74,28 @@ Result remained stable:
 - Skipped: `1`
 - Crashed: `0`
 - Timeout: `0`
+
+## Targeted Parity Win (2026-02-14)
+
+Implemented shorthand-property missing-value diagnostic (`TS18004`) for object literals in checker.
+
+Targeted validation:
+
+```bash
+./scripts/conformance.sh run --filter "argumentsReferenceInObjectLiteral_Js.ts" --workers 16
+```
+
+Result:
+
+- `1/1` passed (`100.0%`)
+
+Updated slice validation:
+
+```bash
+./scripts/conformance.sh run --offset 0 --max 500 --workers 16
+```
+
+Result improved:
+
+- Previous: `438/499` (`87.8%`)
+- Current: `439/499` (`88.0%`)
