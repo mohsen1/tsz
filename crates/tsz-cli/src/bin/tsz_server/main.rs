@@ -269,7 +269,7 @@ enum Protocol {
 pub(crate) struct TsServerRequest {
     pub(crate) seq: u64,
     #[serde(rename = "type")]
-    pub(crate) msg_type: String,
+    pub(crate) _msg_type: String,
     pub(crate) command: String,
     #[serde(default)]
     pub(crate) arguments: serde_json::Value,
@@ -318,7 +318,6 @@ enum LegacyRequest {
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CheckOptions {
-    // === Strict Type Checking ===
     #[serde(default)]
     strict: bool,
     #[serde(default)]
@@ -330,8 +329,6 @@ struct CheckOptions {
     #[serde(default)]
     strict_property_initialization: Option<bool>,
     #[serde(default)]
-    strict_builtin_iterator_return: Option<bool>,
-    #[serde(default)]
     no_implicit_any: Option<bool>,
     #[serde(default)]
     no_implicit_this: Option<bool>,
@@ -341,8 +338,6 @@ struct CheckOptions {
     use_unknown_in_catch_variables: Option<bool>,
     #[serde(default)]
     always_strict: Option<bool>,
-
-    // === Additional Type Checks ===
     #[serde(default)]
     no_unused_locals: bool,
     #[serde(default)]
@@ -350,35 +345,17 @@ struct CheckOptions {
     #[serde(default)]
     exact_optional_property_types: bool,
     #[serde(default)]
-    no_fallthrough_cases_in_switch: bool,
-    #[serde(default)]
     no_unchecked_indexed_access: bool,
-    #[serde(default)]
-    no_implicit_override: bool,
-    #[serde(default)]
-    no_property_access_from_index_signature: bool,
-    #[serde(default)]
-    no_unchecked_side_effect_imports: bool,
     #[serde(default)]
     allow_unreachable_code: Option<bool>,
     #[serde(default)]
-    allow_unused_labels: Option<bool>,
-
-    // === Module Interop ===
+    no_property_access_from_index_signature: bool,
     #[serde(default)]
     es_module_interop: bool,
     #[serde(default)]
     allow_synthetic_default_imports: Option<bool>,
     #[serde(default)]
     isolated_modules: bool,
-    #[serde(default)]
-    isolated_declarations: bool,
-    #[serde(default)]
-    verbatim_module_syntax: bool,
-    #[serde(default)]
-    erasable_syntax_only: bool,
-
-    // === Language & Environment ===
     #[serde(default)]
     no_lib: bool,
     #[serde(default)]
@@ -388,127 +365,11 @@ struct CheckOptions {
     #[serde(default)]
     module: Option<String>,
     #[serde(default)]
-    module_resolution: Option<String>,
-    #[serde(default)]
-    module_detection: Option<String>,
-    #[serde(default)]
-    jsx: Option<String>,
-    #[serde(default)]
-    jsx_factory: Option<String>,
-    #[serde(default)]
-    jsx_fragment_factory: Option<String>,
-    #[serde(default)]
-    jsx_import_source: Option<String>,
-    #[serde(default)]
-    react_namespace: Option<String>,
-    #[serde(default)]
     experimental_decorators: bool,
-    #[serde(default)]
-    emit_decorator_metadata: bool,
-    #[serde(default)]
-    use_define_for_class_fields: Option<bool>,
-
-    // === Emit ===
-    #[serde(default)]
-    no_emit: bool,
-    #[serde(default)]
-    no_emit_on_error: bool,
-    #[serde(default)]
-    declaration: bool,
-    #[serde(default)]
-    declaration_map: bool,
-    #[serde(default)]
-    emit_declaration_only: bool,
-    #[serde(default)]
-    source_map: bool,
-    #[serde(default)]
-    inline_source_map: bool,
-    #[serde(default)]
-    inline_sources: bool,
-    #[serde(default)]
-    out_dir: Option<String>,
-    #[serde(default)]
-    out_file: Option<String>,
-    #[serde(default)]
-    root_dir: Option<String>,
-    #[serde(default)]
-    remove_comments: bool,
-    #[serde(default)]
-    no_emit_helpers: bool,
-    #[serde(default)]
-    import_helpers: bool,
-    #[serde(default)]
-    downlevel_iteration: bool,
-    #[serde(default)]
-    preserve_const_enums: bool,
-    #[serde(default)]
-    strip_internal: bool,
-    #[serde(default)]
-    emit_bom: bool,
-    #[serde(default)]
-    new_line: Option<String>,
-
-    // === JavaScript Support ===
-    #[serde(default)]
-    allow_js: bool,
     #[serde(default)]
     check_js: bool,
     #[serde(default)]
-    max_node_module_js_depth: Option<u32>,
-
-    // === Module Resolution ===
-    #[serde(default)]
-    base_url: Option<String>,
-    #[serde(default)]
-    type_roots: Option<Vec<String>>,
-    #[serde(default)]
-    types: Option<Vec<String>>,
-    #[serde(default)]
-    root_dirs: Option<Vec<String>>,
-    #[serde(default)]
     resolve_json_module: bool,
-    #[serde(default)]
-    resolve_package_json_exports: Option<bool>,
-    #[serde(default)]
-    resolve_package_json_imports: Option<bool>,
-    #[serde(default)]
-    module_suffixes: Option<Vec<String>>,
-    #[serde(default)]
-    allow_arbitrary_extensions: bool,
-    #[serde(default)]
-    allow_importing_ts_extensions: bool,
-    #[serde(default)]
-    rewrite_relative_import_extensions: bool,
-    #[serde(default)]
-    custom_conditions: Option<Vec<String>>,
-    #[serde(default)]
-    no_resolve: bool,
-    #[serde(default)]
-    allow_umd_global_access: bool,
-    #[serde(default)]
-    preserve_symlinks: bool,
-
-    // === Completeness ===
-    #[serde(default)]
-    skip_lib_check: bool,
-    #[serde(default)]
-    skip_default_lib_check: bool,
-    #[serde(default)]
-    no_check: bool,
-
-    // === Projects ===
-    #[serde(default)]
-    composite: bool,
-    #[serde(default)]
-    incremental: bool,
-
-    // === Interop ===
-    #[serde(default)]
-    force_consistent_casing_in_file_names: Option<bool>,
-
-    // === Diagnostics ===
-    #[serde(default)]
-    no_error_truncation: bool,
 }
 
 /// Legacy response to client
