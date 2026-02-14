@@ -1,5 +1,3 @@
-#![allow(clippy::print_stderr)]
-
 use super::*;
 use crate::TypeInterner;
 use tsz_parser::parser::NodeArena;
@@ -2055,7 +2053,7 @@ fn test_lower_interface_single_with_two_properties() {
     match key {
         TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
-            eprintln!(
+            println!(
                 "Properties found: {:?}",
                 shape
                     .properties
@@ -2074,7 +2072,7 @@ fn test_lower_interface_single_with_two_properties() {
             let mut found_y = None;
             for prop in &shape.properties {
                 let name = interner.resolve_atom(prop.name);
-                eprintln!("  Property: {} -> {:?}", name, prop.type_id);
+                println!("  Property: {} -> {:?}", name, prop.type_id);
                 match name.as_str() {
                     "x" => found_x = Some(prop),
                     "y" => found_y = Some(prop),
