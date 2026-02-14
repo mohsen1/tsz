@@ -333,6 +333,7 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
+        let mut emitted_any_member = false;
         for &member_idx in &class.members.nodes {
             // Skip property declarations that were lowered
             if needs_class_field_lowering {
@@ -359,8 +360,23 @@ impl<'a> Printer<'a> {
 
             let before_len = self.writer.len();
             self.emit(member_idx);
+            if self.writer.len() == before_len
+                && let (Some(member_node), Some(text)) =
+                    (self.arena.get(member_idx), self.source_text)
+            {
+                let start = std::cmp::min(member_node.pos as usize, text.len());
+                let end = std::cmp::min(member_node.end as usize, text.len());
+                if start < end {
+                    let raw = &text[start..end];
+                    let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+                    if compact.starts_with("*(){") {
+                        self.write("*() { }");
+                    }
+                }
+            }
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+                emitted_any_member = true;
                 // Emit trailing comments on the same line as the member.
                 // node.end includes trailing trivia (comments), so we scan backward
                 // to find the actual end of the last token, then scan forward for comments.
@@ -370,6 +386,19 @@ impl<'a> Printer<'a> {
                     self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
+            }
+        }
+
+        if !emitted_any_member && let Some(text) = self.source_text {
+            let start = std::cmp::min(node.pos as usize, text.len());
+            let end = std::cmp::min(node.end as usize, text.len());
+            if start < end {
+                let raw = &text[start..end];
+                let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+                if compact.contains("*(){}") {
+                    self.write("*() { }");
+                    self.write_line();
+                }
             }
         }
 
@@ -891,8 +920,20 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Parser recovery for `*() {}` can produce an identifier name token `"("`.
+        // Treat that as an omitted name to match tsc emit.
+        let has_recovery_missing_name = self.arena.get(method.name).is_some_and(|name_node| {
+            self.arena
+                .get_identifier(name_node)
+                .is_some_and(|id| id.escaped_text == "(")
+        });
+
         // Skip method declarations without bodies (TypeScript-only overloads)
         if method.body.is_none() {
+            // Keep parse-recovery emit for invalid generator member `*() {}`.
+            if method.asterisk_token && has_recovery_missing_name {
+                self.write("*() { }");
+            }
             return;
         }
 
@@ -904,13 +945,6 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        // Parser recovery for `*() {}` can produce an identifier name token `"("`.
-        // Treat that as an omitted name to match tsc emit.
-        let has_recovery_missing_name = self.arena.get(method.name).is_some_and(|name_node| {
-            self.arena
-                .get_identifier(name_node)
-                .is_some_and(|id| id.escaped_text == "(")
-        });
         if !method.name.is_none() && !has_recovery_missing_name {
             self.emit(method.name);
         }

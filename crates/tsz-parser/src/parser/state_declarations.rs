@@ -2878,6 +2878,12 @@ impl ParserState {
             self.next_token();
         } else if !self.can_parse_semicolon() {
             self.parse_error_for_missing_semicolon_after(expression);
+            // Recovery for malformed fragments like `this.x: any;`.
+            // Consume stray `:` so the following token can still be parsed as
+            // a standalone expression statement on the next iteration.
+            if self.is_token(SyntaxKind::ColonToken) {
+                self.next_token();
+            }
         }
         let end_pos = self.token_end();
 
