@@ -522,3 +522,8 @@ If a change computes `WHERE` to report or which AST node triggered it, it belong
    1. open a focused follow-up issue with owner,
    2. add regression fixture before reattempt,
    3. document root cause in decision log.
+
+## 19. Phase 0 Artifacts (2026-02-14)
+
+1. Parity baseline snapshot: `docs/architecture/parity-baseline-2026-02-14.md`
+2. Checker type-internal inventory: `docs/architecture/checker-type-internal-inventory-2026-02-14.md`
