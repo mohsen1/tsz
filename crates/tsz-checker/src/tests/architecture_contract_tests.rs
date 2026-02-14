@@ -326,6 +326,29 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
         path.extension().and_then(|ext| ext.to_str()) == Some("rs")
     }
 
+    fn collect_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = fs::read_dir(dir).unwrap_or_else(|_| {
+            panic!("failed to read checker source directory {}", dir.display())
+        });
+        for entry in entries {
+            let entry = entry.expect("failed to read checker source directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files_recursive(&path, files);
+                continue;
+            }
+            if is_rs_source_file(&path) {
+                if path
+                    .components()
+                    .any(|component| component.as_os_str() == "tests")
+                {
+                    continue;
+                }
+                files.push(path);
+            }
+        }
+    }
+
     fn has_forbidden_typekey_pattern(line: &str) -> bool {
         let trimmed = line.trim_start();
         if trimmed.starts_with("//") {
@@ -339,16 +362,10 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
     }
 
     let src_dir = Path::new("src");
-    let entries = fs::read_dir(src_dir).expect("failed to read checker src directory");
-
+    let mut source_files = Vec::new();
+    collect_rs_files_recursive(src_dir, &mut source_files);
     let mut violations = Vec::new();
-    for entry in entries {
-        let entry = entry.expect("failed to read checker src directory entry");
-        let path = entry.path();
-        if !is_rs_source_file(&path) {
-            continue;
-        }
-
+    for path in source_files {
         let file_name = path
             .file_name()
             .and_then(|name| name.to_str())
