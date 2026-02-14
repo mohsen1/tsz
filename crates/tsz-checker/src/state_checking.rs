@@ -1597,7 +1597,7 @@ impl<'a> CheckerState<'a> {
                                 declared_type,
                                 source_level,
                                 target_level,
-                                var_decl.initializer,
+                                decl_idx,
                             );
                         } else if checker.should_report_assignability_mismatch(
                             init_type,
@@ -1610,13 +1610,13 @@ impl<'a> CheckerState<'a> {
                                 checker.error_type_not_assignable_generic_at(
                                     init_type,
                                     declared_type,
-                                    var_decl.initializer,
+                                    decl_idx,
                                 );
                             } else {
                                 checker.error_type_not_assignable_with_reason_at(
                                     init_type,
                                     declared_type,
-                                    var_decl.initializer,
+                                    decl_idx,
                                 );
                             }
                         } else {

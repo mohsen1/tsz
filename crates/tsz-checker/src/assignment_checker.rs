@@ -884,6 +884,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        self.error_type_not_assignable_with_reason_at(source_type, target_type, right_idx);
+        // TS2322 anchoring should point at the assignment target (LHS), not the RHS expression.
+        // This aligns diagnostic fingerprints with tsc for assignment-compatibility suites.
+        self.error_type_not_assignable_with_reason_at(source_type, target_type, left_idx);
     }
 }
