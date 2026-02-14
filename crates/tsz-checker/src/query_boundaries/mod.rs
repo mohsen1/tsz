@@ -18,4 +18,5 @@ pub(crate) mod state_type_resolution;
 pub(crate) mod type_checking;
 pub(crate) mod type_computation;
 pub(crate) mod type_computation_complex;
+pub(crate) mod type_query;
 pub(crate) mod union_type;
