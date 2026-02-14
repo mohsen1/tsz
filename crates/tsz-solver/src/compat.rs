@@ -230,6 +230,40 @@ impl<'a> CompatChecker<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> CompatChecker<'a, R> {
+    fn normalize_assignability_operand(&mut self, mut type_id: TypeId) -> TypeId {
+        // Keep normalization bounded to avoid infinite resolver/evaluator cycles.
+        for _ in 0..8 {
+            let next = match self.interner.lookup(type_id) {
+                Some(TypeKey::Lazy(def_id)) => self
+                    .subtype
+                    .resolver
+                    .resolve_lazy(def_id, self.interner)
+                    .unwrap_or(type_id),
+                Some(TypeKey::Mapped(_)) | Some(TypeKey::Application(_)) => {
+                    self.subtype.evaluate_type(type_id)
+                }
+                _ => type_id,
+            };
+
+            if next == type_id {
+                break;
+            }
+            type_id = next;
+        }
+        type_id
+    }
+
+    fn normalize_assignability_operands(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> (TypeId, TypeId) {
+        (
+            self.normalize_assignability_operand(source),
+            self.normalize_assignability_operand(target),
+        )
+    }
+
     fn is_function_target_member(&self, member: TypeId) -> bool {
         let is_function_object_shape = match self.interner.lookup(member) {
             Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
@@ -645,6 +679,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         target: TypeId,
         strict_function_types: bool,
     ) -> bool {
+        let (source, target) = self.normalize_assignability_operands(source, target);
+
         // Fast path checks
         if let Some(result) = self.check_assignable_fast_path(source, target) {
             return result;
@@ -735,7 +771,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Example: `setTimeout(() => {}, 0)` where first arg is `string | Function`.
         if let Some(TypeKey::Union(members_id)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members_id);
-            if members.iter().any(|&member| self.is_function_target_member(member))
+            if members
+                .iter()
+                .any(|&member| self.is_function_target_member(member))
                 && crate::type_queries::is_callable_type(self.interner, source)
             {
                 return Some(true);
@@ -780,7 +818,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
         if let Some(TypeKey::Union(members_id)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members_id);
-            if members.iter().any(|&member| self.is_function_target_member(member))
+            if members
+                .iter()
+                .any(|&member| self.is_function_target_member(member))
                 && crate::type_queries::is_callable_type(self.interner, source)
             {
                 return true;

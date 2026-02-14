@@ -163,7 +163,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.force_bivariant_callbacks = enabled;
     }
 
-    fn is_function_union_compat(&self, arg_type: TypeId, mut target_type: TypeId) -> bool {
+    fn is_function_union_compat(&mut self, arg_type: TypeId, mut target_type: TypeId) -> bool {
         if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target_type)
             && let Some(resolved) = self.interner.resolve_lazy(def_id, self.interner)
         {
@@ -176,18 +176,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return false;
         }
         let members = self.interner.type_list(members_id);
-        members.iter().any(|&member| match self.interner.lookup(member) {
-            Some(TypeKey::Intrinsic(IntrinsicKind::Function)) => true,
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
-                let shape = self.interner.object_shape(shape_id);
-                let apply = self.interner.intern_string("apply");
-                let call = self.interner.intern_string("call");
-                let has_apply = shape.properties.iter().any(|prop| prop.name == apply);
-                let has_call = shape.properties.iter().any(|prop| prop.name == call);
-                has_apply && has_call
-            }
-            _ => false,
-        })
+        if members
+            .iter()
+            .any(|&member| self.checker.is_assignable_to(arg_type, member))
+        {
+            return true;
+        }
+        let synthetic_any_fn = self.interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![],
+            return_type: TypeId::ANY,
+            this_type: None,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        if members
+            .iter()
+            .any(|&member| self.checker.is_assignable_to(synthetic_any_fn, member))
+        {
+            return true;
+        }
+        members
+            .iter()
+            .any(|&member| match self.interner.lookup(member) {
+                Some(TypeKey::Intrinsic(IntrinsicKind::Function)) => true,
+                Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                    let shape = self.interner.object_shape(shape_id);
+                    let apply = self.interner.intern_string("apply");
+                    let call = self.interner.intern_string("call");
+                    let has_apply = shape.properties.iter().any(|prop| prop.name == apply);
+                    let has_call = shape.properties.iter().any(|prop| prop.name == call);
+                    has_apply && has_call
+                }
+                _ => false,
+            })
     }
 
     pub fn infer_call_signature(&mut self, sig: &CallSignature, arg_types: &[TypeId]) -> TypeId {
