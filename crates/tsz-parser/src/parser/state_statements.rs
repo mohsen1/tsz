@@ -2454,11 +2454,28 @@ impl ParserState {
                 let type_ref = self.parse_heritage_type_reference();
 
                 while self.is_token(SyntaxKind::CommaToken) {
-                    self.parse_error_at_current_token(
+                    // Check for trailing comma: `extends C, {`
+                    // tsc emits TS1009 for trailing comma, TS1174 for multiple extends
+                    let comma_pos = self.token_pos();
+                    let comma_end = self.token_end();
+                    self.next_token();
+                    if self.is_token(SyntaxKind::OpenBraceToken)
+                        || self.is_token(SyntaxKind::ImplementsKeyword)
+                    {
+                        self.parse_error_at(
+                            comma_pos,
+                            comma_end - comma_pos,
+                            tsz_common::diagnostics::diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
+                            diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
+                        );
+                        break;
+                    }
+                    self.parse_error_at(
+                        comma_pos,
+                        comma_end - comma_pos,
                         "Classes can only extend a single class.",
                         diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
                     );
-                    self.next_token();
                     let _ = self.parse_heritage_type_reference();
                 }
 
