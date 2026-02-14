@@ -1,0 +1,6 @@
+model: gpt-5.3-codex
+approval_mode: full-auto
+bypass_approvals_and_sandbox: true
+sleep_seconds: 2
+workdir: /Users/mohsenazimi/code/tsz
+prompt_file: scripts/codex-conformance-loop.prompt.txt
