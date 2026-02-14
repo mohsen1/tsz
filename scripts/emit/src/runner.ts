@@ -432,9 +432,13 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
 function resultStatusIcon(result: TestResult, dtsOnly: boolean): string {
   if (result.timeout) return pc.yellow('T');
   if (result.skipped) return pc.dim('S');
-  const match = dtsOnly ? result.dtsMatch : result.jsMatch;
-  if (match === true) return pc.green('✓');
-  if (match === false) return pc.red('✗');
+  if (dtsOnly) {
+    if (result.dtsMatch === true) return pc.green('✓');
+    if (result.dtsMatch === false) return pc.red('✗');
+    return pc.dim('-');
+  }
+  if (result.jsMatch === false || result.dtsMatch === false) return pc.red('✗');
+  if (result.jsMatch === true || result.dtsMatch === true) return pc.green('✓');
   return pc.dim('-');
 }
 
@@ -568,7 +572,12 @@ async function main() {
     }
 
     if (result.dtsMatch === true) dtsPass++;
-    else if (result.dtsMatch === false) dtsFail++;
+    else if (result.dtsMatch === false) {
+      dtsFail++;
+      if (result.jsMatch !== false && !result.timeout) {
+        failures.push(result);
+      }
+    }
     else dtsSkip++;
   }
 
