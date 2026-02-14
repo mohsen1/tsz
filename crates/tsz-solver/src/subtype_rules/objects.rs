@@ -815,12 +815,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        if target.number_index.is_some() {
-            // Plain object sources without explicit index signatures are not
-            // assignable to targets that require numeric indexing.
-            return SubtypeResult::False;
-        }
-
         self.check_properties_against_index_signatures(source, target)
     }
 
