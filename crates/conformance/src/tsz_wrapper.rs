@@ -1002,5 +1002,5 @@ fn rewrite_absolute_reference_paths(content: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/tsz_wrapper.rs"]
+#[path = "../tests/tsz_wrapper.rs"]
 mod tests;

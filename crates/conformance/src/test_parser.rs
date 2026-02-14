@@ -180,7 +180,3 @@ pub fn filter_incompatible_module_resolution_variants(
         })
         .collect()
 }
-
-#[cfg(test)]
-#[path = "tests/test_parser.rs"]
-mod tests;

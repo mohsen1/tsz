@@ -1531,7 +1531,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(ext) = self.ctx.arena.get_extended(idx) {
                     let parent = ext.parent;
                     let recovery_stmt_kind = if !parent.is_none() {
-                        self.ctx.arena.get(parent).map(|parent_node| parent_node.kind)
+                        self.ctx
+                            .arena
+                            .get(parent)
+                            .map(|parent_node| parent_node.kind)
                     } else {
                         None
                     };

@@ -45,6 +45,8 @@ pub const CONTEXT_FLAG_IN_CONDITIONAL_TRUE: u32 = 64;
 /// Context flag: inside a decorator expression (@expr)
 /// When set, `[` should not be treated as element access (it starts a computed property name)
 pub const CONTEXT_FLAG_IN_DECORATOR: u32 = 128;
+/// Context flag: parsing parameters of a class constructor.
+pub const CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS: u32 = 256;
 
 // =============================================================================
 // Parse Diagnostic

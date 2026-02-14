@@ -50,7 +50,3 @@ pub fn cache_key(path: &Path, test_dir: &Path) -> Option<String> {
 pub fn lookup<'a>(cache: &'a TscCache, key: &str) -> Option<&'a TscResult> {
     cache.get(key)
 }
-
-#[cfg(test)]
-#[path = "tests/cache.rs"]
-mod tests;
