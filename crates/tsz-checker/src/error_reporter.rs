@@ -3669,11 +3669,7 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
-            if self.has_parse_errors()
-                && !is_es2015_type
-                && !primitive_array_recovery
-                && !primitive_keyword_name
-            {
+            if self.has_parse_errors() && !is_es2015_type && !primitive_array_recovery {
                 return;
             }
 
