@@ -3135,7 +3135,19 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(type_args) = type_args {
                         if total_type_params == 0 {
-                            if let Some(&arg_idx) = type_args.nodes.first() {
+                            let symbol_type = self.get_type_of_symbol(heritage_sym);
+                            let has_generic_construct_signature =
+                                tsz_solver::type_queries::get_construct_signatures(
+                                    self.ctx.types,
+                                    symbol_type,
+                                )
+                                .is_some_and(|sigs| {
+                                    sigs.iter().any(|sig| !sig.type_params.is_empty())
+                                });
+
+                            if !has_generic_construct_signature
+                                && let Some(&arg_idx) = type_args.nodes.first()
+                            {
                                 let name = self
                                     .heritage_name_text(expr_idx)
                                     .unwrap_or_else(|| "<expression>".to_string());
