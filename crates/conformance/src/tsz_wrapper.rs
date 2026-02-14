@@ -5,8 +5,6 @@
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
-use tsz::diagnostics::{Diagnostic, DiagnosticSeverity};
-use tsz::span::Span;
 
 /// Result of compiling a test file
 #[derive(Debug, Clone)]
@@ -201,8 +199,7 @@ pub fn parse_tsz_output(
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}\n{}", stdout, stderr);
     let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
-    let diagnostics = parse_diagnostics_from_text(&combined);
-    let mut error_codes = extract_error_codes(&diagnostics);
+    let mut error_codes = parse_error_codes_from_text(&combined);
     const TS5110: u32 = 5110;
     if !error_codes.contains(&TS5110) {
         if let (Some(module_resolution), Some(module)) =
@@ -658,20 +655,23 @@ fn copy_tsconfig_to_root_if_needed(
     Ok(())
 }
 
-/// Extract error codes from diagnostics
-fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
+fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static DIAG_CODE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\berror\s+TS(?P<code>\d+):").expect("valid regex"));
+
     let mut codes = Vec::new();
-
-    for diag in diagnostics {
-        // Only collect errors, not warnings or suggestions
-        if diag.severity != DiagnosticSeverity::Error {
+    for caps in DIAG_CODE_RE.captures_iter(text) {
+        let Some(code) = caps
+            .name("code")
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+        else {
             continue;
-        }
-
-        // The code field already contains the numeric error code
-        codes.push(diag.code);
+        };
+        codes.push(code);
     }
-
     codes
 }
 
