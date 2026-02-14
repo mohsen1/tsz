@@ -274,25 +274,46 @@ while true; do
     fi
   fi
 
-  ITER_TMP="$(mktemp)"
+  TERMINAL_FAILURE_DETECTED="false"
   set +e
-  "${CMD[@]}" "$PROMPT_TEXT" 2>&1 | tee -a "$LOG_FILE" | tee "$ITER_TMP"
+  ITER_PIPE="$(mktemp)"
+  rm -f "$ITER_PIPE"
+  mkfifo "$ITER_PIPE"
+  "${CMD[@]}" "$PROMPT_TEXT" >"$ITER_PIPE" 2>&1 &
+  CODexLoopRun_PID=$!
+
+  while IFS= read -r line <"$ITER_PIPE"; do
+    echo "$line" | tee -a "$LOG_FILE"
+    if [[ "$line" == *"You've hit your usage limit"* ]] \
+      || [[ "$line" == *"state db missing rollout path"* ]] \
+      || [[ "$line" == *"model_not_found"* ]] \
+      || [[ "$line" == *"The requested model"* && "$line" == *"does not exist"* ]]; then
+      TERMINAL_FAILURE_DETECTED="true"
+      break
+    fi
+  done
+
+  if [[ "$TERMINAL_FAILURE_DETECTED" == "true" ]]; then
+    kill "$CODexLoopRun_PID" >/dev/null 2>&1 || true
+  fi
+  wait "$CODexLoopRun_PID" 2>/dev/null
   status=$?
+  rm -f "$ITER_PIPE"
+
   set -e
-  if grep -qiE "You've hit your usage limit|state db missing rollout path|model_not_found|The requested model .* does not exist" "$ITER_TMP"; then
+
+  if [[ "$TERMINAL_FAILURE_DETECTED" == "true" ]]; then
     if [[ "$MODE" == "spark" && "$MODEL" != "$MODEL_BASE" && "$SPARK_MODEL_FALLBACK_ATTEMPTED" == "false" ]]; then
       SPARK_MODEL_FALLBACK_ATTEMPTED="true"
       echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i spark model unavailable; falling back to model=$MODEL_BASE" | tee -a "$LOG_FILE"
       MODEL="$MODEL_BASE"
-      rm -f "$ITER_TMP"
       continue
     fi
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i hard-stop-trigger matched terminal failure" | tee -a "$LOG_FILE"
-    rm -f "$ITER_TMP"
     exit 1
   fi
-  rm -f "$ITER_TMP"
 
+  status="${status:-0}"
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i exit_status=$status" | tee -a "$LOG_FILE"
   sleep "$SLEEP_SECS"
 done
