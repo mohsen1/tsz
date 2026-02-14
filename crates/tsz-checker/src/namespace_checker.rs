@@ -51,6 +51,7 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use rustc_hash::FxHashMap;
         use tsz_solver::{CallableShape, PropertyInfo};
+        let factory = self.ctx.types.factory();
 
         // Check recursion depth to prevent stack overflow
         const MAX_MERGE_DEPTH: u32 = 32;
@@ -125,14 +126,16 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
-        self.ctx.types.callable(CallableShape {
+        let call_shape = CallableShape {
             call_signatures: shape.call_signatures.clone(),
             construct_signatures: shape.construct_signatures.clone(),
             properties,
             string_index: shape.string_index.clone(),
             number_index: shape.number_index.clone(),
             symbol: None,
-        })
+        };
+
+        factory.callable(call_shape)
     }
 
     /// Merge namespace exports into a function type for function+namespace merging.
@@ -219,7 +222,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
-        let merged_type = self.ctx.types.callable(CallableShape {
+        let factory = self.ctx.types.factory();
+        let merged_type = factory.callable(CallableShape {
             call_signatures: shape.call_signatures.clone(),
             construct_signatures: shape.construct_signatures.clone(),
             properties,
@@ -459,6 +463,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
-        self.ctx.types.object(properties)
+        self.ctx.types.factory().object(properties)
     }
 }
