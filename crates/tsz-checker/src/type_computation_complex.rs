@@ -2325,6 +2325,8 @@ impl<'a> CheckerState<'a> {
         // TS2693: Primitive type keywords used as values
         // TypeScript primitive type keywords (number, string, boolean, etc.) are language keywords
         // for types, not identifiers. When used in value position, emit TS2693.
+        // Exception: in import equals module references (e.g., `import r = undefined`),
+        // TS2503 is already emitted by check_namespace_import — don't also emit TS2693.
         if matches!(
             name,
             "number"
