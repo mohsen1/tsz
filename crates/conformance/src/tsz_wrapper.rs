@@ -2,6 +2,7 @@
 //!
 //! Provides a simple API to compile TypeScript code and extract error codes.
 
+use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
 use tsz::diagnostics::{Diagnostic, DiagnosticSeverity};
@@ -12,6 +13,8 @@ use tsz::span::Span;
 pub struct CompilationResult {
     /// Error codes (TSXXXX format, e.g., 2304 for TS2304)
     pub error_codes: Vec<u32>,
+    /// Diagnostic fingerprints for richer mismatch tracking.
+    pub diagnostic_fingerprints: Vec<DiagnosticFingerprint>,
     /// Whether compilation crashed (panic)
     pub crashed: bool,
     /// Resolved compiler options used
@@ -148,6 +151,7 @@ pub fn compile_test(
             let error_codes = extract_error_codes(&diagnostics);
             Ok(CompilationResult {
                 error_codes,
+                diagnostic_fingerprints: vec![],
                 crashed: false,
                 options: options.clone(),
             })
@@ -155,6 +159,7 @@ pub fn compile_test(
         Ok(Err(e)) => Err(e), // Fatal error
         Err(_) => Ok(CompilationResult {
             error_codes: vec![],
+            diagnostic_fingerprints: vec![],
             crashed: true,
             options: options.clone(),
         }),
@@ -304,11 +309,13 @@ pub fn prepare_test_dir(
 /// Parse tsz process output into a CompilationResult.
 pub fn parse_tsz_output(
     output: &std::process::Output,
+    project_root: &Path,
     options: HashMap<String, String>,
 ) -> CompilationResult {
     if output.status.success() {
         return CompilationResult {
             error_codes: vec![],
+            diagnostic_fingerprints: vec![],
             crashed: false,
             options,
         };
@@ -321,6 +328,7 @@ pub fn parse_tsz_output(
         if output.status.signal().is_some() {
             return CompilationResult {
                 error_codes: vec![],
+                diagnostic_fingerprints: vec![],
                 crashed: true,
                 options,
             };
@@ -330,6 +338,7 @@ pub fn parse_tsz_output(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}\n{}", stdout, stderr);
+    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
     let diagnostics = parse_diagnostics_from_text(&combined);
     let mut error_codes = extract_error_codes(&diagnostics);
     const TS5110: u32 = 5110;
@@ -357,9 +366,149 @@ pub fn parse_tsz_output(
     }
     CompilationResult {
         error_codes,
+        diagnostic_fingerprints,
         crashed: false,
         options,
     }
+}
+
+fn parse_diagnostic_fingerprints_from_text(
+    text: &str,
+    project_root: &Path,
+) -> Vec<DiagnosticFingerprint> {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
+            .expect("valid regex")
+    });
+    static DIAG_NO_POS_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
+
+    let mut fingerprints = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(caps) = DIAG_WITH_POS_RE.captures(line) {
+            let code = caps
+                .name("code")
+                .and_then(|m| m.as_str().parse::<u32>().ok());
+            let line_no = caps
+                .name("line")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+                .unwrap_or(0);
+            let col_no = caps
+                .name("col")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+                .unwrap_or(0);
+            if let Some(code) = code {
+                let file = normalize_diagnostic_path(
+                    caps.name("file").map(|m| m.as_str()).unwrap_or_default(),
+                    project_root,
+                );
+                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                fingerprints.push(DiagnosticFingerprint::new(
+                    code, file, line_no, col_no, message,
+                ));
+            }
+            continue;
+        }
+
+        if let Some(caps) = DIAG_NO_POS_RE.captures(line) {
+            if let Some(code) = caps
+                .name("code")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+            {
+                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                fingerprints.push(DiagnosticFingerprint::new(
+                    code,
+                    String::new(),
+                    0,
+                    0,
+                    message,
+                ));
+            }
+        }
+    }
+
+    fingerprints.sort_by(|a, b| {
+        (
+            a.code,
+            a.file.as_str(),
+            a.line,
+            a.column,
+            a.message_key.as_str(),
+        )
+            .cmp(&(
+                b.code,
+                b.file.as_str(),
+                b.line,
+                b.column,
+                b.message_key.as_str(),
+            ))
+    });
+    fingerprints.dedup();
+    fingerprints
+}
+
+fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
+    let normalized = raw.trim().replace('\\', "/");
+    if normalized.is_empty() {
+        return normalized;
+    }
+
+    // Build a set of equivalent root prefixes. On macOS, the same temp directory
+    // may appear as either /var/... or /private/var/... in diagnostics.
+    let mut roots = Vec::new();
+    roots.push(project_root.to_string_lossy().replace('\\', "/"));
+    if let Ok(canon_root) = project_root.canonicalize() {
+        roots.push(canon_root.to_string_lossy().replace('\\', "/"));
+    }
+
+    let mut expanded_roots = Vec::new();
+    for root in roots {
+        if root.is_empty() {
+            continue;
+        }
+        expanded_roots.push(root.clone());
+        if let Some(stripped) = root.strip_prefix("/private") {
+            if stripped.starts_with("/var/") {
+                expanded_roots.push(stripped.to_string());
+            }
+        }
+        if root.starts_with("/var/") {
+            expanded_roots.push(format!("/private{}", root));
+        }
+    }
+
+    expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
+    expanded_roots.dedup();
+
+    for root in &expanded_roots {
+        if normalized.starts_with(root) {
+            return normalized[root.len()..].trim_start_matches('/').to_string();
+        }
+    }
+
+    // If the diagnostic path is absolute, try canonicalizing it and strip again.
+    let diag_path = Path::new(&normalized);
+    if diag_path.is_absolute() {
+        if let Ok(canon_diag) = diag_path.canonicalize() {
+            let canon_diag = canon_diag.to_string_lossy().replace('\\', "/");
+            for root in &expanded_roots {
+                if canon_diag.starts_with(root) {
+                    return canon_diag[root.len()..].trim_start_matches('/').to_string();
+                }
+            }
+            return canon_diag;
+        }
+    }
+
+    normalized
 }
 
 /// Test harness-specific directives that should NOT be passed to tsconfig.json
@@ -1175,5 +1324,19 @@ const x: number = 42;
             parsed.get("include").is_none(),
             "Expected provided tsconfig to be preserved without injected include"
         );
+    }
+
+    #[test]
+    fn test_normalize_diagnostic_path_strips_project_root() {
+        let root = std::path::Path::new("/tmp/tsz-test");
+        let raw = "/tmp/tsz-test/test.ts";
+        assert_eq!(normalize_diagnostic_path(raw, root), "test.ts");
+    }
+
+    #[test]
+    fn test_normalize_diagnostic_path_handles_private_var_alias() {
+        let root = std::path::Path::new("/var/folders/x/y/T/.tmp123");
+        let raw = "/private/var/folders/x/y/T/.tmp123/src/test.ts";
+        assert_eq!(normalize_diagnostic_path(raw, root), "src/test.ts");
     }
 }

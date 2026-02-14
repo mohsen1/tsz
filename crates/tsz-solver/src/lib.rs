@@ -41,6 +41,7 @@ mod object_literal;
 pub mod objects;
 pub mod operations;
 pub mod operations_property;
+mod query_trace;
 pub mod recursion;
 pub mod sound;
 mod subtype;

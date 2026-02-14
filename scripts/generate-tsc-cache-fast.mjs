@@ -245,6 +245,7 @@ if (!IS_WORKER) {
               cache[r.key] = {
                 metadata: { mtime_ms: r.mtimeMs, size: r.size },
                 error_codes: r.errorCodes,
+                diagnostic_fingerprints: r.diagnosticFingerprints || [],
               };
             }
             processed++;
@@ -321,12 +322,13 @@ if (!IS_WORKER) {
       const results = [];
       for (const file of msg.files) {
         try {
-          const errorCodes = processFile(ts, file, libSourceFileCache);
+          const { errorCodes, diagnosticFingerprints } = processFile(ts, file, libSourceFileCache);
           results.push({
             key: file.key,
             mtimeMs: file.mtimeMs,
             size: file.size,
             errorCodes,
+            diagnosticFingerprints,
           });
         } catch (err) {
           results.push({ key: file.key, error: err.message });
@@ -422,7 +424,65 @@ function processFile(ts, file, libCache) {
     ...program.getGlobalDiagnostics(),
   ];
 
-  return [...new Set(diagnostics.map(d => d.code))].sort((a, b) => a - b);
+  const errorCodes = [...new Set(diagnostics.map(d => d.code))].sort((a, b) => a - b);
+  const diagnosticFingerprints = buildDiagnosticFingerprints(ts, diagnostics);
+
+  return { errorCodes, diagnosticFingerprints };
+}
+
+function buildDiagnosticFingerprints(ts, diagnostics) {
+  const fingerprints = diagnostics.map((diag) => {
+    const code = diag.code ?? 0;
+    const message = ts.flattenDiagnosticMessageText(diag.messageText, ' ');
+    let file = '';
+    let line = 0;
+    let column = 0;
+
+    if (diag.file) {
+      file = normalizeDiagnosticPath(diag.file.fileName || '');
+      if (typeof diag.start === 'number') {
+        const pos = diag.file.getLineAndCharacterOfPosition(diag.start);
+        line = (pos.line ?? 0) + 1;
+        column = (pos.character ?? 0) + 1;
+      }
+    }
+
+    return {
+      code,
+      file,
+      line,
+      column,
+      message_key: normalizeMessageKey(message),
+    };
+  });
+
+  // Stable deterministic order and de-dup.
+  fingerprints.sort((a, b) => {
+    if (a.code !== b.code) return a.code - b.code;
+    if (a.file !== b.file) return a.file.localeCompare(b.file);
+    if (a.line !== b.line) return a.line - b.line;
+    if (a.column !== b.column) return a.column - b.column;
+    return a.message_key.localeCompare(b.message_key);
+  });
+
+  const unique = [];
+  let prevKey = null;
+  for (const fp of fingerprints) {
+    const key = `${fp.code}|${fp.file}|${fp.line}|${fp.column}|${fp.message_key}`;
+    if (key !== prevKey) unique.push(fp);
+    prevKey = key;
+  }
+  return unique;
+}
+
+function normalizeDiagnosticPath(fileName) {
+  const normalized = fileName.replace(/\\/g, '/').trim();
+  if (normalized.startsWith('/virtual/')) return normalized.slice('/virtual/'.length);
+  return normalized;
+}
+
+function normalizeMessageKey(message) {
+  return String(message || '').trim().replace(/\s+/g, ' ');
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
     should_skip_test,
 };
-use crate::tsc_results::{ErrorFrequency, TestResult, TestStats};
+use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats};
 use crate::tsz_wrapper;
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
@@ -94,6 +94,8 @@ impl Runner {
 
         let error_code_filter = self.args.error_code;
         let timeout_secs = self.args.timeout;
+        let compare_fingerprints = self.args.compare_fingerprints;
+        let print_fingerprints = self.args.print_fingerprints;
         let test_dir: PathBuf = PathBuf::from(&self.args.test_dir);
 
         stream::iter(test_files)
@@ -109,6 +111,8 @@ impl Runner {
                 let print_test_files = self.args.print_test_files;
                 let base = base_path.clone();
                 let test_dir = test_dir.clone();
+                let compare_fingerprints = compare_fingerprints;
+                let print_fingerprints = print_fingerprints;
 
                 async move {
                     let _permit = permit.acquire().await.unwrap();
@@ -119,6 +123,7 @@ impl Runner {
                         &test_dir,
                         cache,
                         tsz_binary,
+                        compare_fingerprints,
                         verbose,
                         print_test_files,
                         timeout_secs,
@@ -138,6 +143,8 @@ impl Runner {
                                     actual,
                                     missing,
                                     extra,
+                                    missing_fingerprints,
+                                    extra_fingerprints,
                                     options,
                                 } => {
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
@@ -174,6 +181,25 @@ impl Runner {
                                                 println!("  options:  {{}}");
                                             }
                                         }
+
+                                        if print_fingerprints {
+                                            if missing_fingerprints.is_empty() {
+                                                println!("  missing-fingerprints: []");
+                                            } else {
+                                                println!("  missing-fingerprints:");
+                                                for fingerprint in &missing_fingerprints {
+                                                    println!("    - {}", fingerprint.display_key());
+                                                }
+                                            }
+                                            if extra_fingerprints.is_empty() {
+                                                println!("  extra-fingerprints: []");
+                                            } else {
+                                                println!("  extra-fingerprints:");
+                                                for fingerprint in &extra_fingerprints {
+                                                    println!("    - {}", fingerprint.display_key());
+                                                }
+                                            }
+                                        }
                                     }
 
                                     // Record error frequencies
@@ -182,6 +208,12 @@ impl Runner {
                                     }
                                     for code in extra {
                                         error_freq.record_extra(code);
+                                    }
+                                    for fingerprint in missing_fingerprints {
+                                        error_freq.record_missing_fingerprint(fingerprint);
+                                    }
+                                    for fingerprint in extra_fingerprints {
+                                        error_freq.record_extra_fingerprint(fingerprint);
                                     }
                                 }
                                 TestResult::Skipped(reason) => {
@@ -270,6 +302,20 @@ impl Runner {
             println!("Top Error Code Mismatches:");
             for (code, missing, extra) in top_errors {
                 println!("  TS{}: missing={}, extra={}", code, missing, extra);
+            }
+        }
+
+        let top_fingerprint_errors = error_freq.top_fingerprint_errors(10);
+        if !top_fingerprint_errors.is_empty() {
+            println!();
+            println!("Top Diagnostic Fingerprint Mismatches:");
+            for (fingerprint, missing, extra) in top_fingerprint_errors {
+                println!(
+                    "  {} (missing={}, extra={})",
+                    fingerprint.display_key(),
+                    missing,
+                    extra
+                );
             }
         }
 
@@ -365,6 +411,7 @@ impl Runner {
         test_dir: &Path,
         cache: Arc<crate::cache::TscCache>,
         tsz_binary: String,
+        compare_fingerprints: bool,
         _verbose: bool,
         print_test_files: bool,
         timeout_secs: u64,
@@ -414,6 +461,7 @@ impl Runner {
             }
 
             let mut all_codes = std::collections::HashSet::new();
+            let mut all_fingerprints = std::collections::HashSet::new();
             for variant in option_variants {
                 let content_clone = content.clone();
                 let filenames = parsed.directives.filenames.clone();
@@ -451,12 +499,14 @@ impl Runner {
                     child.wait_with_output().await?
                 };
 
-                let compile_result = tsz_wrapper::parse_tsz_output(&output, variant);
+                let compile_result =
+                    tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), variant);
                 if compile_result.crashed {
                     return Ok(TestResult::Crashed);
                 }
 
                 all_codes.extend(compile_result.error_codes);
+                all_fingerprints.extend(compile_result.diagnostic_fingerprints);
             }
 
             // Filter out all error codes for JS files when checkJs is not enabled.
@@ -476,10 +526,12 @@ impl Runner {
                 .unwrap_or(false);
             if is_js_file && !check_js {
                 all_codes.clear();
+                all_fingerprints.clear();
             }
 
             let compile_result = tsz_wrapper::CompilationResult {
                 error_codes: all_codes.into_iter().collect(),
+                diagnostic_fingerprints: all_fingerprints.into_iter().collect(),
                 crashed: false,
                 options,
             };
@@ -495,7 +547,54 @@ impl Runner {
             // Find extra (in tsz but not TSC)
             let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
 
-            if missing.is_empty() && extra.is_empty() {
+            let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
+                tsc_result.diagnostic_fingerprints.iter().cloned().collect();
+            let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> = compile_result
+                .diagnostic_fingerprints
+                .iter()
+                .cloned()
+                .collect();
+            let use_fingerprint_compare = compare_fingerprints && !tsc_fingerprints.is_empty();
+            let mut missing_fingerprints: Vec<DiagnosticFingerprint> = if use_fingerprint_compare {
+                tsc_fingerprints
+                    .difference(&tsz_fingerprints)
+                    .cloned()
+                    .collect()
+            } else {
+                vec![]
+            };
+            let mut extra_fingerprints: Vec<DiagnosticFingerprint> = if use_fingerprint_compare {
+                tsz_fingerprints
+                    .difference(&tsc_fingerprints)
+                    .cloned()
+                    .collect()
+            } else {
+                vec![]
+            };
+            missing_fingerprints.sort_by_key(|f| {
+                (
+                    f.code,
+                    f.file.clone(),
+                    f.line,
+                    f.column,
+                    f.message_key.clone(),
+                )
+            });
+            extra_fingerprints.sort_by_key(|f| {
+                (
+                    f.code,
+                    f.file.clone(),
+                    f.line,
+                    f.column,
+                    f.message_key.clone(),
+                )
+            });
+
+            if missing.is_empty()
+                && extra.is_empty()
+                && (!use_fingerprint_compare
+                    || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
+            {
                 Ok(TestResult::Pass)
             } else {
                 // Sort the codes for consistent display
@@ -508,6 +607,8 @@ impl Runner {
                     actual,
                     missing,
                     extra,
+                    missing_fingerprints,
+                    extra_fingerprints,
                     options: compile_result.options,
                 })
             }
