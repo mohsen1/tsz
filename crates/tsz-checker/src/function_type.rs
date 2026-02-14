@@ -1315,6 +1315,15 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
             }
 
+            if self.ctx.strict_bind_call_apply()
+                && let Some(strict_method_type) = self.strict_bind_call_apply_method_type(
+                    object_type_for_access,
+                    property_name,
+                )
+            {
+                return self.apply_flow_narrowing(idx, strict_method_type);
+            }
+
             // Use the environment-aware resolver so that array methods, boxed
             // primitive types, and other lib-registered types are available.
             let result =
@@ -1864,5 +1873,64 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn strict_bind_call_apply_method_type(
+        &self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        if property_name != "apply" {
+            return None;
+        }
+
+        let (params, return_type) = match self.ctx.types.lookup(object_type) {
+            Some(tsz_solver::TypeKey::Function(shape_id)) => {
+                let shape = self.ctx.types.function_shape(shape_id);
+                (shape.params.clone(), shape.return_type)
+            }
+            Some(tsz_solver::TypeKey::Callable(shape_id)) => {
+                let shape = self.ctx.types.callable_shape(shape_id);
+                let sig = shape.call_signatures.first()?;
+                (sig.params.clone(), sig.return_type)
+            }
+            _ => return None,
+        };
+
+        let tuple_elements: Vec<tsz_solver::TupleElement> = params
+            .iter()
+            .map(|param| tsz_solver::TupleElement {
+                type_id: param.type_id,
+                name: param.name,
+                optional: param.optional,
+                rest: param.rest,
+            })
+            .collect();
+        let args_tuple = self.ctx.types.tuple(tuple_elements);
+
+        let method_shape = tsz_solver::FunctionShape {
+            params: vec![
+                tsz_solver::ParamInfo {
+                    name: Some(self.ctx.types.intern_string("thisArg")),
+                    type_id: TypeId::ANY,
+                    optional: false,
+                    rest: false,
+                },
+                tsz_solver::ParamInfo {
+                    name: Some(self.ctx.types.intern_string("args")),
+                    type_id: args_tuple,
+                    optional: true,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type,
+            type_params: vec![],
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+
+        Some(self.ctx.types.function(method_shape))
     }
 }
