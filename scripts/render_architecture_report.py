@@ -56,6 +56,16 @@ def render_markdown(payload: dict) -> str:
     if not failures:
         lines.append("- None")
     else:
+        lines.append("| Failure group | Hits |")
+        lines.append("|---|---:|")
+        for failure in failures:
+            name = failure.get("name", "unnamed")
+            hits = failure.get("hits", [])
+            lines.append(f"| {name} | {len(hits)} |")
+        lines.append("")
+
+        lines.append("### Failure details")
+        lines.append("")
         for failure in failures:
             name = failure.get("name", "unnamed")
             hits = failure.get("hits", [])
