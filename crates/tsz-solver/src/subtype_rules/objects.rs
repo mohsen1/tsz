@@ -746,6 +746,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         for prop in source {
+            // If target declares this property explicitly, its compatibility is
+            // checked via named-property rules. Don't also force it through the
+            // index signature value type (tsc behavior for intersections like
+            // `{ a: X } & { [k: string]: Y }` where `a` is validated against `X`).
+            if target
+                .properties
+                .binary_search_by_key(&prop.name, |p| p.name)
+                .is_ok()
+            {
+                continue;
+            }
+
             let prop_type = self.optional_property_type(prop);
             let allow_bivariant = prop.is_method;
 
