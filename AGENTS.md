@@ -168,6 +168,8 @@ Skill usage rules:
 - `TS2322` parity is a top-level gate for checker/solver work.
 - `TS2322`/`TS2345`/`TS2416` paths must use one compatibility gateway via `query_boundaries`.
 - Gateway order is fixed: relation -> reason -> diagnostic rendering.
+- Use the assignability gate helper as a single entrypoint for relation + failure analysis; avoid split ad-hoc calls.
+- New checker code must not call `CompatChecker` directly for TS2322-family paths; route through `query_boundaries/assignability`.
 - Checker must not instantiate solver internals in feature modules when a boundary helper can exist.
 - Keep `TS2322` behavior centralized:
   - one suppression/prioritization policy,

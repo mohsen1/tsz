@@ -13,8 +13,8 @@
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::query_boundaries::assignability::{
-    AssignabilityEvalKind, ExcessPropertiesKind, analyze_assignability_failure_with_context,
-    are_types_overlapping_with_env, classify_for_assignability_eval,
+    AssignabilityEvalKind, ExcessPropertiesKind, are_types_overlapping_with_env,
+    check_assignable_gate_with_overrides, classify_for_assignability_eval,
     classify_for_excess_properties, is_assignable_bivariant_with_resolver,
     is_assignable_with_overrides, is_assignable_with_resolver, is_callable_type,
     is_redeclaration_identical_with_resolver, is_subtype_with_resolver, object_shape_for_type,
@@ -629,7 +629,31 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
         let env = self.ctx.type_env.borrow();
-        analyze_assignability_failure_with_context(self.ctx.types, &self.ctx, &*env, source, target)
+        let overrides = CheckerOverrideProvider::new(self, Some(&*env));
+        let gate = check_assignable_gate_with_overrides(
+            self.ctx.types,
+            &*env,
+            source,
+            target,
+            self.ctx.pack_relation_flags(),
+            &self.ctx.inheritance_graph,
+            self.ctx.sound_mode(),
+            &overrides,
+            Some(&self.ctx),
+            true,
+        );
+        if gate.related {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: None,
+            };
+        }
+        gate.analysis.unwrap_or(
+            crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: None,
+            },
+        )
     }
 
     pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
