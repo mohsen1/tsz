@@ -1412,14 +1412,17 @@ impl BinderState {
                             // Merge: reuse existing symbol ID, merge declarations
                             if let Some(existing_mut) = self.symbols.get_mut(existing_id) {
                                 existing_mut.flags |= lib_sym.flags;
+                                let mut seen: FxHashSet<u32> = existing_mut
+                                    .declarations
+                                    .iter()
+                                    .map(|decl| decl.0)
+                                    .collect();
                                 for &decl in &lib_sym.declarations {
-                                    if !existing_mut.declarations.contains(&decl) {
+                                    if seen.insert(decl.0) {
                                         existing_mut.declarations.push(decl);
                                         // Track which arena this specific declaration belongs to
-                                        self.declaration_arenas.insert(
-                                            (existing_id, decl),
-                                            Arc::clone(&lib_ctx.arena),
-                                        );
+                                        self.declaration_arenas
+                                            .insert((existing_id, decl), Arc::clone(&lib_ctx.arena));
                                     }
                                 }
                                 // Update value_declaration if not set
