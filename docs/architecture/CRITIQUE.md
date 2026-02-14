@@ -430,6 +430,18 @@ The checker crate still contains a full local type arena and constructors for un
 * You can safely harden TypeKey privacy (next milestone).
 * You can trust memoization/canonicalization decisions.
 
+### Status update (2026-02-14)
+
+* **Status:** In progress
+* **Completed in this iteration (Milestone 1 sub-item):**
+  * Quarantined checker legacy `TypeArena` surface behind an explicit crate feature flag:
+    * `crates/tsz-checker/Cargo.toml` now defines `legacy-type-arena` (off by default).
+    * `crates/tsz-checker/src/lib.rs` now gates `pub mod arena;` and `pub use arena::TypeArena;` behind `#[cfg(feature = "legacy-type-arena")]`.
+  * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to lock this boundary and fail if the legacy `TypeArena` module/re-export become default-visible again.
+* **Remaining for Milestone 1:**
+  * Continue migrating/deleting checker-local type-system internals (`types`/`arena`) from active checker paths.
+  * Remove the `legacy-type-arena` feature entirely once migration users are gone.
+
 ---
 
 # Milestone 2 — Seal the solver representation (no `TypeKey` leakage)

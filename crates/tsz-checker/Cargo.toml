@@ -7,6 +7,10 @@ repository.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+legacy-type-arena = []
+
 [dependencies]
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }

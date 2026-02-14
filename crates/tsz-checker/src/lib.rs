@@ -2,7 +2,7 @@
 //!
 //! This module is organized into several submodules:
 //! - `types` - Type definitions (Type enum, flags, diagnostics)
-//! - `arena` - TypeArena for type allocation
+//! - `arena` - Legacy checker TypeArena for migration-only paths
 //! - `context` - CheckerContext for shared state
 //! - `expr` - Expression type checking
 //! - `statements` - Statement type checking
@@ -19,6 +19,7 @@
 
 pub mod accessibility;
 pub mod accessor_checker;
+#[cfg(feature = "legacy-type-arena")]
 pub mod arena;
 pub mod array_type;
 pub mod assignability_checker;
@@ -167,6 +168,7 @@ mod strict_null_manual;
 // any_propagation, constructor_accessibility, void_return_exception
 
 // Re-export key types
+#[cfg(feature = "legacy-type-arena")]
 pub use arena::TypeArena;
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};
 pub use control_flow::{FlowAnalyzer, FlowGraph as ControlFlowGraph};
