@@ -163,6 +163,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.force_bivariant_callbacks = enabled;
     }
 
+    fn is_function_union_compat(&self, arg_type: TypeId, mut target_type: TypeId) -> bool {
+        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target_type)
+            && let Some(resolved) = self.interner.resolve_lazy(def_id, self.interner)
+        {
+            target_type = resolved;
+        }
+        let Some(TypeKey::Union(members_id)) = self.interner.lookup(target_type) else {
+            return false;
+        };
+        if !crate::type_queries::is_callable_type(self.interner, arg_type) {
+            return false;
+        }
+        let members = self.interner.type_list(members_id);
+        members.iter().any(|&member| match self.interner.lookup(member) {
+            Some(TypeKey::Intrinsic(IntrinsicKind::Function)) => true,
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                let apply = self.interner.intern_string("apply");
+                let call = self.interner.intern_string("call");
+                let has_apply = shape.properties.iter().any(|prop| prop.name == apply);
+                let has_call = shape.properties.iter().any(|prop| prop.name == call);
+                has_apply && has_call
+            }
+            _ => false,
+        })
+    }
+
     pub fn infer_call_signature(&mut self, sig: &CallSignature, arg_types: &[TypeId]) -> TypeId {
         let func = FunctionShape {
             params: sig.params.clone(),
@@ -815,7 +842,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             placeholder_visited.clear();
             if !self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited) {
                 // No placeholder in target_type - check assignability directly
-                if !self.checker.is_assignable_to(arg_type, target_type) {
+                if !self.checker.is_assignable_to(arg_type, target_type)
+                    && !self.is_function_union_compat(arg_type, target_type)
+                {
                     return CallResult::ArgumentTypeMismatch {
                         index: i,
                         expected: target_type,
@@ -836,7 +865,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &mut placeholder_visited,
                     ) {
                         // Constraint is fully concrete - safe to check now
-                        if !self.checker.is_assignable_to(arg_type, inst_constraint) {
+                        if !self.checker.is_assignable_to(arg_type, inst_constraint)
+                            && !self.is_function_union_compat(arg_type, inst_constraint)
+                        {
                             return CallResult::ArgumentTypeMismatch {
                                 index: i,
                                 expected: inst_constraint,
@@ -902,7 +933,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             if !target_has_placeholders {
                 // No placeholders in target - direct assignability check
-                if !self.checker.is_assignable_to(arg_type, target_type) {
+                if !self.checker.is_assignable_to(arg_type, target_type)
+                    && !self.is_function_union_compat(arg_type, target_type)
+                {
                     return CallResult::ArgumentTypeMismatch {
                         index: i,
                         expected: target_type,

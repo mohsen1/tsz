@@ -370,7 +370,17 @@ impl<'a> CheckerState<'a> {
         let left_type = self.resolve_type_query_type(left_target);
 
         let prev_context = self.ctx.contextual_type;
-        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
+        let left_is_element_access = self
+            .ctx
+            .arena
+            .get(left_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
+        if !left_is_element_access
+            && left_type != TypeId::ANY
+            && left_type != TypeId::NEVER
+            && left_type != TypeId::UNKNOWN
+            && !self.type_contains_error(left_type)
+        {
             self.ctx.contextual_type = Some(left_type);
         }
 
@@ -695,7 +705,17 @@ impl<'a> CheckerState<'a> {
         let left_type = self.resolve_type_query_type(left_target);
 
         let prev_context = self.ctx.contextual_type;
-        if left_type != TypeId::ANY && !self.type_contains_error(left_type) {
+        let left_is_element_access = self
+            .ctx
+            .arena
+            .get(left_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
+        if !left_is_element_access
+            && left_type != TypeId::ANY
+            && left_type != TypeId::NEVER
+            && left_type != TypeId::UNKNOWN
+            && !self.type_contains_error(left_type)
+        {
             self.ctx.contextual_type = Some(left_type);
         }
 
