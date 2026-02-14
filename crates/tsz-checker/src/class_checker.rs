@@ -12,7 +12,7 @@
 
 use crate::query_boundaries::class::should_report_member_type_mismatch;
 use crate::state::CheckerState;
-use crate::types::diagnostics::diagnostic_codes;
+use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -1453,6 +1453,37 @@ impl<'a> CheckerState<'a> {
                                 &message,
                                 diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
                             );
+
+                            // tsc also reports a follow-on missing-property diagnostic (TS2741)
+                            // for required instance members from the class being implemented.
+                            // Emit the first missing required member to match that behavior.
+                            if let Some((missing_name, _)) = base_class_data
+                                .members
+                                .nodes
+                                .iter()
+                                .filter_map(|&member_idx| {
+                                    self.extract_class_member_info(member_idx, false).and_then(
+                                        |member| {
+                                            if member.is_static {
+                                                None
+                                            } else {
+                                                Some((member.name, member.visibility))
+                                            }
+                                        },
+                                    )
+                                })
+                                .find(|(member_name, _)| !class_members.contains_key(member_name))
+                            {
+                                let msg = format_message(
+                                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                                    &[&missing_name, &class_name, &interface_name],
+                                );
+                                self.error_at_node(
+                                    type_idx,
+                                    &msg,
+                                    diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                                );
+                            }
                         }
                         continue;
                     }
