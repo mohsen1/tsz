@@ -552,8 +552,16 @@ impl<'a> CheckerState<'a> {
             return derived;
         }
 
-        let derived_kind = classify_for_interface_merge(self.ctx.types, derived);
-        let base_kind = classify_for_interface_merge(self.ctx.types, base);
+        // Resolve Application/Lazy types before classification.
+        // When an interface extends a type alias (e.g., `interface TaggedPair<T> extends Pair<T>`
+        // where `type Pair<T> = AB<T, T>`), the instantiated base type may be an Application
+        // (e.g., `AB<number, number>`) which classify_for_interface_merge cannot structurally
+        // merge. Evaluating it first resolves it to an Object type with the actual properties.
+        let derived_resolved = self.resolve_type_for_interface_merge(derived);
+        let base_resolved = self.resolve_type_for_interface_merge(base);
+
+        let derived_kind = classify_for_interface_merge(self.ctx.types, derived_resolved);
+        let base_kind = classify_for_interface_merge(self.ctx.types, base_resolved);
         trace!(derived_kind = ?derived_kind, base_kind = ?base_kind, "Classified types for merge");
 
         match (derived_kind, base_kind) {
@@ -744,6 +752,21 @@ impl<'a> CheckerState<'a> {
             (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
             _ => derived,
         }
+    }
+
+    /// Resolve a type for interface merging by evaluating Application/Lazy types.
+    ///
+    /// When an interface extends a type alias like `type Pair<T> = AB<T, T>`, the
+    /// instantiated base type is `Application(AB, [number, number])`. This needs to
+    /// be evaluated to get the underlying Object type so that properties can be merged.
+    fn resolve_type_for_interface_merge(&mut self, type_id: TypeId) -> TypeId {
+        if tsz_solver::type_queries::needs_evaluation_for_merge(self.ctx.types, type_id) {
+            let evaluated = self.evaluate_type_with_env(type_id);
+            if evaluated != type_id {
+                return evaluated;
+            }
+        }
+        type_id
     }
 
     /// Merge derived and base interface properties.

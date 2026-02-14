@@ -233,6 +233,19 @@ pub fn is_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::ERROR || matches!(db.lookup(type_id), Some(TypeKey::Error))
 }
 
+/// Check if a type needs evaluation before interface merging.
+///
+/// Returns true for Application and Lazy types, which are meta-types that
+/// may resolve to Object/Callable types when evaluated. Used before
+/// `classify_for_interface_merge` to ensure that type-alias-based heritage
+/// (e.g., `interface X extends TypeAlias<T>`) is properly resolved.
+pub fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeKey::Application(_)) | Some(TypeKey::Lazy(_))
+    )
+}
+
 /// Check if a type is an intrinsic type (any, unknown, never, void, etc.).
 ///
 /// Returns true for TypeKey::Intrinsic.
