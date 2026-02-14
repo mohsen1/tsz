@@ -222,14 +222,20 @@ impl<'a> CheckerState<'a> {
 
                 let is_this_param = name == Some(this_atom);
 
+                let is_js_file = self.ctx.file_name.ends_with(".js")
+                    || self.ctx.file_name.ends_with(".jsx")
+                    || self.ctx.file_name.ends_with(".mjs")
+                    || self.ctx.file_name.ends_with(".cjs");
                 let contextual_type = if let Some(ref helper) = ctx_helper {
                     helper.get_parameter_type(contextual_index)
                 } else {
                     None
                 };
-                // TS7006: Only count as contextual type if it's not UNKNOWN
-                // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
-                let has_contextual_type = contextual_type.is_some_and(|t| t != TypeId::UNKNOWN);
+                // TS7006: In TS files, contextual `unknown` is still a concrete contextual
+                // type and should suppress implicit-any reporting for callback parameters.
+                // Keep the old JS behavior where weak contextual `unknown` is treated as no context.
+                let has_contextual_type =
+                    contextual_type.is_some_and(|t| t != TypeId::UNKNOWN || !is_js_file);
 
                 // Use type annotation if present, otherwise infer from context
                 let type_id = if !param.type_annotation.is_none() {
@@ -254,10 +260,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Infer from contextual type, default to ANY for implicit any parameters
                     // TypeScript uses `any` (with TS7006) when no contextual type is available.
-                    let is_js_file = self.ctx.file_name.ends_with(".js")
-                        || self.ctx.file_name.ends_with(".jsx")
-                        || self.ctx.file_name.ends_with(".mjs")
-                        || self.ctx.file_name.ends_with(".cjs");
                     if is_js_file {
                         // In checkJs mode, contextual `unknown` from weak callback types
                         // (e.g. `(...args: unknown[]) => T`) should not force parameters
