@@ -1,13 +1,13 @@
 use super::*;
 use crate::TypeInterner;
 use crate::types::{
-    LiteralValue, OrderedFloat, PropertyInfo, SymbolRef, TypeKey, TypeParamInfo, Visibility,
+    LiteralValue, OrderedFloat, PropertyInfo, SymbolRef, TypeData, TypeParamInfo, Visibility,
 };
 
 #[test]
 fn test_widen_string_literal() {
     let interner = TypeInterner::new();
-    let string_lit = interner.intern(TypeKey::Literal(LiteralValue::String(
+    let string_lit = interner.intern(TypeData::Literal(LiteralValue::String(
         interner.intern_string("hello"),
     )));
     let widened = widen_type(&interner as &dyn crate::TypeDatabase, string_lit);
@@ -17,7 +17,7 @@ fn test_widen_string_literal() {
 #[test]
 fn test_widen_number_literal() {
     let interner = TypeInterner::new();
-    let number_lit = interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(42.0))));
+    let number_lit = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(42.0))));
     let widened = widen_type(&interner as &dyn crate::TypeDatabase, number_lit);
     assert_eq!(widened, TypeId::NUMBER);
 }
@@ -25,7 +25,7 @@ fn test_widen_number_literal() {
 #[test]
 fn test_widen_boolean_literal() {
     let interner = TypeInterner::new();
-    let bool_lit = interner.intern(TypeKey::Literal(LiteralValue::Boolean(true)));
+    let bool_lit = interner.intern(TypeData::Literal(LiteralValue::Boolean(true)));
     let widened = widen_type(&interner as &dyn crate::TypeDatabase, bool_lit);
     assert_eq!(widened, TypeId::BOOLEAN);
 }
@@ -33,8 +33,8 @@ fn test_widen_boolean_literal() {
 #[test]
 fn test_widen_union() {
     let interner = TypeInterner::new();
-    let lit1 = interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0))));
-    let lit2 = interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(2.0))));
+    let lit1 = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0))));
+    let lit2 = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(2.0))));
     let union = interner.union(vec![lit1, lit2]);
 
     let widened = widen_type(&interner as &dyn crate::TypeDatabase, union);
@@ -58,12 +58,12 @@ fn test_type_param_not_widened() {
     let info = TypeParamInfo {
         name,
         constraint: Some(
-            interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+            interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
         ),
         default: None,
         is_const: false,
     };
-    let type_param = interner.intern(TypeKey::TypeParameter(info));
+    let type_param = interner.intern(TypeData::TypeParameter(info));
 
     let widened = widen_type(&interner, type_param);
     // Should preserve the original type_param type
@@ -73,7 +73,7 @@ fn test_type_param_not_widened() {
 #[test]
 fn test_widen_unique_symbol() {
     let interner = TypeInterner::new();
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(42)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(42)));
     let widened = widen_type(&interner, unique_sym);
     assert_eq!(widened, TypeId::SYMBOL);
 }
@@ -84,8 +84,8 @@ fn test_widen_object_properties() {
     // Create object { x: 1 } where x is a literal number
     let props = vec![PropertyInfo {
         name: interner.intern_string("x"),
-        type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
-        write_type: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+        type_id: interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+        write_type: interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
         optional: false,
         readonly: false,
         is_method: false,
@@ -99,7 +99,7 @@ fn test_widen_object_properties() {
     // Check that the widened type has number, not the literal 1
     let widened_key = interner.lookup(widened);
     match widened_key {
-        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert_eq!(shape.properties[0].type_id, TypeId::NUMBER);
@@ -115,10 +115,10 @@ fn test_widen_nested_object_properties() {
     // Create nested object { a: { b: "hello" } }
     let inner_props = vec![PropertyInfo {
         name: interner.intern_string("b"),
-        type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+        type_id: interner.intern(TypeData::Literal(LiteralValue::String(
             interner.intern_string("hello"),
         ))),
-        write_type: interner.intern(TypeKey::Literal(LiteralValue::String(
+        write_type: interner.intern(TypeData::Literal(LiteralValue::String(
             interner.intern_string("hello"),
         ))),
         optional: false,
@@ -146,7 +146,7 @@ fn test_widen_nested_object_properties() {
     // Check that both inner and outer properties are widened
     let widened_key = interner.lookup(widened);
     match widened_key {
-        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
 
@@ -154,8 +154,8 @@ fn test_widen_nested_object_properties() {
             let inner_type = shape.properties[0].type_id;
             let inner_key = interner.lookup(inner_type);
             match inner_key {
-                Some(TypeKey::Object(inner_shape_id))
-                | Some(TypeKey::ObjectWithIndex(inner_shape_id)) => {
+                Some(TypeData::Object(inner_shape_id))
+                | Some(TypeData::ObjectWithIndex(inner_shape_id)) => {
                     let inner_shape = interner.object_shape(inner_shape_id);
                     assert_eq!(inner_shape.properties.len(), 1);
                     // Inner property 'b' should be widened to string
@@ -175,8 +175,8 @@ fn test_widen_readonly_property_preserved() {
     let props = vec![
         PropertyInfo {
             name: interner.intern_string("a"),
-            type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
-            write_type: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+            type_id: interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+            write_type: interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
             optional: false,
             readonly: false, // Mutable -> Widens
             is_method: false,
@@ -185,8 +185,8 @@ fn test_widen_readonly_property_preserved() {
         },
         PropertyInfo {
             name: interner.intern_string("b"),
-            type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(2.0)))),
-            write_type: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(2.0)))),
+            type_id: interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(2.0)))),
+            write_type: interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(2.0)))),
             optional: false,
             readonly: true, // Readonly -> Preserved
             is_method: false,
@@ -199,7 +199,7 @@ fn test_widen_readonly_property_preserved() {
 
     // Verify 'a' is number, 'b' is literal 2
     let shape = match interner.lookup(widened).unwrap() {
-        TypeKey::Object(id) => interner.object_shape(id),
+        TypeData::Object(id) => interner.object_shape(id),
         _ => panic!("Expected object"),
     };
 
@@ -217,6 +217,6 @@ fn test_widen_readonly_property_preserved() {
     assert_eq!(a.type_id, TypeId::NUMBER);
     assert!(matches!(
         interner.lookup(b.type_id),
-        Some(TypeKey::Literal(_))
+        Some(TypeData::Literal(_))
     ));
 }

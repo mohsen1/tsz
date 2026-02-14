@@ -40,7 +40,7 @@ fn test_lower_literal_string_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "hello");
         }
         _ => panic!("Expected string literal type, got {:?}", key),
@@ -56,7 +56,7 @@ fn test_lower_literal_number_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 42.0);
         }
         _ => panic!("Expected number literal type, got {:?}", key),
@@ -72,7 +72,7 @@ fn test_lower_literal_hex_number_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 255.0);
         }
         _ => panic!("Expected hex literal type, got {:?}", key),
@@ -88,7 +88,7 @@ fn test_lower_literal_binary_number_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 10.0);
         }
         _ => panic!("Expected binary literal type, got {:?}", key),
@@ -104,7 +104,7 @@ fn test_lower_literal_octal_number_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 63.0);
         }
         _ => panic!("Expected octal literal type, got {:?}", key),
@@ -120,7 +120,7 @@ fn test_lower_literal_number_with_separators() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 1_234_567.0);
         }
         _ => panic!("Expected number literal type, got {:?}", key),
@@ -136,7 +136,7 @@ fn test_lower_literal_hex_number_with_separators() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 65_535.0);
         }
         _ => panic!("Expected hex literal type, got {:?}", key),
@@ -152,7 +152,7 @@ fn test_lower_literal_binary_number_with_separators() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 165.0);
         }
         _ => panic!("Expected binary literal type, got {:?}", key),
@@ -168,7 +168,7 @@ fn test_lower_literal_octal_number_with_separators() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 668.0);
         }
         _ => panic!("Expected octal literal type, got {:?}", key),
@@ -184,7 +184,7 @@ fn test_lower_literal_bigint_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "123");
         }
         _ => panic!("Expected bigint literal type, got {:?}", key),
@@ -200,7 +200,7 @@ fn test_lower_literal_hex_bigint_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "255");
         }
         _ => panic!("Expected hex bigint literal type, got {:?}", key),
@@ -216,7 +216,7 @@ fn test_lower_literal_binary_bigint_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "10");
         }
         _ => panic!("Expected binary bigint literal type, got {:?}", key),
@@ -232,7 +232,7 @@ fn test_lower_literal_octal_bigint_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "63");
         }
         _ => panic!("Expected octal bigint literal type, got {:?}", key),
@@ -248,7 +248,7 @@ fn test_lower_literal_bigint_with_separators() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "1000");
         }
         _ => panic!("Expected bigint literal type, got {:?}", key),
@@ -264,7 +264,7 @@ fn test_lower_literal_hex_bigint_with_separators() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "65535");
         }
         _ => panic!("Expected hex bigint literal type, got {:?}", key),
@@ -280,7 +280,7 @@ fn test_lower_literal_binary_bigint_with_separators() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "165");
         }
         _ => panic!("Expected binary bigint literal type, got {:?}", key),
@@ -296,7 +296,7 @@ fn test_lower_literal_octal_bigint_with_separators() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "668");
         }
         _ => panic!("Expected octal bigint literal type, got {:?}", key),
@@ -312,7 +312,7 @@ fn test_lower_literal_negative_number_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, -42.0);
         }
         _ => panic!("Expected negative number literal type, got {:?}", key),
@@ -328,7 +328,7 @@ fn test_lower_literal_negative_hex_number_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Number(num)) => {
+        TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, -42.0);
         }
         _ => panic!("Expected negative hex literal type, got {:?}", key),
@@ -344,7 +344,7 @@ fn test_lower_literal_negative_bigint_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "-123");
         }
         _ => panic!("Expected negative bigint literal type, got {:?}", key),
@@ -360,7 +360,7 @@ fn test_lower_literal_negative_hex_bigint_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "-42");
         }
         _ => panic!("Expected negative hex bigint literal type, got {:?}", key),
@@ -376,7 +376,7 @@ fn test_lower_literal_boolean_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::Boolean(true)) => {}
+        TypeData::Literal(LiteralValue::Boolean(true)) => {}
         _ => panic!("Expected boolean literal type, got {:?}", key),
     }
 }
@@ -390,7 +390,7 @@ fn test_lower_unique_symbol_type() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::UniqueSymbol(_) => {}
+        TypeData::UniqueSymbol(_) => {}
         _ => panic!("Expected unique symbol type, got {:?}", key),
     }
 }
@@ -404,7 +404,7 @@ fn test_lower_keyof_type_operator() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::KeyOf(inner) => {
+        TypeData::KeyOf(inner) => {
             assert_eq!(inner, TypeId::STRING);
         }
         _ => panic!("Expected keyof type, got {:?}", key),
@@ -420,10 +420,10 @@ fn test_lower_readonly_type_operator() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::ReadonlyType(inner) => {
+        TypeData::ReadonlyType(inner) => {
             let inner_key = interner.lookup(inner).expect("Inner type should exist");
             match inner_key {
-                TypeKey::Array(element) => {
+                TypeData::Array(element) => {
                     assert_eq!(element, TypeId::STRING);
                 }
                 _ => panic!("Expected readonly array type, got {:?}", inner_key),
@@ -442,7 +442,7 @@ fn test_lower_array_type_reference() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Array(element) => {
+        TypeData::Array(element) => {
             assert_eq!(element, TypeId::STRING);
         }
         _ => panic!("Expected array type, got {:?}", key),
@@ -458,10 +458,10 @@ fn test_lower_readonly_array_type_reference() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::ReadonlyType(inner) => {
+        TypeData::ReadonlyType(inner) => {
             let inner_key = interner.lookup(inner).expect("Inner type should exist");
             match inner_key {
-                TypeKey::Array(element) => {
+                TypeData::Array(element) => {
                     assert_eq!(element, TypeId::STRING);
                 }
                 _ => panic!("Expected readonly array type, got {:?}", inner_key),
@@ -505,11 +505,11 @@ fn test_lower_array_type_reference_respects_resolver() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                 other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
@@ -551,11 +551,11 @@ fn test_lower_readonly_array_type_reference_respects_resolver() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                 other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
@@ -573,13 +573,13 @@ fn test_lower_conditional_type_with_infer() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Conditional(cond_id) => {
+        TypeData::Conditional(cond_id) => {
             let cond = interner.conditional_type(cond_id);
             assert_eq!(cond.check_type, TypeId::STRING);
             assert_eq!(cond.true_type, TypeId::STRING);
             assert_eq!(cond.false_type, TypeId::NEVER);
             match interner.lookup(cond.extends_type) {
-                Some(TypeKey::Infer(info)) => {
+                Some(TypeData::Infer(info)) => {
                     assert_eq!(interner.resolve_atom(info.name), "R");
                     assert!(info.constraint.is_none());
                 }
@@ -601,10 +601,10 @@ fn test_lower_infer_type_with_constraint() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Conditional(cond_id) => {
+        TypeData::Conditional(cond_id) => {
             let cond = interner.conditional_type(cond_id);
             match interner.lookup(cond.extends_type) {
-                Some(TypeKey::Infer(info)) => {
+                Some(TypeData::Infer(info)) => {
                     assert_eq!(interner.resolve_atom(info.name), "R");
                     assert_eq!(info.constraint, Some(TypeId::STRING));
                 }
@@ -625,11 +625,11 @@ fn test_lower_conditional_infer_binding() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Conditional(cond_id) => {
+        TypeData::Conditional(cond_id) => {
             let cond = interner.conditional_type(cond_id);
             assert_eq!(cond.true_type, cond.extends_type);
             match interner.lookup(cond.true_type) {
-                Some(TypeKey::Infer(info)) => {
+                Some(TypeData::Infer(info)) => {
                     assert_eq!(interner.resolve_atom(info.name), "R");
                 }
                 other => panic!("Expected infer type in true branch, got {:?}", other),
@@ -649,12 +649,12 @@ fn test_lower_conditional_infer_binding_false_branch() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Conditional(cond_id) => {
+        TypeData::Conditional(cond_id) => {
             let cond = interner.conditional_type(cond_id);
             assert_eq!(cond.true_type, TypeId::NEVER);
             assert_eq!(cond.false_type, cond.extends_type);
             match interner.lookup(cond.false_type) {
-                Some(TypeKey::Infer(info)) => {
+                Some(TypeData::Infer(info)) => {
                     assert_eq!(interner.resolve_atom(info.name), "R");
                 }
                 other => panic!("Expected infer type in false branch, got {:?}", other),
@@ -674,10 +674,10 @@ fn test_lower_conditional_distributive_flag() {
     let type_id = lowering.lower_type(func_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             match interner.lookup(shape.return_type) {
-                Some(TypeKey::Conditional(cond_id)) => {
+                Some(TypeData::Conditional(cond_id)) => {
                     let cond = interner.conditional_type(cond_id);
                     assert!(cond.is_distributive);
                 }
@@ -698,10 +698,10 @@ fn test_lower_conditional_non_distributive_flag() {
     let type_id = lowering.lower_type(func_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             match interner.lookup(shape.return_type) {
-                Some(TypeKey::Conditional(cond_id)) => {
+                Some(TypeData::Conditional(cond_id)) => {
                     let cond = interner.conditional_type(cond_id);
                     assert!(!cond.is_distributive);
                 }
@@ -957,7 +957,7 @@ fn test_lower_function_type_with_type_parameter() {
     // Verify it's a function type
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             // Should have 1 type parameter named "T"
             assert_eq!(shape.type_params.len(), 1, "Expected 1 type parameter");
@@ -987,7 +987,7 @@ fn test_lower_function_type_with_type_predicate_return() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::BOOLEAN);
             let predicate = shape
@@ -1016,7 +1016,7 @@ fn test_lower_function_type_with_this_predicate_return() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::BOOLEAN);
             let predicate = shape
@@ -1043,7 +1043,7 @@ fn test_lower_function_type_with_asserts_predicate_return() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::VOID);
             let predicate = shape
@@ -1073,7 +1073,7 @@ fn test_lower_function_type_with_asserts_this_predicate_return() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::VOID);
             let predicate = shape
@@ -1100,7 +1100,7 @@ fn test_lower_function_type_with_asserts_this_predicate_without_is() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::VOID);
             let predicate = shape
@@ -1127,7 +1127,7 @@ fn test_lower_function_type_with_asserts_predicate_without_is() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::VOID);
             let predicate = shape
@@ -1156,7 +1156,7 @@ fn test_lower_function_type_with_this_param_separate() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.this_type, Some(TypeId::ANY));
             assert_eq!(shape.params.len(), 1);
@@ -1177,7 +1177,7 @@ fn test_lower_function_type_parameter_usage() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.params.len(), 1);
             assert_eq!(shape.params[0].type_id, shape.return_type);
@@ -1186,7 +1186,7 @@ fn test_lower_function_type_parameter_usage() {
                 .lookup(shape.params[0].type_id)
                 .expect("Type should exist");
             match param_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(interner.resolve_atom(info.name), "T");
                 }
                 _ => panic!("Expected type parameter type, got {:?}", param_key),
@@ -1208,7 +1208,7 @@ fn test_lower_function_type_with_constrained_type_parameter() {
 
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 1);
             assert_eq!(
@@ -1236,13 +1236,13 @@ fn test_lower_constrained_type_parameter_usage() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             let param_key = interner
                 .lookup(shape.params[0].type_id)
                 .expect("Type should exist");
             match param_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(info.constraint, Some(TypeId::STRING));
                 }
                 _ => panic!("Expected type parameter type, got {:?}", param_key),
@@ -1264,7 +1264,7 @@ fn test_lower_function_type_with_default_type_parameter() {
 
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 1);
             assert_eq!(
@@ -1296,7 +1296,7 @@ fn test_lower_function_type_with_multiple_type_parameters() {
 
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 3, "Expected 3 type parameters");
             assert_eq!(
@@ -1328,7 +1328,7 @@ fn test_lower_function_type_with_constraint_and_default() {
 
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 1);
             assert_eq!(
@@ -1361,7 +1361,7 @@ fn test_lower_function_type_no_type_parameters() {
 
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 0, "Expected no type parameters");
         }
@@ -1379,7 +1379,7 @@ fn test_lower_tuple_type_metadata() {
     let type_id = lowering.lower_type(tuple_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Tuple(elements) => {
+        TypeData::Tuple(elements) => {
             let elements = interner.tuple_list(elements);
             assert_eq!(elements.len(), 3);
 
@@ -1403,7 +1403,7 @@ fn test_lower_tuple_type_metadata() {
             assert!(!third.optional);
             assert!(third.rest);
             match interner.lookup(third.type_id) {
-                Some(TypeKey::Array(elem)) => assert_eq!(elem, TypeId::NUMBER),
+                Some(TypeData::Array(elem)) => assert_eq!(elem, TypeId::NUMBER),
                 other => panic!("Expected array type for rest element, got {:?}", other),
             }
         }
@@ -1420,7 +1420,7 @@ fn test_lower_union_type_normalization() {
     let type_id = lowering.lower_type(union_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             assert_eq!(members.as_ref(), [TypeId::NUMBER, TypeId::STRING]);
         }
@@ -1449,7 +1449,7 @@ fn test_lower_function_parameter_names() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.params.len(), 2);
             assert_eq!(
@@ -1481,7 +1481,7 @@ fn test_lower_function_rest_parameter() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.params.len(), 1);
             let param = &shape.params[0];
@@ -1496,7 +1496,7 @@ fn test_lower_function_rest_parameter() {
                 .lookup(param.type_id)
                 .expect("Param type should exist");
             match param_key {
-                TypeKey::Array(element) => {
+                TypeData::Array(element) => {
                     assert_eq!(element, TypeId::STRING);
                 }
                 _ => panic!("Expected rest param to be array type, got {:?}", param_key),
@@ -1539,24 +1539,24 @@ fn test_lower_generic_type_reference_uses_type_parameter_args() {
     let type_id = lowering.lower_type(func_type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = interner.function_shape(shape_id);
             let return_key = interner
                 .lookup(shape.return_type)
                 .expect("Type should exist");
             match return_key {
-                TypeKey::Application(app_id) => {
+                TypeData::Application(app_id) => {
                     let app = interner.type_application(app_id);
                     let base_key = interner.lookup(app.base).expect("Type should exist");
                     match base_key {
-                        TypeKey::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                        TypeData::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                         _ => panic!("Expected lazy base type, got {:?}", base_key),
                     }
 
                     assert_eq!(app.args.len(), 1);
                     let arg_key = interner.lookup(app.args[0]).expect("Type should exist");
                     match arg_key {
-                        TypeKey::TypeParameter(info) => {
+                        TypeData::TypeParameter(info) => {
                             assert_eq!(interner.resolve_atom(info.name), "T");
                         }
                         _ => panic!("Expected type parameter argument, got {:?}", arg_key),
@@ -1602,11 +1602,11 @@ fn test_lower_type_reference_with_arguments() {
     let type_id = lowering.lower_type(type_ref_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                 other => panic!("Expected Lazy base type, got {:?}", other),
             }
         }
@@ -1638,17 +1638,17 @@ fn test_lower_type_query_uses_value_resolver() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let mut saw_lazy = false;
             let mut saw_query = false;
             for &member in members.iter() {
                 match interner.lookup(member) {
-                    Some(TypeKey::Lazy(_def_id)) => {
+                    Some(TypeData::Lazy(_def_id)) => {
                         // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                         saw_lazy = true;
                     }
-                    Some(TypeKey::TypeQuery(SymbolRef(sym_id))) => {
+                    Some(TypeData::TypeQuery(SymbolRef(sym_id))) => {
                         assert_eq!(sym_id, 2);
                         saw_query = true;
                     }
@@ -1685,11 +1685,11 @@ fn test_lower_type_query_with_type_arguments() {
     let type_id = lowering.lower_type(type_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeKey::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, 2),
+                Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, 2),
                 other => panic!("Expected TypeQuery base type, got {:?}", other),
             }
         }
@@ -1707,7 +1707,7 @@ fn test_lower_template_literal_type_spans() {
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::TemplateLiteral(spans) => {
+        TypeData::TemplateLiteral(spans) => {
             let spans = interner.template_list(spans);
             assert_eq!(spans.len(), 3);
             match spans[0] {
@@ -1736,7 +1736,7 @@ fn test_lower_mapped_type_modifiers_and_constraint() {
     let type_id = lowering.lower_type(mapped_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Mapped(mapped_id) => {
+        TypeData::Mapped(mapped_id) => {
             let mapped = interner.mapped_type(mapped_id);
             assert_eq!(interner.resolve_atom(mapped.type_param.name), "K");
             assert_eq!(mapped.constraint, TypeId::STRING);
@@ -1757,7 +1757,7 @@ fn test_lower_mapped_type_remove_modifiers() {
     let type_id = lowering.lower_type(mapped_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Mapped(mapped_id) => {
+        TypeData::Mapped(mapped_id) => {
             let mapped = interner.mapped_type(mapped_id);
             assert_eq!(mapped.readonly_modifier, Some(MappedModifier::Remove));
             assert_eq!(mapped.optional_modifier, Some(MappedModifier::Remove));
@@ -1776,7 +1776,7 @@ fn test_lower_type_literal_object_properties() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let foo = shape
                 .properties
@@ -1810,7 +1810,7 @@ fn test_lower_type_literal_nested_object() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let config = shape
                 .properties
@@ -1819,7 +1819,7 @@ fn test_lower_type_literal_nested_object() {
                 .expect("Expected config property");
 
             match interner.lookup(config.type_id) {
-                Some(TypeKey::Object(nested_id)) => {
+                Some(TypeData::Object(nested_id)) => {
                     let nested = interner.object_shape(nested_id);
                     let enabled = nested
                         .properties
@@ -1854,7 +1854,7 @@ fn test_lower_type_literal_call_signature() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Callable(callable_id) => {
+        TypeData::Callable(callable_id) => {
             let callable = interner.callable_shape(callable_id);
             assert_eq!(callable.call_signatures.len(), 1);
             assert_eq!(callable.construct_signatures.len(), 0);
@@ -1875,7 +1875,7 @@ fn test_lower_type_literal_call_signature_this_param() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Callable(callable_id) => {
+        TypeData::Callable(callable_id) => {
             let callable = interner.callable_shape(callable_id);
             assert_eq!(callable.call_signatures.len(), 1);
             let sig = &callable.call_signatures[0];
@@ -1896,7 +1896,7 @@ fn test_lower_type_literal_call_signature_type_predicate() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Callable(callable_id) => {
+        TypeData::Callable(callable_id) => {
             let callable = interner.callable_shape(callable_id);
             assert_eq!(callable.call_signatures.len(), 1);
             let sig = &callable.call_signatures[0];
@@ -1927,7 +1927,7 @@ fn test_lower_type_literal_call_signature_asserts_predicate_without_is() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Callable(callable_id) => {
+        TypeData::Callable(callable_id) => {
             let callable = interner.callable_shape(callable_id);
             assert_eq!(callable.call_signatures.len(), 1);
             let sig = &callable.call_signatures[0];
@@ -1959,7 +1959,7 @@ fn test_lower_type_literal_overloaded_call_signatures() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Callable(callable_id) => {
+        TypeData::Callable(callable_id) => {
             let callable = interner.callable_shape(callable_id);
             assert_eq!(callable.call_signatures.len(), 2);
 
@@ -1986,7 +1986,7 @@ fn test_lower_type_literal_construct_signature() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Callable(callable_id) => {
+        TypeData::Callable(callable_id) => {
             let callable = interner.callable_shape(callable_id);
             assert_eq!(callable.call_signatures.len(), 0);
             assert_eq!(callable.construct_signatures.len(), 1);
@@ -2005,7 +2005,7 @@ fn test_lower_type_literal_index_signature() {
     let type_id = lowering.lower_type(literal_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::ObjectWithIndex(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert_eq!(interner.resolve_atom(shape.properties[0].name), "foo");
@@ -2053,7 +2053,7 @@ fn test_lower_interface_single_with_two_properties() {
     let type_id = lowering.lower_interface_declarations(&declarations);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             eprintln!(
                 "Properties found: {:?}",
@@ -2101,7 +2101,7 @@ fn test_lower_interface_merges_properties() {
     let type_id = lowering.lower_interface_declarations(&declarations);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let mut found_a = None;
             let mut found_b = None;
@@ -2134,7 +2134,7 @@ fn test_lower_interface_conflicting_property_types() {
     let type_id = lowering.lower_interface_declarations(&declarations);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -2158,7 +2158,7 @@ fn test_lower_interface_method_overload_accumulates() {
     let type_id = lowering.lower_interface_declarations(&declarations);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -2167,7 +2167,7 @@ fn test_lower_interface_method_overload_accumulates() {
                 .expect("Expected property bar");
             let prop_key = interner.lookup(prop.type_id).expect("Type should exist");
             match prop_key {
-                TypeKey::Callable(callable_id) => {
+                TypeData::Callable(callable_id) => {
                     let callable = interner.callable_shape(callable_id);
                     assert_eq!(callable.call_signatures.len(), 2);
                     let mut combos: Vec<(TypeId, TypeId)> = callable
@@ -2205,7 +2205,7 @@ fn test_template_literal_empty_string() {
     let key = interner.lookup(type_id).expect("Type should exist");
     // Empty template literal is collapsed to empty string literal
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "");
         }
         _ => panic!("Expected empty string Literal type, got {:?}", key),
@@ -2222,7 +2222,7 @@ fn test_template_literal_single_text_span() {
     let key = interner.lookup(type_id).expect("Type should exist");
     // Text-only templates are collapsed to string literals
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "hello");
         }
         _ => panic!("Expected string Literal type, got {:?}", key),
@@ -2239,7 +2239,7 @@ fn test_template_literal_multiple_interpolations() {
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::TemplateLiteral(spans) => {
+        TypeData::TemplateLiteral(spans) => {
             let spans = interner.template_list(spans);
             assert_eq!(spans.len(), 5); // type, text, type, text, type
 
@@ -2270,7 +2270,7 @@ fn test_template_literal_consecutive_text_normalization() {
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::TemplateLiteral(spans) => {
+        TypeData::TemplateLiteral(spans) => {
             let spans = interner.template_list(spans);
             // Should have 3 spans: "hello", string, "world"
             assert_eq!(spans.len(), 3);
@@ -2306,7 +2306,7 @@ fn test_template_literal_only_interpolation() {
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::TemplateLiteral(spans) => {
+        TypeData::TemplateLiteral(spans) => {
             let spans = interner.template_list(spans);
             assert_eq!(spans.len(), 1);
             assert!(matches!(spans[0], TemplateSpan::Type(TypeId::STRING)));
@@ -2324,7 +2324,7 @@ fn test_template_literal_trailing_text() {
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::TemplateLiteral(spans) => {
+        TypeData::TemplateLiteral(spans) => {
             let spans = interner.template_list(spans);
             assert_eq!(spans.len(), 2);
             assert!(matches!(spans[0], TemplateSpan::Type(TypeId::STRING)));
@@ -2347,7 +2347,7 @@ fn test_template_literal_leading_text() {
     let type_id = lowering.lower_type(template_idx);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::TemplateLiteral(spans) => {
+        TypeData::TemplateLiteral(spans) => {
             let spans = interner.template_list(spans);
             assert_eq!(spans.len(), 2);
             if let TemplateSpan::Text(atom) = &spans[0] {
@@ -2371,7 +2371,7 @@ fn test_template_literal_escape_sequences() {
     let key = interner.lookup(type_id).expect("Type should exist");
     // Text-only templates are collapsed to string literals
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             // The escape sequence should be processed
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "hello\nworld");
@@ -2390,7 +2390,7 @@ fn test_template_literal_escape_dollar_brace() {
     let key = interner.lookup(type_id).expect("Type should exist");
     // Text-only templates are collapsed to string literals
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             // The escaped ${ should become literal ${ (not an interpolation)
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "hello${string}");
@@ -2410,7 +2410,7 @@ fn test_template_literal_with_union() {
     // Should not exceed expansion limit and create a union
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Union(list_id) => {
+        TypeData::Union(list_id) => {
             let members = interner.type_list(list_id);
             // Should have expanded to "prefix-a-suffix" | "prefix-b-suffix"
             assert_eq!(members.len(), 2);
@@ -2441,7 +2441,7 @@ fn test_template_literal_with_multiple_unions() {
     let type_id = interner.template_literal(spans);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Union(list_id) => {
+        TypeData::Union(list_id) => {
             let members = interner.type_list(list_id);
             // Should have 4 combinations: "a-x", "a-y", "b-x", "b-y"
             assert_eq!(members.len(), 4);
@@ -2450,7 +2450,7 @@ fn test_template_literal_with_multiple_unions() {
             let mut strings: Vec<String> = members
                 .iter()
                 .filter_map(|&m| match interner.lookup(m) {
-                    Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                    Some(TypeData::Literal(LiteralValue::String(atom))) => {
                         Some(interner.resolve_atom(atom))
                     }
                     _ => None,
@@ -2478,7 +2478,7 @@ fn test_template_literal_single_string_literal() {
     let type_id = interner.template_literal(spans);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "prefix-hello-suffix");
         }
@@ -2500,7 +2500,7 @@ fn test_template_literal_only_texts_becomes_literal() {
     let type_id = interner.template_literal(spans);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "hello world");
         }
@@ -2522,7 +2522,7 @@ fn test_template_literal_with_non_string_literal_stays_template() {
     let type_id = interner.template_literal(spans);
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
-        TypeKey::TemplateLiteral(_) => {
+        TypeData::TemplateLiteral(_) => {
             // Expected: remains as template literal type
         }
         _ => panic!("Expected TemplateLiteral type, got {:?}", key),
@@ -2544,7 +2544,7 @@ fn test_template_literal_normalization_merges_consecutive_texts() {
     let key = interner.lookup(type_id).expect("Type should exist");
     // Text-only templates are collapsed to string literals
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             // After normalization and expansion, text-only becomes string literal
             assert_eq!(interner.resolve_atom(atom), "hello world");
         }

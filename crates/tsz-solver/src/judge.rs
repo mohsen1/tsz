@@ -447,7 +447,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         // Try to get type params from Lazy - use DefId directly
-        if let TypeKey::Lazy(def_id) = &key {
+        if let TypeData::Lazy(def_id) = &key {
             if let Some(params) = self.env.get_def_params(*def_id) {
                 if let Some(resolved) = self.env.get_def(*def_id) {
                     return instantiate_generic(self.db, resolved, params, args);
@@ -476,14 +476,14 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::Array(elem) => IterableKind::Array(elem),
-            TypeKey::Tuple(list_id) => {
+            TypeData::Array(elem) => IterableKind::Array(elem),
+            TypeData::Tuple(list_id) => {
                 let elements = self.db.tuple_list(list_id);
                 let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
                 IterableKind::Tuple(types)
             }
-            TypeKey::Literal(LiteralValue::String(_)) => IterableKind::String,
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::Literal(LiteralValue::String(_)) => IterableKind::String,
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let has_usable_iterator_signature = |method_type: TypeId| {
                     if method_type == TypeId::ANY
                         || method_type == TypeId::UNKNOWN
@@ -522,7 +522,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                 }
                 IterableKind::NotIterable
             }
-            TypeKey::Union(members_id) => {
+            TypeData::Union(members_id) => {
                 // All members must be iterable with compatible element types
                 let members = self.db.type_list(members_id);
                 let mut element_types = Vec::new();
@@ -564,7 +564,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::Function(fn_id) => {
+            TypeData::Function(fn_id) => {
                 let shape = self.db.function_shape(fn_id);
                 if shape.is_constructor {
                     CallableKind::Constructor {
@@ -580,7 +580,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                     }
                 }
             }
-            TypeKey::Callable(callable_id) => {
+            TypeData::Callable(callable_id) => {
                 let shape = self.db.callable_shape(callable_id);
                 CallableKind::Overloaded {
                     call_signatures: shape.call_signatures.clone(),
@@ -620,17 +620,17 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::Literal(LiteralValue::String(_)) => flags |= PrimitiveFlags::STRING_LIKE,
-            TypeKey::Literal(LiteralValue::Number(_)) => flags |= PrimitiveFlags::NUMBER_LIKE,
-            TypeKey::Literal(LiteralValue::Boolean(_)) => flags |= PrimitiveFlags::BOOLEAN_LIKE,
-            TypeKey::Literal(LiteralValue::BigInt(_)) => flags |= PrimitiveFlags::BIGINT_LIKE,
-            TypeKey::Union(members_id) => {
+            TypeData::Literal(LiteralValue::String(_)) => flags |= PrimitiveFlags::STRING_LIKE,
+            TypeData::Literal(LiteralValue::Number(_)) => flags |= PrimitiveFlags::NUMBER_LIKE,
+            TypeData::Literal(LiteralValue::Boolean(_)) => flags |= PrimitiveFlags::BOOLEAN_LIKE,
+            TypeData::Literal(LiteralValue::BigInt(_)) => flags |= PrimitiveFlags::BIGINT_LIKE,
+            TypeData::Union(members_id) => {
                 let members = self.db.type_list(members_id);
                 for &member in members.iter() {
                     flags |= self.classify_primitive(member);
                 }
             }
-            TypeKey::TemplateLiteral(_) => flags |= PrimitiveFlags::STRING_LIKE,
+            TypeData::TemplateLiteral(_) => flags |= PrimitiveFlags::STRING_LIKE,
             _ => {}
         }
 
@@ -655,7 +655,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::Literal(LiteralValue::String(s)) => {
+            TypeData::Literal(LiteralValue::String(s)) => {
                 let s_str = self.db.resolve_atom(s);
                 if s_str.is_empty() {
                     TruthinessKind::AlwaysFalsy
@@ -663,21 +663,21 @@ impl<'a> Judge for DefaultJudge<'a> {
                     TruthinessKind::AlwaysTruthy
                 }
             }
-            TypeKey::Literal(LiteralValue::Number(n)) => {
+            TypeData::Literal(LiteralValue::Number(n)) => {
                 if n.0 == 0.0 || n.0.is_nan() {
                     TruthinessKind::AlwaysFalsy
                 } else {
                     TruthinessKind::AlwaysTruthy
                 }
             }
-            TypeKey::Literal(LiteralValue::Boolean(b)) => {
+            TypeData::Literal(LiteralValue::Boolean(b)) => {
                 if b {
                     TruthinessKind::AlwaysTruthy
                 } else {
                     TruthinessKind::AlwaysFalsy
                 }
             }
-            TypeKey::Literal(LiteralValue::BigInt(s)) => {
+            TypeData::Literal(LiteralValue::BigInt(s)) => {
                 let s_str = self.db.resolve_atom(s);
                 if s_str == "0" || s_str == "0n" {
                     TruthinessKind::AlwaysFalsy
@@ -685,13 +685,13 @@ impl<'a> Judge for DefaultJudge<'a> {
                     TruthinessKind::AlwaysTruthy
                 }
             }
-            TypeKey::Object(_)
-            | TypeKey::ObjectWithIndex(_)
-            | TypeKey::Array(_)
-            | TypeKey::Tuple(_)
-            | TypeKey::Function(_)
-            | TypeKey::Callable(_) => TruthinessKind::AlwaysTruthy,
-            TypeKey::Union(members_id) => {
+            TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_) => TruthinessKind::AlwaysTruthy,
+            TypeData::Union(members_id) => {
                 let members = self.db.type_list(members_id);
                 let mut has_truthy = false;
                 let mut has_falsy = false;
@@ -712,9 +712,9 @@ impl<'a> Judge for DefaultJudge<'a> {
                     (false, false) => TruthinessKind::Unknown,
                 }
             }
-            TypeKey::Intrinsic(IntrinsicKind::String)
-            | TypeKey::Intrinsic(IntrinsicKind::Number)
-            | TypeKey::Intrinsic(IntrinsicKind::Bigint) => {
+            TypeData::Intrinsic(IntrinsicKind::String)
+            | TypeData::Intrinsic(IntrinsicKind::Number)
+            | TypeData::Intrinsic(IntrinsicKind::Bigint) => {
                 // Could be empty string, 0, or 0n
                 TruthinessKind::Sometimes
             }
@@ -729,8 +729,8 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::TypeParameter(ref info) => info.constraint.unwrap_or(type_id),
-            TypeKey::Lazy(def_id) => self.env.get_def(def_id).unwrap_or(type_id),
+            TypeData::TypeParameter(ref info) => info.constraint.unwrap_or(type_id),
+            TypeData::Lazy(def_id) => self.env.get_def(def_id).unwrap_or(type_id),
             _ => type_id,
         }
     }
@@ -751,7 +751,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.db.object_shape(shape_id);
 
                 // Check named properties first
@@ -775,7 +775,7 @@ impl<'a> Judge for DefaultJudge<'a> {
 
                 PropertyResult::NotFound
             }
-            TypeKey::Array(_elem) => {
+            TypeData::Array(_elem) => {
                 let name_str = self.db.resolve_atom(name);
                 if name_str == "length" {
                     PropertyResult::Found {
@@ -788,7 +788,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                     PropertyResult::NotFound
                 }
             }
-            TypeKey::Tuple(list_id) => {
+            TypeData::Tuple(list_id) => {
                 let name_str = self.db.resolve_atom(name);
                 if name_str == "length" {
                     let elements = self.db.tuple_list(list_id);
@@ -813,7 +813,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                     PropertyResult::NotFound
                 }
             }
-            TypeKey::Union(members_id) => {
+            TypeData::Union(members_id) => {
                 let members = self.db.type_list(members_id);
                 let mut result_types = Vec::new();
                 let mut all_optional = true;
@@ -863,7 +863,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                     }
                 }
             }
-            TypeKey::Intersection(members_id) => {
+            TypeData::Intersection(members_id) => {
                 let members = self.db.type_list(members_id);
                 let mut found_types = Vec::new();
                 let mut optional = true;
@@ -908,7 +908,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.db.object_shape(shape_id);
                 Arc::new(
                     shape
@@ -918,7 +918,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                         .collect(),
                 )
             }
-            TypeKey::Callable(callable_id) => {
+            TypeData::Callable(callable_id) => {
                 let shape = self.db.callable_shape(callable_id);
                 Arc::new(
                     shape
@@ -940,7 +940,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::Function(fn_id) => {
+            TypeData::Function(fn_id) => {
                 let shape = self.db.function_shape(fn_id);
                 if shape.is_constructor {
                     return Arc::new(Vec::new());
@@ -954,7 +954,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                     is_method: shape.is_method,
                 }])
             }
-            TypeKey::Callable(callable_id) => {
+            TypeData::Callable(callable_id) => {
                 let shape = self.db.callable_shape(callable_id);
                 Arc::new(shape.call_signatures.clone())
             }
@@ -970,7 +970,7 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeKey::Function(fn_id) => {
+            TypeData::Function(fn_id) => {
                 let shape = self.db.function_shape(fn_id);
                 if !shape.is_constructor {
                     return Arc::new(Vec::new());
@@ -984,7 +984,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                     is_method: false,
                 }])
             }
-            TypeKey::Callable(callable_id) => {
+            TypeData::Callable(callable_id) => {
                 let shape = self.db.callable_shape(callable_id);
                 Arc::new(shape.construct_signatures.clone())
             }
@@ -1006,21 +1006,21 @@ impl<'a> Judge for DefaultJudge<'a> {
         let key = self.db.lookup(evaluated)?;
 
         match key {
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.db.object_shape(shape_id);
                 match kind {
                     IndexKind::String => shape.string_index.as_ref().map(|s| s.value_type),
                     IndexKind::Number => shape.number_index.as_ref().map(|s| s.value_type),
                 }
             }
-            TypeKey::Array(elem) => {
+            TypeData::Array(elem) => {
                 if kind == IndexKind::Number {
                     Some(elem)
                 } else {
                     None
                 }
             }
-            TypeKey::Tuple(list_id) => {
+            TypeData::Tuple(list_id) => {
                 if kind == IndexKind::Number {
                     let elements = self.db.tuple_list(list_id);
                     let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
@@ -1049,7 +1049,7 @@ impl<'a> DefaultJudge<'a> {
         let next_name = self.db.intern_string("next");
         if let PropertyResult::Found { type_id, .. } = self.get_property(iterator_type, next_name) {
             // Check if it's a function
-            if let Some(TypeKey::Function(fn_id)) = self.db.lookup(type_id) {
+            if let Some(TypeData::Function(fn_id)) = self.db.lookup(type_id) {
                 let shape = self.db.function_shape(fn_id);
                 // Look for value property in return type
                 let value_name = self.db.intern_string("value");

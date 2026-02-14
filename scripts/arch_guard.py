@@ -113,6 +113,22 @@ CHECKS = [
         re.compile(r"\.intern\(TypeKey::"),
         {"exclude_files": {"crates/tsz-solver/src/intern.rs"}, "exclude_dirs": {"tests"}},
     ),
+    (
+        "Checker test boundary: no direct solver internal type inspection in integration tests",
+        ROOT / "crates" / "tsz-checker" / "tests",
+        re.compile(r"\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b"),
+        {"exclude_files": {"crates/tsz-checker/tests/architecture_contract_tests.rs"}},
+    ),
+    (
+        "Checker test boundary: no direct solver internal type inspection in src tests",
+        ROOT / "crates" / "tsz-checker" / "src" / "tests",
+        re.compile(r"\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b"),
+        {
+            "exclude_files": {
+                "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
+            }
+        },
+    ),
 ]
 
 MANIFEST_CHECKS = [

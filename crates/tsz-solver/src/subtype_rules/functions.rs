@@ -632,10 +632,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .is_true()
                     || (matches!(
                         self.interner.lookup(source_constraint),
-                        Some(TypeKey::TypeParameter(_))
+                        Some(TypeData::TypeParameter(_))
                     ) && matches!(
                         self.interner.lookup(target_constraint),
-                        Some(TypeKey::TypeParameter(_))
+                        Some(TypeData::TypeParameter(_))
                     ) && self
                         .check_subtype(source_constraint, target_constraint)
                         .is_true());
@@ -933,7 +933,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         s_sig: &crate::types::CallSignature,
         t_fn: &crate::types::FunctionShape,
     ) -> SubtypeResult {
-        use crate::TypeKey;
+        use crate::TypeData;
         use crate::instantiate::{TypeSubstitution, instantiate_type};
 
         // Create a substitution mapping type parameters to the target's parameter types
@@ -944,7 +944,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This handles the common case where type parameters flow through from parameters to return type
         for (s_param, t_param) in s_sig.params.iter().zip(t_fn.params.iter()) {
             // If source param is a type parameter, map it to target param type
-            if let Some(TypeKey::TypeParameter(tp)) = self.interner.lookup(s_param.type_id) {
+            if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(s_param.type_id) {
                 substitution.insert(tp.name, t_param.type_id);
             }
         }

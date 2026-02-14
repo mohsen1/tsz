@@ -5,7 +5,7 @@ use crate::CompatChecker;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::operations_property::PropertyAccessResult;
-use crate::types::{TypeKey, Visibility};
+use crate::types::{TypeData, Visibility};
 
 #[test]
 fn test_call_simple_function() {
@@ -397,7 +397,7 @@ fn test_binary_overlap_generic_constraint_disjoint() {
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -413,7 +413,7 @@ fn test_binary_overlap_generic_constraint_overlap() {
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -432,7 +432,7 @@ fn test_binary_overlap_unconstrained_type_param() {
     let interner = TypeInterner::new();
     let evaluator = BinaryOpEvaluator::new(&interner);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -452,7 +452,7 @@ fn test_binary_overlap_union_constraint_disjoint() {
     let evaluator = BinaryOpEvaluator::new(&interner);
 
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -469,7 +469,7 @@ fn test_binary_overlap_union_constraint_overlap() {
     let evaluator = BinaryOpEvaluator::new(&interner);
 
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -803,7 +803,7 @@ fn test_property_access_function_members() {
     let result = evaluator.resolve_property_access(func, "call");
     match result {
         PropertyAccessResult::Success { type_id, .. } => {
-            let Some(TypeKey::Function(shape_id)) = interner.lookup(type_id) else {
+            let Some(TypeData::Function(shape_id)) = interner.lookup(type_id) else {
                 panic!("Expected call to resolve to function type");
             };
             let shape = interner.function_shape(shape_id);
@@ -825,7 +825,7 @@ fn test_property_access_function_members() {
     let result = evaluator.resolve_property_access(func, "toString");
     match result {
         PropertyAccessResult::Success { type_id, .. } => {
-            let Some(TypeKey::Function(shape_id)) = interner.lookup(type_id) else {
+            let Some(TypeData::Function(shape_id)) = interner.lookup(type_id) else {
                 panic!("Expected toString to resolve to function type");
             };
             let shape = interner.function_shape(shape_id);
@@ -859,7 +859,7 @@ fn test_property_access_callable_members() {
     let result = evaluator.resolve_property_access(callable, "bind");
     match result {
         PropertyAccessResult::Success { type_id, .. } => {
-            let Some(TypeKey::Function(shape_id)) = interner.lookup(type_id) else {
+            let Some(TypeData::Function(shape_id)) = interner.lookup(type_id) else {
                 panic!("Expected bind to resolve to function type");
             };
             let shape = interner.function_shape(shape_id);
@@ -908,7 +908,7 @@ fn make_array_test_env(
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // length: number
     let length_prop = PropertyInfo::readonly(interner.intern_string("length"), TypeId::NUMBER);
@@ -920,7 +920,7 @@ fn make_array_test_env(
         default: None,
         is_const: false,
     };
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
     let map_callback = interner.function(FunctionShape {
         params: vec![
             ParamInfo {
@@ -1151,7 +1151,7 @@ fn test_property_access_readonly_array() {
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let array = interner.array(TypeId::STRING);
-    let readonly_array = interner.intern(TypeKey::ReadonlyType(array));
+    let readonly_array = interner.intern(TypeData::ReadonlyType(array));
 
     let result = evaluator.resolve_property_access(readonly_array, "length");
     match result {
@@ -1198,18 +1198,18 @@ fn test_property_access_array_map_signature() {
     let result = evaluator.resolve_property_access(array, "map");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.type_params.len(), 1, "map should have 1 type param U");
                 assert_eq!(func.params.len(), 2, "map should have 2 params");
                 let u_param = &func.type_params[0];
-                let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+                let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
                 let expected_return = interner.array(u_type);
                 assert_eq!(func.return_type, expected_return, "map should return U[]");
 
                 let callback_type = func.params[0].type_id;
                 match interner.lookup(callback_type) {
-                    Some(TypeKey::Function(cb_id)) => {
+                    Some(TypeData::Function(cb_id)) => {
                         let callback = interner.function_shape(cb_id);
                         assert_eq!(callback.return_type, u_type);
                         assert_eq!(callback.params[0].type_id, TypeId::NUMBER); // T=number
@@ -1235,7 +1235,7 @@ fn test_property_access_array_at_returns_optional_element() {
     let result = evaluator.resolve_property_access(array, "at");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
                 assert_eq!(func.return_type, expected);
@@ -1256,12 +1256,12 @@ fn test_property_access_array_entries_returns_tuple_array() {
     let result = evaluator.resolve_property_access(array, "entries");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
-                let Some(TypeKey::Array(return_elem)) = interner.lookup(func.return_type) else {
+                let Some(TypeData::Array(return_elem)) = interner.lookup(func.return_type) else {
                     panic!("Expected array return type");
                 };
-                let Some(TypeKey::Tuple(tuple_id)) = interner.lookup(return_elem) else {
+                let Some(TypeData::Tuple(tuple_id)) = interner.lookup(return_elem) else {
                     panic!("Expected tuple element type");
                 };
                 let tuple = interner.tuple_list(tuple_id);
@@ -1285,14 +1285,14 @@ fn test_property_access_array_reduce_callable() {
     let result = evaluator.resolve_property_access(array, "reduce");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Callable(callable_id)) => {
+            Some(TypeData::Callable(callable_id)) => {
                 let callable = interner.callable_shape(callable_id);
                 assert_eq!(callable.call_signatures.len(), 2);
                 assert_eq!(callable.call_signatures[0].return_type, TypeId::STRING);
                 let generic_sig = &callable.call_signatures[1];
                 assert_eq!(generic_sig.type_params.len(), 1);
                 let u_type =
-                    interner.intern(TypeKey::TypeParameter(generic_sig.type_params[0].clone()));
+                    interner.intern(TypeData::TypeParameter(generic_sig.type_params[0].clone()));
                 assert_eq!(generic_sig.return_type, u_type);
             }
             other => panic!("Expected callable, got {:?}", other),
@@ -1421,7 +1421,7 @@ fn test_property_access_number_method() {
     let result = evaluator.resolve_property_access(TypeId::NUMBER, "toFixed");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::STRING);
             }
@@ -1439,7 +1439,7 @@ fn test_property_access_boolean_method() {
     let result = evaluator.resolve_property_access(TypeId::BOOLEAN, "valueOf");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::BOOLEAN);
             }
@@ -1457,7 +1457,7 @@ fn test_property_access_bigint_method() {
     let result = evaluator.resolve_property_access(TypeId::BIGINT, "toString");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::STRING);
             }
@@ -1475,7 +1475,7 @@ fn test_property_access_object_methods_on_primitives() {
     let result = evaluator.resolve_property_access(TypeId::STRING, "hasOwnProperty");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::BOOLEAN);
             }
@@ -1487,7 +1487,7 @@ fn test_property_access_object_methods_on_primitives() {
     let result = evaluator.resolve_property_access(TypeId::NUMBER, "isPrototypeOf");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::BOOLEAN);
             }
@@ -1499,7 +1499,7 @@ fn test_property_access_object_methods_on_primitives() {
     let result = evaluator.resolve_property_access(TypeId::BOOLEAN, "propertyIsEnumerable");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::BOOLEAN);
             }
@@ -1584,7 +1584,7 @@ fn test_binary_op_logical() {
             // Should be a union type
             let key = interner.lookup(t).unwrap();
             match key {
-                TypeKey::Union(members) => {
+                TypeData::Union(members) => {
                     let members = interner.type_list(members);
                     assert!(members.contains(&TypeId::NUMBER));
                     assert!(members.contains(&TypeId::STRING));
@@ -1609,7 +1609,7 @@ fn test_call_generic_function_identity() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // function identity<T>(x: T): T
     let func = interner.function(FunctionShape {
@@ -1648,7 +1648,7 @@ fn test_call_generic_function_with_string() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // function identity<T>(x: T): T
     let func = interner.function(FunctionShape {
@@ -1686,7 +1686,7 @@ fn test_call_generic_argument_type_mismatch_with_default() {
         default: Some(TypeId::NUMBER),
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let param_type = interner.union(vec![t_type, TypeId::NUMBER]);
 
     let func = interner.function(FunctionShape {
@@ -1731,7 +1731,7 @@ fn test_call_generic_argument_count_mismatch() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -1788,7 +1788,7 @@ fn test_call_generic_rest_tuple_constraint_count_mismatch() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -1846,7 +1846,7 @@ fn test_call_generic_default_rest_tuple_count_mismatch() {
         default: Some(tuple_default),
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -1896,7 +1896,7 @@ fn test_call_generic_default_rest_tuple_optional_allows_empty() {
         default: Some(tuple_default),
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -1932,7 +1932,7 @@ fn test_call_generic_argument_type_mismatch_non_generic_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // function foo<T>(x: number, y: T): T
     let func = interner.function(FunctionShape {
@@ -1985,7 +1985,7 @@ fn test_call_generic_callable_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let callable = interner.callable(CallableShape {
         symbol: None,
@@ -2027,7 +2027,7 @@ fn test_call_generic_array_function() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let array_t = interner.array(t_type);
 
     // function first<T>(arr: T[]): T
@@ -2066,7 +2066,7 @@ fn test_infer_call_signature_identity() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let sig = CallSignature {
         type_params: vec![t_param],
@@ -2097,7 +2097,7 @@ fn test_infer_generic_function_identity() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -2129,7 +2129,7 @@ fn test_infer_generic_function_this_type_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let param_func = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -2181,7 +2181,7 @@ fn test_infer_generic_callable_param_from_function() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let callable_param = interner.callable(CallableShape {
         symbol: None,
@@ -2248,7 +2248,7 @@ fn test_infer_generic_function_param_from_callable() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let function_param = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -2315,7 +2315,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let function_param = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -2405,7 +2405,7 @@ fn test_infer_generic_callable_param_from_callable() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let callable_param = interner.callable(CallableShape {
         symbol: None,
@@ -2477,7 +2477,7 @@ fn test_infer_generic_construct_signature_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let ctor_param = interner.callable(CallableShape {
         symbol: None,
@@ -2549,8 +2549,8 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let keyof_param = interner.intern(TypeKey::KeyOf(t_type));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let keyof_param = interner.intern(TypeData::KeyOf(t_type));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -2571,7 +2571,7 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
         interner.intern_string("value"),
         TypeId::NUMBER,
     )]);
-    let arg_keyof = interner.intern(TypeKey::KeyOf(obj));
+    let arg_keyof = interner.intern(TypeData::KeyOf(obj));
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg_keyof]);
     assert_eq!(result, obj);
@@ -2594,9 +2594,9 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let k_type = interner.intern(TypeKey::TypeParameter(k_param.clone()));
-    let index_access_param = interner.intern(TypeKey::IndexAccess(t_type, k_type));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let index_access_param = interner.intern(TypeData::IndexAccess(t_type, k_type));
 
     let func = FunctionShape {
         type_params: vec![t_param, k_param],
@@ -2618,7 +2618,7 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
         interner.intern_string("value"),
         TypeId::NUMBER,
     )]);
-    let index_access_arg = interner.intern(TypeKey::IndexAccess(obj, key_literal));
+    let index_access_arg = interner.intern(TypeData::IndexAccess(obj, key_literal));
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[index_access_arg]);
     // IndexAccess is eagerly evaluated during instantiation (Task #46: O(1) equality)
@@ -2638,11 +2638,11 @@ fn test_infer_generic_index_access_param_from_object_property_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let key_x = interner.literal_string("x");
     let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), t_type)]);
-    let index_access_param = interner.intern(TypeKey::IndexAccess(obj, key_x));
+    let index_access_param = interner.intern(TypeData::IndexAccess(obj, key_x));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -2674,7 +2674,7 @@ fn test_infer_generic_template_literal_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let template_param = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("prefix")),
@@ -2718,7 +2718,7 @@ fn test_infer_generic_conditional_param_from_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let conditional = ConditionalType {
         check_type: TypeId::STRING,
@@ -2759,7 +2759,7 @@ fn test_infer_generic_mapped_param_from_object_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let key_param = TypeParamInfo {
         name: interner.intern_string("K"),
@@ -2822,8 +2822,8 @@ fn test_infer_generic_array_map() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
     let array_t = interner.array(t_type);
     let array_u = interner.array(u_type);
 
@@ -2902,7 +2902,7 @@ fn test_infer_generic_array_param_from_tuple_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let array_t = interner.array(t_type);
 
     let func = FunctionShape {
@@ -2950,8 +2950,8 @@ fn test_infer_generic_readonly_array_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let readonly_array_t = interner.intern(TypeKey::ReadonlyType(interner.array(t_type)));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let readonly_array_t = interner.intern(TypeData::ReadonlyType(interner.array(t_type)));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -2969,7 +2969,7 @@ fn test_infer_generic_readonly_array_param() {
     };
 
     let readonly_number_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::NUMBER)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::NUMBER)));
     let result = infer_generic_function(&interner, &mut subtype, &func, &[readonly_number_array]);
     assert_eq!(result, TypeId::NUMBER);
 }
@@ -2985,9 +2985,9 @@ fn test_infer_generic_readonly_tuple_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let readonly_tuple_t =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: t_type,
             name: None,
             optional: false,
@@ -3010,7 +3010,7 @@ fn test_infer_generic_readonly_tuple_param() {
     };
 
     let readonly_tuple_number =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: TypeId::NUMBER,
             name: None,
             optional: false,
@@ -3031,7 +3031,7 @@ fn test_infer_generic_constructor_instantiation() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let box_base = interner.lazy(DefId(42));
     let box_t = interner.application(box_base, vec![t_type]);
@@ -3067,7 +3067,7 @@ fn test_infer_generic_application_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let promise_base = interner.lazy(DefId(77));
     let promise_t = interner.application(promise_base, vec![t_type]);
@@ -3103,7 +3103,7 @@ fn test_infer_generic_object_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let boxed_t = interner.object(vec![PropertyInfo::new(
         interner.intern_string("value"),
@@ -3144,7 +3144,7 @@ fn test_infer_generic_optional_property_value() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3181,7 +3181,7 @@ fn test_infer_generic_optional_property_undefined_value() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3218,7 +3218,7 @@ fn test_infer_generic_optional_property_missing() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3254,7 +3254,7 @@ fn test_infer_generic_required_property_from_optional_argument() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3292,7 +3292,7 @@ fn test_infer_generic_required_property_missing_argument() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3327,7 +3327,7 @@ fn test_infer_generic_readonly_property_mismatch() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3365,7 +3365,7 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3423,7 +3423,7 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3478,7 +3478,7 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -3533,7 +3533,7 @@ fn test_infer_generic_method_property_bivariant_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let method_type = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -3604,7 +3604,7 @@ fn test_infer_generic_function_property_contravariant_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let function_type = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -3676,7 +3676,7 @@ fn test_infer_generic_method_property_bivariant_optional_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let method_type = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -3758,7 +3758,7 @@ fn test_infer_generic_tuple_element() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_t = interner.tuple(vec![
         TupleElement {
@@ -3819,7 +3819,7 @@ fn test_infer_generic_tuple_rest_elements() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let t_array = interner.array(t_type);
 
     let tuple_t = interner.tuple(vec![
@@ -3882,7 +3882,7 @@ fn test_infer_generic_tuple_rest_parameter() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_t = interner.tuple(vec![
         TupleElement {
@@ -3935,7 +3935,7 @@ fn test_infer_generic_tuple_rest_from_rest_argument() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let t_array = interner.array(t_type);
 
     let tuple_t = interner.tuple(vec![
@@ -4000,7 +4000,7 @@ fn test_infer_generic_index_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4056,7 +4056,7 @@ fn test_infer_generic_index_signature_from_object_literal() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4105,7 +4105,7 @@ fn test_infer_generic_index_signature_from_optional_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4155,7 +4155,7 @@ fn test_infer_generic_number_index_from_optional_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4205,7 +4205,7 @@ fn test_infer_generic_number_index_from_numeric_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4254,7 +4254,7 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4303,7 +4303,7 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4352,7 +4352,7 @@ fn test_infer_generic_number_index_from_nan_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4401,7 +4401,7 @@ fn test_infer_generic_number_index_from_exponent_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4450,7 +4450,7 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let indexed_t = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4505,8 +4505,8 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4593,8 +4593,8 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4682,8 +4682,8 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     let indexed_tu = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -4771,7 +4771,7 @@ fn test_infer_generic_union_source() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let boxed_t = interner.object(vec![PropertyInfo::new(
         interner.intern_string("value"),
@@ -4819,7 +4819,7 @@ fn test_infer_generic_union_target_with_placeholder_member() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let union_target = interner.union(vec![t_type, TypeId::STRING]);
 
     let func = FunctionShape {
@@ -4852,7 +4852,7 @@ fn test_infer_generic_union_target_with_placeholder_and_optional_member() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let union_target = interner.union(vec![t_type, TypeId::STRING, TypeId::UNDEFINED]);
 
     let func = FunctionShape {
@@ -4885,7 +4885,7 @@ fn test_infer_generic_optional_union_target() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let optional_t = interner.union(vec![t_type, TypeId::UNDEFINED]);
     let func = FunctionShape {
@@ -4918,7 +4918,7 @@ fn test_infer_generic_optional_union_target_with_null() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let optional_t = interner.union(vec![t_type, TypeId::UNDEFINED, TypeId::NULL]);
     let func = FunctionShape {
@@ -4951,7 +4951,7 @@ fn test_infer_generic_rest_parameters() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let array_t = interner.array(t_type);
 
     let func = FunctionShape {
@@ -4990,7 +4990,7 @@ fn test_infer_generic_rest_tuple_type_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -5041,7 +5041,7 @@ fn test_infer_generic_tuple_rest_type_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_t = interner.tuple(vec![
         TupleElement {
@@ -5108,7 +5108,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_t = interner.tuple(vec![
         TupleElement {
@@ -5191,7 +5191,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_t = interner.tuple(vec![
         TupleElement {
@@ -5262,7 +5262,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument_with_fixed_ta
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_t = interner.tuple(vec![
         TupleElement {
@@ -5345,7 +5345,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_empty_tail() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_t = interner.tuple(vec![
         TupleElement {
@@ -5400,7 +5400,7 @@ fn test_infer_generic_default_type_param() {
         default: Some(TypeId::STRING),
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -5432,7 +5432,7 @@ fn test_infer_generic_default_depends_on_prior_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
@@ -5440,7 +5440,7 @@ fn test_infer_generic_default_depends_on_prior_param() {
         default: Some(t_type),
         is_const: false,
     };
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
@@ -5472,7 +5472,7 @@ fn test_infer_generic_constraint_fallback() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -5504,7 +5504,7 @@ fn test_infer_generic_constraint_violation() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param],
@@ -5537,7 +5537,7 @@ fn test_infer_generic_constraint_depends_on_prior_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
@@ -5545,7 +5545,7 @@ fn test_infer_generic_constraint_depends_on_prior_param() {
         default: None,
         is_const: false,
     };
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     let func = FunctionShape {
         type_params: vec![t_param, u_param],
@@ -5596,7 +5596,7 @@ fn test_rest_param_spreading_homogeneous_args() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let array_t = interner.array(t_type);
 
     let func = FunctionShape {
@@ -5637,7 +5637,7 @@ fn test_rest_param_spreading_heterogeneous_args() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let array_t = interner.array(t_type);
 
     let func = FunctionShape {
@@ -5679,7 +5679,7 @@ fn test_rest_param_with_leading_fixed() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
@@ -5687,7 +5687,7 @@ fn test_rest_param_with_leading_fixed() {
         default: None,
         is_const: false,
     };
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
     let array_u = interner.array(u_type);
 
     let return_tuple = interner.tuple(vec![
@@ -5769,7 +5769,7 @@ fn test_tuple_rest_captures_remaining() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_param = interner.tuple(vec![
         TupleElement {
@@ -5839,7 +5839,7 @@ fn test_tuple_rest_with_multiple_prefix() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // [number, string, ...T]
     let tuple_param = interner.tuple(vec![
@@ -5921,7 +5921,7 @@ fn test_tuple_rest_single_capture() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let tuple_param = interner.tuple(vec![
         TupleElement {
@@ -5988,7 +5988,7 @@ fn test_variadic_with_constraint() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let array_t = interner.array(t_type);
 
     let func = FunctionShape {
@@ -6030,7 +6030,7 @@ fn test_variadic_zip_pattern() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
@@ -6038,7 +6038,7 @@ fn test_variadic_zip_pattern() {
         default: None,
         is_const: false,
     };
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     // [T, U] tuple
     let pair_tuple = interner.tuple(vec![
@@ -6152,7 +6152,7 @@ fn test_variadic_empty_args_uses_constraint() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let array_t = interner.array(t_type);
 
     let func = FunctionShape {
@@ -6236,7 +6236,7 @@ fn test_array_element_type_non_array_returns_error() {
     assert!(
         result == TypeId::STRING
             || result == TypeId::NUMBER
-            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+            || matches!(interner.lookup(result), Some(TypeData::Union(_))),
         "array_element_type should return union of tuple element types"
     );
 }
@@ -6565,7 +6565,7 @@ fn test_array_element_type_heterogeneous_tuple() {
     assert!(
         result == TypeId::STRING
             || result == TypeId::NUMBER
-            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+            || matches!(interner.lookup(result), Some(TypeData::Union(_))),
         "[string, number] element type should be string, number, or (string | number)"
     );
 }
@@ -6599,7 +6599,7 @@ fn test_array_element_type_tuple_with_rest() {
     assert!(
         result == TypeId::STRING
             || result == TypeId::NUMBER
-            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+            || matches!(interner.lookup(result), Some(TypeData::Union(_))),
         "[string, ...number[]] element type should be string, number, or (string | number)"
     );
 }
@@ -6667,7 +6667,7 @@ fn test_array_element_type_optional_tuple() {
     assert!(
         result == TypeId::STRING
             || result == TypeId::NUMBER
-            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+            || matches!(interner.lookup(result), Some(TypeData::Union(_))),
         "[string, number?] element type should be string, number, or a union containing them"
     );
 }
@@ -6706,7 +6706,7 @@ fn test_array_element_type_three_element_tuple() {
         result == TypeId::STRING
             || result == TypeId::NUMBER
             || result == TypeId::BOOLEAN
-            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+            || matches!(interner.lookup(result), Some(TypeData::Union(_))),
         "[string, number, boolean] element type should be a union of the three types"
     );
 }
@@ -6741,7 +6741,7 @@ fn test_array_element_type_literal_tuple() {
     assert!(
         result == hello
             || result == world
-            || matches!(interner.lookup(result), Some(TypeKey::Union(_))),
+            || matches!(interner.lookup(result), Some(TypeData::Union(_))),
         "[\"hello\", \"world\"] element type should be literal union"
     );
 }
@@ -7025,7 +7025,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param() {
 
     // Create T
     let t_name = interner.intern_string("T");
-    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7067,7 +7067,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param_violation() {
 
     // Create T
     let t_name = interner.intern_string("T");
-    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7298,7 +7298,7 @@ fn test_property_access_array_push_with_env_resolver() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // push(...items: T[]): number
     let push_func = interner.function(FunctionShape {
@@ -7339,7 +7339,7 @@ fn test_property_access_array_push_with_env_resolver() {
         PropertyAccessResult::Success { type_id, .. } => {
             // The push method should be a function returning number
             match interner.lookup(type_id) {
-                Some(TypeKey::Function(func_id)) => {
+                Some(TypeData::Function(func_id)) => {
                     let func = interner.function_shape(func_id);
                     assert_eq!(
                         func.return_type,
@@ -7373,7 +7373,7 @@ fn test_property_access_array_push_with_query_cache_resolver() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let push_func = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -7404,7 +7404,7 @@ fn test_property_access_array_push_with_query_cache_resolver() {
     let result = evaluator.resolve_property_access(string_array, "push");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::NUMBER);
             }
@@ -7430,7 +7430,7 @@ fn test_property_access_array_push_with_intersection_array_base() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let push_func = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -7467,7 +7467,7 @@ fn test_property_access_array_push_with_intersection_array_base() {
     let result = evaluator.resolve_property_access(string_array, "push");
     match result {
         PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
-            Some(TypeKey::Function(func_id)) => {
+            Some(TypeData::Function(func_id)) => {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::NUMBER);
             }
@@ -7497,7 +7497,7 @@ fn test_array_mapped_type_method_resolution() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
     // Create the mapped type: { [P in keyof T]: T[P] }
     let p_param = TypeParamInfo {
@@ -7506,11 +7506,11 @@ fn test_array_mapped_type_method_resolution() {
         default: None,
         is_const: false,
     };
-    let p_type = interner.intern(TypeKey::TypeParameter(p_param.clone()));
-    let index_access = interner.intern(TypeKey::IndexAccess(t_type, p_type));
+    let p_type = interner.intern(TypeData::TypeParameter(p_param.clone()));
+    let index_access = interner.intern(TypeData::IndexAccess(t_type, p_type));
 
     // Create keyof T as the constraint
-    let keyof_t = interner.intern(TypeKey::KeyOf(t_type));
+    let keyof_t = interner.intern(TypeData::KeyOf(t_type));
 
     // Create the mapped type
     let mapped = MappedType {
@@ -7533,7 +7533,7 @@ fn test_array_mapped_type_method_resolution() {
         default: None,
         is_const: false,
     };
-    let array_t = interner.intern(TypeKey::TypeParameter(array_t_param.clone()));
+    let array_t = interner.intern(TypeData::TypeParameter(array_t_param.clone()));
     let pop_return_type = interner.union2(array_t, TypeId::UNDEFINED);
     let pop_fn = interner.function(FunctionShape {
         type_params: vec![],
@@ -7564,7 +7564,7 @@ fn test_array_mapped_type_method_resolution() {
             // Check that we got a function type back
             let key = interner.lookup(type_id);
             assert!(
-                matches!(key, Some(TypeKey::Function(_))),
+                matches!(key, Some(TypeData::Function(_))),
                 "pop should resolve to a function, got {:?}",
                 key
             );
@@ -7608,9 +7608,9 @@ fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders(
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let s_type = interner.intern(TypeKey::TypeParameter(s_param.clone()));
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let s_type = interner.intern(TypeData::TypeParameter(s_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     let f_type = interner.function(FunctionShape {
         type_params: vec![],
@@ -7664,7 +7664,7 @@ fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders(
         default: None,
         is_const: false,
     };
-    let id_t = interner.intern(TypeKey::TypeParameter(id_t_param.clone()));
+    let id_t = interner.intern(TypeData::TypeParameter(id_t_param.clone()));
     let id = interner.function(FunctionShape {
         type_params: vec![id_t_param],
         params: vec![ParamInfo::unnamed(id_t)],

@@ -25,7 +25,7 @@ fn debug_union_normalization() {
     assert_ne!(string_or_number, TypeId::NUMBER);
 
     // Verify it's a union type
-    if let Some(TypeKey::Union(_)) = interner.lookup(string_or_number) {
+    if let Some(TypeData::Union(_)) = interner.lookup(string_or_number) {
         // OK
     } else {
         panic!("Expected union type");

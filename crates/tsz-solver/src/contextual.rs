@@ -166,7 +166,7 @@ impl<'a> ThisTypeMarkerExtractor<'a> {
         // We must check if the base type is specifically "ThisType"
 
         // Check TypeParameter case first (easier - has name directly)
-        if let Some(TypeKey::TypeParameter(tp)) = self.db.lookup(app.base) {
+        if let Some(TypeData::TypeParameter(tp)) = self.db.lookup(app.base) {
             let name = self.db.resolve_atom_ref(tp.name);
             return name.as_ref() == "ThisType";
         }
@@ -175,7 +175,7 @@ impl<'a> ThisTypeMarkerExtractor<'a> {
         // This is harder without access to the symbol table. For now, we fail safe
         // and return false rather than breaking all type aliases.
         // TODO: When we have access to symbol resolution, check if def_id points to lib.d.ts ThisType
-        if let Some(TypeKey::Lazy(_def_id)) = self.db.lookup(app.base) {
+        if let Some(TypeData::Lazy(_def_id)) = self.db.lookup(app.base) {
             // Cannot safely identify ThisType without symbol table access
             // Return false to avoid breaking other type aliases
             return false;
@@ -498,10 +498,10 @@ fn extract_param_type_at(
     if let Some(last_param) = rest_param {
         // Adjust index relative to rest parameter start
         let rest_index = index - rest_start;
-        if let Some(TypeKey::Array(elem)) = db.lookup(last_param.type_id) {
+        if let Some(TypeData::Array(elem)) = db.lookup(last_param.type_id) {
             return Some(elem);
         }
-        if let Some(TypeKey::Tuple(elements)) = db.lookup(last_param.type_id) {
+        if let Some(TypeData::Tuple(elements)) = db.lookup(last_param.type_id) {
             let elements = db.tuple_list(elements);
             if rest_index < elements.len() {
                 return Some(elements[rest_index].type_id);
@@ -784,7 +784,7 @@ impl<'a> ContextualTypeContext<'a> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect parameter types from all members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let param_types: Vec<TypeId> = members
                 .iter()
@@ -802,7 +802,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Handle Application explicitly - unwrap to base type
-        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected_and_options(
                 self.interner,
@@ -813,7 +813,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Handle Intersection explicitly - pick the first callable member's parameter type
-        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             for &m in members.iter() {
                 let ctx = ContextualTypeContext::with_expected_and_options(
@@ -830,7 +830,7 @@ impl<'a> ContextualTypeContext<'a> {
 
         // Handle Mapped and Conditional types by evaluating them first
         match self.interner.lookup(expected) {
-            Some(TypeKey::Mapped(_) | TypeKey::Conditional(_)) => {
+            Some(TypeData::Mapped(_) | TypeData::Conditional(_)) => {
                 let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected_and_options(
@@ -854,7 +854,7 @@ impl<'a> ContextualTypeContext<'a> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect parameter types from all members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let param_types: Vec<TypeId> = members
                 .iter()
@@ -868,14 +868,14 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Handle Application explicitly - unwrap to base type
-        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
             return ctx.get_parameter_type_for_call(index, arg_count);
         }
 
         // Handle Intersection explicitly - pick the first callable member's parameter type
-        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             for &m in members.iter() {
                 let ctx = ContextualTypeContext::with_expected(self.interner, m);
@@ -896,7 +896,7 @@ impl<'a> ContextualTypeContext<'a> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect this types from all members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let this_types: Vec<TypeId> = members
                 .iter()
@@ -910,7 +910,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Handle Application explicitly - unwrap to base type
-        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
             return ctx.get_this_type();
@@ -948,7 +948,7 @@ impl<'a> ContextualTypeContext<'a> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect return types from all members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let return_types: Vec<TypeId> = members
                 .iter()
@@ -962,7 +962,7 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Handle Application explicitly - unwrap to base type
-        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
             return ctx.get_return_type();
@@ -1002,7 +1002,7 @@ impl<'a> ContextualTypeContext<'a> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect property types from all members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let prop_types: Vec<TypeId> = members
                 .iter()
@@ -1029,7 +1029,7 @@ impl<'a> ContextualTypeContext<'a> {
         // These complex types need to be resolved to concrete object types before
         // property extraction can work.
         match self.interner.lookup(expected) {
-            Some(TypeKey::Mapped(mapped_id)) => {
+            Some(TypeData::Mapped(mapped_id)) => {
                 // First try evaluating the mapped type directly
                 let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
@@ -1040,7 +1040,7 @@ impl<'a> ContextualTypeContext<'a> {
                 // parameter), fall back to the constraint of the mapped type's source.
                 // For `keyof P` where `P extends Props`, use `Props` as the contextual type.
                 let mapped = self.interner.mapped_type(mapped_id);
-                if let Some(TypeKey::KeyOf(operand)) = self.interner.lookup(mapped.constraint) {
+                if let Some(TypeData::KeyOf(operand)) = self.interner.lookup(mapped.constraint) {
                     // The operand may be a Lazy type wrapping a type parameter — resolve it
                     let resolved_operand = crate::evaluate::evaluate_type(self.interner, operand);
                     if let Some(constraint) = crate::type_queries::get_type_parameter_constraint(
@@ -1059,7 +1059,7 @@ impl<'a> ContextualTypeContext<'a> {
                     }
                 }
             }
-            Some(TypeKey::Conditional(_) | TypeKey::Application(_)) => {
+            Some(TypeData::Conditional(_) | TypeData::Application(_)) => {
                 let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
@@ -1130,7 +1130,7 @@ impl<'a> ContextualTypeContext<'a> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect yield types from all members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let yield_types: Vec<TypeId> = members
                 .iter()
@@ -1155,7 +1155,7 @@ impl<'a> ContextualTypeContext<'a> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect return types from all members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let return_types: Vec<TypeId> = members
                 .iter()
@@ -1181,7 +1181,7 @@ impl<'a> ContextualTypeContext<'a> {
         let expected = self.expected?;
 
         // Handle Union explicitly - collect next types from all members
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(expected) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
             let next_types: Vec<TypeId> = members
                 .iter()
@@ -1239,9 +1239,9 @@ pub fn apply_contextual_type(
     // When contextual type is a union like string | number, we should preserve literal types
     if let Some(expr_key) = interner.lookup(expr_type) {
         // Literal types should be preserved when context is a union
-        if matches!(expr_key, TypeKey::Literal(_)) {
+        if matches!(expr_key, TypeData::Literal(_)) {
             if let Some(ctx_key) = interner.lookup(ctx_type) {
-                if matches!(ctx_key, TypeKey::Union(_)) {
+                if matches!(ctx_key, TypeData::Union(_)) {
                     // Preserve the literal type - it's more specific than the union
                     return expr_type;
                 }
@@ -1253,7 +1253,7 @@ pub fn apply_contextual_type(
     let mut checker = crate::subtype::SubtypeChecker::new(interner);
 
     // Check if contextual type is a union
-    if let Some(TypeKey::Union(members)) = interner.lookup(ctx_type) {
+    if let Some(TypeData::Union(members)) = interner.lookup(ctx_type) {
         let members = interner.type_list(members);
         // If expr_type is in the union, it's valid - use the more specific expr_type
         for &member in members.iter() {
@@ -1283,7 +1283,7 @@ pub fn apply_contextual_type(
     // type and suppress valid TS2322 errors under strict function types.
     let is_function_type = matches!(
         interner.lookup(expr_type),
-        Some(TypeKey::Function(_) | TypeKey::Object(_))
+        Some(TypeData::Function(_) | TypeData::Object(_))
     );
     if !is_function_type {
         checker.reset();
@@ -1382,7 +1382,7 @@ impl<'a> GeneratorContextualType<'a> {
         }
 
         // Check for union type (IteratorResult = {value: Y, done: false} | {value: R, done: true})
-        if let Some(TypeKey::Union(_)) = self.interner.lookup(return_type) {
+        if let Some(TypeData::Union(_)) = self.interner.lookup(return_type) {
             return self.extract_value_from_iterator_result(return_type);
         }
 
@@ -1393,7 +1393,7 @@ impl<'a> GeneratorContextualType<'a> {
     /// Extract the 'value' property from an IteratorResult<Y, R> type.
     fn extract_value_from_iterator_result(&self, result_type: TypeId) -> Option<TypeId> {
         // Handle Union explicitly
-        if let Some(TypeKey::Union(list_id)) = self.interner.lookup(result_type) {
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(result_type) {
             let members = self.interner.type_list(list_id);
             // Get first member (yield result) and extract value
             if let Some(&first) = members.first() {
@@ -1458,15 +1458,16 @@ pub fn is_async_generator_type(interner: &dyn TypeDatabase, type_id: TypeId) -> 
         return false;
     };
 
-    if let TypeKey::Object(shape_id) = key {
+    if let TypeData::Object(shape_id) = key {
         let shape = interner.object_shape(shape_id);
         for prop in &shape.properties {
             let prop_name = interner.resolve_atom_ref(prop.name);
             if prop_name.as_ref() == "next" && prop.is_method {
                 // Check if return type is a Promise (has 'then' property)
-                if let Some(TypeKey::Function(func_id)) = interner.lookup(prop.type_id) {
+                if let Some(TypeData::Function(func_id)) = interner.lookup(prop.type_id) {
                     let func = interner.function_shape(func_id);
-                    if let Some(TypeKey::Object(ret_shape_id)) = interner.lookup(func.return_type) {
+                    if let Some(TypeData::Object(ret_shape_id)) = interner.lookup(func.return_type)
+                    {
                         let ret_shape = interner.object_shape(ret_shape_id);
                         for ret_prop in &ret_shape.properties {
                             let ret_prop_name = interner.resolve_atom_ref(ret_prop.name);
@@ -1490,16 +1491,17 @@ pub fn is_sync_generator_type(interner: &dyn TypeDatabase, type_id: TypeId) -> b
         return false;
     };
 
-    if let TypeKey::Object(shape_id) = key {
+    if let TypeData::Object(shape_id) = key {
         let shape = interner.object_shape(shape_id);
         for prop in &shape.properties {
             let prop_name = interner.resolve_atom_ref(prop.name);
             if prop_name.as_ref() == "next" && prop.is_method {
                 // Check if return type is NOT a Promise (no 'then' property)
-                if let Some(TypeKey::Function(func_id)) = interner.lookup(prop.type_id) {
+                if let Some(TypeData::Function(func_id)) = interner.lookup(prop.type_id) {
                     let func = interner.function_shape(func_id);
                     // If return type is a union or object without 'then', it's a sync generator
-                    if let Some(TypeKey::Object(ret_shape_id)) = interner.lookup(func.return_type) {
+                    if let Some(TypeData::Object(ret_shape_id)) = interner.lookup(func.return_type)
+                    {
                         let ret_shape = interner.object_shape(ret_shape_id);
                         let has_then = ret_shape
                             .properties
@@ -1509,7 +1511,7 @@ pub fn is_sync_generator_type(interner: &dyn TypeDatabase, type_id: TypeId) -> b
                             return true;
                         }
                     }
-                    if let Some(TypeKey::Union(_)) = interner.lookup(func.return_type) {
+                    if let Some(TypeData::Union(_)) = interner.lookup(func.return_type) {
                         return true;
                     }
                 }

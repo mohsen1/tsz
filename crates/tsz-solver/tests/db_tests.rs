@@ -1,6 +1,6 @@
 use crate::{
-    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, TupleElement, TypeDatabase,
-    TypeId, TypeInterner, TypeKey, Visibility,
+    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, TupleElement, TypeData,
+    TypeDatabase, TypeId, TypeInterner, Visibility,
 };
 
 impl<'a> QueryCache<'a> {
@@ -56,7 +56,7 @@ fn type_database_interns_and_looks_up() {
     let key = db.lookup(hello).expect("type should be interned");
 
     match key {
-        TypeKey::Literal(LiteralValue::String(atom)) => {
+        TypeData::Literal(LiteralValue::String(atom)) => {
             assert_eq!(db.resolve_atom(atom), "hello");
             assert_eq!(db.resolve_atom_ref(atom).as_ref(), "hello");
         }

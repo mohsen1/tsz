@@ -152,7 +152,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return 0; // Abort - too deep
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner().lookup(type_id) {
+        if let Some(TypeData::Union(members)) = self.interner().lookup(type_id) {
             let members = self.interner().type_list(members);
             let mut count = 0;
             for &member in members.iter() {
@@ -163,7 +163,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 count += member_count;
             }
             count
-        } else if let Some(TypeKey::Literal(_)) = self.interner().lookup(type_id) {
+        } else if let Some(TypeData::Literal(_)) = self.interner().lookup(type_id) {
             1
         } else if type_id == TypeId::STRING
             || type_id == TypeId::NUMBER
@@ -191,7 +191,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return Vec::new(); // Abort - too deep
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner().lookup(type_id) {
+        if let Some(TypeData::Union(members)) = self.interner().lookup(type_id) {
             let members = self.interner().type_list(members);
             let mut result = Vec::new();
             for &member in members.iter() {
@@ -203,7 +203,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 result.extend(strings);
             }
             result
-        } else if let Some(TypeKey::Literal(lit)) = self.interner().lookup(type_id) {
+        } else if let Some(TypeData::Literal(lit)) = self.interner().lookup(type_id) {
             match lit {
                 LiteralValue::String(atom) => {
                     vec![self.interner().resolve_atom_ref(atom).to_string()]

@@ -3,7 +3,7 @@
 use crate::db::QueryDatabase;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
-use crate::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeId, TypeKey};
+use crate::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeData, TypeId};
 use crate::visitor::{TypeVisitor, intrinsic_kind, is_empty_object_type_db, lazy_def_id};
 use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
@@ -234,12 +234,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Keep normalization bounded to avoid infinite resolver/evaluator cycles.
         for _ in 0..8 {
             let next = match self.interner.lookup(type_id) {
-                Some(TypeKey::Lazy(def_id)) => self
+                Some(TypeData::Lazy(def_id)) => self
                     .subtype
                     .resolver
                     .resolve_lazy(def_id, self.interner)
                     .unwrap_or(type_id),
-                Some(TypeKey::Mapped(_)) | Some(TypeKey::Application(_)) => {
+                Some(TypeData::Mapped(_)) | Some(TypeData::Application(_)) => {
                     self.subtype.evaluate_type(type_id)
                 }
                 _ => type_id,
@@ -266,7 +266,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     fn is_function_target_member(&self, member: TypeId) -> bool {
         let is_function_object_shape = match self.interner.lookup(member) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 let apply = self.interner.intern_string("apply");
                 let call = self.interner.intern_string("call");
@@ -567,7 +567,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Get target shape - resolve Lazy, Mapped, and Application types
         let target_key = self.interner.lookup(target);
         let resolved_target = match target_key {
-            Some(TypeKey::Lazy(def_id)) => {
+            Some(TypeData::Lazy(def_id)) => {
                 // Try to resolve the Lazy type
                 if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
                     resolved
@@ -575,7 +575,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     return None;
                 }
             }
-            Some(TypeKey::Mapped(_)) | Some(TypeKey::Application(_)) => {
+            Some(TypeData::Mapped(_)) | Some(TypeData::Application(_)) => {
                 // Evaluate mapped and application types
                 self.subtype.evaluate_type(target)
             }
@@ -627,7 +627,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Handle Mapped and Application types by evaluating them to concrete types
         // We resolve before matching so the existing logic handles the result.
         let type_id = match self.interner.lookup(type_id) {
-            Some(TypeKey::Mapped(_)) | Some(TypeKey::Application(_)) => {
+            Some(TypeData::Mapped(_)) | Some(TypeData::Application(_)) => {
                 self.subtype.evaluate_type(type_id)
             }
             _ => type_id,
@@ -636,7 +636,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let mut properties = rustc_hash::FxHashSet::default();
 
         match self.interner.lookup(type_id) {
-            Some(TypeKey::Intersection(members_id)) => {
+            Some(TypeData::Intersection(members_id)) => {
                 let members = self.interner.type_list(members_id);
                 // Property exists if it's in ANY member of intersection
                 for &member in members.iter() {
@@ -644,7 +644,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     properties.extend(member_props);
                 }
             }
-            Some(TypeKey::Union(members_id)) => {
+            Some(TypeData::Union(members_id)) => {
                 let members = self.interner.type_list(members_id);
                 if members.is_empty() {
                     return properties;
@@ -659,7 +659,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
                 properties = all_props;
             }
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop_info in &shape.properties {
                     properties.insert(prop_info.name);
@@ -718,7 +718,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Check fast-path assignability conditions.
     /// Returns Some(result) if fast path applies, None if need to do full check.
     fn check_assignable_fast_path(&self, source: TypeId, target: TypeId) -> Option<bool> {
-        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target)
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
             && let Some(resolved_target) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
             && resolved_target != target
         {
@@ -769,7 +769,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Compatibility: unions containing `Function` should accept callable sources.
         // Example: `setTimeout(() => {}, 0)` where first arg is `string | Function`.
-        if let Some(TypeKey::Union(members_id)) = self.interner.lookup(target) {
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members_id);
             if members
                 .iter()
@@ -784,7 +784,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     pub fn is_assignable_strict(&mut self, source: TypeId, target: TypeId) -> bool {
-        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target)
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
             && let Some(resolved_target) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
             && resolved_target != target
         {
@@ -816,7 +816,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if source == TypeId::UNKNOWN {
             return false;
         }
-        if let Some(TypeKey::Union(members_id)) = self.interner.lookup(target) {
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members_id);
             if members
                 .iter()
@@ -942,7 +942,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             .object_shape(crate::types::ObjectShapeId(target_shape_id));
 
         // ObjectWithIndex with index signatures is not a weak type
-        if let Some(TypeKey::ObjectWithIndex(_)) = self.interner.lookup(target) {
+        if let Some(TypeData::ObjectWithIndex(_)) = self.interner.lookup(target) {
             if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
                 return false;
             }
@@ -960,7 +960,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Don't resolve the target - check it directly for union type
         // (resolve_weak_type_ref was converting unions to objects, which is wrong)
         let target_key = match self.interner.lookup(target) {
-            Some(TypeKey::Union(members)) => members,
+            Some(TypeData::Union(members)) => members,
             _ => {
                 return false;
             }
@@ -1018,7 +1018,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         target_props: &[PropertyInfo],
     ) -> bool {
         // Handle Union types explicitly before visitor
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(source) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             return members
                 .iter()
@@ -1049,7 +1049,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let source = self.resolve_weak_type_ref(source);
 
         // Handle Union explicitly
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(source) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             return members
                 .iter()
@@ -1057,7 +1057,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Handle TypeParameter explicitly
-        if let Some(TypeKey::TypeParameter(param)) = self.interner.lookup(source) {
+        if let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source) {
             return match param.constraint {
                 Some(constraint) => {
                     self.source_lacks_union_common_property(constraint, target_members)
@@ -1166,19 +1166,19 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         };
 
         match key {
-            TypeKey::Union(members) => {
+            TypeData::Union(members) => {
                 let members = self.interner.type_list(members);
                 members
                     .iter()
                     .all(|member| self.is_assignable_to_empty_object(*member))
             }
-            TypeKey::Intersection(members) => {
+            TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 members
                     .iter()
                     .any(|member| self.is_assignable_to_empty_object(*member))
             }
-            TypeKey::TypeParameter(param) => match param.constraint {
+            TypeData::TypeParameter(param) => match param.constraint {
                 Some(constraint) => self.is_assignable_to_empty_object(constraint),
                 None => false,
             },
@@ -1264,7 +1264,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // 1. Handle Target Union (OR logic)
         // S -> (A | B) : Valid if S -> A OR S -> B
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(target) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members);
             // If source matches ANY target member, it's valid
             for &member in members.iter() {
@@ -1278,7 +1278,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // 2. Handle Source Union (AND logic)
         // (A | B) -> T : Valid if A -> T AND B -> T
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(source) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
                 if let Some(false) = self.private_brand_assignability_override(member, target) {
@@ -1290,7 +1290,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // 3. Handle Target Intersection (AND logic)
         // S -> (A & B) : Valid if S -> A AND S -> B
-        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(target) {
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
                 if let Some(false) = self.private_brand_assignability_override(source, member) {
@@ -1302,7 +1302,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // 4. Handle Source Intersection (OR logic)
         // (A & B) -> T : Valid if A -> T OR B -> T
-        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(source) {
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
                 match self.private_brand_assignability_override(member, target) {
@@ -1314,7 +1314,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // 5. Handle Lazy types (recursive resolution)
-        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(source) {
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(source) {
             if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
                 // Guard against non-progressing lazy resolution (e.g. DefId -> same Lazy type),
                 // which would otherwise recurse forever.
@@ -1325,7 +1325,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target) {
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target) {
             if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
                 // Same non-progress guard for target-side lazy resolution.
                 if resolved == target {
@@ -1521,7 +1521,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     let is_source_number = source == TypeId::NUMBER
                         || matches!(
                             self.interner.lookup(source),
-                            Some(TypeKey::Literal(LiteralValue::Number(_)))
+                            Some(TypeData::Literal(LiteralValue::Number(_)))
                         );
 
                     if is_source_number {
@@ -1585,10 +1585,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     fn is_literal_enum_member(&self, type_id: TypeId) -> bool {
         matches!(
             self.interner.lookup(type_id),
-            Some(TypeKey::Enum(_, member_type))
+            Some(TypeData::Enum(_, member_type))
                 if matches!(
                     self.interner.lookup(member_type),
-                    Some(TypeKey::Literal(LiteralValue::Number(_) | LiteralValue::String(_)))
+                    Some(TypeData::Literal(LiteralValue::Number(_) | LiteralValue::String(_)))
                 )
         )
     }
@@ -1623,7 +1623,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // 1. Check for Intrinsic Primitives first (using visitor, not TypeId constants)
         // This filters out intrinsic types like string, number, boolean which are stored
-        // as TypeKey::Enum for definition store purposes but are NOT user enums
+        // as TypeData::Enum for definition store purposes but are NOT user enums
         if visitor::intrinsic_kind(self.interner, resolved).is_some() {
             return None;
         }

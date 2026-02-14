@@ -1,8 +1,6 @@
 //! Type checker module for TypeScript AST.
 //!
 //! This module is organized into several submodules:
-//! - `types` - Legacy checker type definitions (Type enum, flags) used only for transition.
-//! - `arena` - Legacy checker TypeArena for migration-only paths
 //! - `context` - CheckerContext for shared state
 //! - `expr` - Expression type checking
 //! - `statements` - Statement type checking
@@ -15,13 +13,10 @@
 //! - `error_reporter` - Error reporting utilities
 //!
 //! Note: The thin checker is the unified checker pipeline; `CheckerState`
-//! is an alias to the thin checker. The legacy checker `types` surface is
-//! migration-only and should not be used as the canonical typing model.
+//! is an alias to the thin checker.
 
 pub mod accessibility;
 pub mod accessor_checker;
-#[cfg(feature = "legacy-type-arena")]
-pub mod arena;
 pub mod array_type;
 pub mod assignability_checker;
 pub mod assignment_checker;
@@ -94,8 +89,6 @@ pub mod type_literal_checker;
 pub mod type_node;
 pub mod type_parameter;
 pub mod type_query;
-#[cfg(feature = "legacy-type-arena")]
-mod types;
 pub mod union_type;
 pub mod diagnostics {
     pub use tsz_common::diagnostics::{
@@ -174,8 +167,6 @@ mod private_brands;
 mod strict_null_manual;
 
 // Re-export key types
-#[cfg(feature = "legacy-type-arena")]
-pub use arena::TypeArena;
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};
 pub use control_flow::{FlowAnalyzer, FlowGraph as ControlFlowGraph};
 pub use declarations::DeclarationChecker;
@@ -191,10 +182,3 @@ pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;
 pub use type_node::TypeNodeChecker;
-#[cfg(feature = "legacy-type-arena")]
-pub use types::{
-    ArrayTypeInfo, ConditionalType, EnumTypeInfo, FunctionType, IndexInfo, IndexType,
-    IndexedAccessType, IntersectionType, IntrinsicType, LiteralType, LiteralValue, MappedType,
-    ObjectType, Signature, TemplateLiteralType, TupleTypeInfo, Type, TypeId, TypeParameter,
-    TypeReference, UnionType, object_flags, signature_flags, type_flags,
-};

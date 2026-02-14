@@ -12,7 +12,7 @@ fn test_intersection_with_empty_object_assignable_to_type_param() {
 
     // Create type parameter T
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -40,7 +40,7 @@ fn test_intersection_with_type_param_and_constraint() {
 
     // Create type parameter T extends string
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: Some(TypeId::STRING),
         default: None,

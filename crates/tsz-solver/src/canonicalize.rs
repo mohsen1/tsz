@@ -36,7 +36,7 @@ use crate::TypeDatabase;
 use crate::def::DefId;
 use crate::def::DefKind;
 use crate::subtype::TypeResolver;
-use crate::types::{IndexSignature, ObjectShapeId, TemplateSpan, TupleElement, TypeId, TypeKey};
+use crate::types::{IndexSignature, ObjectShapeId, TemplateSpan, TupleElement, TypeData, TypeId};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
@@ -81,7 +81,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             return cached;
         }
 
-        // 2. Look up TypeKey
+        // 2. Look up TypeData
         let key = match self.interner.lookup(type_id) {
             Some(k) => k,
             None => return type_id, // Error/None - preserve as-is
@@ -89,7 +89,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
         let result = match key {
             // Handle Type Alias Expansion (structural only)
-            TypeKey::Lazy(def_id) => {
+            TypeData::Lazy(def_id) => {
                 match self.resolver.get_def_kind(def_id) {
                     Some(DefKind::TypeAlias) => {
                         // Structural type: canonicalize recursively
@@ -105,7 +105,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             }
 
             // Handle Type Parameters -> De Bruijn indices
-            TypeKey::TypeParameter(info) => {
+            TypeData::TypeParameter(info) => {
                 if let Some(index) = self.find_param_index(info.name) {
                     self.interner.bound_parameter(index)
                 } else {
@@ -115,18 +115,18 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             }
 
             // Handle Recursive references (pass through - already canonical)
-            TypeKey::Recursive(_) => type_id,
+            TypeData::Recursive(_) => type_id,
 
             // Handle BoundParameter references (pass through - already canonical)
-            TypeKey::BoundParameter(_) => type_id,
+            TypeData::BoundParameter(_) => type_id,
 
             // Recurse into composite types
-            TypeKey::Array(elem) => {
+            TypeData::Array(elem) => {
                 let c_elem = self.canonicalize(elem);
                 self.interner.array(c_elem)
             }
 
-            TypeKey::Tuple(list_id) => {
+            TypeData::Tuple(list_id) => {
                 let elements = self.interner.tuple_list(list_id);
                 let c_elements: Vec<TupleElement> = elements
                     .iter()
@@ -140,7 +140,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 self.interner.tuple(c_elements)
             }
 
-            TypeKey::Union(members_id) => {
+            TypeData::Union(members_id) => {
                 let members = self.interner.type_list(members_id);
                 let c_members: Vec<TypeId> =
                     members.iter().map(|&m| self.canonicalize(m)).collect();
@@ -152,7 +152,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 self.interner.union(sorted)
             }
 
-            TypeKey::Intersection(members_id) => {
+            TypeData::Intersection(members_id) => {
                 let members = self.interner.type_list(members_id);
                 // 1. Canonicalize all members
                 let c_members: Vec<TypeId> =
@@ -180,7 +180,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             }
 
             // Generic type application (e.g., Box<string>)
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 // Canonicalize base type
                 let c_base = self.canonicalize(app.base);
@@ -190,7 +190,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 self.interner.application(c_base, c_args)
             }
 
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
 
                 // Enter new scope if this function has type parameters (alpha-equivalence)
@@ -260,13 +260,13 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 self.interner.function(new_shape)
             }
 
-            TypeKey::Callable(shape_id) => self.canonicalize_callable(shape_id),
+            TypeData::Callable(shape_id) => self.canonicalize_callable(shape_id),
 
             // Task #39: Mapped type canonicalization for alpha-equivalence
             // When comparing mapped types over type parameters (deferred), we need
             // to canonicalize the constraint, template, and name_type to achieve
             // structural identity. The type_param name is handled via param_stack.
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(mapped_id);
 
                 // 1. Canonicalize the constraint FIRST (Outside scope)
@@ -309,16 +309,16 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             }
 
             // Primitives and literals are already canonical
-            TypeKey::Intrinsic(_) | TypeKey::Literal(_) | TypeKey::Error => type_id,
+            TypeData::Intrinsic(_) | TypeData::Literal(_) | TypeData::Error => type_id,
 
             // Object types: canonicalize property types while preserving metadata
-            TypeKey::Object(shape_id) => self.canonicalize_object(shape_id, false),
+            TypeData::Object(shape_id) => self.canonicalize_object(shape_id, false),
 
-            TypeKey::ObjectWithIndex(shape_id) => self.canonicalize_object(shape_id, true),
+            TypeData::ObjectWithIndex(shape_id) => self.canonicalize_object(shape_id, true),
 
             // Task #47: Template Literal canonicalization for alpha-equivalence
             // Uppercase<T> and Uppercase<U> should be identical when T and U are identical
-            TypeKey::TemplateLiteral(id) => {
+            TypeData::TemplateLiteral(id) => {
                 let spans = self.interner.template_list(id);
                 let c_spans: Vec<TemplateSpan> = spans
                     .iter()
@@ -332,7 +332,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
             // Task #47: String Intrinsic canonicalization for alpha-equivalence
             // Uppercase<T>, Lowercase<T>, etc. should canonicalize nested type parameters
-            TypeKey::StringIntrinsic { kind, type_arg } => {
+            TypeData::StringIntrinsic { kind, type_arg } => {
                 let c_arg = self.canonicalize(type_arg);
                 self.interner.string_intrinsic(kind, c_arg)
             }
@@ -482,7 +482,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
     /// Check if a type is a callable (Function or Callable).
     fn is_callable_type(&self, type_id: TypeId) -> bool {
         match self.interner.lookup(type_id) {
-            Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_)) => true,
+            Some(TypeData::Function(_)) | Some(TypeData::Callable(_)) => true,
             _ => false,
         }
     }

@@ -81,7 +81,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return (false, false);
         };
 
-        // NORTH STAR: Use collect_properties instead of manual TypeKey matching.
+        // NORTH STAR: Use collect_properties instead of manual TypeData matching.
         // This handles Lazy (Interfaces), Ref, and Intersections automatically.
         match collect_properties(source_obj, self.interner(), self.resolver()) {
             PropertyCollectionResult::Properties { properties, .. } => {
@@ -239,17 +239,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 match self.interner().lookup(resolved) {
                     // Array type: map the element type
-                    Some(TypeKey::Array(element_type)) => {
+                    Some(TypeData::Array(element_type)) => {
                         return self.evaluate_mapped_array(mapped, element_type);
                     }
 
                     // Tuple type: map each element
-                    Some(TypeKey::Tuple(tuple_id)) => {
+                    Some(TypeData::Tuple(tuple_id)) => {
                         return self.evaluate_mapped_tuple(mapped, tuple_id);
                     }
 
                     // ReadonlyArray: map the element type and preserve readonly
-                    Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                    Some(TypeData::ObjectWithIndex(shape_id)) => {
                         // Check if this is a ReadonlyArray (has readonly numeric index)
                         // Note: We DON'T check properties.is_empty() because ReadonlyArray<T>
                         // has methods like length, map, filter, etc. We only care about the index signature.
@@ -299,7 +299,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let remapped_names: Vec<Atom> =
                 if let Some(name) = crate::visitor::literal_string(self.interner(), remapped) {
                     vec![name]
-                } else if let Some(TypeKey::Union(list_id)) = self.interner().lookup(remapped) {
+                } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
                     let members = self.interner().type_list(list_id);
                     let names: Vec<Atom> = members
                         .iter()
@@ -434,37 +434,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// instantiation would fail (T[key] can't be resolved for a type parameter).
     fn is_mapped_type_over_type_parameter(&self, mapped: &MappedType) -> bool {
         // Check if the constraint is `keyof T`
-        let Some(TypeKey::KeyOf(source)) = self.interner().lookup(mapped.constraint) else {
+        let Some(TypeData::KeyOf(source)) = self.interner().lookup(mapped.constraint) else {
             return false;
         };
 
         // Check if the source is a type parameter
         matches!(
             self.interner().lookup(source),
-            Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
         )
     }
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
     fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
-        if let Some(TypeKey::Conditional(cond_id)) = self.interner().lookup(constraint) {
+        if let Some(TypeData::Conditional(cond_id)) = self.interner().lookup(constraint) {
             let cond = self.interner().conditional_type(cond_id);
             return self.evaluate_conditional(cond.as_ref());
         }
 
         // If constraint is already a union of literals, return it
-        if let Some(TypeKey::Union(_)) = self.interner().lookup(constraint) {
+        if let Some(TypeData::Union(_)) = self.interner().lookup(constraint) {
             return constraint;
         }
 
         // If constraint is a literal, return it
-        if let Some(TypeKey::Literal(LiteralValue::String(_))) = self.interner().lookup(constraint)
+        if let Some(TypeData::Literal(LiteralValue::String(_))) = self.interner().lookup(constraint)
         {
             return constraint;
         }
 
         // If constraint is KeyOf, evaluate it
-        if let Some(TypeKey::KeyOf(operand)) = self.interner().lookup(constraint) {
+        if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint) {
             return self.evaluate_keyof(operand);
         }
 
@@ -485,7 +485,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match key {
             // NEW: Handle KeyOf types directly if evaluate_keyof deferred
             // This fixes Bug #1: Key Remapping with conditionals
-            TypeKey::KeyOf(operand) => {
+            TypeData::KeyOf(operand) => {
                 tracing::trace!(
                     operand = operand.0,
                     operand_lookup = ?self.interner().lookup(operand),
@@ -530,11 +530,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
             }
-            TypeKey::Literal(LiteralValue::String(s)) => {
+            TypeData::Literal(LiteralValue::String(s)) => {
                 keys.string_literals.push(s);
                 Some(keys)
             }
-            TypeKey::Union(members) => {
+            TypeData::Union(members) => {
                 let members = self.interner().type_list(members);
                 for &member in members.iter() {
                     if member == TypeId::STRING {
@@ -563,15 +563,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 Some(keys)
             }
-            TypeKey::Intrinsic(IntrinsicKind::String) => {
+            TypeData::Intrinsic(IntrinsicKind::String) => {
                 keys.has_string = true;
                 Some(keys)
             }
-            TypeKey::Intrinsic(IntrinsicKind::Number) => {
+            TypeData::Intrinsic(IntrinsicKind::Number) => {
                 keys.has_number = true;
                 Some(keys)
             }
-            TypeKey::Intrinsic(IntrinsicKind::Never) => {
+            TypeData::Intrinsic(IntrinsicKind::Never) => {
                 // Mapped over `never` yields an empty object.
                 Some(keys)
             }
@@ -594,7 +594,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Check if template is an IndexAccess type T[K]
         match self.interner().lookup(mapped.template) {
-            Some(TypeKey::IndexAccess(obj, idx)) => {
+            Some(TypeData::IndexAccess(obj, idx)) => {
                 // CRITICAL: Must verify that the object being indexed is the same T
                 // from keyof T in the constraint
                 if obj != source_from_constraint {
@@ -603,7 +603,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 // Check if the index is our type parameter K
                 match self.interner().lookup(idx) {
-                    Some(TypeKey::TypeParameter(param)) => param.name == mapped.type_param.name,
+                    Some(TypeData::TypeParameter(param)) => param.name == mapped.type_param.name,
                     _ => false,
                 }
             }
@@ -615,9 +615,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Handles aliased constraints like `type Keys<T> = keyof T`.
     fn extract_source_from_keyof(&mut self, constraint: TypeId) -> Option<TypeId> {
         match self.interner().lookup(constraint) {
-            Some(TypeKey::KeyOf(source)) => Some(source),
+            Some(TypeData::KeyOf(source)) => Some(source),
             // Handle aliased constraints (Application)
-            Some(TypeKey::Application(_)) => {
+            Some(TypeData::Application(_)) => {
                 // Evaluate to resolve the alias
                 let evaluated = self.evaluate(constraint);
                 // Recursively check the evaluated type
@@ -635,7 +635,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// For { [K in keyof T]: T[K] }, extract T.
     fn extract_source_from_homomorphic(&self, mapped: &MappedType) -> Option<TypeId> {
         match self.interner().lookup(mapped.template) {
-            Some(TypeKey::IndexAccess(obj, _idx)) => {
+            Some(TypeData::IndexAccess(obj, _idx)) => {
                 // The object part of T[K] is the source type
                 Some(obj)
             }
@@ -737,12 +737,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Check if the rest type is an Array
                 let rest_type = elem.type_id;
                 let mapped_rest_type = match self.interner().lookup(rest_type) {
-                    Some(TypeKey::Array(inner_elem)) => {
+                    Some(TypeData::Array(inner_elem)) => {
                         // Map the inner array element
                         // Reuse the array mapping logic
                         self.evaluate_mapped_array(mapped, inner_elem)
                     }
-                    Some(TypeKey::Tuple(inner_tuple_id)) => {
+                    Some(TypeData::Tuple(inner_tuple_id)) => {
                         // Nested tuple in rest - recurse
                         self.evaluate_mapped_tuple(mapped, inner_tuple_id)
                     }

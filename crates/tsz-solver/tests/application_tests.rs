@@ -5,7 +5,7 @@ use crate::subtype::NoopResolver;
 #[test]
 fn test_non_application_passthrough() {
     let interner = TypeInterner::new();
-    let string_type = interner.intern(TypeKey::Intrinsic(IntrinsicKind::String));
+    let string_type = interner.intern(TypeData::Intrinsic(IntrinsicKind::String));
 
     let evaluator = ApplicationEvaluator::new(&interner, &NoopResolver);
     let result = evaluator.evaluate(string_type);

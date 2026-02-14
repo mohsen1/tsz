@@ -1994,23 +1994,23 @@ impl<'a> CheckerContext<'a> {
 
     /// Create a Lazy type reference from a symbol.
     ///
-    /// This returns `TypeKey::Lazy(DefId)` for use in the new DefId system.
+    /// This returns `TypeData::Lazy(DefId)` for use in the new DefId system.
     /// During migration, this is called alongside or instead of creating
-    /// `TypeKey::Ref(SymbolRef)`.
+    /// `TypeData::Ref(SymbolRef)`.
     pub fn create_lazy_type_ref(&mut self, sym_id: SymbolId) -> TypeId {
         let def_id = self.get_or_create_def_id(sym_id);
         self.types.lazy(def_id)
     }
 
-    /// Convert TypeKey::Ref to TypeKey::Lazy(DefId) if needed (Phase 1 migration).
+    /// Convert TypeData::Ref to TypeData::Lazy(DefId) if needed (Phase 1 migration).
     ///
     /// This post-processes a TypeId created by TypeLowering. If the type is
-    /// TypeKey::Ref(SymbolRef), this creates a corresponding TypeKey::Lazy(DefId)
+    /// TypeData::Ref(SymbolRef), this creates a corresponding TypeData::Lazy(DefId)
     /// for the same symbol. This enables gradual migration from SymbolRef to DefId.
     ///
     /// **Pattern:** TypeLowering creates Ref → post-process → returns Lazy
     ///
-    /// PHASE 4.2: TypeKey::Ref removed, all types are now Lazy(DefId).
+    /// PHASE 4.2: TypeData::Ref removed, all types are now Lazy(DefId).
     /// This function is now a no-op since all types are already Lazy.
     pub fn maybe_create_lazy_from_resolved(&mut self, type_id: TypeId) -> TypeId {
         type_id
@@ -2108,7 +2108,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a resolved type in the TypeEnvironment for both SymbolRef and DefId.
     ///
-    /// This ensures that both the old `TypeKey::Ref(SymbolRef)` and new `TypeKey::Lazy(DefId)`
+    /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`
     /// paths can resolve the type during evaluation.
     ///
     /// Should be called when a symbol's type is resolved via `get_type_of_symbol`.
@@ -2677,7 +2677,7 @@ impl<'a> CheckerContext<'a> {
 
 /// Implement TypeResolver for CheckerContext to support Lazy type resolution.
 ///
-/// This enables ApplicationEvaluator to resolve TypeKey::Lazy(DefId) references
+/// This enables ApplicationEvaluator to resolve TypeData::Lazy(DefId) references
 /// by looking up the cached type for a symbol. The cache is populated during
 /// type checking when get_type_of_symbol() is called.
 ///
@@ -2688,7 +2688,7 @@ impl<'a> CheckerContext<'a> {
 impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// Resolve a symbol reference to its cached type (deprecated).
     ///
-    /// Phase 4.2: TypeKey::Ref is removed, but we keep this for compatibility.
+    /// Phase 4.2: TypeData::Ref is removed, but we keep this for compatibility.
     /// Converts SymbolRef to SymbolId and looks up in cache.
     #[allow(deprecated)]
     fn resolve_ref(
@@ -3024,8 +3024,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// - `enum E.A` (an enum MEMBER - rejects `let x: E.A = 1`)
     ///
     /// Returns true if:
-    /// - TypeId is TypeKey::Enum where Symbol has ENUM flag but not ENUM_MEMBER flag
-    /// - TypeId is a Union of TypeKey::Enum members from the same parent enum
+    /// - TypeId is TypeData::Enum where Symbol has ENUM flag but not ENUM_MEMBER flag
+    /// - TypeId is a Union of TypeData::Enum members from the same parent enum
     ///
     /// Returns false for:
     /// - Enum members (symbols with ENUM_MEMBER flag)

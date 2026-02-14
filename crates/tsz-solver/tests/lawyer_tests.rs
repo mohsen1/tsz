@@ -945,15 +945,15 @@ fn test_enum_nominality_different_enums() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    // Create enum members using TypeKey::Enum(def_id, literal_type)
+    // Create enum members using TypeData::Enum(def_id, literal_type)
     // Enum A with member 0 (def_id = 1)
-    let enum_a_member = interner.intern(crate::types::TypeKey::Enum(
+    let enum_a_member = interner.intern(crate::types::TypeData::Enum(
         crate::def::DefId(1),
         TypeId::NUMBER,
     ));
 
     // Enum B with member 0 (def_id = 2)
-    let enum_b_member = interner.intern(crate::types::TypeKey::Enum(
+    let enum_b_member = interner.intern(crate::types::TypeData::Enum(
         crate::def::DefId(2),
         TypeId::NUMBER,
     ));
@@ -972,7 +972,7 @@ fn test_numeric_enum_to_number() {
     let mut checker = CompatChecker::new(&interner);
 
     // Numeric enum member (def_id = 1, value = NUMBER type)
-    let enum_member = interner.intern(crate::types::TypeKey::Enum(
+    let enum_member = interner.intern(crate::types::TypeData::Enum(
         crate::def::DefId(1),
         TypeId::NUMBER,
     ));

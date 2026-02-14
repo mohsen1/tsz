@@ -25,7 +25,7 @@ fn test_template_literal_small_expansion_works() {
     assert_ne!(template, TypeId::STRING);
 
     // Verify it's a union with the expected members
-    if let Some(TypeKey::Union(members)) = interner.lookup(template) {
+    if let Some(TypeData::Union(members)) = interner.lookup(template) {
         let members = interner.type_list(members);
         assert_eq!(members.len(), 10);
     } else {
@@ -163,7 +163,7 @@ fn test_template_literal_just_under_limit() {
     // But should be a union of literals
     assert_ne!(template, TypeId::STRING);
 
-    if let Some(TypeKey::Union(members)) = interner.lookup(template) {
+    if let Some(TypeData::Union(members)) = interner.lookup(template) {
         let members = interner.type_list(members);
         // Should have expanded to 99,856 combinations
         assert_eq!(members.len(), 99856);
@@ -183,7 +183,7 @@ fn test_template_literal_non_literal_types() {
     ]);
 
     // Should remain as template literal (can't expand `string` to literals)
-    if let Some(TypeKey::TemplateLiteral(_)) = interner.lookup(template) {
+    if let Some(TypeData::TemplateLiteral(_)) = interner.lookup(template) {
         // Expected
     } else {
         panic!("Expected a template literal type");
@@ -208,7 +208,7 @@ fn test_template_literal_single_union_member() {
     assert_ne!(template, literal);
 
     // Should be the literal string "getkey"
-    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
+    if let Some(TypeData::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
         let s = interner.resolve_atom_ref(atom);
         assert_eq!(&*s, "getkey");
     } else {

@@ -283,7 +283,7 @@ impl<'a> NarrowingContext<'a> {
             }
 
             // 2. Handle Application types (Generics)
-            if let Some(TypeKey::Application(_app_id)) = self.db.lookup(type_id) {
+            if let Some(TypeData::Application(_app_id)) = self.db.lookup(type_id) {
                 type_id = self.db.evaluate_type(type_id);
                 continue;
             }
@@ -1039,16 +1039,16 @@ impl<'a> NarrowingContext<'a> {
     /// This is used to determine if two types can form an intersection
     /// for instanceof narrowing when they're not directly assignable.
     fn are_object_like(&self, type_id: TypeId) -> bool {
-        use crate::types::TypeKey;
+        use crate::types::TypeData;
 
         match self.db.lookup(type_id) {
-            Some(TypeKey::Object(_))
-            | Some(TypeKey::ObjectWithIndex(_))
-            | Some(TypeKey::Function(_))
-            | Some(TypeKey::Callable(_)) => true,
+            Some(TypeData::Object(_))
+            | Some(TypeData::ObjectWithIndex(_))
+            | Some(TypeData::Function(_))
+            | Some(TypeData::Callable(_)) => true,
 
             // Interface and class types (which are object-like)
-            Some(TypeKey::Application(_)) => {
+            Some(TypeData::Application(_)) => {
                 // Check if the application type has construct signatures or object structure
                 use crate::type_queries_extended::InstanceTypeKind;
                 use crate::type_queries_extended::classify_for_instance_type;
@@ -1060,14 +1060,14 @@ impl<'a> NarrowingContext<'a> {
             }
 
             // Type parameters - check their constraint
-            Some(TypeKey::TypeParameter(info)) => {
+            Some(TypeData::TypeParameter(info)) => {
                 // For instanceof, generics with object constraints are treated as object-like
                 // This allows intersection narrowing for cases like: T & MyClass
                 info.constraint.is_none_or(|c| self.are_object_like(c))
             }
 
             // Intersection of object types
-            Some(TypeKey::Intersection(members)) => {
+            Some(TypeData::Intersection(members)) => {
                 let members = self.db.type_list(members);
                 members.iter().any(|&member| self.are_object_like(member))
             }
@@ -2280,7 +2280,7 @@ impl<'a> NarrowingContext<'a> {
         trace!(?resolved, "Resolved source type");
 
         // Check if this is an array type
-        if let Some(TypeKey::Array(current_elem)) = self.db.lookup(resolved) {
+        if let Some(TypeData::Array(current_elem)) = self.db.lookup(resolved) {
             trace!(?current_elem, "Found array type");
             // Narrow the element type
             let new_elem = self.narrow_to_type(current_elem, narrowed_element);
@@ -2293,7 +2293,7 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Check if this is a union - narrow each member that's an array
-        if let Some(TypeKey::Union(list_id)) = self.db.lookup(resolved) {
+        if let Some(TypeData::Union(list_id)) = self.db.lookup(resolved) {
             trace!(?list_id, "Found union type");
             let members = self.db.type_list(list_id);
             trace!(?members, "Union members");
@@ -2681,7 +2681,7 @@ impl<'a> NarrowingContext<'a> {
         use crate::type_queries;
 
         // Check for ReadonlyType wrapper (unwrap recursively)
-        if let Some(TypeKey::ReadonlyType(inner)) = self.db.lookup(type_id) {
+        if let Some(TypeData::ReadonlyType(inner)) = self.db.lookup(type_id) {
             return self.is_array_like(inner);
         }
 
@@ -2710,7 +2710,7 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
         if let Some(type_key) = types.lookup(type_id) {
             match type_key {
                 // Lazy types: resolve and recurse
-                TypeKey::Lazy(_) => {
+                TypeData::Lazy(_) => {
                     // Use self.db (QueryDatabase) which has evaluate_type
                     let resolved = self.db.evaluate_type(type_id);
                     // If resolution changed the type, recurse with the resolved type
@@ -2720,21 +2720,21 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                     // Otherwise, fall through to normal visitation
                 }
                 // Ref types: resolve and recurse
-                TypeKey::TypeQuery(_) => {
+                TypeData::TypeQuery(_) => {
                     let resolved = self.db.evaluate_type(type_id);
                     if resolved != type_id {
                         return self.visit_type(types, resolved);
                     }
                 }
                 // Application types (generics): resolve and recurse
-                TypeKey::Application(_) => {
+                TypeData::Application(_) => {
                     let resolved = self.db.evaluate_type(type_id);
                     if resolved != type_id {
                         return self.visit_type(types, resolved);
                     }
                 }
                 // Object types: check subtype relationships
-                TypeKey::Object(_) => {
+                TypeData::Object(_) => {
                     // Case 1: type_id is subtype of narrower (e.g., { a: "foo" } narrowed by { a: string })
                     // Result: type_id (keep the more specific type)
                     self.checker.reset();
@@ -2757,7 +2757,7 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                     return TypeId::NEVER;
                 }
                 // Function types: check subtype relationships
-                TypeKey::Function(_) => {
+                TypeData::Function(_) => {
                     // Case 1: type_id is subtype of narrower (keep specific)
                     self.checker.reset();
                     if self.checker.is_subtype_of(type_id, self.narrower) {

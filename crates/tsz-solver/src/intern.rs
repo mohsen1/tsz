@@ -1,7 +1,7 @@
 //! Type interning for structural deduplication.
 //!
 //! This module implements the type interning engine that converts
-//! TypeKey structures into lightweight TypeId handles.
+//! TypeData structures into lightweight TypeId handles.
 //!
 //! Benefits:
 //! - O(1) type equality (just compare TypeId values)
@@ -13,7 +13,7 @@
 //! The TypeInterner uses a sharded DashMap-based architecture for lock-free
 //! concurrent access:
 //!
-//! - **Sharded Type Storage**: 64 shards based on hash of TypeKey to minimize contention
+//! - **Sharded Type Storage**: 64 shards based on hash of TypeData to minimize contention
 //! - **DashMap for Interning**: Each shard uses DashMap for lock-free read/write operations
 //! - **Arc for Immutability**: Type data is stored in Arc<T> for cheap cloning
 //! - **No RwLock<Vec<T>>**: Avoids the read-then-write deadlock pattern
@@ -125,10 +125,10 @@ fn literal_domain(literal: &LiteralValue) -> LiteralDomain {
 
 /// Inner data for a TypeShard, lazily initialized.
 struct TypeShardInner {
-    /// Map from TypeKey to local index within this shard
-    key_to_index: DashMap<TypeKey, u32, FxBuildHasher>,
-    /// Map from local index to TypeKey (using Arc for shared access)
-    index_to_key: DashMap<u32, Arc<TypeKey>, FxBuildHasher>,
+    /// Map from TypeData to local index within this shard
+    key_to_index: DashMap<TypeData, u32, FxBuildHasher>,
+    /// Map from local index to TypeData (using Arc for shared access)
+    index_to_key: DashMap<u32, Arc<TypeData>, FxBuildHasher>,
 }
 
 /// A single shard of the type interned storage.
@@ -636,7 +636,7 @@ impl TypeInterner {
         }
     }
 
-    /// Look up the TypeKey for a given TypeId.
+    /// Look up the TypeData for a given TypeId.
     ///
     /// This uses lock-free DashMap access with lazy shard initialization.
     pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
@@ -742,35 +742,35 @@ impl TypeInterner {
 
     fn get_intrinsic_id(&self, key: &TypeData) -> Option<TypeId> {
         match key {
-            TypeKey::Intrinsic(kind) => Some(kind.to_type_id()),
-            TypeKey::Error => Some(TypeId::ERROR),
+            TypeData::Intrinsic(kind) => Some(kind.to_type_id()),
+            TypeData::Error => Some(TypeId::ERROR),
             // Map boolean literals to their intrinsic IDs to avoid duplicates
-            TypeKey::Literal(LiteralValue::Boolean(true)) => Some(TypeId::BOOLEAN_TRUE),
-            TypeKey::Literal(LiteralValue::Boolean(false)) => Some(TypeId::BOOLEAN_FALSE),
+            TypeData::Literal(LiteralValue::Boolean(true)) => Some(TypeId::BOOLEAN_TRUE),
+            TypeData::Literal(LiteralValue::Boolean(false)) => Some(TypeId::BOOLEAN_FALSE),
             _ => None,
         }
     }
 
     fn get_intrinsic_key(&self, id: TypeId) -> Option<TypeData> {
         match id {
-            TypeId::NONE => Some(TypeKey::Error),
-            TypeId::ERROR => Some(TypeKey::Error),
-            TypeId::NEVER => Some(TypeKey::Intrinsic(IntrinsicKind::Never)),
-            TypeId::UNKNOWN => Some(TypeKey::Intrinsic(IntrinsicKind::Unknown)),
-            TypeId::ANY => Some(TypeKey::Intrinsic(IntrinsicKind::Any)),
-            TypeId::VOID => Some(TypeKey::Intrinsic(IntrinsicKind::Void)),
-            TypeId::UNDEFINED => Some(TypeKey::Intrinsic(IntrinsicKind::Undefined)),
-            TypeId::NULL => Some(TypeKey::Intrinsic(IntrinsicKind::Null)),
-            TypeId::BOOLEAN => Some(TypeKey::Intrinsic(IntrinsicKind::Boolean)),
-            TypeId::NUMBER => Some(TypeKey::Intrinsic(IntrinsicKind::Number)),
-            TypeId::STRING => Some(TypeKey::Intrinsic(IntrinsicKind::String)),
-            TypeId::BIGINT => Some(TypeKey::Intrinsic(IntrinsicKind::Bigint)),
-            TypeId::SYMBOL => Some(TypeKey::Intrinsic(IntrinsicKind::Symbol)),
-            TypeId::OBJECT => Some(TypeKey::Intrinsic(IntrinsicKind::Object)),
-            TypeId::BOOLEAN_TRUE => Some(TypeKey::Literal(LiteralValue::Boolean(true))),
-            TypeId::BOOLEAN_FALSE => Some(TypeKey::Literal(LiteralValue::Boolean(false))),
-            TypeId::FUNCTION => Some(TypeKey::Intrinsic(IntrinsicKind::Function)),
-            TypeId::PROMISE_BASE => Some(TypeKey::Intrinsic(IntrinsicKind::Object)), // Promise base treated as object
+            TypeId::NONE => Some(TypeData::Error),
+            TypeId::ERROR => Some(TypeData::Error),
+            TypeId::NEVER => Some(TypeData::Intrinsic(IntrinsicKind::Never)),
+            TypeId::UNKNOWN => Some(TypeData::Intrinsic(IntrinsicKind::Unknown)),
+            TypeId::ANY => Some(TypeData::Intrinsic(IntrinsicKind::Any)),
+            TypeId::VOID => Some(TypeData::Intrinsic(IntrinsicKind::Void)),
+            TypeId::UNDEFINED => Some(TypeData::Intrinsic(IntrinsicKind::Undefined)),
+            TypeId::NULL => Some(TypeData::Intrinsic(IntrinsicKind::Null)),
+            TypeId::BOOLEAN => Some(TypeData::Intrinsic(IntrinsicKind::Boolean)),
+            TypeId::NUMBER => Some(TypeData::Intrinsic(IntrinsicKind::Number)),
+            TypeId::STRING => Some(TypeData::Intrinsic(IntrinsicKind::String)),
+            TypeId::BIGINT => Some(TypeData::Intrinsic(IntrinsicKind::Bigint)),
+            TypeId::SYMBOL => Some(TypeData::Intrinsic(IntrinsicKind::Symbol)),
+            TypeId::OBJECT => Some(TypeData::Intrinsic(IntrinsicKind::Object)),
+            TypeId::BOOLEAN_TRUE => Some(TypeData::Literal(LiteralValue::Boolean(true))),
+            TypeId::BOOLEAN_FALSE => Some(TypeData::Literal(LiteralValue::Boolean(false))),
+            TypeId::FUNCTION => Some(TypeData::Intrinsic(IntrinsicKind::Function)),
+            TypeId::PROMISE_BASE => Some(TypeData::Intrinsic(IntrinsicKind::Object)), // Promise base treated as object
             _ => None,
         }
     }
@@ -787,28 +787,28 @@ impl TypeInterner {
     /// Intern a literal string type
     pub fn literal_string(&self, value: &str) -> TypeId {
         let atom = self.intern_string(value);
-        self.intern(TypeKey::Literal(LiteralValue::String(atom)))
+        self.intern(TypeData::Literal(LiteralValue::String(atom)))
     }
 
     /// Intern a literal string type from an already-interned Atom
     pub fn literal_string_atom(&self, atom: Atom) -> TypeId {
-        self.intern(TypeKey::Literal(LiteralValue::String(atom)))
+        self.intern(TypeData::Literal(LiteralValue::String(atom)))
     }
 
     /// Intern a literal number type
     pub fn literal_number(&self, value: f64) -> TypeId {
-        self.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(value))))
+        self.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(value))))
     }
 
     /// Intern a literal boolean type
     pub fn literal_boolean(&self, value: bool) -> TypeId {
-        self.intern(TypeKey::Literal(LiteralValue::Boolean(value)))
+        self.intern(TypeData::Literal(LiteralValue::Boolean(value)))
     }
 
     /// Intern a literal bigint type
     pub fn literal_bigint(&self, value: &str) -> TypeId {
         let atom = self.intern_string(value);
-        self.intern(TypeKey::Literal(LiteralValue::BigInt(atom)))
+        self.intern(TypeData::Literal(LiteralValue::BigInt(atom)))
     }
 
     /// Intern a literal bigint type, allowing a sign prefix without extra clones.
@@ -821,7 +821,7 @@ impl TypeInterner {
         value.push('-');
         value.push_str(digits);
         let atom = self.string_interner.intern_owned(value);
-        self.intern(TypeKey::Literal(LiteralValue::BigInt(atom)))
+        self.intern(TypeData::Literal(LiteralValue::BigInt(atom)))
     }
 
     /// Intern a union type, normalizing and deduplicating members
@@ -839,7 +839,7 @@ impl TypeInterner {
 
         let mut flat: TypeListBuffer = SmallVec::new();
         for member in members {
-            if let Some(TypeKey::Union(inner)) = self.lookup(member) {
+            if let Some(TypeData::Union(inner)) = self.lookup(member) {
                 let members = self.type_list(inner);
                 flat.extend(members.iter().copied());
             } else {
@@ -859,7 +859,7 @@ impl TypeInterner {
         }
 
         let list_id = self.intern_type_list(flat.into_vec());
-        self.intern(TypeKey::Union(list_id))
+        self.intern(TypeData::Union(list_id))
     }
 
     /// Fast path for unions that already fit in registers.
@@ -905,7 +905,7 @@ impl TypeInterner {
     }
 
     fn push_union_member(&self, flat: &mut TypeListBuffer, member: TypeId) {
-        if let Some(TypeKey::Union(inner)) = self.lookup(member) {
+        if let Some(TypeData::Union(inner)) = self.lookup(member) {
             let members = self.type_list(inner);
             flat.extend(members.iter().copied());
         } else {
@@ -963,7 +963,7 @@ impl TypeInterner {
         let has_complex = flat.iter().any(|&id| {
             matches!(
                 self.lookup(id),
-                Some(TypeKey::TypeParameter(_) | TypeKey::Lazy(_))
+                Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
             )
         });
         if !has_complex {
@@ -978,7 +978,7 @@ impl TypeInterner {
         }
 
         let list_id = self.intern_type_list(flat.into_vec());
-        self.intern(TypeKey::Union(list_id))
+        self.intern(TypeData::Union(list_id))
     }
 
     /// Intern an intersection type, normalizing and deduplicating members
@@ -1006,7 +1006,7 @@ impl TypeInterner {
 
         for member in members {
             // Structural flattening is safe and cheap
-            if let Some(TypeKey::Intersection(inner)) = self.lookup(member) {
+            if let Some(TypeData::Intersection(inner)) = self.lookup(member) {
                 let inner_members = self.type_list(inner);
                 flat.extend(inner_members.iter().copied());
             } else {
@@ -1019,13 +1019,13 @@ impl TypeInterner {
         // we must preserve the intersection as-is without attempting to merge or reduce.
         let has_unresolved = flat
             .iter()
-            .any(|&id| matches!(self.lookup(id), Some(TypeKey::Lazy(_))));
+            .any(|&id| matches!(self.lookup(id), Some(TypeData::Lazy(_))));
         if has_unresolved {
             // Basic dedup without any simplification
             flat.sort_by_key(|id| id.0);
             flat.dedup();
             let list_id = self.intern_type_list(flat.into_vec());
-            return self.intern(TypeKey::Intersection(list_id));
+            return self.intern(TypeData::Intersection(list_id));
         }
 
         // =========================================================
@@ -1103,7 +1103,7 @@ impl TypeInterner {
 
         // Create the intersection directly without calling normalize_intersection
         let list_id = self.intern_type_list(flat.into_vec());
-        self.intern(TypeKey::Intersection(list_id))
+        self.intern(TypeData::Intersection(list_id))
     }
 
     /// Convenience wrapper for raw intersection of two types
@@ -1134,7 +1134,7 @@ impl TypeInterner {
     }
 
     fn push_intersection_member(&self, flat: &mut TypeListBuffer, member: TypeId) {
-        if let Some(TypeKey::Intersection(inner)) = self.lookup(member) {
+        if let Some(TypeData::Intersection(inner)) = self.lookup(member) {
             let members = self.type_list(inner);
             flat.extend(members.iter().copied());
         } else {
@@ -1151,7 +1151,7 @@ impl TypeInterner {
     fn is_callable_type(&self, id: TypeId) -> bool {
         matches!(
             self.lookup(id),
-            Some(TypeKey::Function(_)) | Some(TypeKey::Callable(_))
+            Some(TypeData::Function(_)) | Some(TypeData::Callable(_))
         )
     }
 
@@ -1161,7 +1161,7 @@ impl TypeInterner {
     /// In intersections like `string & {}`, the empty object is redundant and can be removed.
     fn is_empty_object(&self, id: TypeId) -> bool {
         match self.lookup(id) {
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.object_shape(shape_id);
                 shape.properties.is_empty()
                     && shape.string_index.is_none()
@@ -1188,26 +1188,26 @@ impl TypeInterner {
             | TypeId::SYMBOL
             | TypeId::OBJECT => true,
             _ => match self.lookup(id) {
-                Some(TypeKey::Literal(_))
-                | Some(TypeKey::Object(_))
-                | Some(TypeKey::ObjectWithIndex(_))
-                | Some(TypeKey::Array(_))
-                | Some(TypeKey::Tuple(_))
-                | Some(TypeKey::Function(_))
-                | Some(TypeKey::Callable(_))
-                | Some(TypeKey::TemplateLiteral(_))
-                | Some(TypeKey::UniqueSymbol(_)) => true,
+                Some(TypeData::Literal(_))
+                | Some(TypeData::Object(_))
+                | Some(TypeData::ObjectWithIndex(_))
+                | Some(TypeData::Array(_))
+                | Some(TypeData::Tuple(_))
+                | Some(TypeData::Function(_))
+                | Some(TypeData::Callable(_))
+                | Some(TypeData::TemplateLiteral(_))
+                | Some(TypeData::UniqueSymbol(_)) => true,
 
                 // Union is non-nullish only if ALL members are non-nullish
                 // (conservative: don't remove {} if any member might be nullish)
-                Some(TypeKey::Union(list_id)) => {
+                Some(TypeData::Union(list_id)) => {
                     let members = self.type_list(list_id);
                     members.iter().all(|&m| self.is_non_nullish_type(m))
                 }
 
                 // Intersection is non-nullish if ANY member is non-nullish
                 // (permissive: string & T is non-nullish regardless of T)
-                Some(TypeKey::Intersection(list_id)) => {
+                Some(TypeData::Intersection(list_id)) => {
                     let members = self.type_list(list_id);
                     members.iter().any(|&m| self.is_non_nullish_type(m))
                 }
@@ -1305,10 +1305,10 @@ impl TypeInterner {
         // This prevents incorrect reductions on type aliases like `type A = { x: number }`.
         let has_unresolved = flat
             .iter()
-            .any(|&id| matches!(self.lookup(id), Some(TypeKey::Lazy(_))));
+            .any(|&id| matches!(self.lookup(id), Some(TypeData::Lazy(_))));
         if has_unresolved {
             let list_id = self.intern_type_list(flat.into_vec());
-            return self.intern(TypeKey::Intersection(list_id));
+            return self.intern(TypeData::Intersection(list_id));
         }
 
         // NOTE: narrow_literal_primitive_intersection was removed (Task #43) because it was too aggressive.
@@ -1396,7 +1396,7 @@ impl TypeInterner {
         let has_complex = flat.iter().any(|&id| {
             matches!(
                 self.lookup(id),
-                Some(TypeKey::TypeParameter(_) | TypeKey::Lazy(_))
+                Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
             )
         });
         if !has_complex {
@@ -1411,7 +1411,7 @@ impl TypeInterner {
         }
 
         let list_id = self.intern_type_list(flat.into_vec());
-        self.intern(TypeKey::Intersection(list_id))
+        self.intern(TypeData::Intersection(list_id))
     }
 
     fn try_merge_callables_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
@@ -1423,7 +1423,7 @@ impl TypeInterner {
         // Collect all call signatures and properties
         for &member in members {
             match self.lookup(member) {
-                Some(TypeKey::Function(func_id)) => {
+                Some(TypeData::Function(func_id)) => {
                     let func = self.function_shape(func_id);
                     call_signatures.push(CallSignature {
                         type_params: func.type_params.clone(),
@@ -1434,7 +1434,7 @@ impl TypeInterner {
                         is_method: func.is_method,
                     });
                 }
-                Some(TypeKey::Callable(callable_id)) => {
+                Some(TypeData::Callable(callable_id)) => {
                     let callable = self.callable_shape(callable_id);
                     // Add all call signatures
                     for sig in &callable.call_signatures {
@@ -1505,7 +1505,7 @@ impl TypeInterner {
         };
 
         let shape_id = self.intern_callable_shape(callable_shape);
-        Some(self.intern(TypeKey::Callable(shape_id)))
+        Some(self.intern(TypeData::Callable(shape_id)))
     }
 
     fn try_merge_objects_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {
@@ -1514,7 +1514,7 @@ impl TypeInterner {
         // Check if all members are objects
         for &member in members {
             match self.lookup(member) {
-                Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                     objects.push(self.object_shape(shape_id));
                 }
                 _ => return None, // Not all objects, can't merge
@@ -1625,9 +1625,9 @@ impl TypeInterner {
         if self.object_shape(shape_id).string_index.is_some()
             || self.object_shape(shape_id).number_index.is_some()
         {
-            Some(self.intern(TypeKey::ObjectWithIndex(shape_id)))
+            Some(self.intern(TypeData::ObjectWithIndex(shape_id)))
         } else {
-            Some(self.intern(TypeKey::Object(shape_id)))
+            Some(self.intern(TypeData::Object(shape_id)))
         }
     }
 
@@ -1649,7 +1649,7 @@ impl TypeInterner {
         // Separate objects from non-objects
         for &member in members {
             match self.lookup(member) {
-                Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_)) => {
+                Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
                     objects.push(member);
                 }
                 _ => {
@@ -1733,7 +1733,7 @@ impl TypeInterner {
             // mark this as disjoint.
             let mut mark_non_primitive = false;
             match self.lookup(member) {
-                Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                     let shape = self.object_shape(shape_id);
                     if !(shape.properties.is_empty()
                         && shape.string_index.is_none()
@@ -1742,10 +1742,10 @@ impl TypeInterner {
                         mark_non_primitive = true;
                     }
                 }
-                Some(TypeKey::Function(_))
-                | Some(TypeKey::Callable(_))
-                | Some(TypeKey::Array(_))
-                | Some(TypeKey::Tuple(_)) => {
+                Some(TypeData::Function(_))
+                | Some(TypeData::Callable(_))
+                | Some(TypeData::Array(_))
+                | Some(TypeData::Tuple(_)) => {
                     mark_non_primitive = true;
                 }
                 _ => {}
@@ -1806,14 +1806,14 @@ impl TypeInterner {
                 match self.lookup(member) {
                     // Task #48: Empty objects ARE object types and are disjoint from null/undefined
                     // null & {} = never (null is not a non-nullish value)
-                    Some(TypeKey::Object(_)) | Some(TypeKey::ObjectWithIndex(_)) => {
+                    Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
                         has_object_type = true;
                     }
                     // Array, tuple, function, callable are all object types that are disjoint from null/undefined
-                    Some(TypeKey::Array(_))
-                    | Some(TypeKey::Tuple(_))
-                    | Some(TypeKey::Function(_))
-                    | Some(TypeKey::Callable(_)) => {
+                    Some(TypeData::Array(_))
+                    | Some(TypeData::Tuple(_))
+                    | Some(TypeData::Function(_))
+                    | Some(TypeData::Callable(_)) => {
                         has_object_type = true;
                     }
                     _ => {}
@@ -1865,15 +1865,15 @@ impl TypeInterner {
     fn get_primitive_kind(&self, type_id: TypeId) -> Option<PrimitiveKind> {
         match self.lookup(type_id) {
             // Direct primitives
-            Some(TypeKey::Intrinsic(IntrinsicKind::String)) => Some(PrimitiveKind::String),
-            Some(TypeKey::Intrinsic(IntrinsicKind::Number)) => Some(PrimitiveKind::Number),
-            Some(TypeKey::Intrinsic(IntrinsicKind::Boolean)) => Some(PrimitiveKind::Boolean),
-            Some(TypeKey::Intrinsic(IntrinsicKind::Bigint)) => Some(PrimitiveKind::BigInt),
-            Some(TypeKey::Intrinsic(IntrinsicKind::Symbol)) => Some(PrimitiveKind::Symbol),
+            Some(TypeData::Intrinsic(IntrinsicKind::String)) => Some(PrimitiveKind::String),
+            Some(TypeData::Intrinsic(IntrinsicKind::Number)) => Some(PrimitiveKind::Number),
+            Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => Some(PrimitiveKind::Boolean),
+            Some(TypeData::Intrinsic(IntrinsicKind::Bigint)) => Some(PrimitiveKind::BigInt),
+            Some(TypeData::Intrinsic(IntrinsicKind::Symbol)) => Some(PrimitiveKind::Symbol),
             // Literals - they inherit the kind of their base type
-            Some(TypeKey::Literal(lit)) => Some(PrimitiveKind::from_literal(&lit)),
+            Some(TypeData::Literal(lit)) => Some(PrimitiveKind::from_literal(&lit)),
             // Template literals are string-like
-            Some(TypeKey::TemplateLiteral(_)) => Some(PrimitiveKind::String),
+            Some(TypeData::TemplateLiteral(_)) => Some(PrimitiveKind::String),
             _ => None,
         }
     }
@@ -1915,7 +1915,7 @@ impl TypeInterner {
                 continue;
             };
             match key {
-                TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+                TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                     objects.push(self.object_shape(shape_id));
                 }
                 _ => {}
@@ -1987,13 +1987,13 @@ impl TypeInterner {
     fn literal_set_from_type(&self, type_id: TypeId) -> Option<LiteralSet> {
         let key = self.lookup(type_id)?;
         match key {
-            TypeKey::Literal(literal) => Some(LiteralSet::from_literal(literal)),
-            TypeKey::Union(members) => {
+            TypeData::Literal(literal) => Some(LiteralSet::from_literal(literal)),
+            TypeData::Union(members) => {
                 let members = self.type_list(members);
                 let mut domain: Option<LiteralDomain> = None;
                 let mut values = FxHashSet::default();
                 for &member in members.iter() {
-                    let Some(TypeKey::Literal(literal)) = self.lookup(member) else {
+                    let Some(TypeData::Literal(literal)) = self.lookup(member) else {
                         return None;
                     };
                     let literal_domain = literal_domain(&literal);
@@ -2034,7 +2034,7 @@ impl TypeInterner {
         let key = self.lookup(type_id)?;
 
         match key {
-            TypeKey::Intrinsic(kind) => match kind {
+            TypeData::Intrinsic(kind) => match kind {
                 IntrinsicKind::String => Some(PrimitiveClass::String),
                 IntrinsicKind::Number => Some(PrimitiveClass::Number),
                 IntrinsicKind::Boolean => Some(PrimitiveClass::Boolean),
@@ -2044,14 +2044,14 @@ impl TypeInterner {
                 IntrinsicKind::Undefined | IntrinsicKind::Void => Some(PrimitiveClass::Undefined),
                 _ => None,
             },
-            TypeKey::Literal(literal) => match literal {
+            TypeData::Literal(literal) => match literal {
                 LiteralValue::String(_) => Some(PrimitiveClass::String),
                 LiteralValue::Number(_) => Some(PrimitiveClass::Number),
                 LiteralValue::Boolean(_) => Some(PrimitiveClass::Boolean),
                 LiteralValue::BigInt(_) => Some(PrimitiveClass::Bigint),
             },
-            TypeKey::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
-            TypeKey::TemplateLiteral(_) => Some(PrimitiveClass::String),
+            TypeData::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
+            TypeData::TemplateLiteral(_) => Some(PrimitiveClass::String),
             _ => None,
         }
     }
@@ -2070,9 +2070,9 @@ impl TypeInterner {
         if matches!(
             (self.lookup(source), self.lookup(target)),
             (
-                Some(TypeKey::TypeParameter(_)) | _,
-                Some(TypeKey::TypeParameter(_))
-            ) | (Some(TypeKey::Lazy(_)) | _, Some(TypeKey::Lazy(_)))
+                Some(TypeData::TypeParameter(_)) | _,
+                Some(TypeData::TypeParameter(_))
+            ) | (Some(TypeData::Lazy(_)) | _, Some(TypeData::Lazy(_)))
         ) {
             return false;
         }
@@ -2089,18 +2089,18 @@ impl TypeInterner {
         // Only if target is NOT a literal (we don't want "a" <: "b")
         if self
             .lookup(source)
-            .is_some_and(|k| matches!(k, TypeKey::Literal(_)))
+            .is_some_and(|k| matches!(k, TypeData::Literal(_)))
         {
             if self
                 .lookup(target)
-                .is_some_and(|k| matches!(k, TypeKey::Literal(_)))
+                .is_some_and(|k| matches!(k, TypeData::Literal(_)))
             {
                 // Both are literals - only subtype if identical (handled above)
                 return false;
             }
 
             // Check if target is a union containing a compatible primitive
-            if let Some(TypeKey::Union(members)) = self.lookup(target) {
+            if let Some(TypeData::Union(members)) = self.lookup(target) {
                 let members = self.type_list(members);
                 // A literal is a subtype of a union if it's a subtype of ANY member
                 for &member in members.iter() {
@@ -2129,8 +2129,8 @@ impl TypeInterner {
         let t_key = self.lookup(target);
         match (s_key, t_key) {
             (
-                Some(TypeKey::Object(s_id) | TypeKey::ObjectWithIndex(s_id)),
-                Some(TypeKey::Object(t_id) | TypeKey::ObjectWithIndex(t_id)),
+                Some(TypeData::Object(s_id) | TypeData::ObjectWithIndex(s_id)),
+                Some(TypeData::Object(t_id) | TypeData::ObjectWithIndex(t_id)),
             ) => self.is_object_shape_subtype_shallow(s_id, t_id),
             _ => false,
         }
@@ -2277,7 +2277,7 @@ impl TypeInterner {
                 TypeId::BOOLEAN_TRUE => has_true = true,
                 TypeId::BOOLEAN_FALSE => has_false = true,
                 _ => {
-                    if let Some(TypeKey::Intrinsic(kind)) = self.lookup(type_id) {
+                    if let Some(TypeData::Intrinsic(kind)) = self.lookup(type_id) {
                         match kind {
                             IntrinsicKind::String => has_string = true,
                             IntrinsicKind::Number => has_number = true,
@@ -2312,7 +2312,7 @@ impl TypeInterner {
             }
 
             // Keep if it's not a literal type
-            let Some(TypeKey::Literal(literal)) = self.lookup(*type_id) else {
+            let Some(TypeData::Literal(literal)) = self.lookup(*type_id) else {
                 return true;
             };
 
@@ -2348,11 +2348,11 @@ impl TypeInterner {
                 matches!(
                     self.lookup(ty),
                     Some(
-                        TypeKey::Array(_)
-                            | TypeKey::Tuple(_)
-                            | TypeKey::Object(_)
-                            | TypeKey::ObjectWithIndex(_)
-                            | TypeKey::Enum(_, _)
+                        TypeData::Array(_)
+                            | TypeData::Tuple(_)
+                            | TypeData::Object(_)
+                            | TypeData::ObjectWithIndex(_)
+                            | TypeData::Enum(_, _)
                     )
                 )
             });
@@ -2442,7 +2442,7 @@ impl TypeInterner {
         let mut total_combinations = 1;
 
         for (i, &id) in flat.iter().enumerate() {
-            if let Some(TypeKey::Union(members)) = self.lookup(id) {
+            if let Some(TypeData::Union(members)) = self.lookup(id) {
                 let member_count = self.type_list(members).len();
 
                 // Calculate total combinations: product of all union sizes
@@ -2484,7 +2484,7 @@ impl TypeInterner {
 
         for &union_idx in &union_indices {
             let union_type = flat[union_idx];
-            let TypeKey::Union(union_members) = self.lookup(union_type)? else {
+            let TypeData::Union(union_members) = self.lookup(union_type)? else {
                 continue;
             };
             let union_members = self.type_list(union_members);
@@ -2513,77 +2513,77 @@ impl TypeInterner {
 
     /// Intern an array type
     pub fn array(&self, element: TypeId) -> TypeId {
-        self.intern(TypeKey::Array(element))
+        self.intern(TypeData::Array(element))
     }
 
     /// Canonical `this` type.
     pub fn this_type(&self) -> TypeId {
-        self.intern(TypeKey::ThisType)
+        self.intern(TypeData::ThisType)
     }
 
     /// Intern a readonly array type
     /// Returns a distinct type from mutable arrays to enforce readonly semantics
     pub fn readonly_array(&self, element: TypeId) -> TypeId {
         let array_type = self.array(element);
-        self.intern(TypeKey::ReadonlyType(array_type))
+        self.intern(TypeData::ReadonlyType(array_type))
     }
 
     /// Intern a tuple type
     pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         let list_id = self.intern_tuple_list(elements);
-        self.intern(TypeKey::Tuple(list_id))
+        self.intern(TypeData::Tuple(list_id))
     }
 
     /// Intern a readonly tuple type
     /// Returns a distinct type from mutable tuples to enforce readonly semantics
     pub fn readonly_tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         let tuple_type = self.tuple(elements);
-        self.intern(TypeKey::ReadonlyType(tuple_type))
+        self.intern(TypeData::ReadonlyType(tuple_type))
     }
 
     /// Wrap any type in a ReadonlyType marker
     /// This is used for the `readonly` type operator
     pub fn readonly_type(&self, inner: TypeId) -> TypeId {
-        self.intern(TypeKey::ReadonlyType(inner))
+        self.intern(TypeData::ReadonlyType(inner))
     }
 
     /// Wrap a type in a `NoInfer` marker.
     pub fn no_infer(&self, inner: TypeId) -> TypeId {
-        self.intern(TypeKey::NoInfer(inner))
+        self.intern(TypeData::NoInfer(inner))
     }
 
     /// Create a `unique symbol` type for a symbol declaration.
     pub fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
-        self.intern(TypeKey::UniqueSymbol(symbol))
+        self.intern(TypeData::UniqueSymbol(symbol))
     }
 
     /// Create an `infer` binder with the provided info.
     pub fn infer(&self, info: TypeParamInfo) -> TypeId {
-        self.intern(TypeKey::Infer(info))
+        self.intern(TypeData::Infer(info))
     }
 
     pub fn bound_parameter(&self, index: u32) -> TypeId {
-        self.intern(TypeKey::BoundParameter(index))
+        self.intern(TypeData::BoundParameter(index))
     }
 
     pub fn recursive(&self, depth: u32) -> TypeId {
-        self.intern(TypeKey::Recursive(depth))
+        self.intern(TypeData::Recursive(depth))
     }
 
     /// Wrap a type in a KeyOf marker.
     pub fn keyof(&self, inner: TypeId) -> TypeId {
-        self.intern(TypeKey::KeyOf(inner))
+        self.intern(TypeData::KeyOf(inner))
     }
 
     /// Build an indexed access type (`T[K]`).
     pub fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
-        self.intern(TypeKey::IndexAccess(object_type, index_type))
+        self.intern(TypeData::IndexAccess(object_type, index_type))
     }
 
     /// Build a nominal enum type that preserves DefId identity and carries
     /// structural member information for compatibility with primitive relations.
     pub fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
-        self.intern(TypeKey::Enum(def_id, structural_type))
+        self.intern(TypeData::Enum(def_id, structural_type))
     }
 
     /// Intern an object type with properties.
@@ -2611,7 +2611,7 @@ impl TypeInterner {
             number_index: None,
             symbol: None,
         });
-        self.intern(TypeKey::Object(shape_id))
+        self.intern(TypeData::Object(shape_id))
     }
 
     /// Intern an object type with properties, custom flags, and optional symbol.
@@ -2631,7 +2631,7 @@ impl TypeInterner {
             number_index: None,
             symbol,
         });
-        self.intern(TypeKey::Object(shape_id))
+        self.intern(TypeData::Object(shape_id))
     }
 
     /// Intern an object type with index signatures.
@@ -2639,19 +2639,19 @@ impl TypeInterner {
         // Sort properties by name for consistent hashing
         shape.properties.sort_by_key(|a| a.name);
         let shape_id = self.intern_object_shape(shape);
-        self.intern(TypeKey::ObjectWithIndex(shape_id))
+        self.intern(TypeData::ObjectWithIndex(shape_id))
     }
 
     /// Intern a function type
     pub fn function(&self, shape: FunctionShape) -> TypeId {
         let shape_id = self.intern_function_shape(shape);
-        self.intern(TypeKey::Function(shape_id))
+        self.intern(TypeData::Function(shape_id))
     }
 
     /// Intern a callable type with overloaded signatures
     pub fn callable(&self, shape: CallableShape) -> TypeId {
         let shape_id = self.intern_callable_shape(shape);
-        self.intern(TypeKey::Callable(shape_id))
+        self.intern(TypeData::Callable(shape_id))
     }
 
     fn template_span_cardinality(&self, type_id: TypeId) -> Option<usize> {
@@ -2672,8 +2672,8 @@ impl TypeInterner {
 
         match self.lookup(type_id) {
             // Accept all literal types (String, Number, Boolean, BigInt) - they all stringify
-            Some(TypeKey::Literal(_)) => Some(1),
-            Some(TypeKey::Union(list_id)) => {
+            Some(TypeData::Literal(_)) => Some(1),
+            Some(TypeData::Union(list_id)) => {
                 let members = self.type_list(list_id);
                 let mut count = 0usize;
                 for member in members.iter() {
@@ -2684,7 +2684,7 @@ impl TypeInterner {
                 Some(count)
             }
             // Task #47: Handle nested template literals
-            Some(TypeKey::TemplateLiteral(list_id)) => {
+            Some(TypeData::TemplateLiteral(list_id)) => {
                 let spans = self.template_list(list_id);
                 let mut total = 1usize;
                 for span in spans.iter() {
@@ -2757,15 +2757,15 @@ impl TypeInterner {
 
             // Handle literal types
             match self.lookup(id) {
-                Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                Some(TypeData::Literal(LiteralValue::String(atom))) => {
                     Some(self.resolve_atom_ref(atom).to_string())
                 }
-                Some(TypeKey::Literal(LiteralValue::Boolean(b))) => Some(b.to_string()),
-                Some(TypeKey::Literal(LiteralValue::Number(n))) => {
+                Some(TypeData::Literal(LiteralValue::Boolean(b))) => Some(b.to_string()),
+                Some(TypeData::Literal(LiteralValue::Number(n))) => {
                     // TypeScript stringifies numbers in templates (e.g., 1 -> "1", 1.5 -> "1.5")
                     Some(format!("{}", n.0))
                 }
-                Some(TypeKey::Literal(LiteralValue::BigInt(atom))) => {
+                Some(TypeData::Literal(LiteralValue::BigInt(atom))) => {
                     // BigInts in templates are stringified (e.g., 100n -> "100")
                     Some(self.resolve_atom_ref(atom).to_string())
                 }
@@ -2779,7 +2779,7 @@ impl TypeInterner {
         }
 
         match self.lookup(type_id) {
-            Some(TypeKey::Union(list_id)) => {
+            Some(TypeData::Union(list_id)) => {
                 let members = self.type_list(list_id);
                 let mut values = Vec::new();
                 for member in members.iter() {
@@ -2790,7 +2790,7 @@ impl TypeInterner {
                 Some(values)
             }
             // Task #47: Handle nested template literals by expanding them recursively
-            Some(TypeKey::TemplateLiteral(list_id)) => {
+            Some(TypeData::TemplateLiteral(list_id)) => {
                 let spans = self.template_list(list_id);
                 // Check if all spans are text-only (can return a single string)
                 if spans.iter().all(|s| matches!(s, TemplateSpan::Text(_))) {
@@ -2895,7 +2895,7 @@ impl TypeInterner {
                 TemplateSpan::Type(type_id) => {
                     // Task #47: Flatten nested template literals
                     // If a Type(type_id) refers to another TemplateLiteral, splice its spans into the parent
-                    if let Some(TypeKey::TemplateLiteral(nested_list_id)) = self.lookup(*type_id) {
+                    if let Some(TypeData::TemplateLiteral(nested_list_id)) = self.lookup(*type_id) {
                         let nested_spans = self.template_list(nested_list_id);
                         // Process each nested span as if it were part of the parent template
                         for nested_span in nested_spans.iter() {
@@ -2957,7 +2957,8 @@ impl TypeInterner {
 
                     // Task #47: Remove empty string literals from interpolations
                     // An empty string literal contributes nothing to the template
-                    if let Some(TypeKey::Literal(LiteralValue::String(s))) = self.lookup(*type_id) {
+                    if let Some(TypeData::Literal(LiteralValue::String(s))) = self.lookup(*type_id)
+                    {
                         let s = self.resolve_atom_ref(s);
                         if s.is_empty() {
                             // Skip this empty string literal
@@ -3057,14 +3058,14 @@ impl TypeInterner {
         }
 
         let list_id = self.intern_template_list(normalized);
-        self.intern(TypeKey::TemplateLiteral(list_id))
+        self.intern(TypeData::TemplateLiteral(list_id))
     }
 
     /// Get the interpolation positions from a template literal type
     /// Returns indices of type interpolation spans
     pub fn template_literal_interpolation_positions(&self, type_id: TypeId) -> Vec<usize> {
         match self.lookup(type_id) {
-            Some(TypeKey::TemplateLiteral(spans_id)) => {
+            Some(TypeData::TemplateLiteral(spans_id)) => {
                 let spans = self.template_list(spans_id);
                 spans
                     .iter()
@@ -3082,7 +3083,7 @@ impl TypeInterner {
     /// Get the span at a given position from a template literal type
     pub fn template_literal_get_span(&self, type_id: TypeId, index: usize) -> Option<TemplateSpan> {
         match self.lookup(type_id) {
-            Some(TypeKey::TemplateLiteral(spans_id)) => {
+            Some(TypeData::TemplateLiteral(spans_id)) => {
                 let spans = self.template_list(spans_id);
                 spans.get(index).cloned()
             }
@@ -3093,7 +3094,7 @@ impl TypeInterner {
     /// Get the number of spans in a template literal type
     pub fn template_literal_span_count(&self, type_id: TypeId) -> usize {
         match self.lookup(type_id) {
-            Some(TypeKey::TemplateLiteral(spans_id)) => {
+            Some(TypeData::TemplateLiteral(spans_id)) => {
                 let spans = self.template_list(spans_id);
                 spans.len()
             }
@@ -3105,12 +3106,12 @@ impl TypeInterner {
     /// Also returns true for string literals (which are the result of text-only template expansion)
     pub fn template_literal_is_text_only(&self, type_id: TypeId) -> bool {
         match self.lookup(type_id) {
-            Some(TypeKey::TemplateLiteral(spans_id)) => {
+            Some(TypeData::TemplateLiteral(spans_id)) => {
                 let spans = self.template_list(spans_id);
                 spans.iter().all(|span| span.is_text())
             }
             // String literals are the result of text-only template expansion
-            Some(TypeKey::Literal(LiteralValue::String(_))) => true,
+            Some(TypeData::Literal(LiteralValue::String(_))) => true,
             _ => false,
         }
     }
@@ -3118,13 +3119,13 @@ impl TypeInterner {
     /// Intern a conditional type
     pub fn conditional(&self, conditional: ConditionalType) -> TypeId {
         let conditional_id = self.intern_conditional_type(conditional);
-        self.intern(TypeKey::Conditional(conditional_id))
+        self.intern(TypeData::Conditional(conditional_id))
     }
 
     /// Intern a mapped type
     pub fn mapped(&self, mapped: MappedType) -> TypeId {
         let mapped_id = self.intern_mapped_type(mapped);
-        self.intern(TypeKey::Mapped(mapped_id))
+        self.intern(TypeData::Mapped(mapped_id))
     }
 
     /// Build a string intrinsic (`Uppercase`, `Lowercase`, etc.) marker.
@@ -3133,20 +3134,20 @@ impl TypeInterner {
         kind: crate::types::StringIntrinsicKind,
         type_arg: TypeId,
     ) -> TypeId {
-        self.intern(TypeKey::StringIntrinsic { kind, type_arg })
+        self.intern(TypeData::StringIntrinsic { kind, type_arg })
     }
 
     /// Intern a type reference (deprecated - use lazy() with DefId instead).
     ///
     /// This method is kept for backward compatibility with tests and legacy code.
-    /// It converts SymbolRef to DefId and creates TypeKey::Lazy.
+    /// It converts SymbolRef to DefId and creates TypeData::Lazy.
     ///
     /// **Phase 1 migration**: New code should use `lazy(def_id)` instead.
     pub fn reference(&self, symbol: SymbolRef) -> TypeId {
         // Convert SymbolRef to DefId by wrapping the raw u32 value
-        // This maintains the same identity while using the new TypeKey::Lazy variant
+        // This maintains the same identity while using the new TypeData::Lazy variant
         let def_id = DefId(symbol.0);
-        self.intern(TypeKey::Lazy(def_id))
+        self.intern(TypeData::Lazy(def_id))
     }
 
     /// Intern a lazy type reference (DefId-based).
@@ -3157,23 +3158,23 @@ impl TypeInterner {
     /// Phase 1 migration: Use this method for all new type references
     /// to enable O(1) type equality across Binder and Solver boundaries.
     pub fn lazy(&self, def_id: DefId) -> TypeId {
-        self.intern(TypeKey::Lazy(def_id))
+        self.intern(TypeData::Lazy(def_id))
     }
 
     /// Intern a type parameter.
     pub fn type_param(&self, info: TypeParamInfo) -> TypeId {
-        self.intern(TypeKey::TypeParameter(info))
+        self.intern(TypeData::TypeParameter(info))
     }
 
     /// Intern a type query (`typeof value`) marker.
     pub fn type_query(&self, symbol: SymbolRef) -> TypeId {
-        self.intern(TypeKey::TypeQuery(symbol))
+        self.intern(TypeData::TypeQuery(symbol))
     }
 
     /// Intern a generic type application
     pub fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         let app_id = self.intern_application(TypeApplication { base, args });
-        self.intern(TypeKey::Application(app_id))
+        self.intern(TypeData::Application(app_id))
     }
 }
 

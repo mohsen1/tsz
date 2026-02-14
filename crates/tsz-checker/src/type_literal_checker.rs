@@ -77,8 +77,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_type_from_type_reference_in_type_literal(&mut self, idx: NodeIndex) -> TypeId {
-        // Phase 4.3: Migration to TypeKey::Lazy(DefId) is complete for this file.
-        // Type references now use create_lazy_type_ref() instead of TypeKey::Ref(SymbolRef).
+        // Phase 4.3: Migration to TypeData::Lazy(DefId) is complete for this file.
+        // Type references now use create_lazy_type_ref() instead of TypeData::Ref(SymbolRef).
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error

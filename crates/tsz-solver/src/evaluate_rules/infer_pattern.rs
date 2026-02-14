@@ -53,28 +53,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
-            TypeKey::Infer(_) => true,
-            TypeKey::Array(elem) => self.type_contains_infer_inner(elem, visited),
-            TypeKey::Tuple(elements) => {
+            TypeData::Infer(_) => true,
+            TypeData::Array(elem) => self.type_contains_infer_inner(elem, visited),
+            TypeData::Tuple(elements) => {
                 let elements = self.interner().tuple_list(elements);
                 elements
                     .iter()
                     .any(|element| self.type_contains_infer_inner(element.type_id, visited))
             }
-            TypeKey::Union(members) | TypeKey::Intersection(members) => {
+            TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner().type_list(members);
                 members
                     .iter()
                     .any(|&member| self.type_contains_infer_inner(member, visited))
             }
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 shape
                     .properties
                     .iter()
                     .any(|prop| self.type_contains_infer_inner(prop.type_id, visited))
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 if shape
                     .properties
@@ -97,7 +97,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 false
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner().function_shape(shape_id);
                 shape
                     .params
@@ -108,7 +108,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .is_some_and(|this_type| self.type_contains_infer_inner(this_type, visited))
                     || self.type_contains_infer_inner(shape.return_type, visited)
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
                 shape.call_signatures.iter().any(|sig| {
                     sig.params
@@ -131,14 +131,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .iter()
                     .any(|prop| self.type_contains_infer_inner(prop.type_id, visited))
             }
-            TypeKey::TypeParameter(info) => {
+            TypeData::TypeParameter(info) => {
                 info.constraint
                     .is_some_and(|constraint| self.type_contains_infer_inner(constraint, visited))
                     || info
                         .default
                         .is_some_and(|default| self.type_contains_infer_inner(default, visited))
             }
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner().type_application(app_id);
                 self.type_contains_infer_inner(app.base, visited)
                     || app
@@ -146,14 +146,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .iter()
                         .any(|&arg| self.type_contains_infer_inner(arg, visited))
             }
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner().conditional_type(cond_id);
                 self.type_contains_infer_inner(cond.check_type, visited)
                     || self.type_contains_infer_inner(cond.extends_type, visited)
                     || self.type_contains_infer_inner(cond.true_type, visited)
                     || self.type_contains_infer_inner(cond.false_type, visited)
             }
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner().mapped_type(mapped_id);
                 mapped
                     .type_param
@@ -169,36 +169,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .is_some_and(|name_type| self.type_contains_infer_inner(name_type, visited))
                     || self.type_contains_infer_inner(mapped.template, visited)
             }
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 self.type_contains_infer_inner(obj, visited)
                     || self.type_contains_infer_inner(idx, visited)
             }
-            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
                 self.type_contains_infer_inner(inner, visited)
             }
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner().template_list(spans);
                 spans.iter().any(|span| match span {
                     TemplateSpan::Text(_) => false,
                     TemplateSpan::Type(inner) => self.type_contains_infer_inner(*inner, visited),
                 })
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => {
+            TypeData::StringIntrinsic { type_arg, .. } => {
                 self.type_contains_infer_inner(type_arg, visited)
             }
-            TypeKey::Enum(_def_id, member_type) => {
+            TypeData::Enum(_def_id, member_type) => {
                 self.type_contains_infer_inner(member_type, visited)
             }
-            TypeKey::Intrinsic(_)
-            | TypeKey::Literal(_)
-            | TypeKey::Lazy(_)
-            | TypeKey::Recursive(_)
-            | TypeKey::BoundParameter(_)
-            | TypeKey::TypeQuery(_)
-            | TypeKey::UniqueSymbol(_)
-            | TypeKey::ThisType
-            | TypeKey::ModuleNamespace(_)
-            | TypeKey::Error => false,
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Error => false,
         }
     }
 
@@ -216,7 +216,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return Some(inferred);
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner().lookup(inferred) {
+        if let Some(TypeData::Union(members)) = self.interner().lookup(inferred) {
             let members = self.interner().type_list(members);
             let mut filtered = Vec::new();
             for &member in members.iter() {
@@ -252,7 +252,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return inferred;
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner().lookup(inferred) {
+        if let Some(TypeData::Union(members)) = self.interner().lookup(inferred) {
             let members = self.interner().type_list(members);
             let mut filtered = Vec::new();
             let mut had_non_matching = false;
@@ -341,11 +341,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
-            TypeKey::Infer(info) => self.bind_infer(&info, inferred, bindings, checker),
-            TypeKey::Array(elem) => {
+            TypeData::Infer(info) => self.bind_infer(&info, inferred, bindings, checker),
+            TypeData::Array(elem) => {
                 self.bind_infer_defaults_inner(elem, inferred, bindings, checker, visited)
             }
-            TypeKey::Tuple(elements) => {
+            TypeData::Tuple(elements) => {
                 let elements = self.interner().tuple_list(elements);
                 for element in elements.iter() {
                     if !self.bind_infer_defaults_inner(
@@ -360,7 +360,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            TypeKey::Union(members) | TypeKey::Intersection(members) => {
+            TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner().type_list(members);
                 for &member in members.iter() {
                     if !self.bind_infer_defaults_inner(member, inferred, bindings, checker, visited)
@@ -370,7 +370,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     if !self.bind_infer_defaults_inner(
@@ -385,7 +385,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     if !self.bind_infer_defaults_inner(
@@ -434,7 +434,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner().function_shape(shape_id);
                 for param in shape.params.iter() {
                     if !self.bind_infer_defaults_inner(
@@ -461,7 +461,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     visited,
                 )
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
                 for sig in shape.call_signatures.iter() {
                     for param in sig.params.iter() {
@@ -534,7 +534,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            TypeKey::TypeParameter(info) => {
+            TypeData::TypeParameter(info) => {
                 if let Some(constraint) = info.constraint
                     && !self
                         .bind_infer_defaults_inner(constraint, inferred, bindings, checker, visited)
@@ -549,7 +549,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner().type_application(app_id);
                 if !self.bind_infer_defaults_inner(app.base, inferred, bindings, checker, visited) {
                     return false;
@@ -561,7 +561,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner().conditional_type(cond_id);
                 self.bind_infer_defaults_inner(
                     cond.check_type,
@@ -589,7 +589,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     visited,
                 )
             }
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner().mapped_type(mapped_id);
                 if let Some(constraint) = mapped.type_param.constraint
                     && !self
@@ -626,14 +626,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     visited,
                 )
             }
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 self.bind_infer_defaults_inner(obj, inferred, bindings, checker, visited)
                     && self.bind_infer_defaults_inner(idx, inferred, bindings, checker, visited)
             }
-            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
                 self.bind_infer_defaults_inner(inner, inferred, bindings, checker, visited)
             }
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner().template_list(spans);
                 for span in spans.iter() {
                     if let TemplateSpan::Type(inner) = span
@@ -645,22 +645,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => {
+            TypeData::StringIntrinsic { type_arg, .. } => {
                 self.bind_infer_defaults_inner(type_arg, inferred, bindings, checker, visited)
             }
-            TypeKey::Enum(_def_id, member_type) => {
+            TypeData::Enum(_def_id, member_type) => {
                 self.bind_infer_defaults_inner(member_type, inferred, bindings, checker, visited)
             }
-            TypeKey::Intrinsic(_)
-            | TypeKey::Literal(_)
-            | TypeKey::Lazy(_)
-            | TypeKey::Recursive(_)
-            | TypeKey::BoundParameter(_)
-            | TypeKey::TypeQuery(_)
-            | TypeKey::UniqueSymbol(_)
-            | TypeKey::ThisType
-            | TypeKey::ModuleNamespace(_)
-            | TypeKey::Error => true,
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Error => true,
         }
     }
 
@@ -866,7 +866,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return true;
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner().lookup(source) {
+        if let Some(TypeData::Union(members)) = self.interner().lookup(source) {
             let members = self.interner().type_list(members);
             let base = bindings.clone();
             let mut merged = base.clone();
@@ -901,8 +901,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match pattern_key {
-            TypeKey::Infer(info) => self.bind_infer(&info, source, bindings, checker),
-            TypeKey::Function(pattern_fn_id) => self.match_infer_function_pattern(
+            TypeData::Infer(info) => self.bind_infer(&info, source, bindings, checker),
+            TypeData::Function(pattern_fn_id) => self.match_infer_function_pattern(
                 source,
                 pattern_fn_id,
                 pattern,
@@ -910,7 +910,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 visited,
                 checker,
             ),
-            TypeKey::Callable(pattern_shape_id) => self.match_infer_callable_pattern(
+            TypeData::Callable(pattern_shape_id) => self.match_infer_callable_pattern(
                 source,
                 pattern_shape_id,
                 pattern,
@@ -918,15 +918,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 visited,
                 checker,
             ),
-            TypeKey::Array(pattern_elem) => match self.interner().lookup(source) {
-                Some(TypeKey::Array(source_elem)) => {
+            TypeData::Array(pattern_elem) => match self.interner().lookup(source) {
+                Some(TypeData::Array(source_elem)) => {
                     self.match_infer_pattern(source_elem, pattern_elem, bindings, visited, checker)
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
-                        let Some(TypeKey::Array(source_elem)) = self.interner().lookup(member)
+                        let Some(TypeData::Array(source_elem)) = self.interner().lookup(member)
                         else {
                             return false;
                         };
@@ -955,8 +955,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 _ => false,
             },
-            TypeKey::Tuple(pattern_elems) => match self.interner().lookup(source) {
-                Some(TypeKey::Tuple(source_elems)) => {
+            TypeData::Tuple(pattern_elems) => match self.interner().lookup(source) {
+                Some(TypeData::Tuple(source_elems)) => {
                     let source_elems = self.interner().tuple_list(source_elems);
                     let pattern_elems = self.interner().tuple_list(pattern_elems);
                     self.match_tuple_elements(
@@ -967,11 +967,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checker,
                     )
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
-                        let Some(TypeKey::Tuple(source_elems)) = self.interner().lookup(member)
+                        let Some(TypeData::Tuple(source_elems)) = self.interner().lookup(member)
                         else {
                             return false;
                         };
@@ -1002,22 +1002,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 _ => false,
             },
-            TypeKey::ReadonlyType(pattern_inner) => {
+            TypeData::ReadonlyType(pattern_inner) => {
                 let source_inner = match self.interner().lookup(source) {
-                    Some(TypeKey::ReadonlyType(inner)) => inner,
+                    Some(TypeData::ReadonlyType(inner)) => inner,
                     _ => source,
                 };
                 self.match_infer_pattern(source_inner, pattern_inner, bindings, visited, checker)
             }
-            TypeKey::NoInfer(pattern_inner) => {
+            TypeData::NoInfer(pattern_inner) => {
                 // NoInfer<T> matches if source matches T (strip wrapper)
                 let source_inner = match self.interner().lookup(source) {
-                    Some(TypeKey::NoInfer(inner)) => inner,
+                    Some(TypeData::NoInfer(inner)) => inner,
                     _ => source,
                 };
                 self.match_infer_pattern(source_inner, pattern_inner, bindings, visited, checker)
             }
-            TypeKey::Object(pattern_shape_id) => self.match_infer_object_pattern(
+            TypeData::Object(pattern_shape_id) => self.match_infer_object_pattern(
                 source,
                 pattern_shape_id,
                 pattern,
@@ -1025,7 +1025,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 visited,
                 checker,
             ),
-            TypeKey::ObjectWithIndex(pattern_shape_id) => self
+            TypeData::ObjectWithIndex(pattern_shape_id) => self
                 .match_infer_object_with_index_pattern(
                     source,
                     pattern_shape_id,
@@ -1034,10 +1034,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     visited,
                     checker,
                 ),
-            TypeKey::Application(pattern_app_id) => {
+            TypeData::Application(pattern_app_id) => {
                 // First try declaration matching: Application vs Application
                 let declaration_matched = match self.interner().lookup(source) {
-                    Some(TypeKey::Application(source_app_id)) => {
+                    Some(TypeData::Application(source_app_id)) => {
                         let source_app = self.interner().type_application(source_app_id);
                         let pattern_app = self.interner().type_application(pattern_app_id);
                         if source_app.args.len() != pattern_app.args.len() {
@@ -1090,10 +1090,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 false
             }
-            TypeKey::TemplateLiteral(pattern_spans_id) => {
+            TypeData::TemplateLiteral(pattern_spans_id) => {
                 let pattern_spans = self.interner().template_list(pattern_spans_id);
                 match self.interner().lookup(source) {
-                    Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+                    Some(TypeData::Literal(LiteralValue::String(atom))) => {
                         let source_text = self.interner().resolve_atom_ref(atom);
                         self.match_template_literal_string(
                             source_text.as_ref(),
@@ -1102,7 +1102,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             checker,
                         )
                     }
-                    Some(TypeKey::TemplateLiteral(source_spans_id)) => {
+                    Some(TypeData::TemplateLiteral(source_spans_id)) => {
                         let source_spans = self.interner().template_list(source_spans_id);
                         self.match_template_literal_spans(
                             source,
@@ -1112,7 +1112,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             checker,
                         )
                     }
-                    Some(TypeKey::Intrinsic(IntrinsicKind::String)) => self
+                    Some(TypeData::Intrinsic(IntrinsicKind::String)) => self
                         .match_template_literal_string_type(
                             pattern_spans.as_ref(),
                             bindings,
@@ -1126,7 +1126,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Source: A | T | U or a single type A
             // Algorithm: Match source members against non-infer pattern members,
             // then bind the infer to the remaining source members
-            TypeKey::Union(pattern_members) => {
+            TypeData::Union(pattern_members) => {
                 self.match_infer_union_pattern(source, pattern_members, pattern, bindings, checker)
             }
             _ => checker.is_subtype_of(source, pattern),
@@ -1214,7 +1214,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             return match self.interner().lookup(source) {
-                Some(TypeKey::Function(source_fn_id)) => {
+                Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
                     match_params_and_return(
                         source,
@@ -1223,7 +1223,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         bindings,
                     )
                 }
-                Some(TypeKey::Callable(source_shape_id)) => {
+                Some(TypeData::Callable(source_shape_id)) => {
                     // Match against the last call signature (TypeScript behavior)
                     let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.call_signatures.is_empty() {
@@ -1242,13 +1242,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         bindings,
                     )
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
-                            Some(TypeKey::Function(source_fn_id)) => {
+                            Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
                                 if !match_params_and_return(
                                     member,
@@ -1259,7 +1259,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     return false;
                                 }
                             }
-                            Some(TypeKey::Callable(source_shape_id)) => {
+                            Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.is_empty() {
                                     return false;
@@ -1348,10 +1348,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             return match self.interner().lookup(source) {
-                Some(TypeKey::Function(source_fn_id)) => {
+                Some(TypeData::Function(source_fn_id)) => {
                     match_function_params(source, source_fn_id, bindings)
                 }
-                Some(TypeKey::Callable(source_shape_id)) => {
+                Some(TypeData::Callable(source_shape_id)) => {
                     // Match against the last call signature (TypeScript behavior for overloads)
                     let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.call_signatures.is_empty() {
@@ -1387,11 +1387,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                     true
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
-                        let Some(TypeKey::Function(source_fn_id)) = self.interner().lookup(member)
+                        let Some(TypeData::Function(source_fn_id)) = self.interner().lookup(member)
                         else {
                             return false;
                         };
@@ -1435,11 +1435,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             return match self.interner().lookup(source) {
-                Some(TypeKey::Function(source_fn_id)) => {
+                Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
                     match_return(source, source_fn.return_type, bindings)
                 }
-                Some(TypeKey::Callable(source_shape_id)) => {
+                Some(TypeData::Callable(source_shape_id)) => {
                     // Match against the last call signature (TypeScript behavior)
                     let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.call_signatures.is_empty() {
@@ -1452,13 +1452,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     };
                     match_return(source, source_sig.return_type, bindings)
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
-                            Some(TypeKey::Function(source_fn_id)) => {
+                            Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
                                 if !match_return(
                                     member,
@@ -1468,7 +1468,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     return false;
                                 }
                             }
-                            Some(TypeKey::Callable(source_shape_id)) => {
+                            Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.is_empty() {
                                     return false;
@@ -1539,14 +1539,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match self.interner().lookup(source) {
-            Some(TypeKey::Function(source_fn_id)) => {
+            Some(TypeData::Function(source_fn_id)) => {
                 match_function_this(source, source_fn_id, bindings)
             }
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut combined = FxHashMap::default();
                 for &member in members.iter() {
-                    let Some(TypeKey::Function(source_fn_id)) = self.interner().lookup(member)
+                    let Some(TypeData::Function(source_fn_id)) = self.interner().lookup(member)
                     else {
                         return false;
                     };
@@ -1607,7 +1607,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             return match self.interner().lookup(source) {
-                Some(TypeKey::Callable(source_shape_id)) => {
+                Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.construct_signatures.is_empty() {
                         return false;
@@ -1615,13 +1615,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let source_sig = &source_shape.construct_signatures[0];
                     match_construct_params_tuple(&source_sig.params, bindings)
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
-                            Some(TypeKey::Callable(source_shape_id)) => {
+                            Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.construct_signatures.is_empty() {
                                     return false;
@@ -1666,7 +1666,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
         match self.interner().lookup(source) {
-            Some(TypeKey::Callable(source_shape_id)) => {
+            Some(TypeData::Callable(source_shape_id)) => {
                 let source_shape = self.interner().callable_shape(source_shape_id);
                 if source_shape.construct_signatures.is_empty() {
                     return false;
@@ -1674,13 +1674,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let source_sig = &source_shape.construct_signatures[0];
                 match_construct_params(&source_sig.params, bindings)
             }
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut combined = FxHashMap::default();
                 for &member in members.iter() {
                     let mut member_bindings = FxHashMap::default();
                     match self.interner().lookup(member) {
-                        Some(TypeKey::Callable(source_shape_id)) => {
+                        Some(TypeData::Callable(source_shape_id)) => {
                             let source_shape = self.interner().callable_shape(source_shape_id);
                             if source_shape.construct_signatures.is_empty() {
                                 return false;
@@ -1763,7 +1763,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             return match self.interner().lookup(source) {
-                Some(TypeKey::Callable(source_shape_id)) => {
+                Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.call_signatures.len() != 1
                         || !source_shape.construct_signatures.is_empty()
@@ -1779,7 +1779,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         bindings,
                     )
                 }
-                Some(TypeKey::Function(source_fn_id)) => {
+                Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
                     match_params_and_return(
                         source,
@@ -1788,13 +1788,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         bindings,
                     )
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
-                            Some(TypeKey::Callable(source_shape_id)) => {
+                            Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.len() != 1
                                     || !source_shape.construct_signatures.is_empty()
@@ -1812,7 +1812,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     return false;
                                 }
                             }
-                            Some(TypeKey::Function(source_fn_id)) => {
+                            Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
                                 if !match_params_and_return(
                                     member,
@@ -1857,7 +1857,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 };
 
             return match self.interner().lookup(source) {
-                Some(TypeKey::Callable(source_shape_id)) => {
+                Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.call_signatures.len() != 1
                         || !source_shape.construct_signatures.is_empty()
@@ -1868,17 +1868,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let source_sig = &source_shape.call_signatures[0];
                     match_params(&source_sig.params, bindings)
                 }
-                Some(TypeKey::Function(source_fn_id)) => {
+                Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
                     match_params(&source_fn.params, bindings)
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
-                            Some(TypeKey::Callable(source_shape_id)) => {
+                            Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.len() != 1
                                     || !source_shape.construct_signatures.is_empty()
@@ -1891,7 +1891,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     return false;
                                 }
                             }
-                            Some(TypeKey::Function(source_fn_id)) => {
+                            Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
                                 if !match_params(&source_fn.params, &mut member_bindings) {
                                     return false;
@@ -1936,7 +1936,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             return match self.interner().lookup(source) {
-                Some(TypeKey::Callable(source_shape_id)) => {
+                Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
                     if source_shape.call_signatures.len() != 1
                         || !source_shape.construct_signatures.is_empty()
@@ -1947,17 +1947,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let source_sig = &source_shape.call_signatures[0];
                     match_return(source, source_sig.return_type, bindings)
                 }
-                Some(TypeKey::Function(source_fn_id)) => {
+                Some(TypeData::Function(source_fn_id)) => {
                     let source_fn = self.interner().function_shape(source_fn_id);
                     match_return(source, source_fn.return_type, bindings)
                 }
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);
                     let mut combined = FxHashMap::default();
                     for &member in members.iter() {
                         let mut member_bindings = FxHashMap::default();
                         match self.interner().lookup(member) {
-                            Some(TypeKey::Callable(source_shape_id)) => {
+                            Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
                                 if source_shape.call_signatures.len() != 1
                                     || !source_shape.construct_signatures.is_empty()
@@ -1974,7 +1974,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     return false;
                                 }
                             }
-                            Some(TypeKey::Function(source_fn_id)) => {
+                            Some(TypeData::Function(source_fn_id)) => {
                                 let source_fn = self.interner().function_shape(source_fn_id);
                                 if !match_return(
                                     member,
@@ -2016,8 +2016,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         match self.interner().lookup(source) {
-            Some(TypeKey::Object(source_shape_id))
-            | Some(TypeKey::ObjectWithIndex(source_shape_id)) => {
+            Some(TypeData::Object(source_shape_id))
+            | Some(TypeData::ObjectWithIndex(source_shape_id)) => {
                 let source_shape = self.interner().object_shape(source_shape_id);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
@@ -2055,15 +2055,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            Some(TypeKey::Intersection(members)) => {
+            Some(TypeData::Intersection(members)) => {
                 let members = self.interner().type_list(members);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
                     let mut merged_type = None;
                     for &member in members.iter() {
                         let shape_id = match self.interner().lookup(member) {
-                            Some(TypeKey::Object(shape_id))
-                            | Some(TypeKey::ObjectWithIndex(shape_id)) => shape_id,
+                            Some(TypeData::Object(shape_id))
+                            | Some(TypeData::ObjectWithIndex(shape_id)) => shape_id,
                             _ => return false,
                         };
                         let shape = self.interner().object_shape(shape_id);
@@ -2112,7 +2112,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut combined = FxHashMap::default();
                 for &member in members.iter() {
@@ -2154,8 +2154,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         match self.interner().lookup(source) {
-            Some(TypeKey::Object(source_shape_id))
-            | Some(TypeKey::ObjectWithIndex(source_shape_id)) => {
+            Some(TypeData::Object(source_shape_id))
+            | Some(TypeData::ObjectWithIndex(source_shape_id)) => {
                 let source_shape = self.interner().object_shape(source_shape_id);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
@@ -2309,7 +2309,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 true
             }
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut combined = FxHashMap::default();
                 for &member in members.iter() {
@@ -2356,7 +2356,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut non_infer_pattern_members: Vec<TypeId> = Vec::new();
 
         for &pattern_member in pattern_members.iter() {
-            if let Some(TypeKey::Infer(info)) = self.interner().lookup(pattern_member) {
+            if let Some(TypeData::Infer(info)) = self.interner().lookup(pattern_member) {
                 infer_members.push((info.name, info.constraint));
             } else {
                 non_infer_pattern_members.push(pattern_member);
@@ -2377,7 +2377,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Handle both union and non-union sources
         match self.interner().lookup(source) {
-            Some(TypeKey::Union(source_members)) => {
+            Some(TypeData::Union(source_members)) => {
                 let source_members = self.interner().type_list(source_members);
 
                 // Find source members that DON'T match non-infer pattern members
@@ -2514,7 +2514,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     pos = end;
                     let captured_type = self.interner().literal_string(captured);
 
-                    if let Some(TypeKey::Infer(info)) = self.interner().lookup(type_id) {
+                    if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
                         if !self.bind_infer(&info, captured_type, bindings, checker) {
                             return false;
                         }
@@ -2541,7 +2541,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if pattern_spans.len() == 1
             && let TemplateSpan::Type(type_id) = pattern_spans[0]
         {
-            if let Some(TypeKey::Infer(info)) = self.interner().lookup(type_id) {
+            if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
                 let inferred = if source_spans
                     .iter()
                     .all(|span| matches!(span, TemplateSpan::Type(_)))
@@ -2573,7 +2573,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         TemplateSpan::Type(source_type) => *source_type,
                     };
-                    if let Some(TypeKey::Infer(info)) = self.interner().lookup(*type_id) {
+                    if let Some(TypeData::Infer(info)) = self.interner().lookup(*type_id) {
                         if !self.bind_infer(&info, inferred, bindings, checker) {
                             return false;
                         }
@@ -2603,7 +2603,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         for span in pattern_spans {
             if let TemplateSpan::Type(type_id) = span {
-                if let Some(TypeKey::Infer(info)) = self.interner().lookup(*type_id) {
+                if let Some(TypeData::Infer(info)) = self.interner().lookup(*type_id) {
                     if !self.bind_infer(&info, TypeId::STRING, bindings, checker) {
                         return false;
                     }
@@ -2650,8 +2650,8 @@ impl<'a> InferSubstitutor<'a> {
         self.visiting.insert(type_id, type_id);
 
         let result = match key {
-            TypeKey::Infer(info) => self.bindings.get(&info.name).copied().unwrap_or(type_id),
-            TypeKey::Array(elem) => {
+            TypeData::Infer(info) => self.bindings.get(&info.name).copied().unwrap_or(type_id),
+            TypeData::Array(elem) => {
                 let substituted = self.substitute(elem);
                 if substituted == elem {
                     type_id
@@ -2659,7 +2659,7 @@ impl<'a> InferSubstitutor<'a> {
                     self.interner.array(substituted)
                 }
             }
-            TypeKey::Tuple(elements) => {
+            TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(elements);
                 let mut changed = false;
                 let mut new_elements = Vec::with_capacity(elements.len());
@@ -2681,7 +2681,7 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 }
             }
-            TypeKey::Union(members) => {
+            TypeData::Union(members) => {
                 let members = self.interner.type_list(members);
                 let mut changed = false;
                 let mut new_members = Vec::with_capacity(members.len());
@@ -2698,7 +2698,7 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 }
             }
-            TypeKey::Intersection(members) => {
+            TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 let mut changed = false;
                 let mut new_members = Vec::with_capacity(members.len());
@@ -2715,7 +2715,7 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 }
             }
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 let mut changed = false;
                 let mut properties = Vec::with_capacity(shape.properties.len());
@@ -2742,7 +2742,7 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 }
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 let mut changed = false;
                 let mut properties = Vec::with_capacity(shape.properties.len());
@@ -2799,7 +2799,7 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 }
             }
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(cond_id);
                 let check_type = self.substitute(cond.check_type);
                 let extends_type = self.substitute(cond.extends_type);
@@ -2821,7 +2821,7 @@ impl<'a> InferSubstitutor<'a> {
                     })
                 }
             }
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 let new_obj = self.substitute(obj);
                 let new_idx = self.substitute(idx);
                 if new_obj == obj && new_idx == idx {
@@ -2830,7 +2830,7 @@ impl<'a> InferSubstitutor<'a> {
                     self.interner.index_access(new_obj, new_idx)
                 }
             }
-            TypeKey::KeyOf(inner) => {
+            TypeData::KeyOf(inner) => {
                 let new_inner = self.substitute(inner);
                 if new_inner == inner {
                     type_id
@@ -2838,7 +2838,7 @@ impl<'a> InferSubstitutor<'a> {
                     self.interner.keyof(new_inner)
                 }
             }
-            TypeKey::ReadonlyType(inner) => {
+            TypeData::ReadonlyType(inner) => {
                 let new_inner = self.substitute(inner);
                 if new_inner == inner {
                     type_id
@@ -2846,7 +2846,7 @@ impl<'a> InferSubstitutor<'a> {
                     self.interner.readonly_type(new_inner)
                 }
             }
-            TypeKey::NoInfer(inner) => {
+            TypeData::NoInfer(inner) => {
                 let new_inner = self.substitute(inner);
                 if new_inner == inner {
                     type_id
@@ -2854,7 +2854,7 @@ impl<'a> InferSubstitutor<'a> {
                     self.interner.no_infer(new_inner)
                 }
             }
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 let mut changed = false;
                 let mut new_spans = Vec::with_capacity(spans.len());
@@ -2877,7 +2877,7 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 }
             }
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 let base = self.substitute(app.base);
                 let mut changed = base != app.base;
@@ -2895,7 +2895,7 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 }
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 let mut changed = false;
                 let mut new_params = Vec::with_capacity(shape.params.len());
@@ -2936,7 +2936,7 @@ impl<'a> InferSubstitutor<'a> {
                     type_id
                 }
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 let mut changed = false;
 

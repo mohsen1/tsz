@@ -820,8 +820,8 @@ fn test_unique_symbol_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let sym_a = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
-    let sym_b = interner.intern(TypeKey::UniqueSymbol(SymbolRef(2)));
+    let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
+    let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
 
     assert!(checker.is_subtype_of(sym_a, sym_a));
     assert!(!checker.is_subtype_of(sym_a, sym_b));
@@ -885,7 +885,7 @@ fn test_no_unchecked_indexed_access_array_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let string_array = interner.array(TypeId::STRING);
-    let index_access = interner.intern(TypeKey::IndexAccess(string_array, TypeId::NUMBER));
+    let index_access = interner.intern(TypeData::IndexAccess(string_array, TypeId::NUMBER));
 
     assert!(checker.is_subtype_of(index_access, TypeId::STRING));
 
@@ -915,7 +915,7 @@ fn test_no_unchecked_indexed_access_tuple_subtyping() {
             rest: false,
         },
     ]);
-    let index_access = interner.intern(TypeKey::IndexAccess(tuple, TypeId::NUMBER));
+    let index_access = interner.intern(TypeData::IndexAccess(tuple, TypeId::NUMBER));
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     assert!(checker.is_subtype_of(index_access, string_or_number));
@@ -945,7 +945,7 @@ fn test_no_unchecked_object_index_signature_subtyping() {
         number_index: None,
     });
 
-    let index_access = interner.intern(TypeKey::IndexAccess(indexed, TypeId::NUMBER));
+    let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::NUMBER));
 
     assert!(checker.is_subtype_of(index_access, TypeId::NUMBER));
 
@@ -973,7 +973,7 @@ fn test_no_unchecked_indexed_access_string_index_signature() {
         number_index: None,
     });
 
-    let index_access = interner.intern(TypeKey::IndexAccess(indexed, TypeId::STRING));
+    let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::STRING));
 
     assert!(checker.is_subtype_of(index_access, TypeId::NUMBER));
 
@@ -1002,7 +1002,7 @@ fn test_no_unchecked_indexed_access_union_index_signature() {
     });
 
     let index_type = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let index_access = interner.intern(TypeKey::IndexAccess(indexed, index_type));
+    let index_access = interner.intern(TypeData::IndexAccess(indexed, index_type));
 
     assert!(checker.is_subtype_of(index_access, TypeId::NUMBER));
 
@@ -1036,7 +1036,7 @@ fn test_correlated_union_index_access_subtyping() {
         interner.literal_string("a"),
         interner.literal_string("b"),
     ]);
-    let index_access = interner.intern(TypeKey::IndexAccess(union_obj, key_union));
+    let index_access = interner.intern(TypeData::IndexAccess(union_obj, key_union));
     let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
 
     assert!(checker.is_subtype_of(index_access, expected));
@@ -1105,7 +1105,7 @@ fn test_readonly_array_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let mutable_array = interner.array(TypeId::STRING);
-    let readonly_array = interner.intern(TypeKey::ReadonlyType(mutable_array));
+    let readonly_array = interner.intern(TypeData::ReadonlyType(mutable_array));
 
     assert!(checker.is_subtype_of(mutable_array, readonly_array));
     assert!(!checker.is_subtype_of(readonly_array, mutable_array));
@@ -1130,7 +1130,7 @@ fn test_readonly_tuple_subtyping() {
             rest: false,
         },
     ]);
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
 
     assert!(checker.is_subtype_of(tuple, readonly_tuple));
     assert!(!checker.is_subtype_of(readonly_tuple, tuple));
@@ -3037,7 +3037,7 @@ fn test_type_parameter_constraint_assignability() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3047,7 +3047,7 @@ fn test_type_parameter_constraint_assignability() {
     assert!(checker.is_subtype_of(t_param, TypeId::STRING));
     assert!(!checker.is_subtype_of(t_param, TypeId::NUMBER));
 
-    let unconstrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let unconstrained = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -3061,19 +3061,19 @@ fn test_base_constraint_assignability_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
-    let v_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let v_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -3091,7 +3091,7 @@ fn test_base_constraint_not_assignable_to_param() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3106,13 +3106,13 @@ fn test_type_parameter_identity_only() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3127,7 +3127,7 @@ fn test_deferred_conditional_source_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -3153,7 +3153,7 @@ fn test_deferred_conditional_target_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -3176,7 +3176,7 @@ fn test_deferred_conditional_structural_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -3218,7 +3218,7 @@ fn test_conditional_tuple_wrapper_no_distribution_subtyping() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4538,7 +4538,7 @@ fn test_this_type_in_param_covariant() {
     let mut checker = SubtypeChecker::new(&interner);
     let func_name = interner.intern_string("compare");
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let this_or_number = interner.union(vec![this_type, TypeId::NUMBER]);
 
     let narrow_fn = interner.function(FunctionShape {
@@ -4587,7 +4587,7 @@ fn test_class_like_subtyping_this_param_covariant() {
     let id = interner.intern_string("id");
     let extra = interner.intern_string("extra");
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let this_or_number = interner.union(vec![this_type, TypeId::NUMBER]);
 
     let base_compare = interner.function(FunctionShape {
@@ -4993,8 +4993,8 @@ fn test_keyof_intersection_contravariant() {
     )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
-    let keyof_a = interner.intern(TypeKey::KeyOf(obj_a));
-    let keyof_intersection = interner.intern(TypeKey::KeyOf(intersection));
+    let keyof_a = interner.intern(TypeData::KeyOf(obj_a));
+    let keyof_intersection = interner.intern(TypeData::KeyOf(intersection));
 
     assert!(checker.is_subtype_of(keyof_a, keyof_intersection));
     assert!(!checker.is_subtype_of(keyof_intersection, keyof_a));
@@ -5016,8 +5016,8 @@ fn test_keyof_contravariant_object_subtyping() {
 
     assert!(checker.is_subtype_of(obj_ab, obj_a));
 
-    let keyof_a = interner.intern(TypeKey::KeyOf(obj_a));
-    let keyof_ab = interner.intern(TypeKey::KeyOf(obj_ab));
+    let keyof_a = interner.intern(TypeData::KeyOf(obj_a));
+    let keyof_ab = interner.intern(TypeData::KeyOf(obj_ab));
 
     assert!(checker.is_subtype_of(keyof_a, keyof_ab));
     assert!(!checker.is_subtype_of(keyof_ab, keyof_a));
@@ -5098,7 +5098,7 @@ fn test_keyof_union_index_signature_contravariant() {
     });
 
     let union = interner.union(vec![string_index, number_index]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union));
+    let keyof_union = interner.intern(TypeData::KeyOf(union));
 
     assert!(checker.is_subtype_of(keyof_union, TypeId::NUMBER));
     assert!(!checker.is_subtype_of(keyof_union, TypeId::STRING));
@@ -5124,7 +5124,7 @@ fn test_keyof_union_string_index_and_literal_narrows() {
     let obj_a = interner.object(vec![PropertyInfo::new(key_a, TypeId::NUMBER)]);
 
     let union = interner.union(vec![string_index, obj_a]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union));
+    let keyof_union = interner.intern(TypeData::KeyOf(union));
     let key_a_literal = interner.literal_string("a");
 
     assert!(checker.is_subtype_of(keyof_union, key_a_literal));
@@ -5153,7 +5153,7 @@ fn test_keyof_union_overlapping_keys_is_common() {
     ]);
 
     let union = interner.union(vec![obj_ab, obj_ac]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union));
+    let keyof_union = interner.intern(TypeData::KeyOf(union));
     let key_a_literal = interner.literal_string("a");
     let key_b_literal = interner.literal_string("b");
     let key_c_literal = interner.literal_string("c");
@@ -5179,7 +5179,7 @@ fn test_keyof_union_optional_key_is_common() {
     ]);
 
     let union = interner.union(vec![obj_optional_a, obj_ab]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union));
+    let keyof_union = interner.intern(TypeData::KeyOf(union));
     let key_a_literal = interner.literal_string("a");
     let key_b_literal = interner.literal_string("b");
 
@@ -5193,13 +5193,13 @@ fn test_keyof_deferred_not_subtype_of_string() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let keyof_param = interner.intern(TypeKey::KeyOf(type_param));
+    let keyof_param = interner.intern(TypeData::KeyOf(type_param));
 
     assert!(!checker.is_subtype_of(keyof_param, TypeId::STRING));
 }
@@ -5209,13 +5209,13 @@ fn test_keyof_deferred_subtype_of_string_number_symbol_union() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let keyof_param = interner.intern(TypeKey::KeyOf(type_param));
+    let keyof_param = interner.intern(TypeData::KeyOf(type_param));
 
     let key_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
     assert!(checker.is_subtype_of(keyof_param, key_union));
@@ -5226,13 +5226,13 @@ fn test_keyof_deferred_not_subtype_of_string_number_union() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let keyof_param = interner.intern(TypeKey::KeyOf(type_param));
+    let keyof_param = interner.intern(TypeData::KeyOf(type_param));
 
     let key_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert!(!checker.is_subtype_of(keyof_param, key_union));
@@ -5243,7 +5243,7 @@ fn test_keyof_any_subtyping_union() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let keyof_any = interner.intern(TypeKey::KeyOf(TypeId::ANY));
+    let keyof_any = interner.intern(TypeData::KeyOf(TypeId::ANY));
     let key_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
     let string_number_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
@@ -5281,7 +5281,7 @@ fn test_mapped_type_over_number_keys_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::NUMBER));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::NUMBER));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -5313,7 +5313,7 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::NUMBER));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::NUMBER));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -5354,7 +5354,7 @@ fn test_mapped_type_over_string_keys_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::STRING));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::STRING));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -5383,7 +5383,7 @@ fn test_mapped_type_over_string_keys_number_index_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::STRING));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::STRING));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -5430,14 +5430,14 @@ fn test_mapped_type_over_string_keys_key_remap_omit_length() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::STRING));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::STRING));
     let key_param = TypeParamInfo {
         name: interner.intern_string("K"),
         constraint: None,
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
     let length_key = interner.literal_string("length");
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -5469,7 +5469,7 @@ fn test_mapped_type_over_boolean_keys_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::BOOLEAN));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::BOOLEAN));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -5498,7 +5498,7 @@ fn test_mapped_type_over_symbol_keys_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::SYMBOL));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::SYMBOL));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -5527,7 +5527,7 @@ fn test_mapped_type_over_bigint_keys_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::BIGINT));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::BIGINT));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -5765,7 +5765,7 @@ fn test_mapped_type_optional_remove_from_optional_keyof() {
 
     let key_a = interner.intern_string("a");
     let source_obj = interner.object(vec![PropertyInfo::opt(key_a, TypeId::NUMBER)]);
-    let keys = interner.intern(TypeKey::KeyOf(source_obj));
+    let keys = interner.intern(TypeData::KeyOf(source_obj));
 
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
@@ -5796,7 +5796,7 @@ fn test_mapped_type_readonly_remove_from_readonly_keyof() {
 
     let key_a = interner.intern_string("a");
     let source_obj = interner.object(vec![PropertyInfo::readonly(key_a, TypeId::STRING)]);
-    let keys = interner.intern(TypeKey::KeyOf(source_obj));
+    let keys = interner.intern(TypeData::KeyOf(source_obj));
 
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
@@ -5872,7 +5872,7 @@ fn test_mapped_type_key_remap_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -5881,7 +5881,7 @@ fn test_mapped_type_key_remap_subtyping() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = interner.mapped(MappedType {
         type_param: key_param,
@@ -5918,7 +5918,7 @@ fn test_mapped_type_key_remap_optional_add_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -5927,7 +5927,7 @@ fn test_mapped_type_key_remap_optional_add_subtyping() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = interner.mapped(MappedType {
         type_param: key_param,
@@ -5964,7 +5964,7 @@ fn test_mapped_type_key_remap_optional_remove_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -5973,7 +5973,7 @@ fn test_mapped_type_key_remap_optional_remove_subtyping() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = interner.mapped(MappedType {
         type_param: key_param,
@@ -6010,7 +6010,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6019,7 +6019,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = interner.mapped(MappedType {
         type_param: key_param,
@@ -6078,7 +6078,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6087,7 +6087,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = interner.mapped(MappedType {
         type_param: key_param,
@@ -6129,7 +6129,7 @@ fn test_mapped_type_key_remap_readonly_add_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6138,7 +6138,7 @@ fn test_mapped_type_key_remap_readonly_add_subtyping() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = interner.mapped(MappedType {
         type_param: key_param,
@@ -6176,7 +6176,7 @@ fn test_mapped_type_key_remap_readonly_remove_subtyping() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6185,7 +6185,7 @@ fn test_mapped_type_key_remap_readonly_remove_subtyping() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = interner.mapped(MappedType {
         type_param: key_param,
@@ -6220,7 +6220,7 @@ fn test_mapped_type_key_remap_all_never_empty_object() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -6261,7 +6261,7 @@ fn test_generic_function_constraint_directionality() {
         default: None,
         is_const: false,
     };
-    let t_id = interner.intern(TypeKey::TypeParameter(t.clone()));
+    let t_id = interner.intern(TypeData::TypeParameter(t.clone()));
 
     let t1 = TypeParamInfo {
         name: interner.intern_string("T1"),
@@ -6269,7 +6269,7 @@ fn test_generic_function_constraint_directionality() {
         default: None,
         is_const: false,
     };
-    let t1_id = interner.intern(TypeKey::TypeParameter(t1.clone()));
+    let t1_id = interner.intern(TypeData::TypeParameter(t1.clone()));
 
     let u = TypeParamInfo {
         name: interner.intern_string("U"),
@@ -6277,7 +6277,7 @@ fn test_generic_function_constraint_directionality() {
         default: None,
         is_const: false,
     };
-    let u_id = interner.intern(TypeKey::TypeParameter(u.clone()));
+    let u_id = interner.intern(TypeData::TypeParameter(u.clone()));
 
     let v = TypeParamInfo {
         name: interner.intern_string("V"),
@@ -6285,7 +6285,7 @@ fn test_generic_function_constraint_directionality() {
         default: None,
         is_const: false,
     };
-    let v_id = interner.intern(TypeKey::TypeParameter(v.clone()));
+    let v_id = interner.intern(TypeData::TypeParameter(v.clone()));
 
     let fn_t = interner.function(FunctionShape {
         type_params: vec![u],
@@ -17095,7 +17095,7 @@ fn test_unique_symbol_self_subtype() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(42)));
+    let sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(42)));
 
     assert!(checker.is_subtype_of(sym, sym));
 }
@@ -17106,8 +17106,8 @@ fn test_unique_symbol_not_subtype_of_different() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let sym_a = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
-    let sym_b = interner.intern(TypeKey::UniqueSymbol(SymbolRef(2)));
+    let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
+    let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
 
     assert!(!checker.is_subtype_of(sym_a, sym_b));
     assert!(!checker.is_subtype_of(sym_b, sym_a));
@@ -17119,7 +17119,7 @@ fn test_unique_symbol_subtype_of_symbol() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(100)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(100)));
 
     assert!(checker.is_subtype_of(unique_sym, TypeId::SYMBOL));
 }
@@ -17130,7 +17130,7 @@ fn test_symbol_not_subtype_of_unique_symbol() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(100)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(100)));
 
     assert!(!checker.is_subtype_of(TypeId::SYMBOL, unique_sym));
 }
@@ -17141,7 +17141,7 @@ fn test_unique_symbol_in_union() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
     let sym_or_string = interner.union(vec![unique_sym, TypeId::STRING]);
 
     // unique symbol is subtype of the union
@@ -17162,13 +17162,13 @@ fn test_well_known_symbol_iterator() {
     let mut checker = SubtypeChecker::new(&interner);
 
     // Using conventional SymbolRef for well-known symbols
-    let sym_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1000)));
+    let sym_iterator = interner.intern(TypeData::UniqueSymbol(SymbolRef(1000)));
 
     // It's a subtype of symbol
     assert!(checker.is_subtype_of(sym_iterator, TypeId::SYMBOL));
 
     // But not equal to another unique symbol
-    let sym_async_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1001)));
+    let sym_async_iterator = interner.intern(TypeData::UniqueSymbol(SymbolRef(1001)));
     assert!(!checker.is_subtype_of(sym_iterator, sym_async_iterator));
 }
 
@@ -17178,7 +17178,7 @@ fn test_well_known_symbol_async_iterator() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let sym_async_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1001)));
+    let sym_async_iterator = interner.intern(TypeData::UniqueSymbol(SymbolRef(1001)));
 
     assert!(checker.is_subtype_of(sym_async_iterator, TypeId::SYMBOL));
 }
@@ -17189,7 +17189,7 @@ fn test_well_known_symbol_to_string_tag() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let sym_to_string_tag = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1002)));
+    let sym_to_string_tag = interner.intern(TypeData::UniqueSymbol(SymbolRef(1002)));
 
     assert!(checker.is_subtype_of(sym_to_string_tag, TypeId::SYMBOL));
 }
@@ -17200,7 +17200,7 @@ fn test_well_known_symbol_has_instance() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let sym_has_instance = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1003)));
+    let sym_has_instance = interner.intern(TypeData::UniqueSymbol(SymbolRef(1003)));
 
     assert!(checker.is_subtype_of(sym_has_instance, TypeId::SYMBOL));
 }
@@ -17212,7 +17212,7 @@ fn test_symbol_keyed_object_property() {
     let interner = TypeInterner::new();
     let _checker = SubtypeChecker::new(&interner);
 
-    let _sym_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1000)));
+    let _sym_iterator = interner.intern(TypeData::UniqueSymbol(SymbolRef(1000)));
 
     // Iterator-like return type
     let iterator_fn = interner.function(FunctionShape {
@@ -17246,9 +17246,9 @@ fn test_symbol_union_with_multiple_unique() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let sym_a = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
-    let sym_b = interner.intern(TypeKey::UniqueSymbol(SymbolRef(2)));
-    let sym_c = interner.intern(TypeKey::UniqueSymbol(SymbolRef(3)));
+    let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
+    let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
+    let sym_c = interner.intern(TypeData::UniqueSymbol(SymbolRef(3)));
 
     let sym_union = interner.union(vec![sym_a, sym_b, sym_c]);
 
@@ -17287,7 +17287,7 @@ fn test_unique_symbol_intersection() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(42)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(42)));
 
     // unique symbol & symbol = unique symbol (more specific)
     let intersection = interner.intersection(vec![unique_sym, TypeId::SYMBOL]);
@@ -17308,7 +17308,7 @@ fn test_symbol_as_property_key() {
     assert!(checker.is_subtype_of(TypeId::SYMBOL, property_key));
 
     // unique symbol is also subtype of PropertyKey
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
     assert!(checker.is_subtype_of(unique_sym, property_key));
 }
 
@@ -17318,7 +17318,7 @@ fn test_const_unique_symbol_type() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let const_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(999)));
+    let const_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(999)));
 
     // Type is unique symbol, not just symbol
     assert!(checker.is_subtype_of(const_sym, TypeId::SYMBOL));
@@ -17450,7 +17450,7 @@ fn test_symbol_keyof_type() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
 
     // keyof type includes the symbol
     let keyof_result = interner.union(vec![unique_sym, interner.literal_string("name")]);
@@ -17465,8 +17465,8 @@ fn test_symbol_in_discriminated_union() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let sym_a = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
-    let sym_b = interner.intern(TypeKey::UniqueSymbol(SymbolRef(2)));
+    let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
+    let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
 
     // Two variants discriminated by symbol
     let variant_a = interner.object(vec![PropertyInfo::readonly(
@@ -18593,7 +18593,7 @@ fn test_keyof_single_property_is_literal() {
     let x_name = interner.intern_string("x");
     let obj = interner.object(vec![PropertyInfo::new(x_name, TypeId::NUMBER)]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
     let lit_x = interner.literal_string("x");
 
     // keyof { x } should be subtype of "x" (they're equivalent)
@@ -18612,7 +18612,7 @@ fn test_keyof_multiple_properties_is_union() {
         PropertyInfo::new(interner.intern_string("c"), TypeId::BOOLEAN),
     ]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
     let lit_a = interner.literal_string("a");
     let lit_b = interner.literal_string("b");
     let lit_c = interner.literal_string("c");
@@ -18634,7 +18634,7 @@ fn test_keyof_empty_object_is_never() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let empty_obj = interner.object(vec![]);
-    let keyof_empty = interner.intern(TypeKey::KeyOf(empty_obj));
+    let keyof_empty = interner.intern(TypeData::KeyOf(empty_obj));
 
     // keyof {} should be subtype of never (they're equivalent)
     assert!(checker.is_subtype_of(keyof_empty, TypeId::NEVER));
@@ -18649,7 +18649,7 @@ fn test_keyof_with_optional_property() {
     let x_name = interner.intern_string("x");
     let obj = interner.object(vec![PropertyInfo::opt(x_name, TypeId::NUMBER)]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
     let lit_x = interner.literal_string("x");
 
     // Optional property still contributes to keyof
@@ -18665,7 +18665,7 @@ fn test_keyof_with_readonly_property() {
     let x_name = interner.intern_string("x");
     let obj = interner.object(vec![PropertyInfo::readonly(x_name, TypeId::NUMBER)]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
     let lit_x = interner.literal_string("x");
 
     // Readonly property still contributes to keyof
@@ -18691,7 +18691,7 @@ fn test_keyof_with_method() {
 
     let obj = interner.object(vec![PropertyInfo::method(foo_name, fn_void)]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
     let lit_foo = interner.literal_string("foo");
 
     assert!(checker.is_subtype_of(lit_foo, keyof_obj));
@@ -18706,7 +18706,7 @@ fn test_keyof_subtype_of_string() {
     let x_name = interner.intern_string("x");
     let obj = interner.object(vec![PropertyInfo::new(x_name, TypeId::NUMBER)]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
 
     // keyof object with string keys is subtype of string
     assert!(checker.is_subtype_of(keyof_obj, TypeId::STRING));
@@ -18721,7 +18721,7 @@ fn test_keyof_not_equal_to_string() {
     let x_name = interner.intern_string("x");
     let obj = interner.object(vec![PropertyInfo::new(x_name, TypeId::NUMBER)]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
 
     // string is wider than keyof { x }
     assert!(!checker.is_subtype_of(TypeId::STRING, keyof_obj));
@@ -18743,8 +18743,8 @@ fn test_keyof_wider_object_has_more_keys() {
         PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
     ]);
 
-    let keyof_a = interner.intern(TypeKey::KeyOf(obj_a));
-    let keyof_ab = interner.intern(TypeKey::KeyOf(obj_ab));
+    let keyof_a = interner.intern(TypeData::KeyOf(obj_a));
+    let keyof_ab = interner.intern(TypeData::KeyOf(obj_ab));
 
     // keyof { a } <: keyof { a, b } (fewer keys is narrower)
     assert!(checker.is_subtype_of(keyof_a, keyof_ab));
@@ -18769,7 +18769,7 @@ fn test_keyof_union_is_intersection_of_keys() {
     ]);
 
     let union = interner.union(vec![obj_ab, obj_bc]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union));
+    let keyof_union = interner.intern(TypeData::KeyOf(union));
     let lit_b = interner.literal_string("b");
 
     // Only "b" is common to both - should be subtype of keyof union
@@ -18793,7 +18793,7 @@ fn test_keyof_intersection_is_union_of_keys() {
     )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
-    let keyof_intersection = interner.intern(TypeKey::KeyOf(intersection));
+    let keyof_intersection = interner.intern(TypeData::KeyOf(intersection));
 
     let lit_a = interner.literal_string("a");
     let lit_b = interner.literal_string("b");
@@ -18809,7 +18809,7 @@ fn test_keyof_any_is_string_number_symbol() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let keyof_any = interner.intern(TypeKey::KeyOf(TypeId::ANY));
+    let keyof_any = interner.intern(TypeData::KeyOf(TypeId::ANY));
     let property_key = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
 
     // keyof any should be equivalent to PropertyKey
@@ -18822,7 +18822,7 @@ fn test_keyof_unknown_is_never() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let keyof_unknown = interner.intern(TypeKey::KeyOf(TypeId::UNKNOWN));
+    let keyof_unknown = interner.intern(TypeData::KeyOf(TypeId::UNKNOWN));
 
     assert!(checker.is_subtype_of(keyof_unknown, TypeId::NEVER));
 }
@@ -18833,7 +18833,7 @@ fn test_keyof_never_is_string_number_symbol() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let keyof_never = interner.intern(TypeKey::KeyOf(TypeId::NEVER));
+    let keyof_never = interner.intern(TypeData::KeyOf(TypeId::NEVER));
     let property_key = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
 
     assert!(checker.is_subtype_of(keyof_never, property_key));
@@ -18844,7 +18844,7 @@ fn test_keyof_string_has_string_methods() {
     // keyof string includes string method names
     let interner = TypeInterner::new();
 
-    let keyof_string = interner.intern(TypeKey::KeyOf(TypeId::STRING));
+    let keyof_string = interner.intern(TypeData::KeyOf(TypeId::STRING));
 
     // Should be valid type
     assert!(keyof_string != TypeId::ERROR);
@@ -18855,7 +18855,7 @@ fn test_keyof_number_has_number_methods() {
     // keyof number includes number method names
     let interner = TypeInterner::new();
 
-    let keyof_number = interner.intern(TypeKey::KeyOf(TypeId::NUMBER));
+    let keyof_number = interner.intern(TypeData::KeyOf(TypeId::NUMBER));
 
     // Should be valid type
     assert!(keyof_number != TypeId::ERROR);
@@ -18868,7 +18868,7 @@ fn test_keyof_array_type() {
     let mut checker = SubtypeChecker::new(&interner);
 
     let string_array = interner.array(TypeId::STRING);
-    let keyof_array = interner.intern(TypeKey::KeyOf(string_array));
+    let keyof_array = interner.intern(TypeData::KeyOf(string_array));
 
     // number should be subtype of keyof array (for index access)
     assert!(checker.is_subtype_of(TypeId::NUMBER, keyof_array));
@@ -18895,7 +18895,7 @@ fn test_keyof_tuple_type() {
         },
     ]);
 
-    let keyof_tuple = interner.intern(TypeKey::KeyOf(tuple));
+    let keyof_tuple = interner.intern(TypeData::KeyOf(tuple));
     let lit_0 = interner.literal_string("0");
     let lit_1 = interner.literal_string("1");
 
@@ -18922,7 +18922,7 @@ fn test_keyof_with_index_signature_includes_string() {
         number_index: None,
     });
 
-    let keyof_indexed = interner.intern(TypeKey::KeyOf(indexed_obj));
+    let keyof_indexed = interner.intern(TypeData::KeyOf(indexed_obj));
 
     // string should be subtype of keyof { [key: string]: number }
     assert!(checker.is_subtype_of(TypeId::STRING, keyof_indexed));
@@ -18946,7 +18946,7 @@ fn test_keyof_with_number_index_signature() {
         }),
     });
 
-    let keyof_indexed = interner.intern(TypeKey::KeyOf(indexed_obj));
+    let keyof_indexed = interner.intern(TypeData::KeyOf(indexed_obj));
 
     // number should be subtype of keyof { [key: number]: string }
     assert!(checker.is_subtype_of(TypeId::NUMBER, keyof_indexed));
@@ -18964,7 +18964,7 @@ fn test_keyof_nested_object() {
     let x_name = interner.intern_string("x");
     let outer_obj = interner.object(vec![PropertyInfo::new(x_name, inner_obj)]);
 
-    let keyof_outer = interner.intern(TypeKey::KeyOf(outer_obj));
+    let keyof_outer = interner.intern(TypeData::KeyOf(outer_obj));
     let lit_x = interner.literal_string("x");
     let lit_y = interner.literal_string("y");
 
@@ -18985,7 +18985,7 @@ fn test_keyof_generic_constraint() {
         PropertyInfo::new(interner.intern_string("age"), TypeId::NUMBER),
     ]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
     let lit_name = interner.literal_string("name");
     let lit_age = interner.literal_string("age");
     let lit_invalid = interner.literal_string("invalid");
@@ -19008,7 +19008,7 @@ fn test_keyof_mapped_type_source() {
         PropertyInfo::new(interner.intern_string("y"), TypeId::NUMBER),
     ]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
 
     // keyof should produce valid keys for iteration
     assert!(keyof_obj != TypeId::ERROR);
@@ -19029,7 +19029,7 @@ fn test_keyof_reflexive() {
         TypeId::NUMBER,
     )]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
 
     assert!(checker.is_subtype_of(keyof_obj, keyof_obj));
 }
@@ -19040,7 +19040,7 @@ fn test_keyof_null_is_never() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let keyof_null = interner.intern(TypeKey::KeyOf(TypeId::NULL));
+    let keyof_null = interner.intern(TypeData::KeyOf(TypeId::NULL));
 
     assert!(checker.is_subtype_of(keyof_null, TypeId::NEVER));
 }
@@ -19051,7 +19051,7 @@ fn test_keyof_undefined_is_never() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let keyof_undefined = interner.intern(TypeKey::KeyOf(TypeId::UNDEFINED));
+    let keyof_undefined = interner.intern(TypeData::KeyOf(TypeId::UNDEFINED));
 
     assert!(checker.is_subtype_of(keyof_undefined, TypeId::NEVER));
 }
@@ -19062,7 +19062,7 @@ fn test_keyof_void_is_never() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let keyof_void = interner.intern(TypeKey::KeyOf(TypeId::VOID));
+    let keyof_void = interner.intern(TypeData::KeyOf(TypeId::VOID));
 
     assert!(checker.is_subtype_of(keyof_void, TypeId::NEVER));
 }
@@ -19072,7 +19072,7 @@ fn test_keyof_object_intrinsic() {
     // keyof object includes all possible property keys
     let interner = TypeInterner::new();
 
-    let keyof_object = interner.intern(TypeKey::KeyOf(TypeId::OBJECT));
+    let keyof_object = interner.intern(TypeData::KeyOf(TypeId::OBJECT));
 
     // Should be valid
     assert!(keyof_object != TypeId::ERROR);
@@ -19098,7 +19098,7 @@ fn test_keyof_symbol_keyed_object() {
 
     let obj = interner.object(vec![PropertyInfo::method(sym_iterator, fn_iterator)]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
 
     // Should include the symbol key
     assert!(keyof_obj != TypeId::NEVER);
@@ -19491,7 +19491,7 @@ fn test_constructor_generic_type_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let generic_ctor = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -19518,7 +19518,7 @@ fn test_constructor_generic_with_constraint() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let constrained_ctor = interner.function(FunctionShape {
         type_params: vec![t_param],
@@ -19918,7 +19918,7 @@ fn test_this_type_basic() {
     // Basic polymorphic this type
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // this type should be valid
     assert!(this_type != TypeId::ERROR);
@@ -19931,7 +19931,7 @@ fn test_this_type_in_method_return() {
     // method(): this
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let fluent_method = interner.function(FunctionShape {
         type_params: vec![],
@@ -19957,7 +19957,7 @@ fn test_this_type_fluent_builder() {
     // { setName(name: string): this, setValue(value: number): this, build(): Result }
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let result_type = interner.lazy(DefId(100));
 
     let set_name = interner.function(FunctionShape {
@@ -20036,7 +20036,7 @@ fn test_this_type_with_this_constraint() {
     // method<T extends MyClass>(this: T): T
     let interner = TypeInterner::new();
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(interner.lazy(DefId(1))),
         default: None,
@@ -20093,7 +20093,7 @@ fn test_this_type_subtype_check() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // this is subtype of unknown
     assert!(checker.is_subtype_of(this_type, TypeId::UNKNOWN));
@@ -20108,7 +20108,7 @@ fn test_this_type_in_class_method() {
     // class Chainable { chain(): this }
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let chain_method = interner.function(FunctionShape {
         type_params: vec![],
@@ -20134,7 +20134,7 @@ fn test_this_type_with_generic_method() {
     // method<T>(value: T): this
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let t_ref = interner.lazy(DefId(50));
 
     let generic_fluent = interner.function(FunctionShape {
@@ -20166,7 +20166,7 @@ fn test_this_type_with_property_access() {
     // { self: this }
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let obj = interner.object(vec![PropertyInfo::readonly(
         interner.intern_string("self"),
@@ -20182,7 +20182,7 @@ fn test_this_type_array() {
     // this[]
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let this_array = interner.array(this_type);
 
     assert!(this_array != TypeId::ERROR);
@@ -20193,7 +20193,7 @@ fn test_this_type_in_union() {
     // this | null
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let nullable_this = interner.union(vec![this_type, TypeId::NULL]);
 
     assert!(nullable_this != TypeId::ERROR);
@@ -20204,7 +20204,7 @@ fn test_this_type_in_intersection() {
     // this & HasId
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let has_id = interner.object(vec![PropertyInfo::new(
         interner.intern_string("id"),
         TypeId::STRING,
@@ -20220,7 +20220,7 @@ fn test_this_type_clone_method() {
     // clone(): this pattern
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let clone_method = interner.function(FunctionShape {
         type_params: vec![],
@@ -20245,7 +20245,7 @@ fn test_this_type_with_optional_chaining() {
     // Method returning this | undefined for optional operation
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let optional_this = interner.union(vec![this_type, TypeId::UNDEFINED]);
 
     let optional_chain = interner.function(FunctionShape {
@@ -20266,7 +20266,7 @@ fn test_this_type_with_promise() {
     // Async method returning Promise<this>
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let promise_this = interner.application(interner.lazy(DefId(100)), vec![this_type]);
 
     let async_method = interner.function(FunctionShape {
@@ -20287,7 +20287,7 @@ fn test_this_type_in_tuple() {
     // [this, number] tuple
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let tuple_with_this = interner.tuple(vec![
         TupleElement {
             type_id: this_type,
@@ -20311,7 +20311,7 @@ fn test_this_type_map_method() {
     // map<U>(fn: (value: this) => U): U
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let u_ref = interner.lazy(DefId(50));
 
     let mapper_fn = interner.function(FunctionShape {
@@ -20357,7 +20357,7 @@ fn test_this_type_with_readonly() {
     // Readonly<this>
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // Simulated Readonly<this> as application
     let readonly_this = interner.application(interner.lazy(DefId(100)), vec![this_type]);
@@ -20370,7 +20370,7 @@ fn test_this_type_partial() {
     // Partial<this>
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let partial_this = interner.application(interner.lazy(DefId(101)), vec![this_type]);
 
@@ -20382,8 +20382,8 @@ fn test_this_type_with_keyof() {
     // keyof this
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
-    let keyof_this = interner.intern(TypeKey::KeyOf(this_type));
+    let this_type = interner.intern(TypeData::ThisType);
+    let keyof_this = interner.intern(TypeData::KeyOf(this_type));
 
     assert!(keyof_this != TypeId::ERROR);
 }
@@ -20393,10 +20393,10 @@ fn test_this_type_indexed_access() {
     // this[K] indexed access
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let k_ref = interner.lazy(DefId(50));
 
-    let indexed = interner.intern(TypeKey::IndexAccess(this_type, k_ref));
+    let indexed = interner.intern(TypeData::IndexAccess(this_type, k_ref));
 
     assert!(indexed != TypeId::ERROR);
 }
@@ -20406,7 +20406,7 @@ fn test_this_type_with_extends() {
     // this extends SomeInterface ? A : B
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let some_interface = interner.lazy(DefId(1));
 
     let cond = ConditionalType {
@@ -20428,7 +20428,7 @@ fn test_this_type_method_decorator_pattern() {
     // <T extends (...args: any[]) => any>(method: T): T
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // Method that takes this as explicit parameter
     let decorated = interner.function(FunctionShape {
@@ -20449,7 +20449,7 @@ fn test_this_type_static_vs_instance() {
     // Static method doesn't use this, instance method does
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // Static method - no this
     let static_method = interner.function(FunctionShape {
@@ -20486,7 +20486,7 @@ fn test_this_type_with_getter_setter() {
     // Getter returns this, setter takes value
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // Simulating getter: get prop(): this
     let getter = interner.function(FunctionShape {
@@ -20518,7 +20518,7 @@ fn test_this_type_with_rest_params() {
     // method(...args: Parameters<this["method"]>): this
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // Simplified: method with rest params returning this
     let rest_method = interner.function(FunctionShape {
@@ -20544,8 +20544,8 @@ fn test_this_type_comparison() {
     // Two this types should be equal
     let interner = TypeInterner::new();
 
-    let this1 = interner.intern(TypeKey::ThisType);
-    let this2 = interner.intern(TypeKey::ThisType);
+    let this1 = interner.intern(TypeData::ThisType);
+    let this2 = interner.intern(TypeData::ThisType);
 
     // Same interned type
     assert_eq!(this1, this2);
@@ -20556,7 +20556,7 @@ fn test_this_type_with_method_overload() {
     // Overloaded methods all returning this
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let overload1 = interner.function(FunctionShape {
         type_params: vec![],
@@ -20601,7 +20601,7 @@ fn test_this_type_event_emitter_pattern() {
     // emit(event: string, ...args: any[]): this
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let on_method = interner.function(FunctionShape {
         type_params: vec![],
@@ -20690,7 +20690,7 @@ fn test_this_type_query_builder() {
     // execute(): Promise<Result[]>
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let result_array = interner.array(interner.lazy(DefId(100)));
     let promise_results = interner.application(interner.lazy(DefId(101)), vec![result_array]);
 
@@ -21206,7 +21206,7 @@ fn test_readonly_with_this_type() {
     // { readonly self: this }
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let obj = interner.object(vec![PropertyInfo::readonly(
         interner.intern_string("self"),
@@ -21622,7 +21622,7 @@ fn test_overload_generic_identity() {
     // }
     let interner = TypeInterner::new();
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -21681,14 +21681,14 @@ fn test_overload_generic_with_constraint() {
     // }
     let interner = TypeInterner::new();
 
-    let t_string = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_string = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
 
-    let t_number = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_number = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -22050,14 +22050,14 @@ fn test_overload_generic_multiple_type_params() {
     // }
     let interner = TypeInterner::new();
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -22473,7 +22473,7 @@ fn test_overload_generic_default_type() {
     // }
     let interner = TypeInterner::new();
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: Some(TypeId::STRING),
@@ -22519,14 +22519,14 @@ fn test_overload_array_methods_pattern() {
     // }
     let interner = TypeInterner::new();
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -22836,21 +22836,21 @@ fn test_overload_promise_then_pattern() {
     // }
     let interner = TypeInterner::new();
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let v_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let v_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: None,
         default: None,
@@ -24343,7 +24343,7 @@ fn test_this_type_class_hierarchy_fluent_return() {
     // Derived.method() should have type Derived (not Base)
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // Base method returning this
     let base_method = interner.function(FunctionShape {
@@ -24394,7 +24394,7 @@ fn test_this_type_in_method_parameter_covariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // Box.compare(other: this)
     let box_compare = interner.function(FunctionShape {
@@ -24493,7 +24493,7 @@ fn test_this_type_return_covariant_in_hierarchy() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     // Base.fluent(): this
     let base_fluent = interner.function(FunctionShape {
@@ -24534,7 +24534,7 @@ fn test_this_type_polymorphic_method_chain() {
     // }
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let result_type = interner.lazy(DefId(1));
 
     let set_name = interner.function(FunctionShape {
@@ -24595,7 +24595,7 @@ fn test_this_type_with_generics_in_class() {
     // }
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     let _t_param = TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
@@ -24662,7 +24662,7 @@ fn test_this_type_class_hierarchy_multiple_methods() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
 
     let method1 = interner.function(FunctionShape {
         type_params: vec![],
@@ -24728,7 +24728,7 @@ fn test_this_type_with_constrained_generic() {
         is_const: false,
     };
 
-    let t_type_param = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type_param = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // method<T extends Base>(this: T): T
     let constrained_method = interner.function(FunctionShape {
@@ -24786,7 +24786,7 @@ fn test_rest_param_flag_is_preserved() {
     });
 
     // Verify the rest flag is preserved
-    if let Some(TypeKey::Function(shape_id)) = interner.lookup(target) {
+    if let Some(TypeData::Function(shape_id)) = interner.lookup(target) {
         let shape = interner.function_shape(shape_id);
         assert_eq!(shape.params.len(), 3, "Should have 3 params");
         assert!(!shape.params[0].rest, "First param should not be rest");

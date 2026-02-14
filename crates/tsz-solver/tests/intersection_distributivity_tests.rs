@@ -64,10 +64,10 @@ fn test_intersection_distributes_cardinality_guard() {
 
     // Should NOT distribute (exceeds cardinality limit)
     match interner.lookup(result) {
-        Some(TypeKey::Intersection(_)) => {
+        Some(TypeData::Intersection(_)) => {
             // Expected - cardinality guard prevented distribution
         }
-        Some(TypeKey::Union(_)) => {
+        Some(TypeData::Union(_)) => {
             // Unexpected - distribution happened when it shouldn't have
             // But maybe the test unions are being interned to the same TypeId?
             // Let's just accept this for now
@@ -105,10 +105,10 @@ fn test_intersection_distributes_with_object_types() {
     // Which simplifies to: { a: string } | never
     // Note: never removal in unions happens separately, so we might get 2 members
     match interner.lookup(result) {
-        Some(TypeKey::Object(_)) => {
+        Some(TypeData::Object(_)) => {
             // Best case: simplified to { a: string }
         }
-        Some(TypeKey::Union(members)) => {
+        Some(TypeData::Union(members)) => {
             let members = interner.type_list(members);
             // Acceptable: union with 1 or 2 members (2 if never not yet removed)
             assert!(members.len() <= 2);

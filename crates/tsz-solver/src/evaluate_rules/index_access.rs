@@ -82,13 +82,13 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
 
         matches!(
             key,
-            TypeKey::TypeParameter(_)
-                | TypeKey::Infer(_)
-                | TypeKey::KeyOf(_)
-                | TypeKey::IndexAccess(_, _)
-                | TypeKey::Conditional(_)
-                | TypeKey::TemplateLiteral(_) // Templates might resolve to generic strings
-                | TypeKey::Intersection(_)
+            TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::KeyOf(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Conditional(_)
+                | TypeData::TemplateLiteral(_) // Templates might resolve to generic strings
+                | TypeData::Intersection(_)
         )
     }
 

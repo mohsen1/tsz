@@ -16,7 +16,7 @@
 
 use crate::types::TypeListId;
 use crate::visitor::TypeVisitor;
-use crate::{IntrinsicKind, LiteralValue, TypeDatabase, TypeId, TypeKey};
+use crate::{IntrinsicKind, LiteralValue, TypeData, TypeDatabase, TypeId};
 
 /// Result of a binary operation.
 #[derive(Clone, Debug, PartialEq)]
@@ -251,12 +251,12 @@ impl<'a> TypeVisitor for OverlapChecker<'a> {
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
         // Check if left is a literal with same value
         match self.db.lookup(self.left) {
-            Some(TypeKey::Literal(left_lit)) => left_lit == *value,
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Literal(left_lit)) => left_lit == *value,
+            Some(TypeData::Union(members)) => {
                 // Check if left's union contains this literal
                 let members = self.db.type_list(members);
                 members.iter().any(|&m| match self.db.lookup(m) {
-                    Some(TypeKey::Literal(lit)) => lit == *value,
+                    Some(TypeData::Literal(lit)) => lit == *value,
                     _ => false,
                 })
             }
@@ -547,7 +547,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         }
 
         // Special handling for TypeParameter and Infer before visitor pattern
-        if let Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) =
+        if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
             self.interner.lookup(left)
         {
             if let Some(constraint) = info.constraint {
@@ -556,7 +556,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             return true;
         }
 
-        if let Some(TypeKey::TypeParameter(info) | TypeKey::Infer(info)) =
+        if let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
             self.interner.lookup(right)
         {
             if let Some(constraint) = info.constraint {
@@ -566,14 +566,14 @@ impl<'a> BinaryOpEvaluator<'a> {
         }
 
         // Handle Union types explicitly (recursively check members)
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(left) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(left) {
             let members = self.interner.type_list(members);
             return members
                 .iter()
                 .any(|member| self.has_overlap(*member, right));
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner.lookup(right) {
+        if let Some(TypeData::Union(members)) = self.interner.lookup(right) {
             let members = self.interner.type_list(members);
             return members.iter().any(|member| self.has_overlap(left, *member));
         }
@@ -626,7 +626,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             return true;
         }
         // For union types, each member must individually be valid
-        if let Some(TypeKey::Union(list_id)) = self.interner.lookup(type_id) {
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
             let members = self.interner.type_list(list_id);
             return !members.is_empty()
                 && members
@@ -654,7 +654,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::UNKNOWN {
             return false;
         }
-        if let Some(TypeKey::Union(list_id)) = self.interner.lookup(type_id) {
+        if let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) {
             let members = self.interner.type_list(list_id);
             return !members.is_empty()
                 && members

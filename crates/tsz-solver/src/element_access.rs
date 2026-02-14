@@ -1,5 +1,5 @@
 use crate::evaluate::{evaluate_index_access_with_options, evaluate_type};
-use crate::{LiteralValue, TypeDatabase, TypeId, TypeKey};
+use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
 
 #[derive(Debug, Clone)]
 pub enum ElementAccessResult {
@@ -67,7 +67,7 @@ impl<'a> ElementAccessEvaluator<'a> {
         }
 
         // 2. Check for Tuple out of bounds
-        if let Some(TypeKey::Tuple(elements)) = self.interner.lookup(evaluated_object) {
+        if let Some(TypeData::Tuple(elements)) = self.interner.lookup(evaluated_object) {
             if let Some(index) = literal_index {
                 let tuple_elements = self.interner.tuple_list(elements);
 
@@ -97,14 +97,14 @@ impl<'a> ElementAccessEvaluator<'a> {
 
     fn is_indexable(&self, type_id: TypeId) -> bool {
         match self.interner.lookup(type_id) {
-            Some(TypeKey::Array(_))
-            | Some(TypeKey::Tuple(_))
-            | Some(TypeKey::Object(_))
-            | Some(TypeKey::ObjectWithIndex(_))
-            | Some(TypeKey::StringIntrinsic { .. })
-            | Some(TypeKey::Literal(LiteralValue::String(_)))
-            | Some(TypeKey::Intersection(_)) => true,
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Array(_))
+            | Some(TypeData::Tuple(_))
+            | Some(TypeData::Object(_))
+            | Some(TypeData::ObjectWithIndex(_))
+            | Some(TypeData::StringIntrinsic { .. })
+            | Some(TypeData::Literal(LiteralValue::String(_)))
+            | Some(TypeData::Intersection(_)) => true,
+            Some(TypeData::Union(members)) => {
                 let members = self.interner.type_list(members);
                 members.iter().all(|&m| self.is_indexable(m))
             }
@@ -123,7 +123,7 @@ impl<'a> ElementAccessEvaluator<'a> {
         let mut checker = crate::subtype::SubtypeChecker::new(self.interner);
         // Simplified check: checking if object has index signature compatible with index_type
         match self.interner.lookup(object_type) {
-            Some(TypeKey::Object(_)) => {
+            Some(TypeData::Object(_)) => {
                 // Object without explicit index signature
                 // If index_type is string/number (not literal), then it's an error
                 // unless it's ANY
@@ -137,7 +137,7 @@ impl<'a> ElementAccessEvaluator<'a> {
                 }
                 false
             }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 checker.reset();
                 if checker.is_subtype_of(index_type, TypeId::STRING) && shape.string_index.is_none()

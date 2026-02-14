@@ -19,7 +19,7 @@ fn test_mapped_type_as_never_skips_property() {
     ]);
 
     // Create keyof T
-    let keyof_t = interner.intern(TypeKey::KeyOf(source_type));
+    let keyof_t = interner.intern(TypeData::KeyOf(source_type));
 
     // Create type parameters P and K
     let type_param_p_info = TypeParamInfo {
@@ -28,7 +28,7 @@ fn test_mapped_type_as_never_skips_property() {
         default: None,
         is_const: false,
     };
-    let type_param_p = interner.intern(TypeKey::TypeParameter(type_param_p_info.clone()));
+    let type_param_p = interner.intern(TypeData::TypeParameter(type_param_p_info.clone()));
 
     let type_param_k_info = TypeParamInfo {
         name: interner.intern_string("K"),
@@ -36,7 +36,7 @@ fn test_mapped_type_as_never_skips_property() {
         default: None,
         is_const: false,
     };
-    let type_param_k = interner.intern(TypeKey::TypeParameter(type_param_k_info.clone()));
+    let type_param_k = interner.intern(TypeData::TypeParameter(type_param_k_info.clone()));
 
     // Create the conditional: P extends K ? never : P
     let conditional_type = ConditionalType {
@@ -65,7 +65,7 @@ fn test_mapped_type_as_never_skips_property() {
     let result = evaluate_type(&interner, mapped_id);
 
     // The result should be an object type
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         // Should have 2 properties (x and y)
         // The 'as never' remapping doesn't filter anything because we're not using 'K' to filter
@@ -93,7 +93,7 @@ fn test_mapped_type_key_remap_to_never_filters_property() {
         default: None,
         is_const: false,
     };
-    let type_param_k = interner.intern(TypeKey::TypeParameter(type_param_k_info.clone()));
+    let type_param_k = interner.intern(TypeData::TypeParameter(type_param_k_info.clone()));
 
     // Create conditional: K extends 'a' ? never : K
     let conditional = ConditionalType {
@@ -122,7 +122,7 @@ fn test_mapped_type_key_remap_to_never_filters_property() {
     let result = evaluate_type(&interner, mapped_id);
 
     // Should get an object with only 'b' (since 'a' is remapped to 'never')
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         // Should only have 'b' since 'a' was filtered out by 'as never'
         assert_eq!(shape.properties.len(), 1);

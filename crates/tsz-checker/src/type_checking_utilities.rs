@@ -2597,7 +2597,7 @@ impl<'a> CheckerState<'a> {
     /// Get the literal type of an enum member from its initializer.
     ///
     /// Returns the literal type (e.g., Literal(0), Literal("a")) of the enum member.
-    /// This is used to create TypeKey::Enum(member_def_id, literal_type) for nominal typing.
+    /// This is used to create TypeData::Enum(member_def_id, literal_type) for nominal typing.
     pub(crate) fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
         let factory = self.ctx.types.factory();
         // Get the member node
@@ -3399,7 +3399,7 @@ impl<'a> CheckerState<'a> {
                     && name == property_name
                 {
                     // Return the enum type itself by getting the computed type of the symbol
-                    // This returns TypeKey::Enum(def_id, structural_type) which allows proper
+                    // This returns TypeData::Enum(def_id, structural_type) which allows proper
                     // enum assignability checking with nominal identity
                     return Some(self.get_type_of_symbol(sym_id));
                 }

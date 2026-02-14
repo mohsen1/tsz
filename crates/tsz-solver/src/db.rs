@@ -16,7 +16,7 @@ use crate::types::{
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
     ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
     TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
-    TypeData, TypeId, TypeKey, TypeListId, TypeParamInfo, Variance,
+    TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -679,14 +679,14 @@ impl QueryDatabase for TypeInterner {
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
         match self.lookup(type_id) {
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.object_shape(shape_id);
                 IndexInfo {
                     string_index: shape.string_index.clone(),
                     number_index: shape.number_index.clone(),
                 }
             }
-            Some(TypeKey::Array(element)) => {
+            Some(TypeData::Array(element)) => {
                 // Arrays have number index signature with element type
                 IndexInfo {
                     string_index: None,
@@ -697,7 +697,7 @@ impl QueryDatabase for TypeInterner {
                     }),
                 }
             }
-            Some(TypeKey::Tuple(elements_id)) => {
+            Some(TypeData::Tuple(elements_id)) => {
                 // Tuples have number index signature with union of element types
                 let elements = self.tuple_list(elements_id);
                 let element_types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
@@ -717,7 +717,7 @@ impl QueryDatabase for TypeInterner {
                     }),
                 }
             }
-            Some(TypeKey::Union(members_id)) => {
+            Some(TypeData::Union(members_id)) => {
                 // For unions, collect index signatures from all members
                 let members = self.type_list(members_id);
                 let mut string_indices = Vec::new();
@@ -761,7 +761,7 @@ impl QueryDatabase for TypeInterner {
                     number_index,
                 }
             }
-            Some(TypeKey::Intersection(members_id)) => {
+            Some(TypeData::Intersection(members_id)) => {
                 // For intersections, combine index signatures
                 let members = self.type_list(members_id);
                 let mut string_index = None;
@@ -1025,13 +1025,13 @@ impl<'a> QueryCache<'a> {
         };
 
         match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 self.interner.object_shape(shape_id).properties.to_vec()
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 self.interner.callable_shape(shape_id).properties.to_vec()
             }
-            TypeKey::Intersection(members_id) => {
+            TypeData::Intersection(members_id) => {
                 let members = self.interner.type_list(members_id);
                 let mut merged: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
 

@@ -87,7 +87,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Step 1: Check for distributivity
             // Only distribute for naked type parameters (recorded at lowering time).
             if cond.is_distributive
-                && let Some(TypeKey::Union(members)) = self.interner().lookup(check_type)
+                && let Some(TypeData::Union(members)) = self.interner().lookup(check_type)
             {
                 let members = self.interner().type_list(members);
                 return self.distribute_conditional(
@@ -99,10 +99,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
             }
 
-            if let Some(TypeKey::Infer(info)) = self.interner().lookup(extends_type) {
+            if let Some(TypeData::Infer(info)) = self.interner().lookup(extends_type) {
                 if matches!(
                     self.interner().lookup(check_type),
-                    Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+                    Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
                 ) {
                     return self.interner().conditional(cond.clone());
                 }
@@ -148,29 +148,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             let extends_unwrapped = match self.interner().lookup(extends_type) {
-                Some(TypeKey::ReadonlyType(inner)) => inner,
+                Some(TypeData::ReadonlyType(inner)) => inner,
                 _ => extends_type,
             };
             let check_unwrapped = match self.interner().lookup(check_type) {
-                Some(TypeKey::ReadonlyType(inner)) => inner,
+                Some(TypeData::ReadonlyType(inner)) => inner,
                 _ => check_type,
             };
 
             // Handle array extends pattern with infer
-            if let Some(TypeKey::Array(ext_elem)) = self.interner().lookup(extends_unwrapped)
-                && let Some(TypeKey::Infer(info)) = self.interner().lookup(ext_elem)
+            if let Some(TypeData::Array(ext_elem)) = self.interner().lookup(extends_unwrapped)
+                && let Some(TypeData::Infer(info)) = self.interner().lookup(ext_elem)
             {
                 return self.eval_conditional_array_infer(cond, check_unwrapped, info);
             }
 
             // Handle tuple extends pattern with infer
-            if let Some(TypeKey::Tuple(extends_elements)) =
+            if let Some(TypeData::Tuple(extends_elements)) =
                 self.interner().lookup(extends_unwrapped)
             {
                 let extends_elements = self.interner().tuple_list(extends_elements);
                 if extends_elements.len() == 1
                     && !extends_elements[0].rest
-                    && let Some(TypeKey::Infer(info)) =
+                    && let Some(TypeData::Infer(info)) =
                         self.interner().lookup(extends_elements[0].type_id)
                 {
                     return self.eval_conditional_tuple_infer(
@@ -184,7 +184,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Handle object extends pattern with infer
             if let Some(extends_shape_id) = match self.interner().lookup(extends_unwrapped) {
-                Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => {
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     Some(shape_id)
                 }
                 _ => None,
@@ -197,7 +197,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Step 2: Check for naked type parameter
-            if let Some(TypeKey::TypeParameter(param)) = self.interner().lookup(check_type) {
+            if let Some(TypeData::TypeParameter(param)) = self.interner().lookup(check_type) {
                 // If extends_type contains infer patterns and the type parameter has a constraint,
                 // try to infer from the constraint. This handles cases like:
                 // R extends Reducer<infer S, any> ? S : never
@@ -236,7 +236,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             // Constraint doesn't satisfy the condition → false branch
                             // For tail-recursion, check if false branch is another conditional
                             if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                                if let Some(TypeKey::Conditional(next_cond_id)) =
+                                if let Some(TypeData::Conditional(next_cond_id)) =
                                     self.interner().lookup(cond.false_type)
                                 {
                                     let next_cond = self.interner().conditional_type(next_cond_id);
@@ -259,12 +259,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // union members and we need to distribute individually.
                         let constraint_is_union = matches!(
                             self.interner().lookup(evaluated_constraint),
-                            Some(TypeKey::Union(_))
+                            Some(TypeData::Union(_))
                         );
                         if !constraint_is_union || !cond.is_distributive {
                             // For tail-recursion on the true branch
                             if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                                if let Some(TypeKey::Conditional(next_cond_id)) =
+                                if let Some(TypeData::Conditional(next_cond_id)) =
                                     self.interner().lookup(cond.true_type)
                                 {
                                     let next_cond = self.interner().conditional_type(next_cond_id);
@@ -303,7 +303,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Check if the result branch is directly a conditional for tail-recursion
                 // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
                 if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                    if let Some(TypeKey::Conditional(next_cond_id)) =
+                    if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(cond.false_type)
                     {
                         let next_cond = self.interner().conditional_type(next_cond_id);
@@ -314,9 +314,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Also detect Application that expands to Conditional (common pattern):
                     // type TrimLeft<T> = T extends ` ${infer R}` ? TrimLeft<R> : T;
                     // The true branch `TrimLeft<R>` is an Application, not a Conditional.
-                    if let Some(TypeKey::Application(_)) = self.interner().lookup(cond.false_type) {
+                    if let Some(TypeData::Application(_)) = self.interner().lookup(cond.false_type)
+                    {
                         let expanded = self.evaluate(cond.false_type);
-                        if let Some(TypeKey::Conditional(next_cond_id)) =
+                        if let Some(TypeData::Conditional(next_cond_id)) =
                             self.interner().lookup(expanded)
                         {
                             let next_cond = self.interner().conditional_type(next_cond_id);
@@ -356,7 +357,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Check if the result branch is directly a conditional for tail-recursion
             // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
             if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                if let Some(TypeKey::Conditional(next_cond_id)) =
+                if let Some(TypeData::Conditional(next_cond_id)) =
                     self.interner().lookup(result_branch)
                 {
                     let next_cond = self.interner().conditional_type(next_cond_id);
@@ -366,9 +367,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 // Also detect Application that expands to Conditional (tail-call through
                 // type alias like `TrimLeft<R>` which is Application, not Conditional)
-                if let Some(TypeKey::Application(_)) = self.interner().lookup(result_branch) {
+                if let Some(TypeData::Application(_)) = self.interner().lookup(result_branch) {
                     let expanded = self.evaluate(result_branch);
-                    if let Some(TypeKey::Conditional(next_cond_id)) =
+                    if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(expanded)
                     {
                         let next_cond = self.interner().conditional_type(next_cond_id);
@@ -456,14 +457,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         if matches!(
             self.interner().lookup(check_unwrapped),
-            Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
         ) {
             return self.interner().conditional(cond.clone());
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
-            Some(TypeKey::Array(elem)) => Some(elem),
-            Some(TypeKey::Tuple(elements)) => {
+            Some(TypeData::Array(elem)) => Some(elem),
+            Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner().tuple_list(elements);
                 let mut parts = Vec::new();
                 for element in elements.iter() {
@@ -485,14 +486,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(self.interner().union(parts))
                 }
             }
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut parts = Vec::new();
                 for &member in members.iter() {
                     match self.interner().lookup(member) {
-                        Some(TypeKey::Array(elem)) => parts.push(elem),
-                        Some(TypeKey::ReadonlyType(inner)) => {
-                            let Some(TypeKey::Array(elem)) = self.interner().lookup(inner) else {
+                        Some(TypeData::Array(elem)) => parts.push(elem),
+                        Some(TypeData::ReadonlyType(inner)) => {
+                            let Some(TypeData::Array(elem)) = self.interner().lookup(inner) else {
                                 return self.evaluate(cond.false_type);
                             };
                             parts.push(elem);
@@ -521,7 +522,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
-            let is_union = matches!(self.interner().lookup(inferred), Some(TypeKey::Union(_)));
+            let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if is_union && !cond.is_distributive {
                 // For unions in non-distributive conditionals, use filter that adds undefined
                 inferred = self.filter_inferred_by_constraint_or_undefined(
@@ -552,13 +553,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         if matches!(
             self.interner().lookup(check_unwrapped),
-            Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
         ) {
             return self.interner().conditional(cond.clone());
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
-            Some(TypeKey::Tuple(check_elements)) => {
+            Some(TypeData::Tuple(check_elements)) => {
                 let check_elements = self.interner().tuple_list(check_elements);
                 if check_elements.is_empty() {
                     extends_elem.optional.then_some(TypeId::UNDEFINED)
@@ -573,16 +574,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     None
                 }
             }
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut inferred_members = Vec::new();
                 for &member in members.iter() {
                     let member_type = match self.interner().lookup(member) {
-                        Some(TypeKey::ReadonlyType(inner)) => inner,
+                        Some(TypeData::ReadonlyType(inner)) => inner,
                         _ => member,
                     };
                     match self.interner().lookup(member_type) {
-                        Some(TypeKey::Tuple(check_elements)) => {
+                        Some(TypeData::Tuple(check_elements)) => {
                             let check_elements = self.interner().tuple_list(check_elements);
                             if check_elements.is_empty() {
                                 if extends_elem.optional {
@@ -654,7 +655,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut infer_nested = None;
 
         for prop in extends_shape.properties.iter() {
-            if let Some(TypeKey::Infer(info)) = self.interner().lookup(prop.type_id) {
+            if let Some(TypeData::Infer(info)) = self.interner().lookup(prop.type_id) {
                 if infer_prop.is_some() || infer_nested.is_some() {
                     return None;
                 }
@@ -663,11 +664,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             let nested_type = match self.interner().lookup(prop.type_id) {
-                Some(TypeKey::ReadonlyType(inner)) => inner,
+                Some(TypeData::ReadonlyType(inner)) => inner,
                 _ => prop.type_id,
             };
             if let Some(nested_shape_id) = match self.interner().lookup(nested_type) {
-                Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => {
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     Some(shape_id)
                 }
                 _ => None,
@@ -675,7 +676,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let nested_shape = self.interner().object_shape(nested_shape_id);
                 let mut nested_infer = None;
                 for nested_prop in nested_shape.properties.iter() {
-                    if let Some(TypeKey::Infer(info)) = self.interner().lookup(nested_prop.type_id)
+                    if let Some(TypeData::Infer(info)) = self.interner().lookup(nested_prop.type_id)
                     {
                         if nested_infer.is_some() {
                             nested_infer = None;
@@ -727,13 +728,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         if matches!(
             self.interner().lookup(check_unwrapped),
-            Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
         ) {
             return self.interner().conditional(cond.clone());
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
-            Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 shape
                     .properties
@@ -748,16 +749,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     })
                     .or_else(|| prop_optional.then_some(TypeId::UNDEFINED))
             }
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut inferred_members = Vec::new();
                 for &member in members.iter() {
                     let member_unwrapped = match self.interner().lookup(member) {
-                        Some(TypeKey::ReadonlyType(inner)) => inner,
+                        Some(TypeData::ReadonlyType(inner)) => inner,
                         _ => member,
                     };
                     match self.interner().lookup(member_unwrapped) {
-                        Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => {
+                        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                             let shape = self.interner().object_shape(shape_id);
                             if let Some(prop) =
                                 shape.properties.iter().find(|prop| prop.name == prop_name)
@@ -797,7 +798,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
-            let is_union = matches!(self.interner().lookup(inferred), Some(TypeKey::Union(_)));
+            let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if prop_optional {
                 let Some(filtered) =
                     self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
@@ -838,13 +839,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         if matches!(
             self.interner().lookup(check_unwrapped),
-            Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
         ) {
             return self.interner().conditional(cond.clone());
         }
 
         let inferred = match self.interner().lookup(check_unwrapped) {
-            Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 shape
                     .properties
@@ -852,13 +853,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .find(|prop| prop.name == outer_name)
                     .and_then(|prop| {
                         let inner_type = match self.interner().lookup(prop.type_id) {
-                            Some(TypeKey::ReadonlyType(inner)) => inner,
+                            Some(TypeData::ReadonlyType(inner)) => inner,
                             _ => prop.type_id,
                         };
                         match self.interner().lookup(inner_type) {
                             Some(
-                                TypeKey::Object(inner_shape_id)
-                                | TypeKey::ObjectWithIndex(inner_shape_id),
+                                TypeData::Object(inner_shape_id)
+                                | TypeData::ObjectWithIndex(inner_shape_id),
                             ) => {
                                 let inner_shape = self.interner().object_shape(inner_shape_id);
                                 inner_shape
@@ -871,15 +872,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                     })
             }
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 let mut inferred_members = Vec::new();
                 for &member in members.iter() {
                     let member_unwrapped = match self.interner().lookup(member) {
-                        Some(TypeKey::ReadonlyType(inner)) => inner,
+                        Some(TypeData::ReadonlyType(inner)) => inner,
                         _ => member,
                     };
-                    let Some(TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id)) =
+                    let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
                         self.interner().lookup(member_unwrapped)
                     else {
                         return self.evaluate(cond.false_type);
@@ -890,11 +891,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate(cond.false_type);
                     };
                     let inner_type = match self.interner().lookup(prop.type_id) {
-                        Some(TypeKey::ReadonlyType(inner)) => inner,
+                        Some(TypeData::ReadonlyType(inner)) => inner,
                         _ => prop.type_id,
                     };
                     let Some(
-                        TypeKey::Object(inner_shape_id) | TypeKey::ObjectWithIndex(inner_shape_id),
+                        TypeData::Object(inner_shape_id)
+                        | TypeData::ObjectWithIndex(inner_shape_id),
                     ) = self.interner().lookup(inner_type)
                     else {
                         return self.evaluate(cond.false_type);
@@ -930,7 +932,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
-            let is_union = matches!(self.interner().lookup(inferred), Some(TypeKey::Union(_)));
+            let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if is_union || cond.is_distributive {
                 // For unions or distributive conditionals, use filter that adds undefined
                 inferred = self.filter_inferred_by_constraint_or_undefined(

@@ -407,7 +407,7 @@ fn test_narrow_by_typeof_negation_function_type_param_with_union_constraint() {
         is_method: false,
     });
     let constraint = interner.union(vec![func, TypeId::STRING]);
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -440,7 +440,7 @@ fn test_narrow_by_typeof_negation_function_type_param_to_never() {
         is_constructor: false,
         is_method: false,
     });
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(func),
         default: None,
@@ -455,7 +455,7 @@ fn test_narrow_by_typeof_negation_function_type_param_to_never() {
 fn test_narrow_by_typeof_type_param_with_union_constraint() {
     let interner = TypeInterner::new();
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -487,7 +487,7 @@ fn test_narrow_by_typeof_function_type_param_with_union_constraint() {
         is_method: false,
     });
     let constraint = interner.union(vec![func, TypeId::STRING]);
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -503,7 +503,7 @@ fn test_narrow_by_typeof_function_type_param_with_union_constraint() {
 #[test]
 fn test_narrow_by_typeof_function_type_param_with_non_function_constraint() {
     let interner = TypeInterner::new();
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -518,7 +518,7 @@ fn test_narrow_by_typeof_function_type_param_with_non_function_constraint() {
 fn test_narrow_by_typeof_function_unconstrained_type_param() {
     let interner = TypeInterner::new();
     let ctx = NarrowingContext::new(&interner);
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -533,7 +533,7 @@ fn test_narrow_by_typeof_function_unconstrained_type_param() {
 #[test]
 fn test_narrow_by_typeof_type_param_with_non_overlapping_constraint() {
     let interner = TypeInterner::new();
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -547,7 +547,7 @@ fn test_narrow_by_typeof_type_param_with_non_overlapping_constraint() {
 #[test]
 fn test_narrow_by_typeof_unconstrained_type_param() {
     let interner = TypeInterner::new();
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -743,7 +743,7 @@ fn test_narrow_excluding_type_param_with_union_constraint() {
     let ctx = NarrowingContext::new(&interner);
 
     let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -762,7 +762,7 @@ fn test_narrow_excluding_type_param_with_non_overlapping_constraint() {
     let interner = TypeInterner::new();
     let ctx = NarrowingContext::new(&interner);
 
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -778,7 +778,7 @@ fn test_narrow_excluding_type_param_to_never() {
     let interner = TypeInterner::new();
     let ctx = NarrowingContext::new(&interner);
 
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
@@ -1205,19 +1205,19 @@ fn test_narrow_by_typeof_indexed_access() {
     let ctx = NarrowingContext::new(&interner);
 
     // Create T[K] indexed access type
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let k_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("K"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let indexed_access = interner.intern(TypeKey::IndexAccess(t_param, k_param));
+    let indexed_access = interner.intern(TypeData::IndexAccess(t_param, k_param));
 
     // typeof fn === 'function' should narrow to T[K] & Function
     let narrowed = narrow_by_typeof(&interner, indexed_access, "function");

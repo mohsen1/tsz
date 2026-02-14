@@ -1,7 +1,7 @@
 //! Type representation for the structural solver.
 //!
 //! Types are represented as lightweight `TypeId` handles that point into
-//! an interning table. The actual structure is stored in `TypeKey`.
+//! an interning table. The actual structure is stored in `TypeData`.
 
 use crate::def::DefId;
 use serde::Serialize;
@@ -524,7 +524,7 @@ impl WellKnownSymbolKey {
 
 /// The structural "shape" of a type.
 /// This is the key used for interning - structurally identical types
-/// will have the same TypeKey and therefore the same TypeId.
+/// will have the same TypeData and therefore the same TypeId.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeData {
     /// Intrinsic types (any, unknown, never, void, null, undefined, boolean, number, string, bigint, symbol, object)
@@ -705,9 +705,6 @@ pub enum TypeData {
     Error,
 }
 
-/// Compatibility alias while external callsites migrate to `TypeData`.
-pub type TypeKey = TypeData;
-
 /// Generic type application (Base<Args>)
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypeApplication {
@@ -771,7 +768,7 @@ pub enum LiteralValue {
     Boolean(bool),
 }
 
-/// Wrapper for f64 that implements Eq and Hash for use in TypeKey
+/// Wrapper for f64 that implements Eq and Hash for use in TypeData
 #[derive(Clone, Copy, Debug)]
 pub struct OrderedFloat(pub f64);
 
@@ -1319,22 +1316,22 @@ pub fn process_template_escape_sequences(input: &str) -> String {
 /// ## Built-in vs Referenced Types
 ///
 /// **Built-in types** (managed by the compiler) are represented directly by their
-/// structure (e.g., `TypeKey::Array`) rather than by symbol reference (`TypeKey::Ref`).
+/// structure (e.g., `TypeData::Array`) rather than by symbol reference (`TypeData::Ref`).
 /// This ensures canonicalization: `Array<number>` and `number[]` resolve to the same type.
 ///
-/// **Referenced types** (user-defined and lib types) are represented as `TypeKey::Ref(symbol_id)`
+/// **Referenced types** (user-defined and lib types) are represented as `TypeData::Ref(symbol_id)`
 /// and resolved lazily during type checking through the `TypeEnvironment`.
 ///
 /// ## Examples
 ///
-/// - `Array<T>` → `TypeKey::Array(T)` (structural, not `Ref`)
-/// - `Uppercase<S>` → `TypeKey::StringIntrinsic { kind: Uppercase, ... }`
-/// - `MyInterface` → `TypeKey::Ref(SymbolRef(sym_id))`
+/// - `Array<T>` → `TypeData::Array(T)` (structural, not `Ref`)
+/// - `Uppercase<S>` → `TypeData::StringIntrinsic { kind: Uppercase, ... }`
+/// - `MyInterface` → `TypeData::Ref(SymbolRef(sym_id))`
 ///
 /// ## When to Add Types
 ///
 /// Add a type to this list if:
-/// 1. It has special structural representation in `TypeKey` (e.g., `Array`)
+/// 1. It has special structural representation in `TypeData` (e.g., `Array`)
 /// 2. It is a compiler intrinsic (e.g., `Uppercase`, `Lowercase`)
 /// 3. It needs canonicalization with alternative syntax (e.g., `T[]` vs `Array<T>`)
 ///

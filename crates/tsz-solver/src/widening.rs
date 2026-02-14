@@ -14,7 +14,7 @@
 //! - **Type parameters**: Never widened
 //! - **Unique symbols**: Never widened
 
-use crate::types::{LiteralValue, TypeId, TypeKey};
+use crate::types::{LiteralValue, TypeData, TypeId};
 
 /// Public API to widen a literal type to its primitive.
 ///
@@ -32,7 +32,7 @@ use crate::types::{LiteralValue, TypeId, TypeKey};
 pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     match db.lookup(type_id) {
         // String/Number/Boolean/BigInt literals widen to their primitives
-        Some(TypeKey::Literal(ref value)) => match value {
+        Some(TypeData::Literal(ref value)) => match value {
             LiteralValue::String(_) => TypeId::STRING,
             LiteralValue::Number(_) => TypeId::NUMBER,
             LiteralValue::Boolean(_) => TypeId::BOOLEAN,
@@ -40,17 +40,17 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
         },
 
         // Unique Symbol widens to Symbol
-        Some(TypeKey::UniqueSymbol(_)) => TypeId::SYMBOL,
+        Some(TypeData::UniqueSymbol(_)) => TypeId::SYMBOL,
 
         // Unions: recursively widen all members
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
             let widened_members: Vec<TypeId> = members.iter().map(|&m| widen_type(db, m)).collect();
             db.union(widened_members)
         }
 
         // Objects: recursively widen properties (critical for mutable variables)
-        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
             let mut new_props = Vec::with_capacity(shape.properties.len());
             let mut changed = false;
