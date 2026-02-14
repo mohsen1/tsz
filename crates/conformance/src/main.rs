@@ -6,6 +6,7 @@ mod cache;
 mod cli;
 mod runner;
 mod test_parser;
+mod text_decode;
 mod tsc_results;
 mod tsz_wrapper;
 

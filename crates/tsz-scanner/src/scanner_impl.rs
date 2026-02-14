@@ -1970,7 +1970,9 @@ impl ScannerState {
                 continue;
             }
 
-            self.pos += 1;
+            // Advance by full UTF-8 codepoint width so multi-byte chars (e.g. µ) don't
+            // move the scanner into a non-char-boundary byte index.
+            self.pos += self.char_len_at(self.pos);
         }
 
         // Unterminated template
@@ -2995,4 +2997,47 @@ fn is_regex_flag(ch: u32) -> bool {
         | CharacterCodes::LOWER_Y  // y - sticky
         | CharacterCodes::LOWER_D // d - has indices
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn template_rescan_handles_unicode_micro_sign() {
+        let source = "const value = `${500}µs`;".to_string();
+        let mut scanner = ScannerState::new(source, true);
+
+        loop {
+            let token = scanner.scan();
+            if token == SyntaxKind::TemplateHead
+                || token == SyntaxKind::NoSubstitutionTemplateLiteral
+            {
+                break;
+            }
+            if token == SyntaxKind::EndOfFileToken {
+                panic!("failed to reach template token");
+            }
+        }
+
+        let token = scanner.re_scan_template_head_or_no_substitution_template();
+        assert_eq!(token, SyntaxKind::TemplateHead);
+        assert_eq!(scanner.get_token_value(), "");
+
+        // The parser would scan the expression and then re-scan at `}`.
+        scanner.set_text("}µs`".to_string(), None, None);
+        scanner.reset_token_state(0);
+        let tail = scanner.re_scan_template_token(false);
+        assert_eq!(tail, SyntaxKind::TemplateTail);
+        assert_eq!(scanner.get_token_value(), "µs");
+    }
+
+    #[test]
+    fn template_no_substitution_handles_unicode_micro_sign() {
+        let source = "`500µs`".to_string();
+        let mut scanner = ScannerState::new(source, true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
+        assert_eq!(scanner.get_token_value(), "500µs");
+    }
 }

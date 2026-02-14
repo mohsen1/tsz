@@ -8,6 +8,7 @@ use crate::test_parser::{
     expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
     should_skip_test,
 };
+use crate::text_decode::decode_source_text;
 use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats};
 use crate::tsz_wrapper;
 use anyhow::Context;
@@ -429,15 +430,11 @@ impl Runner {
         print_test_files: bool,
         timeout_secs: u64,
     ) -> anyhow::Result<TestResult> {
-        // Read file content
-        // Skip files with invalid UTF-8 (BOM tests, Unicode encoding tests, etc.)
+        // Read and decode file content (UTF-8/UTF-8 BOM/UTF-16 BOM).
         let bytes = tokio::fs::read(path).await?;
-        let content = match String::from_utf8(bytes) {
+        let content = match decode_source_text(&bytes) {
             Ok(s) => s,
-            Err(_) => {
-                // Skip test files with non-UTF-8 encoding (UTF-16 BOM tests, etc.)
-                return Ok(TestResult::Skipped("non-UTF-8 encoding"));
-            }
+            Err(reason) => return Ok(TestResult::Skipped(reason)),
         };
 
         // Print test file content with line numbers if requested

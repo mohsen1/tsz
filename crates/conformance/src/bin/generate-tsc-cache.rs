@@ -268,8 +268,12 @@ fn process_test_file(
 ) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
 
-    // Read file content
-    let content = fs::read_to_string(path)?;
+    // Read and decode file content (UTF-8/UTF-8 BOM/UTF-16 BOM).
+    let bytes = fs::read(path)?;
+    let content = match tsz_conformance::text_decode::decode_source_text(&bytes) {
+        Ok(s) => s,
+        Err(_) => return Ok(None),
+    };
 
     // Parse directives
     let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
