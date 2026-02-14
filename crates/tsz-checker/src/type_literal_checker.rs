@@ -37,6 +37,7 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
+        let factory = self.ctx.types.factory();
 
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             return self.get_type_from_type_reference_in_type_literal(idx);
@@ -52,7 +53,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&member_idx| self.get_type_from_type_node_in_type_literal(member_idx))
                     .collect::<Vec<_>>();
-                return self.ctx.types.union(members);
+                return factory.union(members);
             }
             return TypeId::ERROR;
         }
@@ -60,7 +61,7 @@ impl<'a> CheckerState<'a> {
             if let Some(array_type) = self.ctx.arena.get_array_type(node) {
                 let elem_type =
                     self.get_type_from_type_node_in_type_literal(array_type.element_type);
-                return self.ctx.types.array(elem_type);
+                return factory.array(elem_type);
             }
             return TypeId::ERROR; // Missing array type data - propagate error
         }
@@ -82,6 +83,7 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
+        let factory = self.ctx.types.factory();
 
         let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
             return TypeId::ERROR; // Missing type reference data - propagate error
@@ -123,7 +125,7 @@ impl<'a> CheckerState<'a> {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                return self.ctx.types.application(base_type, type_args);
+                return factory.application(base_type, type_args);
             }
             return base_type;
         }
@@ -168,9 +170,9 @@ impl<'a> CheckerState<'a> {
                         .and_then(|args| args.nodes.first().copied())
                         .map(|idx| self.get_type_from_type_node_in_type_literal(idx))
                         .unwrap_or(TypeId::UNKNOWN);
-                    let array_type = self.ctx.types.array(elem_type);
+                    let array_type = factory.array(elem_type);
                     if name == "ReadonlyArray" {
-                        return self.ctx.types.readonly_type(array_type);
+                        return factory.readonly_type(array_type);
                     }
                     return array_type;
                 }
@@ -218,7 +220,7 @@ impl<'a> CheckerState<'a> {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                return self.ctx.types.application(base_type, type_args);
+                return factory.application(base_type, type_args);
             }
 
             if name == "Array" || name == "ReadonlyArray" {
@@ -251,9 +253,9 @@ impl<'a> CheckerState<'a> {
                     .and_then(|args| args.nodes.first().copied())
                     .map(|idx| self.get_type_from_type_node_in_type_literal(idx))
                     .unwrap_or(TypeId::UNKNOWN);
-                let array_type = self.ctx.types.array(elem_type);
+                let array_type = factory.array(elem_type);
                 if name == "ReadonlyArray" {
-                    return self.ctx.types.readonly_type(array_type);
+                    return factory.readonly_type(array_type);
                 }
                 return array_type;
             }
@@ -616,7 +618,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-            return self.ctx.types.callable(CallableShape {
+            return factory.callable(CallableShape {
                 call_signatures,
                 construct_signatures,
                 properties,
@@ -627,7 +629,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if string_index.is_some() || number_index.is_some() {
-            return self.ctx.types.object_with_index(ObjectShape {
+            return factory.object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties,
                 string_index,
@@ -636,6 +638,6 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        self.ctx.types.object(properties)
+        factory.object(properties)
     }
 }

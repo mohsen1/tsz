@@ -5,8 +5,8 @@
 
 use crate::db::TypeDatabase;
 use crate::types::{
-    CallableShape, ConditionalType, FunctionShape, MappedType, ObjectFlags, ObjectShape, PropertyInfo,
-    TemplateSpan, TupleElement, TypeId, TypeParamInfo,
+    CallableShape, ConditionalType, FunctionShape, MappedType, ObjectFlags, ObjectShape,
+    PropertyInfo, TemplateSpan, TupleElement, TypeId, TypeParamInfo,
 };
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
