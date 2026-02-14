@@ -2070,6 +2070,101 @@ impl<'a> CheckerState<'a> {
     // Name Resolution Errors
     // =========================================================================
 
+    fn unresolved_name_matches_enclosing_param(&self, name: &str, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = idx;
+        let mut guard = 0;
+        while !current.is_none() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            let parent = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+
+            let matches_param = match parent_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    self.ctx.arena.get_function(parent_node).is_some_and(|func| {
+                        func.parameters.nodes.iter().any(|&param_idx| {
+                            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                return false;
+                            };
+                            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                return false;
+                            };
+                            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                                return false;
+                            };
+                            self.ctx
+                                .arena
+                                .get_identifier(name_node)
+                                .is_some_and(|id| id.escaped_text == name)
+                        })
+                    })
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.ctx.arena.get_method_decl(parent_node).is_some_and(|method| {
+                        method.parameters.nodes.iter().any(|&param_idx| {
+                            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                return false;
+                            };
+                            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                return false;
+                            };
+                            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                                return false;
+                            };
+                            self.ctx
+                                .arena
+                                .get_identifier(name_node)
+                                .is_some_and(|id| id.escaped_text == name)
+                        })
+                    })
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    self.ctx.arena.get_constructor(parent_node).is_some_and(|ctor| {
+                        ctor.parameters.nodes.iter().any(|&param_idx| {
+                            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                return false;
+                            };
+                            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                return false;
+                            };
+                            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                                return false;
+                            };
+                            self.ctx
+                                .arena
+                                .get_identifier(name_node)
+                                .is_some_and(|id| id.escaped_text == name)
+                        })
+                    })
+                }
+                _ => false,
+            };
+
+            if matches_param {
+                return true;
+            }
+            current = parent;
+        }
+
+        false
+    }
+
     /// Report a cannot find name error using solver diagnostics with source tracking.
     /// Enhanced to provide suggestions for similar names, import suggestions, and
     /// library change suggestions for ES2015+ types.
@@ -2133,6 +2228,12 @@ impl<'a> CheckerState<'a> {
 
         if is_primitive_type_keyword && !is_import_equals_module_specifier {
             self.error_type_only_value_at(name, idx);
+            return;
+        }
+
+        if !force_emit_for_ambiguous_generic
+            && self.unresolved_name_matches_enclosing_param(name, idx)
+        {
             return;
         }
 
