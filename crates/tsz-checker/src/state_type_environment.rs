@@ -559,6 +559,31 @@ impl<'a> CheckerState<'a> {
                                     return enum_object;
                                 }
                             }
+
+                            // Classes in type position should resolve to instance type,
+                            // not constructor type. This matches the behavior of
+                            // resolve_lazy() in context.rs which checks
+                            // symbol_instance_types for CLASS symbols.
+                            // Without this, contextually typed parameters like:
+                            //   var f: (a: A) => void = (a) => a.foo;
+                            // would fail because get_type_of_symbol returns the
+                            // constructor type (Callable), not the instance type.
+                            if symbol.flags & symbol_flags::CLASS != 0 {
+                                if let Some(&instance_type) =
+                                    self.ctx.symbol_instance_types.get(&sym_id)
+                                {
+                                    if instance_type != type_id {
+                                        let r = self.resolve_type_for_property_access_inner(
+                                            instance_type,
+                                            visited,
+                                        );
+                                        self.ctx.leave_recursion();
+                                        return r;
+                                    }
+                                    self.ctx.leave_recursion();
+                                    return instance_type;
+                                }
+                            }
                         }
 
                         let resolved = self.get_type_of_symbol(sym_id);
