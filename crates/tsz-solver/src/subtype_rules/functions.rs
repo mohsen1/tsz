@@ -1028,6 +1028,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .filter(|p| !self.interner.resolve_atom(p.name).starts_with('#'))
             .cloned()
             .collect();
+        // Function-like sources (with call signatures) are expected to have Function members
+        // such as `call` and `apply`, even if those properties are not materialized on the
+        // callable shape. Add synthetic members to align assignability behavior.
+        if !source.call_signatures.is_empty() {
+            for t_prop in &target.properties {
+                let prop_name = self.interner.resolve_atom(t_prop.name);
+                if (prop_name == "call" || prop_name == "apply")
+                    && !source_props.iter().any(|p| p.name == t_prop.name)
+                {
+                    source_props.push(PropertyInfo {
+                        name: t_prop.name,
+                        type_id: t_prop.type_id,
+                        write_type: t_prop.write_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: true,
+                        visibility: Visibility::Public,
+                        parent_id: None,
+                    });
+                }
+            }
+        }
         source_props.sort_by_key(|a| a.name);
         let mut target_props: Vec<_> = target
             .properties
