@@ -2823,13 +2823,9 @@ fn types_are_comparable_inner(
         return true;
     }
 
-    // Type parameters are comparable to anything (they can be anything at runtime)
-    if let Some(TypeKey::TypeParameter(_)) = db.lookup(source) {
-        return true;
-    }
-    if let Some(TypeKey::TypeParameter(_)) = db.lookup(target) {
-        return true;
-    }
+    // Type parameters are not automatically comparable for TS2352 purposes.
+    // Treating them as "comparable to anything" suppresses valid diagnostics
+    // like asserting a specific subtype to an unconcretized type parameter.
 
     // Check union types: a union is comparable if ANY member is comparable
     if let Some(TypeKey::Union(list_id)) = db.lookup(source) {
