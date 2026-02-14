@@ -1285,7 +1285,7 @@ impl<'a> CheckerState<'a> {
         // In parse-error files, identifiers inside class member bodies are often
         // parser-recovery artifacts (e.g. malformed `static` statements in ctors).
         // Suppress TS2304 there to avoid cascades from the primary syntax error.
-        if self.has_parse_errors() {
+        if self.has_syntax_parse_errors() {
             let mut current = idx;
             let mut guard = 0;
             let mut in_class = false;
@@ -1326,34 +1326,37 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Skip TS2304 for nodes/ancestors that have parse errors.
-        // This prevents cascading "Cannot find name" errors on malformed AST
-        // subtrees while still allowing TS2304 for unrelated valid code.
-        let mut current = idx;
-        let mut walk_guard = 0;
-        while !current.is_none() {
-            walk_guard += 1;
-            if walk_guard > 256 {
-                break;
-            }
-            if let Some(node) = self.ctx.arena.get(current) {
-                let flags = node.flags as u32;
-                if !force_emit_for_ambiguous_generic
-                    && ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                        || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0)
-                {
-                    return;
+        // Skip TS2304 for nodes/ancestors that have parse errors, but only when
+        // the file has real syntax parse errors (not just conflict markers TS1185).
+        // Conflict markers are treated as trivia in TS and should not suppress
+        // semantic "Cannot find name" diagnostics.
+        if self.has_syntax_parse_errors() {
+            let mut current = idx;
+            let mut walk_guard = 0;
+            while !current.is_none() {
+                walk_guard += 1;
+                if walk_guard > 256 {
+                    break;
                 }
-            } else {
-                break;
+                if let Some(node) = self.ctx.arena.get(current) {
+                    let flags = node.flags as u32;
+                    if !force_emit_for_ambiguous_generic
+                        && ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                            || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0)
+                    {
+                        return;
+                    }
+                } else {
+                    break;
+                }
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
             }
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
         }
 
         // Also suppress TS2304 for identifiers that appear shortly after a parse error.
