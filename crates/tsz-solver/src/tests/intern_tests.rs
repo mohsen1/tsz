@@ -42,6 +42,23 @@ fn test_interner_keyof_and_index_access_constructors() {
 }
 
 #[test]
+fn test_interner_lazy_and_type_param_constructors() {
+    let interner = TypeInterner::new();
+
+    let lazy = interner.lazy(DefId(42));
+    assert_eq!(interner.lookup(lazy), Some(TypeKey::Lazy(DefId(42))));
+
+    let t = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::STRING),
+        default: Some(TypeId::NUMBER),
+        is_const: false,
+    };
+    let type_param = interner.type_param(t.clone());
+    assert_eq!(interner.lookup(type_param), Some(TypeKey::TypeParameter(t)));
+}
+
+#[test]
 fn test_interner_fresh_object_distinct_from_non_fresh() {
     let interner = TypeInterner::new();
     let prop = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);

@@ -3117,6 +3117,11 @@ impl TypeInterner {
         self.intern(TypeKey::Lazy(def_id))
     }
 
+    /// Intern a type parameter.
+    pub fn type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.intern(TypeKey::TypeParameter(info))
+    }
+
     /// Intern a generic type application
     pub fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         let app_id = self.intern_application(TypeApplication { base, args });

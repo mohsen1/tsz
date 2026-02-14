@@ -2149,10 +2149,8 @@ impl<'a> CheckerContext<'a> {
     /// During migration, this is called alongside or instead of creating
     /// `TypeKey::Ref(SymbolRef)`.
     pub fn create_lazy_type_ref(&mut self, sym_id: SymbolId) -> TypeId {
-        use tsz_solver::TypeKey;
-
         let def_id = self.get_or_create_def_id(sym_id);
-        self.types.intern(TypeKey::Lazy(def_id))
+        self.types.lazy(def_id)
     }
 
     /// Convert TypeKey::Ref to TypeKey::Lazy(DefId) if needed (Phase 1 migration).

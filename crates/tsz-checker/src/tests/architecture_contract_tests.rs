@@ -204,6 +204,10 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !type_resolution_src.contains("TypeKey::ReadonlyType"),
         "state_type_resolution should use solver readonly constructor APIs, not TypeKey::ReadonlyType"
     );
+    assert!(
+        !type_resolution_src.contains("intern(tsz_solver::TypeKey::Lazy("),
+        "state_type_resolution should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+    );
 
     let type_node_src =
         fs::read_to_string("src/type_node.rs").expect("failed to read src/type_node.rs");
@@ -225,5 +229,23 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     assert!(
         !jsx_checker_src.contains("TypeKey::IndexAccess"),
         "jsx_checker should use solver index_access constructor API, not TypeKey::IndexAccess"
+    );
+
+    let context_src = fs::read_to_string("src/context.rs")
+        .expect("failed to read src/context.rs for architecture guard");
+    assert!(
+        !context_src.contains("self.types.intern(TypeKey::Lazy("),
+        "context should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+    );
+
+    let queries_src = fs::read_to_string("src/type_checking_queries.rs")
+        .expect("failed to read src/type_checking_queries.rs for architecture guard");
+    assert!(
+        !queries_src.contains("self.ctx.types.intern(TypeKey::Lazy("),
+        "type_checking_queries should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+    );
+    assert!(
+        !queries_src.contains("self.ctx.types.intern(TypeKey::TypeParameter("),
+        "type_checking_queries should use solver type_param constructor API, not direct TypeKey::TypeParameter interning"
     );
 }

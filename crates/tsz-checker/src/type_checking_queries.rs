@@ -2576,9 +2576,7 @@ impl<'a> CheckerState<'a> {
                                         // Application types only expand when the base is Lazy, not when
                                         // it's the actual MappedType/Object/etc. This allows evaluate_application
                                         // to trigger and substitute type parameters correctly.
-                                        use tsz_solver::types::TypeKey;
-                                        let lazy_type =
-                                            self.ctx.types.intern(TypeKey::Lazy(def_id));
+                                        let lazy_type = self.ctx.types.lazy(def_id);
                                         lib_types.push(lazy_type);
 
                                         // Type aliases don't merge across files, take the first one
@@ -2779,7 +2777,6 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use tsz_parser::parser::node::NodeAccess;
-        use tsz_solver::types::TypeKey;
         use tsz_solver::{
             TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type,
         };
@@ -2888,9 +2885,7 @@ impl<'a> CheckerState<'a> {
                                 // Compute TypeIds for these canonical params
                                 canonical_param_type_ids = params
                                     .iter()
-                                    .map(|p| {
-                                        self.ctx.types.intern(TypeKey::TypeParameter(p.clone()))
-                                    })
+                                    .map(|p| self.ctx.types.type_param(p.clone()))
                                     .collect();
 
                                 // Cache type parameters for Application expansion.
