@@ -367,6 +367,7 @@ impl<'a> CheckerState<'a> {
         // Save/restore the arguments tracking flag for nested function handling
         let saved_uses_arguments = self.ctx.js_body_uses_arguments;
         self.ctx.js_body_uses_arguments = false;
+        self.check_non_impl_parameter_initializers(&parameters.nodes, false, !body.is_none());
         if !body.is_none() {
             // Track that we're inside a nested function for abstract property access checks.
             // This must happen before infer_return_type_from_body which evaluates body expressions.

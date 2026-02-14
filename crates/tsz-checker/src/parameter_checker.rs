@@ -223,22 +223,22 @@ impl<'a> CheckerState<'a> {
     // Parameter Initializers
     // =========================================================================
 
-    /// Check that parameter default values are assignable to declared parameter types.
+    /// Check for parameter initializers that are not allowed by signature shape (TS2371).
     ///
-    /// This function validates parameter initializers against their type annotations:
-    /// Check for parameter initializers in ambient functions (TS2371).
-    ///
-    /// Ambient functions (with `declare` modifier) cannot have parameter initializers.
-    /// This check emits TS2371 when a parameter has a default value in an ambient context.
+    /// Parameter initializers are only valid in function/constructor implementations.
+    /// This emits TS2371 when a signature has parameter initializers in either case:
+    /// - Ambient/declaration contexts (`declare`)
+    /// - Non-implementation signatures (no body), such as overloads and function types
     ///
     /// ## Error TS2371:
     /// "A parameter initializer is only allowed in a function or constructor implementation."
-    pub(crate) fn check_ambient_parameter_initializers(
+    pub(crate) fn check_non_impl_parameter_initializers(
         &mut self,
         parameters: &[NodeIndex],
         has_declare_modifier: bool,
+        has_body: bool,
     ) {
-        if !has_declare_modifier {
+        if has_body && !has_declare_modifier {
             return;
         }
 

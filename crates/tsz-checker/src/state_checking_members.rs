@@ -2800,6 +2800,11 @@ impl<'a> CheckerState<'a> {
 
         // Check that parameter default values are assignable to declared types (TS2322)
         self.check_parameter_initializers(&method.parameters.nodes);
+        self.check_non_impl_parameter_initializers(
+            &method.parameters.nodes,
+            self.has_declare_modifier(&method.modifiers),
+            !method.body.is_none(),
+        );
 
         // Check for parameter properties (error 2369)
         // Parameter properties are only allowed in constructors, not in methods
@@ -3083,6 +3088,11 @@ impl<'a> CheckerState<'a> {
 
         // Check that parameter default values are assignable to declared types (TS2322)
         self.check_parameter_initializers(&ctor.parameters.nodes);
+        self.check_non_impl_parameter_initializers(
+            &ctor.parameters.nodes,
+            self.has_declare_modifier(&ctor.modifiers),
+            !ctor.body.is_none(),
+        );
 
         // Set in_constructor flag for abstract property checks (error 2715)
         if let Some(ref mut class_info) = self.ctx.enclosing_class {
@@ -4250,6 +4260,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.maybe_report_implicit_any_parameter(param, has_jsdoc_param);
         }
 
+        // Check parameter initializer placement for implementation vs signature (TS2371)
+        self.check_non_impl_parameter_initializers(
+            &func.parameters.nodes,
+            self.has_declare_modifier(&func.modifiers),
+            !func.body.is_none(),
+        );
+
         // Check function body if present
         let has_type_annotation = !func.type_annotation.is_none();
         if !func.body.is_none() {
@@ -4296,12 +4313,6 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // Check that parameter default values are assignable to declared types (TS2322)
             self.check_parameter_initializers(&func.parameters.nodes);
-
-            // Check for parameter initializers in ambient functions (TS2371)
-            self.check_ambient_parameter_initializers(
-                &func.parameters.nodes,
-                self.has_declare_modifier(&func.modifiers),
-            );
 
             if !has_type_annotation {
                 // Suppress definite assignment errors during return type inference.
