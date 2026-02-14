@@ -12,6 +12,15 @@ This document is intended to be driven from highest impact to lowest impact:
 
 To keep this actionable, treat each major heading below as a checkpoint you can close only when its “Definition of done” is fully met and architecture guardrail tests pass for that milestone.
 
+## Step tracker (fill as you go)
+
+- [ ] A) Establish hard boundary checks (forbidden imports, solver/lexer direction, TypeKey leakage scan).
+- [ ] B) Remove checker-local semantic typing primitives or quarantine them behind a non-default legacy surface.
+- [ ] C) Hide raw `TypeKey` behind solver constructors.
+- [ ] D) Route all TS2322/TS2345/TS2416-like compatibility checks through one gateway.
+- [ ] E) Move `Lazy(DefId)`-resolution and type-shape preconditions into solver visitors.
+- [ ] F) Add query-level cache/invalidations and connect checker to the query outputs.
+
 ## 1) Make “Solver-first” real by eliminating the second type system
 
 Right now the checker crate still ships a **full parallel type representation** (`TypeArena`, its own `TypeId`, and a big `Type` enum + flags) that sits beside the solver’s `TypeId/TypeKey` world. That’s a structural violation of “single source of truth” and a long‑term maintenance trap because it guarantees drift, duplicate bugs, and confusion about which `TypeId` you’re holding. 
