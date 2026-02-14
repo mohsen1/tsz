@@ -79,6 +79,19 @@ CHECKS = [
     ),
 ]
 
+MANIFEST_CHECKS = [
+    (
+        "Emitter manifest dependency freeze",
+        ROOT / "crates" / "tsz-emitter" / "Cargo.toml",
+        re.compile(r"^\s*tsz-checker\s*=", re.MULTILINE),
+    ),
+    (
+        "Binder manifest dependency freeze",
+        ROOT / "crates" / "tsz-binder" / "Cargo.toml",
+        re.compile(r"^\s*tsz-solver\s*=", re.MULTILINE),
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 def iter_rs_files(base: pathlib.Path):
     for path in base.rglob("*.rs"):
@@ -144,6 +157,19 @@ def main() -> int:
         if not base.exists():
             continue
         hits = scan(base, pattern, excludes)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, manifest_path, pattern in MANIFEST_CHECKS:
+        if not manifest_path.exists():
+            continue
+        text = manifest_path.read_text(encoding="utf-8", errors="ignore")
+        hits = []
+        for i, line in enumerate(text.splitlines(), start=1):
+            if pattern.search(line):
+                rel = manifest_path.relative_to(ROOT).as_posix()
+                hits.append(f"{rel}:{i}")
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
