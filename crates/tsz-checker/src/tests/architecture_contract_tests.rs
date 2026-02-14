@@ -423,6 +423,87 @@ fn test_assignability_checker_routes_relation_queries_through_query_boundaries()
 }
 
 #[test]
+fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
+    let source = fs::read_to_string("src/assignability_checker.rs")
+        .expect("failed to read src/assignability_checker.rs for architecture guard");
+
+    let subtype_start = source
+        .find("pub fn is_subtype_of(")
+        .expect("missing is_subtype_of in assignability_checker");
+    let subtype_end = source[subtype_start..]
+        .find("pub fn is_subtype_of_with_env(")
+        .map(|offset| subtype_start + offset)
+        .expect("missing is_subtype_of_with_env in assignability_checker");
+    let subtype_src = &source[subtype_start..subtype_end];
+
+    let ensure_apps_pos = subtype_src
+        .find("self.ensure_application_symbols_resolved(source);")
+        .expect("is_subtype_of should resolve application symbols for source before relation checks");
+    let lookup_pos = subtype_src
+        .find("lookup_subtype_cache(")
+        .expect("is_subtype_of should consult solver subtype cache");
+    assert!(
+        ensure_apps_pos < lookup_pos,
+        "is_subtype_of must establish ref/application preconditions before subtype cache lookup"
+    );
+
+    let with_env_src = &source[subtype_end..];
+    assert!(
+        with_env_src.contains("self.ensure_application_symbols_resolved(source);")
+            && with_env_src.contains("self.ensure_application_symbols_resolved(target);"),
+        "is_subtype_of_with_env should establish application-symbol preconditions for both sides"
+    );
+}
+
+#[test]
+fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers() {
+    let assignment_checker_src = fs::read_to_string("src/assignment_checker.rs")
+        .expect("failed to read src/assignment_checker.rs for architecture guard");
+    assert!(
+        assignment_checker_src.contains("check_assignable_or_report_at("),
+        "assignment compatibility should route through check_assignable_or_report_at for centralized mismatch policy"
+    );
+
+    let type_checking_src = fs::read_to_string("src/type_checking.rs")
+        .expect("failed to read src/type_checking.rs for architecture guard");
+    assert!(
+        type_checking_src.contains("check_assignable_or_report("),
+        "binding/default-value assignability should route through check_assignable_or_report"
+    );
+
+    let class_checker_src = fs::read_to_string("src/class_checker.rs")
+        .expect("failed to read src/class_checker.rs for architecture guard");
+    assert!(
+        class_checker_src.contains("should_report_assignability_mismatch(")
+            && class_checker_src.contains("should_report_assignability_mismatch_bivariant("),
+        "class member compatibility should use centralized mismatch helper entrypoints"
+    );
+}
+
+#[test]
+fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
+    let context_src =
+        fs::read_to_string("src/context.rs").expect("failed to read src/context.rs for guard");
+
+    let type_cache_start = context_src
+        .find("pub struct TypeCache")
+        .expect("missing TypeCache struct in context.rs");
+    let checker_context_start = context_src[type_cache_start..]
+        .find("pub struct CheckerContext")
+        .map(|offset| type_cache_start + offset)
+        .expect("missing CheckerContext struct in context.rs");
+    let type_cache_src = &context_src[type_cache_start..checker_context_start];
+
+    assert!(
+        !type_cache_src.contains("application_eval_cache")
+            && !type_cache_src.contains("application_eval_set")
+            && !type_cache_src.contains("mapped_eval_cache")
+            && !type_cache_src.contains("mapped_eval_set"),
+        "TypeCache should not persist checker algorithm-evaluation caches"
+    );
+}
+
+#[test]
 fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_interning() {
     fn is_rs_source_file(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()) == Some("rs")

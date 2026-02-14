@@ -872,10 +872,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if !check_assignability
-            || self.is_assignable_to(source_type, target_type)
-            || self.should_skip_weak_union_error(source_type, target_type, right_idx)
-        {
+        if !check_assignability {
             return;
         }
 
@@ -887,6 +884,6 @@ impl<'a> CheckerState<'a> {
 
         // TS2322 anchoring should point at the assignment target (LHS), not the RHS expression.
         // This aligns diagnostic fingerprints with tsc for assignment-compatibility suites.
-        self.error_type_not_assignable_with_reason_at(source_type, target_type, left_idx);
+        let _ = self.check_assignable_or_report_at(source_type, target_type, right_idx, left_idx);
     }
 }

@@ -519,15 +519,23 @@ impl<'a> CheckerState<'a> {
             let resolved_member_type = self.resolve_type_query_type(member_type);
             let resolved_base_type = self.resolve_type_query_type(base_type);
 
-            // Check type compatibility - derived type must be assignable to base type
-            // Use bivariant checking for methods (is_method = true), contravariant for properties
-            let is_compatible = if is_method {
-                self.is_assignable_to_bivariant(resolved_member_type, resolved_base_type)
+            // Check type compatibility through centralized mismatch policy.
+            // Methods use bivariant relation checks; properties use regular assignability.
+            let should_report_mismatch = if is_method {
+                self.should_report_assignability_mismatch_bivariant(
+                    resolved_member_type,
+                    resolved_base_type,
+                    member_name_idx,
+                )
             } else {
-                self.is_assignable_to(resolved_member_type, resolved_base_type)
+                self.should_report_assignability_mismatch(
+                    resolved_member_type,
+                    resolved_base_type,
+                    member_name_idx,
+                )
             };
 
-            if !is_compatible {
+            if should_report_mismatch {
                 let member_type_str = self.format_type(member_type);
                 let base_type_str = self.format_type(base_type);
 
