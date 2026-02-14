@@ -14,9 +14,6 @@ use crate::types::*;
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
-#[cfg(test)]
-use crate::TypeInterner;
-
 /// Maximum depth for recursive type instantiation.
 pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
 

@@ -19,9 +19,6 @@ use crate::subtype::{NoopResolver, TypeResolver};
 use crate::types::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-#[cfg(test)]
-use crate::TypeInterner;
-
 /// Result of conditional type evaluation
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConditionalResult {

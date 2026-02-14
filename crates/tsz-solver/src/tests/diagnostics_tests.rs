@@ -1,6 +1,7 @@
 //! Tests for diagnostic generation.
 
 use super::*;
+use crate::TypeInterner;
 #[test]
 fn test_format_intrinsic_types() {
     let interner = TypeInterner::new();

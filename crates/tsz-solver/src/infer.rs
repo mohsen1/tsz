@@ -21,9 +21,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tsz_common::interner::Atom;
 
-#[cfg(test)]
-use crate::TypeInterner;
-
 /// Helper function to extend a vector with deduplicated items.
 /// Uses a HashSet for O(1) lookups instead of O(n) contains checks.
 fn extend_dedup<T>(target: &mut Vec<T>, items: &[T])

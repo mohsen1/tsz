@@ -42,9 +42,6 @@ use crate::{QueryDatabase, TypeDatabase};
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
-#[cfg(test)]
-use crate::TypeInterner;
-
 /// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
 ///
 /// Using an enum instead of `String` eliminates heap allocation per typeof guard.

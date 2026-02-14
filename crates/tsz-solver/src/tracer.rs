@@ -28,11 +28,6 @@ use crate::TypeDatabase;
 use crate::diagnostics::{SubtypeFailureReason, SubtypeTracer};
 use crate::types::*;
 
-#[cfg(test)]
-use crate::TypeInterner;
-#[cfg(test)]
-use crate::diagnostics::{DiagnosticTracer, FastTracer};
-
 /// Tracer-based subtype checker.
 ///
 /// This provides a unified API for both fast boolean checks and detailed diagnostics

@@ -1,6 +1,7 @@
 //! Tests for union type checking (SOLV-3).
 
 use super::*;
+use crate::TypeInterner;
 
 // =============================================================================
 // Debug Test - Verify union normalization

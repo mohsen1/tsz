@@ -162,7 +162,8 @@ impl<'a> CheckerState<'a> {
             let is_known_global = self.is_known_global_type_name(name);
 
             if has_type_args {
-                let is_builtin_array = name == "Array" || name == "ReadonlyArray";
+                let is_builtin_array =
+                    name == "Array" || name == "ReadonlyArray" || name == "ConcatArray";
                 let type_param = self.lookup_type_parameter(name);
                 let type_resolution =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx);
@@ -451,9 +452,9 @@ impl<'a> CheckerState<'a> {
                 return result;
             }
 
-            // Handle Array/ReadonlyArray without type arguments
-            if name == "Array" || name == "ReadonlyArray" {
-                // TS2314: Array<T> and ReadonlyArray<T> require 1 type argument
+            // Handle Array/ReadonlyArray/ConcatArray without type arguments
+            if name == "Array" || name == "ReadonlyArray" || name == "ConcatArray" {
+                // TS2314: array-like built-ins require a type argument
                 // Skip in heritage clauses: `class C extends Array {}` is valid
                 if !self.is_direct_heritage_type_reference(idx) {
                     self.error_generic_type_requires_type_arguments_at(name, 1, idx);
@@ -539,7 +540,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve `Array<T>` or `ReadonlyArray<T>` without explicit type arguments.
+    /// Resolve `Array<T>`, `ReadonlyArray<T>`, or `ConcatArray<T>` without explicit type arguments.
     fn resolve_array_type_reference(
         &mut self,
         name: &str,
@@ -574,7 +575,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve a simple (non-Array, non-primitive) type reference without type arguments.
+    /// Resolve a simple (non-array-like, non-primitive) type reference without type arguments.
     /// Handles generic validation, default type arguments, and error reporting.
     fn resolve_simple_type_reference(
         &mut self,
@@ -583,7 +584,7 @@ impl<'a> CheckerState<'a> {
         name: &str,
         type_ref: &tsz_parser::parser::node::TypeRefData,
     ) -> TypeId {
-        if name != "Array" && name != "ReadonlyArray" {
+        if name != "Array" && name != "ReadonlyArray" && name != "ConcatArray" {
             match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
                 TypeSymbolResolution::Type(sym_id) => {
                     if self.symbol_is_namespace_only(sym_id) {

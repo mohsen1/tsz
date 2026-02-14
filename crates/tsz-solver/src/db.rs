@@ -805,38 +805,6 @@ impl<'a> QueryCache<'a> {
         }
     }
 
-    #[cfg(test)]
-    pub fn eval_cache_len(&self) -> usize {
-        match self.eval_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn subtype_cache_len(&self) -> usize {
-        match self.subtype_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn assignability_cache_len(&self) -> usize {
-        match self.assignability_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn property_cache_len(&self) -> usize {
-        match self.property_cache.read() {
-            Ok(cache) => cache.len(),
-            Err(e) => e.into_inner().len(),
-        }
-    }
-
     /// Helper to check a cache with poisoned lock handling.
     fn check_cache(
         &self,

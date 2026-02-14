@@ -1,5 +1,6 @@
 use super::*;
 use crate::SubtypeFailureReason;
+use crate::TypeInterner;
 use crate::db::QueryDatabase;
 use crate::def::DefId;
 use crate::{

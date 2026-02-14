@@ -30,9 +30,6 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
-#[cfg(test)]
-use crate::TypeInterner;
-
 // =============================================================================
 // Tracer Pattern: Zero-Cost Diagnostic Abstraction
 // =============================================================================

@@ -59,7 +59,7 @@ jobs:
         if: steps.check_readme.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GH_PAT || github.token }}
           commit-message: "docs: automated README metrics update"
           title: "docs: automated README metrics update"
           body: |

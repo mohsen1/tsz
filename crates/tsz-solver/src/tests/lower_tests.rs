@@ -1,6 +1,7 @@
 #![allow(clippy::print_stderr)]
 
 use super::*;
+use crate::TypeInterner;
 use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::TypeInterner;
 use crate::{CompatChecker, InferenceContext, infer_generic_function};
 #[test]
 fn test_contextual_no_context() {

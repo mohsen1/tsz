@@ -1,4 +1,5 @@
 use super::*;
+use crate::TypeInterner;
 
 // =============================================================================
 // Discriminant Detection Tests

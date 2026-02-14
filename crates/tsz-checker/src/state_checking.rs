@@ -2912,7 +2912,11 @@ impl<'a> CheckerState<'a> {
         symbol.flags & symbol_flags::ENUM != 0
     }
 
-    /// Check whether an expression resolves to a namespace import binding (`import * as ns`).
+    /// Check whether an expression resolves to an immutable module import binding.
+    ///
+    /// Includes:
+    /// - `import * as ns from "mod"`
+    /// - `import ns = require("mod")`
     fn is_namespace_import_binding(&self, object_expr: NodeIndex) -> bool {
         use tsz_binder::symbol_flags;
 
@@ -2932,6 +2936,9 @@ impl<'a> CheckerState<'a> {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 return false;
             };
+            if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                return true;
+            }
             if decl_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
                 return true;
             }
