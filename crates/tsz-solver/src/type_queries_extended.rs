@@ -1849,6 +1849,8 @@ pub enum ExcessPropertiesKind {
     ObjectWithIndex(crate::types::ObjectShapeId),
     /// Union - check all members
     Union(Vec<TypeId>),
+    /// Intersection - merge known members from all object constituents
+    Intersection(Vec<TypeId>),
     /// Not an object type
     NotObject,
 }
@@ -1868,6 +1870,10 @@ pub fn classify_for_excess_properties(
         TypeKey::Union(list_id) => {
             let members = db.type_list(list_id);
             ExcessPropertiesKind::Union(members.to_vec())
+        }
+        TypeKey::Intersection(list_id) => {
+            let members = db.type_list(list_id);
+            ExcessPropertiesKind::Intersection(members.to_vec())
         }
         _ => ExcessPropertiesKind::NotObject,
     }

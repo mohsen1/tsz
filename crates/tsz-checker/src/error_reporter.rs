@@ -821,6 +821,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
+            let suppress_did_you_mean =
+                self.has_syntax_parse_errors() || self.class_extends_any_base(type_id);
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,
@@ -830,7 +832,7 @@ impl<'a> CheckerState<'a> {
 
             // On files with syntax parse errors, TypeScript generally avoids TS2551
             // suggestion diagnostics and sticks with TS2339 to reduce cascades.
-            let suggestion = if self.has_syntax_parse_errors() {
+            let suggestion = if suppress_did_you_mean {
                 None
             } else {
                 self.find_similar_property(prop_name, type_id)
@@ -1542,6 +1544,63 @@ impl<'a> CheckerState<'a> {
         }
 
         best_candidate
+    }
+
+    /// Returns true when `type_id` is a class instance type whose declaration extends
+    /// a base expression currently typed as `any`.
+    ///
+    /// In that case TypeScript treats unknown member accesses as `any` and does not
+    /// surface typo suggestions (TS2551).
+    fn class_extends_any_base(&mut self, type_id: TypeId) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.flags & symbol_flags::CLASS == 0 {
+            return false;
+        }
+
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else if let Some(&first_decl) = symbol.declarations.first() {
+            first_decl
+        } else {
+            return false;
+        };
+        let Some(class_decl) = self.ctx.arena.get_class_at(decl_idx) else {
+            return false;
+        };
+        let Some(heritage_clauses) = &class_decl.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                continue;
+            };
+            if clause.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let Some(&type_idx) = clause.types.nodes.first() else {
+                continue;
+            };
+            let expr_idx =
+                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args_at(type_idx) {
+                    expr_type_args.expression
+                } else {
+                    type_idx
+                };
+            if self.get_type_of_node(expr_idx) == TypeId::ANY {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Collect all property names from a type, handling objects, callables, unions,
