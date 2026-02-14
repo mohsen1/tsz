@@ -10,10 +10,7 @@ PATTERN='\.lookup\('
 
 HITS="$(rg -n "$PATTERN" crates/tsz-checker/src \
   --glob '!**/query_boundaries/**' \
-  --glob '!**/tests/**' \
-  --glob '!**/iterators.rs' \
-  --glob '!**/generators.rs' \
-  --glob '!**/call_checker.rs' || true)"
+  --glob '!**/tests/**' || true)"
 
 if [[ -n "$HITS" ]]; then
   echo "Checker boundary guardrail violation: direct lookup() found outside allowed zones:"
