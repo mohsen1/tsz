@@ -471,7 +471,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// ## TypeScript Soundness:
     /// - **Both have number index**: Source index must be subtype of target index
-    /// - **Only target has number index**: Source properties with numeric names must be compatible
+    /// - **Only target has number index**: Source must provide a compatible number/string index
     /// - **Only source has number index**: Compatible (target accepts numeric access via index)
     /// - **Neither has number index**: Compatible (no numeric index constraint)
     pub(crate) fn check_number_index_compatibility(
@@ -497,10 +497,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 SubtypeResult::True
             }
-            None => {
-                // Target has number index but source doesn't - this is OK
-                // (number indexing is optional)
+            None if source.string_index.is_some() => {
+                // A compatible string index can satisfy numeric index access.
+                let Some(s_string_idx) = source.string_index.as_ref() else {
+                    return SubtypeResult::False;
+                };
+                if s_string_idx.readonly && !t_number_idx.readonly {
+                    return SubtypeResult::False;
+                }
+                if !self
+                    .check_subtype(s_string_idx.value_type, t_number_idx.value_type)
+                    .is_true()
+                {
+                    return SubtypeResult::False;
+                }
                 SubtypeResult::True
+            }
+            None => {
+                // Target requires number indexing but source provides neither
+                // number nor string index signatures.
+                SubtypeResult::False
             }
         }
     }
@@ -796,6 +812,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .check_object_subtype(&source_shape, source_shape_id, target)
             .is_true()
         {
+            return SubtypeResult::False;
+        }
+
+        if target.number_index.is_some() {
+            // Plain object sources without explicit index signatures are not
+            // assignable to targets that require numeric indexing.
             return SubtypeResult::False;
         }
 
