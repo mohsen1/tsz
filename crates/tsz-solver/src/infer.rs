@@ -1944,13 +1944,11 @@ impl<'a> InferenceContext<'a> {
 
         // Step 1: Try to find a common base type for primitives/literals
         // For example, [string, "hello"] -> string
-        let common_base = self.find_common_base_type(&unique);
-        if let Some(base) = common_base {
-            // All types share a common base type
-            // Check if using the base type would be more specific than a union
-            if self.all_types_are_narrower_than_base(&unique, base) {
-                return base;
-            }
+        if let Some(base) = self.find_common_base_type(&unique) {
+            // find_common_base_type already guarantees each candidate widens to
+            // the same base; returning immediately avoids an extra O(N) subtype
+            // validation pass in BCT hot paths.
+            return base;
         }
 
         // Step 2: Tournament reduction — O(N) to find candidate, O(N) to validate
@@ -2152,11 +2150,6 @@ impl<'a> InferenceContext<'a> {
             // No resolver available - can't determine base class
             None
         }
-    }
-
-    /// Check if all types are narrower than (subtypes of) the given base type.
-    fn all_types_are_narrower_than_base(&self, types: &[TypeId], base: TypeId) -> bool {
-        types.iter().all(|&ty| self.is_subtype(ty, base))
     }
 
     /// Check if a candidate type is a suitable common type for all types.

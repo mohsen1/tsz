@@ -8,6 +8,7 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::subtype::TypeResolver;
 use crate::types::Visibility;
 use crate::types::*;
+use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
@@ -68,66 +69,55 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Ok(Some(remapped))
     }
 
-    /// Helper to get property modifiers for a given key in a source object.
-    ///
-    /// Uses `collect_properties` to handle Lazy (Interfaces), Ref, Intersections,
-    /// and TypeParameter types automatically (North Star Rule 3).
-    fn get_property_modifiers_for_key(
-        &mut self,
+    /// Collect source property modifiers once to avoid repeating expensive
+    /// `collect_properties` work for every mapped key.
+    fn collect_property_modifiers(
+        &self,
         source_object: Option<TypeId>,
-        key_name: Atom,
-    ) -> (bool, bool) {
+    ) -> FxHashMap<Atom, (bool, bool)> {
+        let mut modifiers = FxHashMap::default();
         let Some(source_obj) = source_object else {
-            return (false, false);
+            return modifiers;
         };
 
         // NORTH STAR: Use collect_properties instead of manual TypeKey matching.
         // This handles Lazy (Interfaces), Ref, and Intersections automatically.
-        match collect_properties(source_obj, self.interner(), self.resolver()) {
-            PropertyCollectionResult::Properties { properties, .. } => {
-                for prop in properties {
-                    if prop.name == key_name {
-                        return (prop.optional, prop.readonly);
-                    }
-                }
+        if let PropertyCollectionResult::Properties { properties, .. } =
+            collect_properties(source_obj, self.interner(), self.resolver())
+        {
+            for prop in properties {
+                modifiers
+                    .entry(prop.name)
+                    .or_insert((prop.optional, prop.readonly));
             }
-            PropertyCollectionResult::Any => {
-                // 'any' properties are effectively neither readonly nor optional
-                // in the context of mapped type preservation.
-                return (false, false);
-            }
-            PropertyCollectionResult::NonObject => {}
         }
 
-        (false, false)
+        modifiers
     }
 
     /// Helper to compute modifiers for a mapped type property.
     fn get_mapped_modifiers(
-        &mut self,
+        &self,
         mapped: &MappedType,
-        is_homomorphic: bool,
-        source_object: Option<TypeId>,
+        source_modifiers: Option<&FxHashMap<Atom, (bool, bool)>>,
         key_name: Atom,
     ) -> (bool, bool) {
-        let source_mods = self.get_property_modifiers_for_key(source_object, key_name);
+        let source_mods = source_modifiers
+            .and_then(|modifiers| modifiers.get(&key_name).copied())
+            .unwrap_or((false, false));
 
         let optional = match mapped.optional_modifier {
             Some(MappedModifier::Add) => true,
             Some(MappedModifier::Remove) => false,
-            None => {
-                // For homomorphic types with no explicit modifier, preserve original
-                if is_homomorphic { source_mods.0 } else { false }
-            }
+            // Preserve original optionality only when homomorphic source metadata exists.
+            None => source_mods.0,
         };
 
         let readonly = match mapped.readonly_modifier {
             Some(MappedModifier::Add) => true,
             Some(MappedModifier::Remove) => false,
-            None => {
-                // For homomorphic types with no explicit modifier, preserve original
-                if is_homomorphic { source_mods.1 } else { false }
-            }
+            // Preserve original readonly only when homomorphic source metadata exists.
+            None => source_mods.1,
         };
 
         (optional, readonly)
@@ -215,6 +205,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // For { [K in keyof T]: T[K] }, the constraint is keyof T and template is T[K]
         let source_object = if is_homomorphic {
             self.extract_source_from_homomorphic(mapped)
+        } else {
+            None
+        };
+        let source_modifiers = if is_homomorphic {
+            Some(self.collect_property_modifiers(source_object))
         } else {
             None
         };
@@ -327,7 +322,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
             let (optional, readonly) =
-                self.get_mapped_modifiers(mapped, is_homomorphic, source_object, key_name);
+                self.get_mapped_modifiers(mapped, source_modifiers.as_ref(), key_name);
 
             for remapped_name in remapped_names {
                 properties.push(PropertyInfo {
@@ -357,12 +352,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                     // Get modifiers for string index
                     let empty_atom = self.interner().intern_string("");
-                    let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
-                        mapped,
-                        is_homomorphic,
-                        source_object,
-                        empty_atom,
-                    );
+                    let (idx_optional, idx_readonly) =
+                        self.get_mapped_modifiers(mapped, source_modifiers.as_ref(), empty_atom);
                     if idx_optional {
                         value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
                     }
@@ -393,12 +384,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                     // Get modifiers for number index
                     let empty_atom = self.interner().intern_string("");
-                    let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
-                        mapped,
-                        is_homomorphic,
-                        source_object,
-                        empty_atom,
-                    );
+                    let (idx_optional, idx_readonly) =
+                        self.get_mapped_modifiers(mapped, source_modifiers.as_ref(), empty_atom);
                     if idx_optional {
                         value_type = self.interner().union2(value_type, TypeId::UNDEFINED);
                     }
