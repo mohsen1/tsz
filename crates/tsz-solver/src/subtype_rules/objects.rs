@@ -827,6 +827,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        // Enforce target index-signature requirements even when the source is a
+        // plain property-only object shape.
+        if !self
+            .check_string_index_compatibility(&source_shape, target)
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+        if !self
+            .check_number_index_compatibility(&source_shape, target)
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
         self.check_properties_against_index_signatures(source, target)
     }
 
