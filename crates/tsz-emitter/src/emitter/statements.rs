@@ -402,22 +402,51 @@ impl<'a> Printer<'a> {
                 return false;
             }
             text[cond_end..then_start].contains('\n')
+        }) || self.source_text.is_some_and(|text| {
+            let Some(then_node) = self.arena.get(if_stmt.then_statement) else {
+                return false;
+            };
+            if then_node.kind == syntax_kind_ext::BLOCK {
+                return false;
+            }
+            let start = then_node.pos as usize;
+            let end = then_node.end as usize;
+            if start >= end || end > text.len() {
+                return false;
+            }
+            text[start..end].contains("...")
         }) || (!self.is_single_line(node)
             && self
                 .arena
                 .get(if_stmt.then_statement)
                 .map(|n| n.kind != syntax_kind_ext::BLOCK)
-                .unwrap_or(false));
+                .unwrap_or(false))
+            || self
+                .arena
+                .get(if_stmt.then_statement)
+                .map(|n| n.pos >= n.end && n.kind != syntax_kind_ext::BLOCK)
+                .unwrap_or(false);
 
         self.write("if (");
         self.emit(if_stmt.expression);
         self.write(")");
+        let then_is_block = self
+            .arena
+            .get(if_stmt.then_statement)
+            .map(|n| n.kind == syntax_kind_ext::BLOCK)
+            .unwrap_or(false);
         if then_is_multiline_in_source {
             self.write_line();
+            if !then_is_block {
+                self.increase_indent();
+            }
         } else {
             self.write(" ");
         }
         self.emit(if_stmt.then_statement);
+        if then_is_multiline_in_source && !then_is_block {
+            self.decrease_indent();
+        }
 
         if !if_stmt.else_statement.is_none() {
             self.write_line();

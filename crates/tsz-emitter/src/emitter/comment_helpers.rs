@@ -80,6 +80,7 @@ impl<'a> Printer<'a> {
         // accidentally matching a parent scope's closing brace.
         let mut depth: i32 = 0;
         let mut last_token_end: Option<usize> = None;
+        let mut last_non_trivia_at_depth0: Option<usize> = None;
         let mut i = start_pos;
 
         while i < end_pos {
@@ -98,12 +99,14 @@ impl<'a> Printer<'a> {
                     if depth == 0 {
                         // This is the closing brace at the top level of this node
                         last_token_end = Some(i + 1);
+                        last_non_trivia_at_depth0 = Some(i + 1);
                     }
                     i += 1;
                 }
                 b';' => {
                     if depth == 0 {
                         last_token_end = Some(i + 1);
+                        last_non_trivia_at_depth0 = Some(i + 1);
                     }
                     i += 1;
                 }
@@ -141,12 +144,35 @@ impl<'a> Printer<'a> {
                     }
                 }
                 _ => {
+                    if depth == 0 && !matches!(ch, b' ' | b'\t' | b'\r' | b'\n') {
+                        last_non_trivia_at_depth0 = Some(i + 1);
+                    }
                     i += 1;
                 }
             }
         }
 
-        last_token_end.map_or(end, |e| e as u32)
+        let mut token_end = last_token_end
+            .or(last_non_trivia_at_depth0)
+            .map_or(end, |e| e as u32);
+
+        // Some transformed nodes report `end` before the terminating `;`.
+        // Recover by scanning a short same-line suffix for `;` or `}`.
+        if token_end <= end {
+            let mut j = end_pos;
+            while j < bytes.len() {
+                match bytes[j] {
+                    b';' | b'}' => {
+                        token_end = (j + 1) as u32;
+                        break;
+                    }
+                    b'\n' | b'\r' => break,
+                    _ => j += 1,
+                }
+            }
+        }
+
+        token_end
     }
 
     /// Emit all pending comments from `all_comments` whose end position is before `pos`.

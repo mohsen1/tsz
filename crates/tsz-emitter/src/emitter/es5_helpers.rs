@@ -336,12 +336,20 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Get temp variable name
-        let temp_var = self.ctx.destructuring_state.next_temp_var();
+        // Get hoisted temp variable name
+        let temp_var = self.make_unique_name_hoisted();
 
-        self.write("(");
-        self.write(&temp_var);
-        self.write(" = ");
+        let single_computed_only = first_computed_idx == 0 && elements.len() == 1;
+        if single_computed_only {
+            self.write("(");
+            self.increase_indent();
+            self.write(&temp_var);
+            self.write(" = ");
+        } else {
+            self.write("(");
+            self.write(&temp_var);
+            self.write(" = ");
+        }
 
         // Emit initial non-computed properties as the object literal
         if first_computed_idx > 0 {
@@ -353,14 +361,27 @@ impl<'a> Printer<'a> {
         // Emit remaining properties as assignments
         for i in first_computed_idx..elements.len() {
             let prop_idx = elements[i];
-            self.write(", ");
+            if single_computed_only {
+                self.write(",");
+                self.write_line();
+            } else {
+                self.write(", ");
+            }
             self.emit_property_assignment_es5(prop_idx, &temp_var);
         }
 
         // Return the temp variable
-        self.write(", ");
-        self.write(&temp_var);
-        self.write(")");
+        if single_computed_only {
+            self.write(",");
+            self.write_line();
+            self.write(&temp_var);
+            self.decrease_indent();
+            self.write(")");
+        } else {
+            self.write(", ");
+            self.write(&temp_var);
+            self.write(")");
+        }
     }
 
     /// Emit object literal with spread using __assign pattern
@@ -422,7 +443,7 @@ impl<'a> Printer<'a> {
                     .any(|&idx| self.is_computed_property_member(idx));
                 if has_computed {
                     // Need temp var for computed properties
-                    let temp_var = self.ctx.destructuring_state.next_temp_var();
+                    let temp_var = self.make_unique_name_hoisted();
                     self.write("__assign((");
                     self.write(&temp_var);
                     self.write(" = ");
