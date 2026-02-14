@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 BASE_REF="${BASE_REF:-${GITHUB_BASE_REF:-main}}"
 BASE_REMOTE="origin/${BASE_REF}"
+BASE_SHA="${BASE_SHA:-}"
 
 RUN_ROOT="${RUNNER_TEMP:-/tmp}/tsz-perf-compare-${GITHUB_RUN_ID:-local}"
 BASE_WORKTREE="${RUN_ROOT}/base"
@@ -36,13 +37,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Fetching base ref: ${BASE_REMOTE}"
-git -C "${ROOT_DIR}" fetch --no-tags --depth=1 origin "${BASE_REF}"
+if [ -n "${BASE_SHA}" ]; then
+  echo "Fetching base commit: ${BASE_SHA}"
+  git -C "${ROOT_DIR}" fetch --no-tags --depth=1 origin "${BASE_SHA}"
+  BASE_SPEC="${BASE_SHA}"
+else
+  echo "Fetching base ref: ${BASE_REMOTE}"
+  git -C "${ROOT_DIR}" fetch --no-tags --depth=1 origin "${BASE_REF}"
+  BASE_SPEC="${BASE_REMOTE}"
+fi
 
 if [ -d "${BASE_WORKTREE}" ]; then
   git -C "${ROOT_DIR}" worktree remove --force "${BASE_WORKTREE}" >/dev/null 2>&1 || true
 fi
-git -C "${ROOT_DIR}" worktree add --detach "${BASE_WORKTREE}" "${BASE_REMOTE}" >/dev/null
+git -C "${ROOT_DIR}" worktree add --detach "${BASE_WORKTREE}" "${BASE_SPEC}" >/dev/null
+BASE_WORKTREE_SHA="$(git -C "${BASE_WORKTREE}" rev-parse --short HEAD)"
 
 export CARGO_TARGET_DIR="${TARGET_DIR}"
 export CARGO_INCREMENTAL=0
@@ -91,6 +100,37 @@ function emit_row() {
   gsub(/\r/, "", line);
   gsub(/\x1B\[[0-9;]*[A-Za-z]/, "", line);
 
+  if (line ~ /^[[:space:]]*change:[[:space:]]*$/) {
+    in_change_block = 1;
+    next;
+  }
+
+  if (line ~ /change:[[:space:]]+\[/) {
+    change_line = line;
+    sub(/^.*change:[[:space:]]+\[/, "", change_line);
+    sub(/\].*$/, "", change_line);
+    split(change_line, change_parts, /[[:space:]]+/);
+    if (length(change_parts) >= 2) {
+      change_mid = change_parts[2];
+      gsub(/%/, "", change_mid);
+    }
+    in_change_block = 0;
+    next;
+  }
+
+  if (in_change_block && line ~ /^[[:space:]]*time:[[:space:]]+\[/) {
+    change_line = line;
+    sub(/^.*time:[[:space:]]+\[/, "", change_line);
+    sub(/\].*$/, "", change_line);
+    split(change_line, change_parts, /[[:space:]]+/);
+    if (length(change_parts) >= 2) {
+      change_mid = change_parts[2];
+      gsub(/%/, "", change_mid);
+    }
+    in_change_block = 0;
+    next;
+  }
+
   if (line ~ /time:[[:space:]]+\[/) {
     split(line, parts, /time:[[:space:]]+\[/);
     maybe_case = parts[1];
@@ -109,18 +149,6 @@ function emit_row() {
     }
   }
 
-  if (line ~ /change:[[:space:]]+\[/) {
-    change_line = line;
-    sub(/^.*change:[[:space:]]+\[/, "", change_line);
-    sub(/\].*$/, "", change_line);
-    split(change_line, change_parts, /[[:space:]]+/);
-    if (length(change_parts) >= 2) {
-      change_mid = change_parts[2];
-      gsub(/%/, "", change_mid);
-    }
-    next;
-  }
-
   if (line ~ /Performance has regressed\./) {
     status = "regressed";
     emit_row();
@@ -131,7 +159,7 @@ function emit_row() {
     emit_row();
     next;
   }
-  if (line ~ /No change in performance detected\./) {
+  if (line ~ /No change in performance detected\./ || line ~ /Change within noise threshold\./) {
     status = "no_change";
     emit_row();
     next;
@@ -159,6 +187,7 @@ SUMMARY_MD="${OUT_DIR}/summary.md"
   echo "# Performance Bench Comparison"
   echo ""
   echo "- Base ref: \`${BASE_REMOTE}\`"
+  echo "- Base SHA: \`${BASE_WORKTREE_SHA}\`"
   echo "- Head SHA: \`$(git -C "${ROOT_DIR}" rev-parse --short HEAD)\`"
   echo "- Criterion args: \`${BENCH_ARGS[*]}\`"
   echo "- Regression threshold: \`${FAIL_THRESHOLD_PCT}%\` (statistically significant regressions only)"

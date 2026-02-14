@@ -778,6 +778,33 @@ fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bool {
     false
 }
 
+/// Append declarations from `incoming` into `existing` without duplicates.
+///
+/// Small declaration lists are common, so use linear scans there to avoid
+/// hash set allocation overhead. Switch to a set only for larger collections.
+fn append_unique_declarations(existing: &mut Vec<NodeIndex>, incoming: &[NodeIndex]) {
+    if incoming.is_empty() {
+        return;
+    }
+
+    const SMALL_DECL_THRESHOLD: usize = 16;
+    if existing.len() + incoming.len() <= SMALL_DECL_THRESHOLD {
+        for &decl in incoming {
+            if !existing.contains(&decl) {
+                existing.push(decl);
+            }
+        }
+        return;
+    }
+
+    let mut seen: FxHashSet<NodeIndex> = existing.iter().copied().collect();
+    for &decl in incoming {
+        if seen.insert(decl) {
+            existing.push(decl);
+        }
+    }
+}
+
 /// Merge bind results into a unified program state
 ///
 /// This is a sequential operation that combines:
@@ -888,13 +915,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                                 // Merge declarations from this lib
                                 if let Some(existing_mut) = global_symbols.get_mut(existing_id) {
                                     existing_mut.flags |= lib_sym.flags;
-                                    let mut seen: FxHashSet<NodeIndex> =
-                                        existing_mut.declarations.iter().copied().collect();
-                                    for decl in &lib_sym.declarations {
-                                        if seen.insert(*decl) {
-                                            existing_mut.declarations.push(*decl);
-                                        }
-                                    }
+                                    append_unique_declarations(
+                                        &mut existing_mut.declarations,
+                                        &lib_sym.declarations,
+                                    );
                                 }
                                 existing_id
                             } else {
@@ -1047,10 +1071,18 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // Merge wildcard reexports from this file
         for (file_name, source_modules) in &result.wildcard_reexports {
             let entry = wildcard_reexports.entry(file_name.clone()).or_default();
-            let mut seen: FxHashSet<String> = entry.iter().cloned().collect();
-            for source_module in source_modules {
-                if seen.insert(source_module.clone()) {
-                    entry.push(source_module.clone());
+            if entry.len() + source_modules.len() <= 16 {
+                for source_module in source_modules {
+                    if !entry.contains(source_module) {
+                        entry.push(source_module.clone());
+                    }
+                }
+            } else {
+                let mut seen: FxHashSet<String> = entry.iter().cloned().collect();
+                for source_module in source_modules {
+                    if seen.insert(source_module.clone()) {
+                        entry.push(source_module.clone());
+                    }
                 }
             }
         }
@@ -1100,13 +1132,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                             if extra_flags != 0 {
                                 global_sym.flags |= extra_flags;
                                 // Also copy user declarations that were merged into this symbol
-                                let mut seen: FxHashSet<NodeIndex> =
-                                    global_sym.declarations.iter().copied().collect();
-                                for decl in &sym.declarations {
-                                    if seen.insert(*decl) {
-                                        global_sym.declarations.push(*decl);
-                                    }
-                                }
+                                append_unique_declarations(
+                                    &mut global_sym.declarations,
+                                    &sym.declarations,
+                                );
                             }
                         }
                         id_remap.insert(old_id, global_id);
@@ -1342,13 +1371,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     // Cross-file merge: append declarations and merge flags
                     new_sym.flags |= old_sym.flags;
                     // Append new declarations from this file
-                    let mut seen: FxHashSet<NodeIndex> =
-                        new_sym.declarations.iter().copied().collect();
-                    for decl in &old_sym.declarations {
-                        if seen.insert(*decl) {
-                            new_sym.declarations.push(*decl);
-                        }
-                    }
+                    append_unique_declarations(&mut new_sym.declarations, &old_sym.declarations);
                     // Update value_declaration if the old one was NONE
                     if new_sym.value_declaration.is_none() && !old_sym.value_declaration.is_none() {
                         new_sym.value_declaration = old_sym.value_declaration;
