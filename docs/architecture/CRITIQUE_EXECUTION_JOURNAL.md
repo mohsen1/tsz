@@ -104,3 +104,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migrated query-boundary tests to checker-safe constructor APIs by replacing `TypeKey::TypeParameter` and `TypeKey::KeyOf` calls with `types.type_param(...)` / `types.keyof(...)`.
 - [x] Migrated `enum_member_cache_tests.rs` to avoid `TypeKey` construction/inspection by using `type_queries::get_enum_def_id(...)` for enum-member assertions.
 - [x] Added `TypeInterner::this_type()` and migrated `lower.rs` constructor paths (`ThisType`, `TypeParameter`, `IndexAccess`, `Lazy`, `TypeQuery`, `KeyOf`, `ReadonlyType`) to public helpers.
+- [x] Added `TypeInterner` helpers (`no_infer`, `unique_symbol`, `infer`, `string_intrinsic`) and migrated the remaining direct `TypeKey` constructions in `tsz-solver/src/lower.rs` to constructor APIs.

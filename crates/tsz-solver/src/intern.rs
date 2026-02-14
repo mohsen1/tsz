@@ -2547,6 +2547,21 @@ impl TypeInterner {
         self.intern(TypeKey::ReadonlyType(inner))
     }
 
+    /// Wrap a type in a `NoInfer` marker.
+    pub fn no_infer(&self, inner: TypeId) -> TypeId {
+        self.intern(TypeKey::NoInfer(inner))
+    }
+
+    /// Create a `unique symbol` type for a symbol declaration.
+    pub fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
+        self.intern(TypeKey::UniqueSymbol(symbol))
+    }
+
+    /// Create an `infer` binder with the provided info.
+    pub fn infer(&self, info: TypeParamInfo) -> TypeId {
+        self.intern(TypeKey::Infer(info))
+    }
+
     /// Wrap a type in a KeyOf marker.
     pub fn keyof(&self, inner: TypeId) -> TypeId {
         self.intern(TypeKey::KeyOf(inner))
@@ -3102,6 +3117,11 @@ impl TypeInterner {
     pub fn mapped(&self, mapped: MappedType) -> TypeId {
         let mapped_id = self.intern_mapped_type(mapped);
         self.intern(TypeKey::Mapped(mapped_id))
+    }
+
+    /// Build a string intrinsic (`Uppercase`, `Lowercase`, etc.) marker.
+    pub fn string_intrinsic(&self, kind: crate::types::StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+        self.intern(TypeKey::StringIntrinsic { kind, type_arg })
     }
 
     /// Intern a type reference (deprecated - use lazy() with DefId instead).

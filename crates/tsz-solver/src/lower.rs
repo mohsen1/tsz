@@ -2611,10 +2611,12 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let type_arg = self.lower_type(first_arg);
-                                return self.interner.intern(TypeKey::StringIntrinsic {
-                                    kind: crate::types::StringIntrinsicKind::Uppercase,
-                                    type_arg,
-                                });
+                                return self
+                                    .interner
+                                    .string_intrinsic(
+                                        crate::types::StringIntrinsicKind::Uppercase,
+                                        type_arg,
+                                    );
                             }
                             return TypeId::ERROR;
                         }
@@ -2623,10 +2625,12 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let type_arg = self.lower_type(first_arg);
-                                return self.interner.intern(TypeKey::StringIntrinsic {
-                                    kind: crate::types::StringIntrinsicKind::Lowercase,
-                                    type_arg,
-                                });
+                                return self
+                                    .interner
+                                    .string_intrinsic(
+                                        crate::types::StringIntrinsicKind::Lowercase,
+                                        type_arg,
+                                    );
                             }
                             return TypeId::ERROR;
                         }
@@ -2635,10 +2639,12 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let type_arg = self.lower_type(first_arg);
-                                return self.interner.intern(TypeKey::StringIntrinsic {
-                                    kind: crate::types::StringIntrinsicKind::Capitalize,
-                                    type_arg,
-                                });
+                                return self
+                                    .interner
+                                    .string_intrinsic(
+                                        crate::types::StringIntrinsicKind::Capitalize,
+                                        type_arg,
+                                    );
                             }
                             return TypeId::ERROR;
                         }
@@ -2647,10 +2653,12 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let type_arg = self.lower_type(first_arg);
-                                return self.interner.intern(TypeKey::StringIntrinsic {
-                                    kind: crate::types::StringIntrinsicKind::Uncapitalize,
-                                    type_arg,
-                                });
+                                return self
+                                    .interner
+                                    .string_intrinsic(
+                                        crate::types::StringIntrinsicKind::Uncapitalize,
+                                        type_arg,
+                                    );
                             }
                             return TypeId::ERROR;
                         }
@@ -2659,7 +2667,7 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let inner = self.lower_type(first_arg);
-                                return self.interner.intern(TypeKey::NoInfer(inner));
+                                return self.interner.no_infer(inner);
                             }
                             return TypeId::ERROR;
                         }
@@ -2846,7 +2854,7 @@ impl<'a> TypeLowering<'a> {
                     // unique symbol creates a unique symbol type
                     // Use node index as unique identifier
                     self.interner
-                        .intern(TypeKey::UniqueSymbol(SymbolRef(node_idx.0)))
+                        .unique_symbol(SymbolRef(node_idx.0))
                 }
                 _ => inner_type,
             }
@@ -2925,7 +2933,7 @@ impl<'a> TypeLowering<'a> {
 
         if let Some(data) = self.arena.get_infer_type(node) {
             if let Some(info) = self.lower_type_parameter(data.type_parameter) {
-                return self.interner.intern(TypeKey::Infer(info));
+                return self.interner.infer(info);
             }
 
             // Fallback: synthesize a name if the node isn't a type parameter.
@@ -2939,12 +2947,12 @@ impl<'a> TypeLowering<'a> {
                 self.interner.intern_string("infer")
             };
 
-            self.interner.intern(TypeKey::Infer(TypeParamInfo {
+            self.interner.infer(TypeParamInfo {
                 is_const: false,
                 name,
                 constraint: None,
                 default: None,
-            }))
+            })
         } else {
             TypeId::ERROR
         }
