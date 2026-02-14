@@ -755,9 +755,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Reconstruct obj_type for error messages
-        let obj_type = self
-            .interner()
-            .intern(TypeKey::Union(crate::types::TypeListId(list_id)));
+        let obj_type = self.interner().union(self.interner().type_list(TypeListId(list_id)).to_vec());
 
         let prop_atom = match prop_atom {
             Some(atom) => atom,
