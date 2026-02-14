@@ -254,7 +254,7 @@ fn are_disjoint(interner: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
     let key_b = interner.lookup(b);
 
     match (key_a, key_b) {
-        (Some(TypeKey::Intrinsic(k1)), Some(TypeKey::Intrinsic(k2))) => {
+        (Some(TypeData::Intrinsic(k1)), Some(TypeData::Intrinsic(k2))) => {
             use IntrinsicKind::*;
             // Basic primitives are disjoint (ignoring object/Function which are more complex)
             k1 != k2
@@ -263,11 +263,11 @@ fn are_disjoint(interner: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
                     (Object, _) | (_, Object) | (Function, _) | (_, Function)
                 )
         }
-        (Some(TypeKey::Literal(l1)), Some(TypeKey::Literal(l2))) => l1 != l2,
-        (Some(TypeKey::Literal(l1)), Some(TypeKey::Intrinsic(k2))) => {
+        (Some(TypeData::Literal(l1)), Some(TypeData::Literal(l2))) => l1 != l2,
+        (Some(TypeData::Literal(l1)), Some(TypeData::Intrinsic(k2))) => {
             !is_literal_compatible_with_intrinsic(&l1, k2)
         }
-        (Some(TypeKey::Intrinsic(k1)), Some(TypeKey::Literal(l2))) => {
+        (Some(TypeData::Intrinsic(k1)), Some(TypeData::Literal(l2))) => {
             !is_literal_compatible_with_intrinsic(&l2, k1)
         }
         _ => false,
@@ -508,7 +508,7 @@ impl<'a> InferenceContext<'a> {
         upper_bounds: &mut Vec<TypeId>,
     ) {
         let name = match self.interner.lookup(bound) {
-            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info.name,
+            Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info.name,
             _ => return,
         };
 
@@ -564,31 +564,31 @@ impl<'a> InferenceContext<'a> {
         };
 
         match key {
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
                 params.insert(info.name);
             }
-            TypeKey::Array(elem) => {
+            TypeData::Array(elem) => {
                 self.collect_type_params(elem, params, visited);
             }
-            TypeKey::Tuple(elements) => {
+            TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(elements);
                 for element in elements.iter() {
                     self.collect_type_params(element.type_id, params, visited);
                 }
             }
-            TypeKey::Union(members) | TypeKey::Intersection(members) => {
+            TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
                     self.collect_type_params(member, params, visited);
                 }
             }
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     self.collect_type_params(prop.type_id, params, visited);
                 }
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     self.collect_type_params(prop.type_id, params, visited);
@@ -602,14 +602,14 @@ impl<'a> InferenceContext<'a> {
                     self.collect_type_params(index.value_type, params, visited);
                 }
             }
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 self.collect_type_params(app.base, params, visited);
                 for &arg in app.args.iter() {
                     self.collect_type_params(arg, params, visited);
                 }
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 for param in shape.params.iter() {
                     self.collect_type_params(param.type_id, params, visited);
@@ -619,7 +619,7 @@ impl<'a> InferenceContext<'a> {
                 }
                 self.collect_type_params(shape.return_type, params, visited);
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 for sig in shape.call_signatures.iter() {
                     for param in sig.params.iter() {
@@ -643,14 +643,14 @@ impl<'a> InferenceContext<'a> {
                     self.collect_type_params(prop.type_id, params, visited);
                 }
             }
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(cond_id);
                 self.collect_type_params(cond.check_type, params, visited);
                 self.collect_type_params(cond.extends_type, params, visited);
                 self.collect_type_params(cond.true_type, params, visited);
                 self.collect_type_params(cond.false_type, params, visited);
             }
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(mapped_id);
                 self.collect_type_params(mapped.constraint, params, visited);
                 if let Some(name_type) = mapped.name_type {
@@ -658,14 +658,14 @@ impl<'a> InferenceContext<'a> {
                 }
                 self.collect_type_params(mapped.template, params, visited);
             }
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 self.collect_type_params(obj, params, visited);
                 self.collect_type_params(idx, params, visited);
             }
-            TypeKey::KeyOf(operand) | TypeKey::ReadonlyType(operand) => {
+            TypeData::KeyOf(operand) | TypeData::ReadonlyType(operand) => {
                 self.collect_type_params(operand, params, visited);
             }
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 for span in spans.iter() {
                     if let TemplateSpan::Type(inner) = span {
@@ -673,24 +673,24 @@ impl<'a> InferenceContext<'a> {
                     }
                 }
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => {
+            TypeData::StringIntrinsic { type_arg, .. } => {
                 self.collect_type_params(type_arg, params, visited);
             }
-            TypeKey::Enum(_def_id, member_type) => {
+            TypeData::Enum(_def_id, member_type) => {
                 // Recurse into the structural member type
                 self.collect_type_params(member_type, params, visited);
             }
-            TypeKey::Intrinsic(_)
-            | TypeKey::Literal(_)
-            | TypeKey::Lazy(_)
-            | TypeKey::Recursive(_)
-            | TypeKey::BoundParameter(_)
-            | TypeKey::TypeQuery(_)
-            | TypeKey::UniqueSymbol(_)
-            | TypeKey::ThisType
-            | TypeKey::ModuleNamespace(_)
-            | TypeKey::Error => {}
-            TypeKey::NoInfer(inner) => {
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Error => {}
+            TypeData::NoInfer(inner) => {
                 self.collect_type_params(inner, params, visited);
             }
         }
@@ -721,7 +721,7 @@ impl<'a> InferenceContext<'a> {
                     return true;
                 }
             }
-            if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(bound)
+            if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(bound)
                 && self.param_depends_on_targets(info.name, targets, visited)
             {
                 return true;
@@ -747,28 +747,28 @@ impl<'a> InferenceContext<'a> {
         };
 
         match key {
-            TypeKey::TypeParameter(info) => info.name == target,
-            TypeKey::Array(elem) => self.type_contains_param(elem, target, visited),
-            TypeKey::Tuple(elements) => {
+            TypeData::TypeParameter(info) => info.name == target,
+            TypeData::Array(elem) => self.type_contains_param(elem, target, visited),
+            TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(elements);
                 elements
                     .iter()
                     .any(|e| self.type_contains_param(e.type_id, target, visited))
             }
-            TypeKey::Union(members) | TypeKey::Intersection(members) => {
+            TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 members
                     .iter()
                     .any(|&member| self.type_contains_param(member, target, visited))
             }
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 shape
                     .properties
                     .iter()
                     .any(|p| self.type_contains_param(p.type_id, target, visited))
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 shape
                     .properties
@@ -783,7 +783,7 @@ impl<'a> InferenceContext<'a> {
                             || self.type_contains_param(idx.value_type, target, visited)
                     })
             }
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 self.type_contains_param(app.base, target, visited)
                     || app
@@ -791,7 +791,7 @@ impl<'a> InferenceContext<'a> {
                         .iter()
                         .any(|&arg| self.type_contains_param(arg, target, visited))
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 if shape.type_params.iter().any(|tp| tp.name == target) {
                     return false;
@@ -805,7 +805,7 @@ impl<'a> InferenceContext<'a> {
                         .any(|p| self.type_contains_param(p.type_id, target, visited))
                     || self.type_contains_param(shape.return_type, target, visited)
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 let in_call = shape.call_signatures.iter().any(|sig| {
                     if sig.type_params.iter().any(|tp| tp.name == target) {
@@ -844,14 +844,14 @@ impl<'a> InferenceContext<'a> {
                     .iter()
                     .any(|p| self.type_contains_param(p.type_id, target, visited))
             }
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(cond_id);
                 self.type_contains_param(cond.check_type, target, visited)
                     || self.type_contains_param(cond.extends_type, target, visited)
                     || self.type_contains_param(cond.true_type, target, visited)
                     || self.type_contains_param(cond.false_type, target, visited)
             }
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(mapped_id);
                 if mapped.type_param.name == target {
                     return false;
@@ -859,39 +859,39 @@ impl<'a> InferenceContext<'a> {
                 self.type_contains_param(mapped.constraint, target, visited)
                     || self.type_contains_param(mapped.template, target, visited)
             }
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 self.type_contains_param(obj, target, visited)
                     || self.type_contains_param(idx, target, visited)
             }
-            TypeKey::KeyOf(operand) | TypeKey::ReadonlyType(operand) => {
+            TypeData::KeyOf(operand) | TypeData::ReadonlyType(operand) => {
                 self.type_contains_param(operand, target, visited)
             }
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 spans.iter().any(|span| match span {
                     TemplateSpan::Text(_) => false,
                     TemplateSpan::Type(inner) => self.type_contains_param(*inner, target, visited),
                 })
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => {
+            TypeData::StringIntrinsic { type_arg, .. } => {
                 self.type_contains_param(type_arg, target, visited)
             }
-            TypeKey::Enum(_def_id, member_type) => {
+            TypeData::Enum(_def_id, member_type) => {
                 // Recurse into the structural member type
                 self.type_contains_param(member_type, target, visited)
             }
-            TypeKey::Infer(info) => info.name == target,
-            TypeKey::Intrinsic(_)
-            | TypeKey::Literal(_)
-            | TypeKey::Lazy(_)
-            | TypeKey::Recursive(_)
-            | TypeKey::BoundParameter(_)
-            | TypeKey::TypeQuery(_)
-            | TypeKey::UniqueSymbol(_)
-            | TypeKey::ThisType
-            | TypeKey::ModuleNamespace(_)
-            | TypeKey::Error => false,
-            TypeKey::NoInfer(inner) => self.type_contains_param(inner, target, visited),
+            TypeData::Infer(info) => info.name == target,
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Error => false,
+            TypeData::NoInfer(inner) => self.type_contains_param(inner, target, visited),
         }
     }
 
@@ -983,7 +983,7 @@ impl<'a> InferenceContext<'a> {
     /// If target is an inference variable, source becomes a lower bound.
     /// If source is an inference variable, target becomes an upper bound.
     pub fn collect_constraint(&mut self, _source: TypeId, _target: TypeId) {
-        // Check if target is an inference variable (via TypeKey lookup)
+        // Check if target is an inference variable (via TypeData lookup)
         // For now, we rely on the caller to call add_lower_bound/add_upper_bound directly
         // This is a placeholder for more sophisticated constraint collection
     }
@@ -1028,25 +1028,25 @@ impl<'a> InferenceContext<'a> {
         target: TypeId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
-        // Resolve the types to their actual TypeKeys
+        // Resolve the types to their actual TypeDatas
         let source_key = self.interner.lookup(source);
         let target_key = self.interner.lookup(target);
 
         // Block inference if target is NoInfer<T> (TypeScript 5.4+)
         // NoInfer prevents inference from flowing through this type position
-        if let Some(TypeKey::NoInfer(_)) = target_key {
+        if let Some(TypeData::NoInfer(_)) = target_key {
             return Ok(()); // Stop inference - don't descend into NoInfer
         }
 
         // Unwrap NoInfer from source if present (rare but possible)
-        let source_key = if let Some(TypeKey::NoInfer(inner)) = source_key {
+        let source_key = if let Some(TypeData::NoInfer(inner)) = source_key {
             self.interner.lookup(inner)
         } else {
             source_key
         };
 
         // Case 1: Target is a TypeParameter we're inferring (Lower Bound: source <: T)
-        if let Some(TypeKey::TypeParameter(ref param_info)) = target_key {
+        if let Some(TypeData::TypeParameter(ref param_info)) = target_key {
             if let Some(var) = self.find_type_param(param_info.name) {
                 // Add source as a lower bound candidate for this type parameter
                 self.add_candidate(var, source, priority);
@@ -1057,7 +1057,7 @@ impl<'a> InferenceContext<'a> {
         // Case 2: Source is a TypeParameter we're inferring (Upper Bound: T <: target)
         // CRITICAL: This handles contravariance! When function parameters are swapped,
         // the TypeParameter moves to source position and becomes an upper bound.
-        if let Some(TypeKey::TypeParameter(ref param_info)) = source_key {
+        if let Some(TypeData::TypeParameter(ref param_info)) = source_key {
             if let Some(var) = self.find_type_param(param_info.name) {
                 // T <: target, so target is an UPPER bound
                 self.add_upper_bound(var, target);
@@ -1068,47 +1068,47 @@ impl<'a> InferenceContext<'a> {
         // Case 3: Structural recursion - match based on type structure
         match (source_key, target_key) {
             // Object types: recurse into properties
-            (Some(TypeKey::Object(source_shape)), Some(TypeKey::Object(target_shape))) => {
+            (Some(TypeData::Object(source_shape)), Some(TypeData::Object(target_shape))) => {
                 self.infer_objects(source_shape, target_shape, priority)?;
             }
 
             // Function types: handle variance (parameters are contravariant, return is covariant)
-            (Some(TypeKey::Function(source_func)), Some(TypeKey::Function(target_func))) => {
+            (Some(TypeData::Function(source_func)), Some(TypeData::Function(target_func))) => {
                 self.infer_functions(source_func, target_func, priority)?;
             }
 
             // Array types: recurse into element types
-            (Some(TypeKey::Array(source_elem)), Some(TypeKey::Array(target_elem))) => {
+            (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
                 self.infer_from_types(source_elem, target_elem, priority)?;
             }
 
             // Tuple types: recurse into elements
-            (Some(TypeKey::Tuple(source_elems)), Some(TypeKey::Tuple(target_elems))) => {
+            (Some(TypeData::Tuple(source_elems)), Some(TypeData::Tuple(target_elems))) => {
                 self.infer_tuples(source_elems, target_elems, priority)?;
             }
 
             // Union types: try to infer against each member
-            (Some(TypeKey::Union(source_members)), Some(TypeKey::Union(target_members))) => {
+            (Some(TypeData::Union(source_members)), Some(TypeData::Union(target_members))) => {
                 self.infer_unions(source_members, target_members, priority)?;
             }
 
             // Intersection types
             (
-                Some(TypeKey::Intersection(source_members)),
-                Some(TypeKey::Intersection(target_members)),
+                Some(TypeData::Intersection(source_members)),
+                Some(TypeData::Intersection(target_members)),
             ) => {
                 self.infer_intersections(source_members, target_members, priority)?;
             }
 
             // TypeApplication: recurse into instantiated type
-            (Some(TypeKey::Application(source_app)), Some(TypeKey::Application(target_app))) => {
+            (Some(TypeData::Application(source_app)), Some(TypeData::Application(target_app))) => {
                 self.infer_applications(source_app, target_app, priority)?;
             }
 
             // Index access types: infer both object and index types
             (
-                Some(TypeKey::IndexAccess(source_obj, source_idx)),
-                Some(TypeKey::IndexAccess(target_obj, target_idx)),
+                Some(TypeData::IndexAccess(source_obj, source_idx)),
+                Some(TypeData::IndexAccess(target_obj, target_idx)),
             ) => {
                 self.infer_from_types(source_obj, target_obj, priority)?;
                 self.infer_from_types(source_idx, target_idx, priority)?;
@@ -1116,7 +1116,7 @@ impl<'a> InferenceContext<'a> {
 
             // Task #40: Template literal deconstruction for infer patterns
             // Handles: source extends `prefix${infer T}suffix` ? true : false
-            (Some(source_key), Some(TypeKey::TemplateLiteral(target_id))) => {
+            (Some(source_key), Some(TypeData::TemplateLiteral(target_id))) => {
                 self.infer_from_template_literal(source, Some(&source_key), target_id, priority)?;
             }
 
@@ -1238,7 +1238,7 @@ impl<'a> InferenceContext<'a> {
                 //          should infer A = [number, number], not A = number
                 let target_is_type_param = matches!(
                     self.interner.lookup(target_param.type_id),
-                    Some(TypeKey::TypeParameter(_)) | Some(TypeKey::Infer(_))
+                    Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
                 );
 
                 tracing::trace!(
@@ -1446,13 +1446,13 @@ impl<'a> InferenceContext<'a> {
     /// # Arguments
     ///
     /// * `source` - The source type being checked (e.g., `"user_123"`)
-    /// * `source_key` - The TypeKey of the source (cached for efficiency)
+    /// * `source_key` - The TypeData of the source (cached for efficiency)
     /// * `target_template` - The template literal pattern to match against
     /// * `priority` - Inference priority for the extracted candidates
     fn infer_from_template_literal(
         &mut self,
         source: TypeId,
-        source_key: Option<&TypeKey>,
+        source_key: Option<&TypeData>,
         target_template: TemplateLiteralId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
@@ -1460,11 +1460,11 @@ impl<'a> InferenceContext<'a> {
 
         // Special case: if source is `any` or the intrinsic `string` type, all infer vars get that type
         if source == TypeId::ANY
-            || matches!(source_key, Some(TypeKey::Intrinsic(IntrinsicKind::String)))
+            || matches!(source_key, Some(TypeData::Intrinsic(IntrinsicKind::String)))
         {
             for span in spans.iter() {
                 if let TemplateSpan::Type(type_id) = span {
-                    if let Some(TypeKey::Infer(param_info)) = self.interner.lookup(*type_id) {
+                    if let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id) {
                         if let Some(var) = self.find_type_param(param_info.name) {
                             // Source is `any` or `string`, so infer that for all variables
                             self.add_candidate(var, source, priority);
@@ -1476,7 +1476,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         // If source is a union, try to match each member against the template
-        if let Some(TypeKey::Union(source_members)) = source_key {
+        if let Some(TypeData::Union(source_members)) = source_key {
             let members = self.interner.type_list(*source_members);
             for &member in members.iter() {
                 let member_key = self.interner.lookup(member);
@@ -1509,7 +1509,7 @@ impl<'a> InferenceContext<'a> {
     /// Returns None if the type is not a literal string.
     fn extract_string_literal(&self, type_id: TypeId) -> Option<String> {
         match self.interner.lookup(type_id) {
-            Some(TypeKey::Literal(LiteralValue::String(s))) => {
+            Some(TypeData::Literal(LiteralValue::String(s))) => {
                 Some(self.interner.resolve_atom(s).to_string())
             }
             _ => None,
@@ -1550,7 +1550,7 @@ impl<'a> InferenceContext<'a> {
 
                 TemplateSpan::Type(type_id) => {
                     // Check if this is an infer variable
-                    if let Some(TypeKey::Infer(param_info)) = self.interner.lookup(*type_id) {
+                    if let Some(TypeData::Infer(param_info)) = self.interner.lookup(*type_id) {
                         if let Some(var) = self.find_type_param(param_info.name) {
                             if is_last {
                                 // Last span: capture all remaining text (greedy)
@@ -2000,12 +2000,12 @@ impl<'a> InferenceContext<'a> {
     fn get_base_type(&self, ty: TypeId) -> Option<TypeId> {
         match self.interner.lookup(ty) {
             // Literal widening: extract intrinsic type
-            Some(TypeKey::Literal(_)) => {
+            Some(TypeData::Literal(_)) => {
                 match ty {
                     TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT => Some(ty),
                     _ => {
                         // For literal values, extract their base type
-                        if let Some(TypeKey::Literal(lit)) = self.interner.lookup(ty) {
+                        if let Some(TypeData::Literal(lit)) = self.interner.lookup(ty) {
                             match lit {
                                 LiteralValue::String(_) => Some(TypeId::STRING),
                                 LiteralValue::Number(_) => Some(TypeId::NUMBER),
@@ -2019,7 +2019,7 @@ impl<'a> InferenceContext<'a> {
                 }
             }
             // Nominal hierarchy: use resolver to get base class
-            Some(TypeKey::Lazy(_)) => {
+            Some(TypeData::Lazy(_)) => {
                 // For class/interface types, try to get base class from resolver
                 if let Some(resolver) = self.resolver {
                     resolver.get_base_type(ty, self.interner)
@@ -2100,7 +2100,7 @@ impl<'a> InferenceContext<'a> {
             // Intersection types: recurse into all members to extract commonality
             // This enables BCT to find common members from intersections
             // Example: [A & B, A & C] -> A (common member)
-            TypeKey::Intersection(members_id) => {
+            TypeData::Intersection(members_id) => {
                 let members = self.interner.type_list(members_id);
                 for &member in members.iter() {
                     self.collect_class_hierarchy(member, hierarchy);
@@ -2108,13 +2108,13 @@ impl<'a> InferenceContext<'a> {
             }
             // Lazy types: add the type itself, then follow extends chain
             // This enables BCT to work with classes/interfaces defined as Lazy(DefId)
-            TypeKey::Lazy(_) => {
+            TypeData::Lazy(_) => {
                 if let Some(base_type) = self.get_extends_clause(ty) {
                     self.collect_class_hierarchy(base_type, hierarchy);
                 }
             }
             // For class/interface types, collect extends clauses
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let _shape = self.interner.callable_shape(shape_id);
 
                 // Check for base class (extends clause)
@@ -2123,7 +2123,7 @@ impl<'a> InferenceContext<'a> {
                     self.collect_class_hierarchy(base_type, hierarchy);
                 }
             }
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let _shape = self.interner.object_shape(shape_id);
 
                 // Check for base class (extends clause)
@@ -2208,7 +2208,7 @@ impl<'a> InferenceContext<'a> {
         // Two different enum members are guaranteed disjoint (neither is subtype of the other).
         // Since we already checked source == target at the top, reaching here means source != target.
         // This avoids O(n²) structural recursion in enumLiteralsSubtypeReduction.ts
-        if let (Some(TypeKey::Enum(..)), Some(TypeKey::Enum(..))) =
+        if let (Some(TypeData::Enum(..)), Some(TypeData::Enum(..))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             // Different enum members (or different enums) are always disjoint
@@ -2216,7 +2216,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Check if source is literal of target intrinsic
-        if let Some(TypeKey::Literal(lit)) = source_key.as_ref() {
+        if let Some(TypeData::Literal(lit)) = source_key.as_ref() {
             match (lit, target) {
                 (LiteralValue::String(_), t) if t == TypeId::STRING => return true,
                 (LiteralValue::Number(_), t) if t == TypeId::NUMBER => return true,
@@ -2227,13 +2227,13 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Array and tuple structural checks
-        if let (Some(TypeKey::Array(s_elem)), Some(TypeKey::Array(t_elem))) =
+        if let (Some(TypeData::Array(s_elem)), Some(TypeData::Array(t_elem))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             return self.is_subtype(*s_elem, *t_elem);
         }
 
-        if let (Some(TypeKey::Tuple(_)), Some(TypeKey::Tuple(_))) =
+        if let (Some(TypeData::Tuple(_)), Some(TypeData::Tuple(_))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             // OPTIMIZATION: Unit-tuple disjointness fast-path
@@ -2247,7 +2247,7 @@ impl<'a> InferenceContext<'a> {
                 return false;
             }
             // Fall through to structural check for non-unit tuples
-            let (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::Tuple(t_elems))) =
+            let (Some(TypeData::Tuple(s_elems)), Some(TypeData::Tuple(t_elems))) =
                 (source_key.as_ref(), target_key.as_ref())
             else {
                 unreachable!()
@@ -2257,14 +2257,14 @@ impl<'a> InferenceContext<'a> {
             return self.tuple_subtype_of(&s_elems, &t_elems);
         }
 
-        if let (Some(TypeKey::Tuple(s_elems)), Some(TypeKey::Array(t_elem))) =
+        if let (Some(TypeData::Tuple(s_elems)), Some(TypeData::Array(t_elem))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_elems = self.interner.tuple_list(*s_elems);
             return self.tuple_subtype_array(&s_elems, *t_elem);
         }
 
-        if let (Some(TypeKey::Object(s_props)), Some(TypeKey::Object(t_props))) =
+        if let (Some(TypeData::Object(s_props)), Some(TypeData::Object(t_props))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_shape = self.interner.object_shape(*s_props);
@@ -2277,8 +2277,8 @@ impl<'a> InferenceContext<'a> {
         }
 
         if let (
-            Some(TypeKey::ObjectWithIndex(s_shape_id)),
-            Some(TypeKey::ObjectWithIndex(t_shape_id)),
+            Some(TypeData::ObjectWithIndex(s_shape_id)),
+            Some(TypeData::ObjectWithIndex(t_shape_id)),
         ) = (source_key.as_ref(), target_key.as_ref())
         {
             let s_shape = self.interner.object_shape(*s_shape_id);
@@ -2286,7 +2286,7 @@ impl<'a> InferenceContext<'a> {
             return self.object_with_index_subtype_of(&s_shape, Some(*s_shape_id), &t_shape);
         }
 
-        if let (Some(TypeKey::Object(s_props)), Some(TypeKey::ObjectWithIndex(t_shape))) =
+        if let (Some(TypeData::Object(s_props)), Some(TypeData::ObjectWithIndex(t_shape))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_shape = self.interner.object_shape(*s_props);
@@ -2294,7 +2294,7 @@ impl<'a> InferenceContext<'a> {
             return self.object_props_subtype_index(&s_shape.properties, Some(*s_props), &t_shape);
         }
 
-        if let (Some(TypeKey::ObjectWithIndex(s_shape_id)), Some(TypeKey::Object(t_props))) =
+        if let (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Object(t_props))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_shape = self.interner.object_shape(*s_shape_id);
@@ -2306,7 +2306,7 @@ impl<'a> InferenceContext<'a> {
             );
         }
 
-        if let (Some(TypeKey::Function(s_fn)), Some(TypeKey::Function(t_fn))) =
+        if let (Some(TypeData::Function(s_fn)), Some(TypeData::Function(t_fn))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_fn = self.interner.function_shape(*s_fn);
@@ -2314,7 +2314,7 @@ impl<'a> InferenceContext<'a> {
             return self.function_subtype_of(&s_fn, &t_fn);
         }
 
-        if let (Some(TypeKey::Callable(s_callable)), Some(TypeKey::Callable(t_callable))) =
+        if let (Some(TypeData::Callable(s_callable)), Some(TypeData::Callable(t_callable))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_callable = self.interner.callable_shape(*s_callable);
@@ -2322,7 +2322,7 @@ impl<'a> InferenceContext<'a> {
             return self.callable_subtype_of(&s_callable, &t_callable);
         }
 
-        if let (Some(TypeKey::Function(s_fn)), Some(TypeKey::Callable(t_callable))) =
+        if let (Some(TypeData::Function(s_fn)), Some(TypeData::Callable(t_callable))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_fn = self.interner.function_shape(*s_fn);
@@ -2330,7 +2330,7 @@ impl<'a> InferenceContext<'a> {
             return self.function_subtype_callable(&s_fn, &t_callable);
         }
 
-        if let (Some(TypeKey::Callable(s_callable)), Some(TypeKey::Function(t_fn))) =
+        if let (Some(TypeData::Callable(s_callable)), Some(TypeData::Function(t_fn))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_callable = self.interner.callable_shape(*s_callable);
@@ -2338,7 +2338,7 @@ impl<'a> InferenceContext<'a> {
             return self.callable_subtype_function(&s_callable, &t_fn);
         }
 
-        if let (Some(TypeKey::Application(s_app)), Some(TypeKey::Application(t_app))) =
+        if let (Some(TypeData::Application(s_app)), Some(TypeData::Application(t_app))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_app = self.interner.type_application(*s_app);
@@ -2358,7 +2358,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Intersection: A & B <: T if either member is a subtype of T
-        if let Some(TypeKey::Intersection(members)) = source_key.as_ref() {
+        if let Some(TypeData::Intersection(members)) = source_key.as_ref() {
             let members = self.interner.type_list(*members);
             return members
                 .iter()
@@ -2366,7 +2366,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Union: A | B <: T if both A <: T and B <: T
-        if let Some(TypeKey::Union(members)) = source_key.as_ref() {
+        if let Some(TypeData::Union(members)) = source_key.as_ref() {
             let members = self.interner.type_list(*members);
             return members
                 .iter()
@@ -2374,7 +2374,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Target intersection: S <: (A & B) if S <: A and S <: B
-        if let Some(TypeKey::Intersection(members)) = target_key.as_ref() {
+        if let Some(TypeData::Intersection(members)) = target_key.as_ref() {
             let members = self.interner.type_list(*members);
             return members
                 .iter()
@@ -2382,7 +2382,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Target union: S <: (A | B) if S <: A or S <: B
-        if let Some(TypeKey::Union(members)) = target_key.as_ref() {
+        if let Some(TypeData::Union(members)) = target_key.as_ref() {
             let members = self.interner.type_list(*members);
             return members
                 .iter()
@@ -2390,7 +2390,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Object vs Object comparison
-        if let (Some(TypeKey::Object(s_props)), Some(TypeKey::Object(t_props))) =
+        if let (Some(TypeData::Object(s_props)), Some(TypeData::Object(t_props))) =
             (source_key.as_ref(), target_key.as_ref())
         {
             let s_shape = self.interner.object_shape(*s_props);
@@ -2426,17 +2426,17 @@ impl<'a> InferenceContext<'a> {
         };
 
         match key {
-            TypeKey::Object(_)
-            | TypeKey::ObjectWithIndex(_)
-            | TypeKey::Array(_)
-            | TypeKey::Tuple(_)
-            | TypeKey::Function(_)
-            | TypeKey::Callable(_)
-            | TypeKey::Mapped(_)
-            | TypeKey::Application(_)
-            | TypeKey::ThisType => true,
-            TypeKey::ReadonlyType(inner) => self.is_subtype(inner, TypeId::OBJECT),
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => info
+            TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_)
+            | TypeData::Mapped(_)
+            | TypeData::Application(_)
+            | TypeData::ThisType => true,
+            TypeData::ReadonlyType(inner) => self.is_subtype(inner, TypeId::OBJECT),
+            TypeData::TypeParameter(info) | TypeData::Infer(info) => info
                 .constraint
                 .is_some_and(|constraint| self.is_subtype(constraint, TypeId::OBJECT)),
             _ => false,
@@ -2473,7 +2473,7 @@ impl<'a> InferenceContext<'a> {
         let target_key = self.interner.lookup(target);
 
         match (source_key.as_ref(), target_key.as_ref()) {
-            (Some(TypeKey::Function(s_fn)), Some(TypeKey::Function(t_fn))) => {
+            (Some(TypeData::Function(s_fn)), Some(TypeData::Function(t_fn))) => {
                 let s_fn = self.interner.function_shape(*s_fn);
                 let t_fn = self.interner.function_shape(*t_fn);
                 return self.function_like_subtype_of_with_variance(
@@ -2484,17 +2484,17 @@ impl<'a> InferenceContext<'a> {
                     true,
                 );
             }
-            (Some(TypeKey::Callable(s_callable)), Some(TypeKey::Callable(t_callable))) => {
+            (Some(TypeData::Callable(s_callable)), Some(TypeData::Callable(t_callable))) => {
                 let s_callable = self.interner.callable_shape(*s_callable);
                 let t_callable = self.interner.callable_shape(*t_callable);
                 return self.callable_subtype_of_with_variance(&s_callable, &t_callable, true);
             }
-            (Some(TypeKey::Function(s_fn)), Some(TypeKey::Callable(t_callable))) => {
+            (Some(TypeData::Function(s_fn)), Some(TypeData::Callable(t_callable))) => {
                 let s_fn = self.interner.function_shape(*s_fn);
                 let t_callable = self.interner.callable_shape(*t_callable);
                 return self.function_subtype_callable_with_variance(&s_fn, &t_callable, true);
             }
-            (Some(TypeKey::Callable(s_callable)), Some(TypeKey::Function(t_fn))) => {
+            (Some(TypeData::Callable(s_callable)), Some(TypeData::Function(t_fn))) => {
                 let s_callable = self.interner.callable_shape(*s_callable);
                 let t_fn = self.interner.function_shape(*t_fn);
                 return self.callable_subtype_function_with_variance(&s_callable, &t_fn, true);
@@ -2677,7 +2677,7 @@ impl<'a> InferenceContext<'a> {
             return TypeId::ANY;
         }
         match self.interner.lookup(type_id) {
-            Some(TypeKey::Array(elem)) => elem,
+            Some(TypeData::Array(elem)) => elem,
             _ => type_id,
         }
     }
@@ -3050,12 +3050,12 @@ impl<'a> InferenceContext<'a> {
 
     fn expand_tuple_rest(&self, type_id: TypeId) -> TupleRestExpansion {
         match self.interner.lookup(type_id) {
-            Some(TypeKey::Array(elem)) => TupleRestExpansion {
+            Some(TypeData::Array(elem)) => TupleRestExpansion {
                 fixed: Vec::new(),
                 variadic: Some(elem),
                 tail: Vec::new(),
             },
-            Some(TypeKey::Tuple(elements)) => {
+            Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 let mut fixed = Vec::new();
                 for (i, elem) in elements.iter().enumerate() {
@@ -3103,7 +3103,7 @@ impl<'a> InferenceContext<'a> {
         false_type: TypeId,
     ) {
         // If check_type is an inference variable, try to infer from extends_type
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(check_type)
+        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(check_type)
             && let Some(check_var) = self.find_type_param(info.name)
             && check_var == self.table.find(var)
         {
@@ -3127,7 +3127,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         match self.interner.lookup(ty) {
-            Some(TypeKey::TypeParameter(info)) => {
+            Some(TypeData::TypeParameter(info)) => {
                 if let Some(param_var) = self.find_type_param(info.name)
                     && self.table.find(param_var) == root
                 {
@@ -3138,28 +3138,28 @@ impl<'a> InferenceContext<'a> {
                     }
                 }
             }
-            Some(TypeKey::Array(elem)) => {
+            Some(TypeData::Array(elem)) => {
                 self.infer_from_type(var, elem);
             }
-            Some(TypeKey::Tuple(elements)) => {
+            Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 for elem in elements.iter() {
                     self.infer_from_type(var, elem.type_id);
                 }
             }
-            Some(TypeKey::Union(members)) | Some(TypeKey::Intersection(members)) => {
+            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
                     self.infer_from_type(var, member);
                 }
             }
-            Some(TypeKey::Object(shape_id)) => {
+            Some(TypeData::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     self.infer_from_type(var, prop.type_id);
                 }
             }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     self.infer_from_type(var, prop.type_id);
@@ -3173,14 +3173,14 @@ impl<'a> InferenceContext<'a> {
                     self.infer_from_type(var, index.value_type);
                 }
             }
-            Some(TypeKey::Application(app_id)) => {
+            Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
                 self.infer_from_type(var, app.base);
                 for &arg in app.args.iter() {
                     self.infer_from_type(var, arg);
                 }
             }
-            Some(TypeKey::Function(shape_id)) => {
+            Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 for param in shape.params.iter() {
                     self.infer_from_type(var, param.type_id);
@@ -3190,7 +3190,7 @@ impl<'a> InferenceContext<'a> {
                 }
                 self.infer_from_type(var, shape.return_type);
             }
-            Some(TypeKey::Conditional(cond_id)) => {
+            Some(TypeData::Conditional(cond_id)) => {
                 let cond = self.interner.conditional_type(cond_id);
                 self.infer_from_conditional(
                     var,
@@ -3200,7 +3200,7 @@ impl<'a> InferenceContext<'a> {
                     cond.false_type,
                 );
             }
-            Some(TypeKey::TemplateLiteral(spans)) => {
+            Some(TypeData::TemplateLiteral(spans)) => {
                 // Traverse template literal spans to find inference variables
                 let spans = self.interner.template_list(spans);
                 for span in spans.iter() {
@@ -3238,36 +3238,36 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
 
         match self.interner.lookup(ty) {
-            Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => {
+            Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
                 if let Some(param_var) = self.find_type_param(info.name) {
                     self.table.find(param_var) == root
                 } else {
                     false
                 }
             }
-            Some(TypeKey::Array(elem)) => {
+            Some(TypeData::Array(elem)) => {
                 self.contains_inference_var_inner(elem, var, visited, depth + 1)
             }
-            Some(TypeKey::Tuple(elements)) => {
+            Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 elements
                     .iter()
                     .any(|e| self.contains_inference_var_inner(e.type_id, var, visited, depth + 1))
             }
-            Some(TypeKey::Union(members)) | Some(TypeKey::Intersection(members)) => {
+            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
                 let members = self.interner.type_list(members);
                 members
                     .iter()
                     .any(|&m| self.contains_inference_var_inner(m, var, visited, depth + 1))
             }
-            Some(TypeKey::Object(shape_id)) => {
+            Some(TypeData::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 shape
                     .properties
                     .iter()
                     .any(|p| self.contains_inference_var_inner(p.type_id, var, visited, depth + 1))
             }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 shape
                     .properties
@@ -3292,7 +3292,7 @@ impl<'a> InferenceContext<'a> {
                             )
                     })
             }
-            Some(TypeKey::Application(app_id)) => {
+            Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
                 self.contains_inference_var_inner(app.base, var, visited, depth + 1)
                     || app
@@ -3300,7 +3300,7 @@ impl<'a> InferenceContext<'a> {
                         .iter()
                         .any(|&arg| self.contains_inference_var_inner(arg, var, visited, depth + 1))
             }
-            Some(TypeKey::Function(shape_id)) => {
+            Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 shape
                     .params
@@ -3311,14 +3311,14 @@ impl<'a> InferenceContext<'a> {
                     })
                     || self.contains_inference_var_inner(shape.return_type, var, visited, depth + 1)
             }
-            Some(TypeKey::Conditional(cond_id)) => {
+            Some(TypeData::Conditional(cond_id)) => {
                 let cond = self.interner.conditional_type(cond_id);
                 self.contains_inference_var_inner(cond.check_type, var, visited, depth + 1)
                     || self.contains_inference_var_inner(cond.extends_type, var, visited, depth + 1)
                     || self.contains_inference_var_inner(cond.true_type, var, visited, depth + 1)
                     || self.contains_inference_var_inner(cond.false_type, var, visited, depth + 1)
             }
-            Some(TypeKey::TemplateLiteral(spans)) => {
+            Some(TypeData::TemplateLiteral(spans)) => {
                 let spans = self.interner.template_list(spans);
                 spans.iter().any(|span| match span {
                     TemplateSpan::Text(_) => false,
@@ -3367,14 +3367,14 @@ impl<'a> InferenceContext<'a> {
         bivariant: &mut u32,
     ) {
         match self.interner.lookup(ty) {
-            Some(TypeKey::TypeParameter(info)) if info.name == target_param => {
+            Some(TypeData::TypeParameter(info)) if info.name == target_param => {
                 if polarity {
                     *covariant += 1;
                 } else {
                     *contravariant += 1;
                 }
             }
-            Some(TypeKey::Array(elem)) => {
+            Some(TypeData::Array(elem)) => {
                 self.compute_variance_helper(
                     elem,
                     target_param,
@@ -3385,7 +3385,7 @@ impl<'a> InferenceContext<'a> {
                     bivariant,
                 );
             }
-            Some(TypeKey::Tuple(elements)) => {
+            Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 for elem in elements.iter() {
                     self.compute_variance_helper(
@@ -3399,7 +3399,7 @@ impl<'a> InferenceContext<'a> {
                     );
                 }
             }
-            Some(TypeKey::Union(members)) | Some(TypeKey::Intersection(members)) => {
+            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
                     self.compute_variance_helper(
@@ -3413,7 +3413,7 @@ impl<'a> InferenceContext<'a> {
                     );
                 }
             }
-            Some(TypeKey::Object(shape_id)) => {
+            Some(TypeData::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     // Properties are covariant in their type (read position)
@@ -3440,7 +3440,7 @@ impl<'a> InferenceContext<'a> {
                     }
                 }
             }
-            Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     self.compute_variance_helper(
@@ -3487,7 +3487,7 @@ impl<'a> InferenceContext<'a> {
                     );
                 }
             }
-            Some(TypeKey::Application(app_id)) => {
+            Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
                 // Variance depends on the generic type definition
                 // For now, assume covariant for all type arguments
@@ -3503,7 +3503,7 @@ impl<'a> InferenceContext<'a> {
                     );
                 }
             }
-            Some(TypeKey::Function(shape_id)) => {
+            Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 // Parameters are contravariant
                 for param in shape.params.iter() {
@@ -3528,7 +3528,7 @@ impl<'a> InferenceContext<'a> {
                     bivariant,
                 );
             }
-            Some(TypeKey::Conditional(cond_id)) => {
+            Some(TypeData::Conditional(cond_id)) => {
                 let cond = self.interner.conditional_type(cond_id);
                 // Conditional types are invariant in their type parameters
                 self.compute_variance_helper(
@@ -3660,7 +3660,7 @@ impl<'a> InferenceContext<'a> {
 
             for &upper in &info.upper_bounds {
                 // Only follow naked type parameter upper bounds (not List<T>, etc.)
-                if let Some(TypeKey::TypeParameter(param_info)) = self.interner.lookup(upper) {
+                if let Some(TypeData::TypeParameter(param_info)) = self.interner.lookup(upper) {
                     if let Some(&upper_var) = var_for_param.get(&param_info.name) {
                         let upper_root = self.table.find(upper_var);
                         // Add edge: root extends upper_root
@@ -3808,7 +3808,7 @@ impl<'a> InferenceContext<'a> {
         exclude_param: Atom,
     ) -> Result<bool, InferenceError> {
         // Check if 'upper' is a type parameter we are inferring
-        if let Some(TypeKey::TypeParameter(info)) = self.interner.lookup(upper) {
+        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(upper) {
             if info.name != exclude_param {
                 if let Some(upper_var) = self.find_type_param(info.name) {
                     let upper_root = self.table.find(upper_var);
