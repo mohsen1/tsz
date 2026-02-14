@@ -2465,6 +2465,49 @@ impl<'a> CheckerContext<'a> {
         false
     }
 
+    /// Check if the Promise constructor VALUE is available.
+    /// This is different from `has_promise_in_lib()` which checks for the type.
+    /// The ES5 lib declares `interface Promise<T>` (type only) but NOT
+    /// `declare var Promise: PromiseConstructor` (value). ES2015+ libs declare both.
+    /// Used for TS2705: "An async function in ES5 requires the Promise constructor."
+    pub fn has_promise_constructor_in_scope(&self) -> bool {
+        use tsz_binder::symbol_flags;
+        // Check if Promise exists as a VALUE symbol (not just a TYPE)
+        let check_symbol_has_value =
+            |sym_id: tsz_binder::SymbolId, binder: &tsz_binder::BinderState| -> bool {
+                if let Some(sym) = binder.symbols.get(sym_id) {
+                    (sym.flags & symbol_flags::VALUE) != 0
+                } else {
+                    false
+                }
+            };
+
+        // Check lib contexts
+        for lib_ctx in &self.lib_contexts {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get("Promise") {
+                if check_symbol_has_value(sym_id, &lib_ctx.binder) {
+                    return true;
+                }
+            }
+        }
+
+        // Check current scope
+        if let Some(sym_id) = self.binder.current_scope.get("Promise") {
+            if check_symbol_has_value(sym_id, self.binder) {
+                return true;
+            }
+        }
+
+        // Check file locals
+        if let Some(sym_id) = self.binder.file_locals.get("Promise") {
+            if check_symbol_has_value(sym_id, self.binder) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Check if Symbol is available in lib files or global scope.
     /// Returns true if Symbol is declared in lib contexts, globals, or type declarations.
     pub fn has_symbol_in_lib(&self) -> bool {
