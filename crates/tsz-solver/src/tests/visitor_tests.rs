@@ -820,6 +820,22 @@ fn test_collect_type_queries_transitive_and_unique() {
 }
 
 #[test]
+fn test_collect_enum_def_ids_transitive_and_unique() {
+    let interner = TypeInterner::new();
+    let d1 = DefId(31);
+    let d2 = DefId(41);
+
+    let e1 = interner.enum_type(d1, TypeId::NUMBER);
+    let e2 = interner.enum_type(d2, TypeId::STRING);
+    let root = interner.union(vec![e1, e2, e1]);
+
+    let mut defs = collect_enum_def_ids(&interner, root);
+    defs.sort_by_key(|d| d.0);
+
+    assert_eq!(defs, vec![d1, d2]);
+}
+
+#[test]
 fn test_collect_referenced_types_transitive_and_unique() {
     let interner = TypeInterner::new();
     let lazy = interner.lazy(DefId(7));

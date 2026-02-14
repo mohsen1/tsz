@@ -613,6 +613,15 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
   * Added focused regression tests:
     * checker architecture contract assertions that `assignability_checker` uses the centralized DefId resolver helper and avoids direct `env.insert_def(...)` calls.
 * **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Migrated checker `state_type_environment::ensure_application_symbols_resolved_inner` symbol-precondition extraction from checker-owned per-node filtering over referenced types to solver visitor collectors:
+    * `collect_lazy_def_ids(...)` for lazy DefId resolution
+    * `collect_enum_def_ids(...)` for enum DefId resolution
+    * `collect_type_queries(...)` for type-query symbol resolution
+  * Kept checker focused on orchestration only (DefId/SymbolId bridge + TypeEnvironment insertion), while solver owns the traversal/filter logic for these preconditions.
+  * Added focused regression tests:
+    * solver visitor coverage for `collect_enum_def_ids(...)` transitive + unique behavior
+    * checker architecture contract assertions that `state_type_environment` uses solver collector helpers (`collect_lazy_def_ids`, `collect_enum_def_ids`, `collect_type_queries`) for this path
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
   * Adopted solver visitor utility `visitor::collect_referenced_types(...)` for checker precondition traversal consumption instead of local callback buffering.
   * Migrated checker `state_type_environment::ensure_application_symbols_resolved_inner` from direct `walk_referenced_types(...)` callback collection to `collect_referenced_types(...)`, keeping checker focused on symbol/type-environment orchestration.
   * Added focused regression tests:
