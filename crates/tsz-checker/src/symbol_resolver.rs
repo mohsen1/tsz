@@ -446,6 +446,34 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_lib_binders()
         };
+        if name == "Proxy" {
+            // Search ALL symbols for "Proxy" TYPE_ALIAS
+            let mut proxy_symbols = Vec::new();
+            for (i, sym) in self.ctx.binder.symbols.iter().enumerate() {
+                if sym.escaped_name == "Proxy" {
+                    proxy_symbols.push(format!("sym_id={}, flags={:#x}", i, sym.flags));
+                }
+            }
+            tracing::debug!(
+                name,
+                all_proxy_symbols = %proxy_symbols.join("; "),
+                "resolve_identifier_symbol_in_type_position: ALL Proxy symbols in binder"
+            );
+            let main_sym = self.ctx.binder.file_locals.get(name);
+            tracing::debug!(
+                name,
+                ?main_sym,
+                main_sym_name = main_sym
+                    .and_then(|s| self.ctx.binder.get_symbol(s))
+                    .map(|s| s.escaped_name.as_str())
+                    .unwrap_or("?"),
+                main_sym_flags = main_sym
+                    .and_then(|s| self.ctx.binder.get_symbol(s))
+                    .map(|s| s.flags)
+                    .unwrap_or(0),
+                "resolve_identifier_symbol_in_type_position: Proxy lookup"
+            );
+        }
         let should_skip_lib_symbol =
             |sym_id: SymbolId| ignore_libs && self.ctx.symbol_is_from_lib(sym_id);
         let mut value_only_candidate = None;
@@ -589,6 +617,16 @@ impl<'a> CheckerState<'a> {
             },
         );
 
+        // Guard against SymbolId renumbering from lib merging: if the resolved
+        // symbol's name doesn't match the requested name, the scope table has a
+        // stale SymbolId. Reject it and fall through to value_only_candidate.
+        let resolved = resolved.filter(|&sym_id| {
+            self.ctx
+                .binder
+                .get_symbol_with_libs(sym_id, &lib_binders)
+                .map(|s| s.escaped_name.as_str() == name)
+                .unwrap_or(false)
+        });
         if let Some(sym_id) = resolved {
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                 && symbol.flags & symbol_flags::ALIAS != 0

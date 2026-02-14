@@ -2395,7 +2395,6 @@ impl BinderState {
             None => return,
         };
 
-        // Debug trace to see what nodes are being bound
         if node.kind == syntax_kind_ext::ARROW_FUNCTION
             || node.kind == syntax_kind_ext::RETURN_STATEMENT
         {

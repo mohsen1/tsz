@@ -1059,22 +1059,44 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     // global ID via lib_symbol_remap. This ensures all lib symbols
                     // (both top-level and nested) map to their Phase 1 global IDs,
                     // preserving the Phase 1.5 export/member remapping.
+                    let mut resolved_global_id = None;
                     if let Some(&(binder_ptr, original_local_id)) =
                         result.lib_symbol_reverse_remap.get(&old_id)
                     {
                         if let Some(&global_id) =
                             lib_symbol_remap.get(&(binder_ptr, original_local_id))
                         {
-                            id_remap.insert(old_id, global_id);
-                            continue;
+                            resolved_global_id = Some(global_id);
                         }
                     }
                     // Fallback: look up by name in merged_symbols or lib_name_to_global
-                    if let Some(&global_id) = merged_symbols.get(&sym.escaped_name) {
-                        id_remap.insert(old_id, global_id);
-                        continue;
+                    if resolved_global_id.is_none() {
+                        if let Some(&global_id) = merged_symbols.get(&sym.escaped_name) {
+                            resolved_global_id = Some(global_id);
+                        }
                     }
-                    if let Some(&global_id) = lib_name_to_global.get(&sym.escaped_name) {
+                    if resolved_global_id.is_none() {
+                        if let Some(&global_id) = lib_name_to_global.get(&sym.escaped_name) {
+                            resolved_global_id = Some(global_id);
+                        }
+                    }
+                    if let Some(global_id) = resolved_global_id {
+                        // The user binder may have merged additional flags into this
+                        // lib symbol (e.g., user `type Proxy<T>` adds TYPE_ALIAS to
+                        // lib's `declare var Proxy`). Propagate those extra flags and
+                        // declarations to the global symbol.
+                        if let Some(global_sym) = global_symbols.get_mut(global_id) {
+                            let extra_flags = sym.flags & !global_sym.flags;
+                            if extra_flags != 0 {
+                                global_sym.flags |= extra_flags;
+                                // Also copy user declarations that were merged into this symbol
+                                for decl in &sym.declarations {
+                                    if !global_sym.declarations.contains(decl) {
+                                        global_sym.declarations.push(*decl);
+                                    }
+                                }
+                            }
+                        }
                         id_remap.insert(old_id, global_id);
                         continue;
                     }
