@@ -248,12 +248,203 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
         }
 
-        // Function declaration checking is handled by CheckerState for now
-        // Will be migrated incrementally
-        // Key checks:
-        // - Parameter types
-        // - Return type vs actual returns
-        // - Body statements
+        // TS1250/TS1251: Function declarations not allowed inside blocks in strict mode
+        // when targeting ES3 or ES5
+        self.check_strict_mode_function_in_block(func_idx);
+    }
+
+    /// TS1250: "Function declarations are not allowed inside blocks in strict mode when targeting 'ES3' or 'ES5'."
+    /// TS1251: Same, with "Class definitions are automatically in strict mode."
+    fn check_strict_mode_function_in_block(&mut self, func_idx: NodeIndex) {
+        // Only applies when targeting ES5 or lower
+        if !self.ctx.compiler_options.target.is_es5() {
+            return;
+        }
+
+        // Check if the function declaration is inside a block that is NOT a function
+        // body, source file, or module block. Walk up to find the block scope container.
+        let Some(ext) = self.ctx.arena.get_extended(func_idx) else {
+            return;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return;
+        };
+
+        // The parent must be a Block (curly braces)
+        if parent_node.kind != syntax_kind_ext::BLOCK {
+            return;
+        }
+
+        // Now check the Block's parent — if it's a function-like, source file, or module,
+        // then this is a valid position for a function declaration
+        let Some(block_ext) = self.ctx.arena.get_extended(parent_idx) else {
+            return;
+        };
+        let block_parent_idx = block_ext.parent;
+        let Some(block_parent) = self.ctx.arena.get(block_parent_idx) else {
+            return;
+        };
+
+        match block_parent.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::METHOD_DECLARATION
+                || k == syntax_kind_ext::CONSTRUCTOR
+                || k == syntax_kind_ext::GET_ACCESSOR
+                || k == syntax_kind_ext::SET_ACCESSOR
+                || k == syntax_kind_ext::SOURCE_FILE
+                || k == syntax_kind_ext::MODULE_DECLARATION
+                || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
+            {
+                // Function declaration at a valid scope level, no error
+                return;
+            }
+            _ => {}
+        }
+
+        // The function is inside a block (if/while/for/etc.) — check strict mode
+        let in_class = self.is_inside_class(func_idx);
+        let in_strict = in_class
+            || self.ctx.compiler_options.always_strict
+            || self.has_use_strict_directive(func_idx);
+
+        if !in_strict {
+            return;
+        }
+
+        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        if in_class {
+            self.ctx.error(
+                self.ctx.arena.get(func_idx).map_or(0, |n| n.pos),
+                self.ctx
+                    .arena
+                    .get(func_idx)
+                    .map_or(0, |n| n.end - n.pos),
+                diagnostic_messages::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_2
+                    .to_string(),
+                diagnostic_codes::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_2,
+            );
+        } else {
+            self.ctx.error(
+                self.ctx.arena.get(func_idx).map_or(0, |n| n.pos),
+                self.ctx
+                    .arena
+                    .get(func_idx)
+                    .map_or(0, |n| n.end - n.pos),
+                diagnostic_messages::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN
+                    .to_string(),
+                diagnostic_codes::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN,
+            );
+        }
+    }
+
+    /// Check if a node is inside a class definition (which is always strict mode).
+    fn is_inside_class(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return true;
+            }
+            current = parent_idx;
+        }
+        false
+    }
+
+    /// Check if a "use strict" directive is in effect for a node by walking up to
+    /// the nearest function or source file and checking for a "use strict" prologue.
+    fn has_use_strict_directive(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+
+            // Check function bodies and source files for "use strict"
+            match parent.kind {
+                k if k == syntax_kind_ext::SOURCE_FILE => {
+                    return self.source_file_has_use_strict(parent_idx);
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    if let Some(func) = self.ctx.arena.get_function(parent) {
+                        if self.block_has_use_strict(func.body) {
+                            return true;
+                        }
+                    }
+                    // Continue walking up — the outer scope might have "use strict"
+                }
+                _ => {}
+            }
+            current = parent_idx;
+        }
+        false
+    }
+
+    /// Check if a source file starts with "use strict"
+    fn source_file_has_use_strict(&self, sf_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(sf_idx) else {
+            return false;
+        };
+        let Some(sf) = self.ctx.arena.get_source_file(node) else {
+            return false;
+        };
+        self.statements_have_use_strict(&sf.statements.nodes)
+    }
+
+    /// Check if a block node starts with "use strict"
+    fn block_has_use_strict(&self, block_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(block_idx) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(node) else {
+            return false;
+        };
+        self.statements_have_use_strict(&block.statements.nodes)
+    }
+
+    /// Check if a list of statements starts with a "use strict" expression statement
+    fn statements_have_use_strict(&self, stmts: &[NodeIndex]) -> bool {
+        for &stmt_idx in stmts {
+            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                break; // Prologues must be at the top
+            }
+            let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt) else {
+                break;
+            };
+            let Some(expr) = self.ctx.arena.get(expr_stmt.expression) else {
+                break;
+            };
+            if expr.kind == SyntaxKind::StringLiteral as u16 {
+                if let Some(lit) = self.ctx.arena.get_literal(expr) {
+                    if lit.text == "use strict" {
+                        return true;
+                    }
+                }
+            } else {
+                break; // Non-string expression, stop looking for prologues
+            }
+        }
+        false
     }
 
     /// Check a class declaration.

@@ -360,7 +360,12 @@ impl<'a> CheckerState<'a> {
         // In such cases, the function/value takes precedence and TS2749 should be emitted
         let has_module = (symbol.flags & symbol_flags::MODULE) != 0;
         let has_function = (symbol.flags & symbol_flags::FUNCTION) != 0;
-        let has_other_value = (symbol.flags & (symbol_flags::VALUE & !symbol_flags::FUNCTION)) != 0;
+        // Exclude both FUNCTION and MODULE flags when checking for "other" value flags.
+        // VALUE_MODULE is part of VALUE, but a symbol that only has module flags
+        // (VALUE_MODULE | NAMESPACE_MODULE) should be treated as a pure namespace.
+        let has_other_value = (symbol.flags
+            & (symbol_flags::VALUE & !symbol_flags::FUNCTION & !symbol_flags::MODULE))
+            != 0;
 
         // Pure namespace (MODULE only, no function/value flags) is not value-only
         if has_module && !has_function && !has_other_value {
