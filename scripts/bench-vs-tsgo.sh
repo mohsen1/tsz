@@ -61,6 +61,7 @@ QUICK_MODE=false
 JSON_OUTPUT=false
 FILTER=""
 FORCE_REBUILD=false
+NEXTJS_BENCHMARK_ENABLED="${NEXTJS_BENCHMARK_ENABLED:-0}"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
@@ -642,6 +643,10 @@ run_utility_types_benchmarks() {
 }
 
 run_nextjs_benchmarks() {
+    if [ "$NEXTJS_BENCHMARK_ENABLED" != "1" ]; then
+        return
+    fi
+
     if ! is_benchmark_selected "nextjs"; then
         return
     fi
