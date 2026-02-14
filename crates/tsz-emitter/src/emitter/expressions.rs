@@ -75,6 +75,9 @@ impl<'a> Printer<'a> {
         };
 
         self.write(get_operator_text(unary.operator));
+        if unary.operator == SyntaxKind::AsteriskToken as u16 {
+            self.write_space();
+        }
         self.emit(unary.operand);
     }
 

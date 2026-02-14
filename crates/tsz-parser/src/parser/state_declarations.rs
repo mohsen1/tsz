@@ -1973,7 +1973,21 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::CloseParenToken);
 
-        let then_statement = self.parse_statement();
+        let then_statement =
+            if self.is_token(SyntaxKind::Unknown) || self.is_token(SyntaxKind::AsteriskToken) {
+                while self.is_token(SyntaxKind::Unknown) {
+                    self.next_token();
+                }
+                // Recovery for malformed `if (a) * expr;` cases: parse an empty
+                // then-statement and let `* expr;` be parsed as the next statement.
+                self.arena.add_token(
+                    syntax_kind_ext::EMPTY_STATEMENT,
+                    self.token_pos(),
+                    self.token_pos(),
+                )
+            } else {
+                self.parse_statement()
+            };
         self.check_using_outside_block(then_statement);
 
         // TS1313: Check if the body of the if statement is an empty statement

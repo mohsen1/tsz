@@ -787,6 +787,7 @@ impl ParserState {
         match self.token() {
             SyntaxKind::PlusToken
             | SyntaxKind::MinusToken
+            | SyntaxKind::AsteriskToken
             | SyntaxKind::TildeToken
             | SyntaxKind::ExclamationToken
             | SyntaxKind::PlusPlusToken
