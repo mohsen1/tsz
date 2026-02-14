@@ -1107,6 +1107,7 @@ Reduce “tribal knowledge” and make refactors safe.
     * `docs/architecture/CONTRIBUTION_CHECKLIST.md`
   * Wired architecture report artifact generation into `scripts/check-checker-boundaries.sh`:
     * emits `artifacts/architecture/arch_guard_report.json` on each run.
+    * emits `artifacts/architecture/arch_guard_report.md` (largest files + guard summary) on each run.
 
 ### Final closure note (2026-02-14)
 
