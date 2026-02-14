@@ -1496,14 +1496,27 @@ impl<'a> CheckerState<'a> {
 
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
-        // TS1039: Initializers are not allowed in ambient contexts
+        // TS1039/TS1254: Check initializers in ambient contexts
         if !var_decl.initializer.is_none() && self.is_ambient_declaration(decl_idx) {
             use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_node(
-                var_decl.initializer,
-                diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-                diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
-            );
+            let is_const = self.is_const_variable_declaration(decl_idx);
+            if is_const && var_decl.type_annotation.is_none() {
+                // Ambient const without type annotation: only string/numeric literals allowed
+                if !self.is_valid_ambient_const_initializer(var_decl.initializer) {
+                    self.error_at_node(
+                        var_decl.initializer,
+                        diagnostic_messages::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                        diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
+                    );
+                }
+            } else {
+                // Non-const or const with type annotation
+                self.error_at_node(
+                    var_decl.initializer,
+                    diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                    diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                );
+            }
         }
 
         let compute_final_type = |checker: &mut CheckerState| -> TypeId {
