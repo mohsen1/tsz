@@ -815,6 +815,22 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_parameter_type(index);
         }
 
+        // Handle Intersection explicitly - pick the first callable member's parameter type
+        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            for &m in members.iter() {
+                let ctx = ContextualTypeContext::with_expected_and_options(
+                    self.interner,
+                    m,
+                    self.no_implicit_any,
+                );
+                if let Some(param_type) = ctx.get_parameter_type(index) {
+                    return Some(param_type);
+                }
+            }
+            return None;
+        }
+
         // Handle Mapped and Conditional types by evaluating them first
         match self.interner.lookup(expected) {
             Some(TypeKey::Mapped(_) | TypeKey::Conditional(_)) => {
@@ -859,6 +875,18 @@ impl<'a> ContextualTypeContext<'a> {
             let app = self.interner.type_application(app_id);
             let ctx = ContextualTypeContext::with_expected(self.interner, app.base);
             return ctx.get_parameter_type_for_call(index, arg_count);
+        }
+
+        // Handle Intersection explicitly - pick the first callable member's parameter type
+        if let Some(TypeKey::Intersection(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            for &m in members.iter() {
+                let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                if let Some(param_type) = ctx.get_parameter_type_for_call(index, arg_count) {
+                    return Some(param_type);
+                }
+            }
+            return None;
         }
 
         // Use visitor for Function/Callable types
