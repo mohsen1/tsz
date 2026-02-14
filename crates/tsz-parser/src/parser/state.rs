@@ -47,6 +47,8 @@ pub const CONTEXT_FLAG_IN_CONDITIONAL_TRUE: u32 = 64;
 pub const CONTEXT_FLAG_IN_DECORATOR: u32 = 128;
 /// Context flag: parsing parameters of a class constructor.
 pub const CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS: u32 = 256;
+/// Context flag: parsing arrow function parameters.
+pub const CONTEXT_FLAG_ARROW_PARAMETERS: u32 = 512;
 
 // =============================================================================
 // Parse Diagnostic

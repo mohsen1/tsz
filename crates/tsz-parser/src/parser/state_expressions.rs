@@ -1,6 +1,8 @@
 //! Parser state - expression parsing methods
 
-use super::state::{CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR, ParserState};
+use super::state::{
+    CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR, ParserState,
+};
 use crate::parser::{NodeIndex, NodeList, node::*, node_flags, syntax_kind_ext};
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
@@ -320,7 +322,9 @@ impl ParserState {
         let parameters = if self.is_token(SyntaxKind::OpenParenToken) {
             // Parenthesized parameter list: (a, b) =>
             self.parse_expected(SyntaxKind::OpenParenToken);
+            self.context_flags |= CONTEXT_FLAG_ARROW_PARAMETERS;
             let params = self.parse_parameter_list();
+            self.context_flags &= !CONTEXT_FLAG_ARROW_PARAMETERS;
             self.parse_expected(SyntaxKind::CloseParenToken);
             params
         } else {
