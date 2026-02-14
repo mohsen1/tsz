@@ -65,3 +65,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [ ] Migration action 062: incremental boundary migration artifact recorded.
 - [ ] Migration action 063: incremental boundary migration artifact recorded.
 - [ ] Migration action 064: incremental boundary migration artifact recorded.
+- [ ] Migration action 065: incremental boundary migration artifact recorded.
