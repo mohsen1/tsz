@@ -525,6 +525,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
             && type_computation_complex_src.contains("ensure_relation_inputs_ready("),
         "type_computation_complex should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
     );
+    assert!(
+        !type_computation_complex_src.contains("ensure_application_symbols_resolved("),
+        "type_computation_complex should not manually orchestrate application-symbol preconditions; use centralized relation precondition helpers"
+    );
 
     let dispatch_src =
         fs::read_to_string("src/dispatch.rs").expect("failed to read src/dispatch.rs for guard");
