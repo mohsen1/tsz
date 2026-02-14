@@ -4,12 +4,13 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/codex-loop.sh [--conformance|--emit|--lsp] [--config FILE] [--prompt-file FILE]
+  scripts/codex-loop.sh [--conformance|--emit|--lsp|--spark] [--config FILE] [--prompt-file FILE]
 
 Modes:
   --conformance   Continuous conformance parity work (default)
   --emit          Continuous emitter-focused work
   --lsp           Continuous LSP-focused work
+  --spark         Explicit spark mode (same prompt as conformance)
 
 Options:
   --config FILE   YAML config file (default: scripts/codex-loop.yaml)
@@ -40,6 +41,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --lsp)
       MODE="lsp"
+      shift
+      ;;
+    --spark)
+      MODE="spark"
       shift
       ;;
     --config)
@@ -112,7 +117,7 @@ if [[ -n "$PROMPT_FILE_OVERRIDE" ]]; then
   PROMPT_FILE="$PROMPT_FILE_OVERRIDE"
 else
   case "$MODE" in
-    conformance)
+    conformance|spark)
       PROMPT_FILE="${PROMPT_FILE_CONF:-${PROMPT_FILE_LEGACY:-scripts/codex-loop.prompt.conformance.txt}}"
       ;;
     emit)
