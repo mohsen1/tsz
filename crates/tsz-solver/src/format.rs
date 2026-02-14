@@ -441,15 +441,24 @@ impl<'a> TypeFormatter<'a> {
         if props.is_empty() {
             return "{}".to_string();
         }
+        let mut sorted_props: Vec<&PropertyInfo> = props.iter().collect();
+        sorted_props.sort_by(|a, b| {
+            self.interner
+                .resolve_atom_ref(a.name)
+                .cmp(&self.interner.resolve_atom_ref(b.name))
+        });
         if props.len() > 3 {
-            let first_three: Vec<String> = props
+            let first_three: Vec<String> = sorted_props
                 .iter()
                 .take(3)
                 .map(|p| self.format_property(p))
                 .collect();
             return format!("{{ {}; ... }}", first_three.join("; "));
         }
-        let formatted: Vec<String> = props.iter().map(|p| self.format_property(p)).collect();
+        let formatted: Vec<String> = sorted_props
+            .iter()
+            .map(|p| self.format_property(p))
+            .collect();
         format!("{{ {} }}", formatted.join("; "))
     }
 
@@ -461,16 +470,94 @@ impl<'a> TypeFormatter<'a> {
         format!("{}{}{}: {}", readonly, name, optional, type_str)
     }
 
+    fn format_type_params(&mut self, type_params: &[TypeParamInfo]) -> String {
+        if type_params.is_empty() {
+            return String::new();
+        }
+
+        let mut parts = Vec::with_capacity(type_params.len());
+        for tp in type_params {
+            let mut part = String::new();
+            if tp.is_const {
+                part.push_str("const ");
+            }
+            part.push_str(self.atom(tp.name).as_ref());
+            if let Some(constraint) = tp.constraint {
+                part.push_str(" extends ");
+                part.push_str(&self.format(constraint));
+            }
+            if let Some(default) = tp.default {
+                part.push_str(" = ");
+                part.push_str(&self.format(default));
+            }
+            parts.push(part);
+        }
+
+        format!("<{}>", parts.join(", "))
+    }
+
+    fn format_params(&mut self, params: &[ParamInfo], this_type: Option<TypeId>) -> Vec<String> {
+        let mut rendered = Vec::with_capacity(params.len() + usize::from(this_type.is_some()));
+
+        if let Some(this_ty) = this_type {
+            rendered.push(format!("this: {}", self.format(this_ty)));
+        }
+
+        for p in params {
+            let name = p
+                .name
+                .map(|atom| self.atom(atom).to_string())
+                .unwrap_or_else(|| "_".to_string());
+            let optional = if p.optional { "?" } else { "" };
+            let rest = if p.rest { "..." } else { "" };
+            let type_str = self.format(p.type_id);
+            rendered.push(format!("{}{}{}: {}", rest, name, optional, type_str));
+        }
+
+        rendered
+    }
+
+    fn format_signature_arrow(
+        &mut self,
+        type_params: &[TypeParamInfo],
+        params: &[ParamInfo],
+        this_type: Option<TypeId>,
+        return_type: TypeId,
+        is_construct: bool,
+    ) -> String {
+        let prefix = if is_construct { "new " } else { "" };
+        let type_params = self.format_type_params(type_params);
+        let params = self.format_params(params, this_type);
+        let return_str = if is_construct && return_type == TypeId::UNKNOWN {
+            "any".to_string()
+        } else {
+            self.format(return_type)
+        };
+        format!(
+            "{}{}({}) => {}",
+            prefix,
+            type_params,
+            params.join(", "),
+            return_str
+        )
+    }
+
     fn format_object_with_index(&mut self, shape: &ObjectShape) -> String {
         let mut parts = Vec::new();
 
         if let Some(ref idx) = shape.string_index {
-            parts.push(format!("[key: string]: {}", self.format(idx.value_type)));
+            parts.push(format!("[index: string]: {}", self.format(idx.value_type)));
         }
         if let Some(ref idx) = shape.number_index {
-            parts.push(format!("[key: number]: {}", self.format(idx.value_type)));
+            parts.push(format!("[index: number]: {}", self.format(idx.value_type)));
         }
-        for prop in &shape.properties {
+        let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
+        sorted_props.sort_by(|a, b| {
+            self.interner
+                .resolve_atom_ref(a.name)
+                .cmp(&self.interner.resolve_atom_ref(b.name))
+        });
+        for prop in sorted_props {
             parts.push(self.format_property(prop));
         }
 
@@ -514,30 +601,48 @@ impl<'a> TypeFormatter<'a> {
     }
 
     fn format_function(&mut self, shape: &FunctionShape) -> String {
-        let mut params: Vec<String> = Vec::new();
-        if let Some(this_type) = shape.this_type {
-            params.push(format!("this: {}", self.format(this_type)));
-        }
-        for p in &shape.params {
-            let name = p
-                .name
-                .map(|atom| self.atom(atom))
-                .unwrap_or_else(|| Arc::from("_"));
-            let optional = if p.optional { "?" } else { "" };
-            let rest = if p.rest { "..." } else { "" };
-            let type_str = self.format(p.type_id);
-            params.push(format!("{}{}{}: {}", rest, name, optional, type_str));
-        }
-        let arrow = if shape.is_constructor { "new " } else { "" };
-        format!(
-            "{}({}) => {}",
-            arrow,
-            params.join(", "),
-            self.format(shape.return_type)
+        self.format_signature_arrow(
+            &shape.type_params,
+            &shape.params,
+            shape.this_type,
+            shape.return_type,
+            shape.is_constructor,
         )
     }
 
     fn format_callable(&mut self, shape: &CallableShape) -> String {
+        if !shape.construct_signatures.is_empty()
+            && let Some(sym_id) = shape.symbol
+            && let Some(arena) = self.symbol_arena
+            && let Some(sym) = arena.get(sym_id)
+        {
+            return format!("typeof {}", sym.escaped_name);
+        }
+
+        let has_index = shape.string_index.is_some() || shape.number_index.is_some();
+        if !has_index && shape.properties.is_empty() {
+            if shape.call_signatures.len() == 1 && shape.construct_signatures.is_empty() {
+                let sig = &shape.call_signatures[0];
+                return self.format_signature_arrow(
+                    &sig.type_params,
+                    &sig.params,
+                    sig.this_type,
+                    sig.return_type,
+                    false,
+                );
+            }
+            if shape.construct_signatures.len() == 1 && shape.call_signatures.is_empty() {
+                let sig = &shape.construct_signatures[0];
+                return self.format_signature_arrow(
+                    &sig.type_params,
+                    &sig.params,
+                    sig.this_type,
+                    sig.return_type,
+                    true,
+                );
+            }
+        }
+
         let mut parts = Vec::new();
         for sig in &shape.call_signatures {
             parts.push(self.format_call_signature(sig, false));
@@ -545,31 +650,44 @@ impl<'a> TypeFormatter<'a> {
         for sig in &shape.construct_signatures {
             parts.push(self.format_call_signature(sig, true));
         }
-        for prop in &shape.properties {
+        if let Some(ref idx) = shape.string_index {
+            parts.push(format!("[index: string]: {}", self.format(idx.value_type)));
+        }
+        if let Some(ref idx) = shape.number_index {
+            parts.push(format!("[index: number]: {}", self.format(idx.value_type)));
+        }
+        let mut sorted_props: Vec<&PropertyInfo> = shape.properties.iter().collect();
+        sorted_props.sort_by(|a, b| {
+            self.interner
+                .resolve_atom_ref(a.name)
+                .cmp(&self.interner.resolve_atom_ref(b.name))
+        });
+        for prop in sorted_props {
             parts.push(self.format_property(prop));
         }
+
+        if parts.is_empty() {
+            return "{}".to_string();
+        }
+
         format!("{{ {} }}", parts.join("; "))
     }
 
     fn format_call_signature(&mut self, sig: &CallSignature, is_construct: bool) -> String {
-        let mut params: Vec<String> = Vec::new();
-        if let Some(this_type) = sig.this_type {
-            params.push(format!("this: {}", self.format(this_type)));
-        }
-        for p in &sig.params {
-            let name = p
-                .name
-                .map(|atom| self.atom(atom))
-                .unwrap_or_else(|| Arc::from("_"));
-            let type_str = self.format(p.type_id);
-            params.push(format!("{}: {}", name, type_str));
-        }
         let prefix = if is_construct { "new " } else { "" };
-        format!(
-            "{}({}): {}",
-            prefix,
-            params.join(", "),
+        let type_params = self.format_type_params(&sig.type_params);
+        let params = self.format_params(&sig.params, sig.this_type);
+        let return_str = if is_construct && sig.return_type == TypeId::UNKNOWN {
+            "any".to_string()
+        } else {
             self.format(sig.return_type)
+        };
+        format!(
+            "{}{}({}): {}",
+            prefix,
+            type_params,
+            params.join(", "),
+            return_str
         )
     }
 

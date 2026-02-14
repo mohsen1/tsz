@@ -50,7 +50,250 @@ impl<'a> CheckerState<'a> {
         formatted
     }
 
+    fn format_type_param_for_signature(&mut self, tp: &tsz_solver::TypeParamInfo) -> String {
+        let mut part = String::new();
+        if tp.is_const {
+            part.push_str("const ");
+        }
+        part.push_str(self.ctx.types.resolve_atom_ref(tp.name).as_ref());
+        if let Some(constraint) = tp.constraint {
+            part.push_str(" extends ");
+            part.push_str(&self.format_type_for_assignability_message(constraint));
+        }
+        if let Some(default) = tp.default {
+            part.push_str(" = ");
+            part.push_str(&self.format_type_for_assignability_message(default));
+        }
+        part
+    }
+
+    fn format_signature_text(
+        &mut self,
+        type_params: &[tsz_solver::TypeParamInfo],
+        params: &[tsz_solver::ParamInfo],
+        return_type: TypeId,
+        is_construct: bool,
+        arrow: bool,
+    ) -> String {
+        let mut type_params_text = String::new();
+        if !type_params.is_empty() {
+            let parts: Vec<String> = type_params
+                .iter()
+                .map(|tp| self.format_type_param_for_signature(tp))
+                .collect();
+            type_params_text = format!("<{}>", parts.join(", "));
+        }
+
+        let params_text: Vec<String> = params
+            .iter()
+            .map(|p| {
+                let name = p
+                    .name
+                    .map(|atom| self.ctx.types.resolve_atom_ref(atom).to_string())
+                    .unwrap_or_else(|| "_".to_string());
+                let rest = if p.rest { "..." } else { "" };
+                let optional = if p.optional { "?" } else { "" };
+                let ty = self.format_type_for_assignability_message(p.type_id);
+                format!("{}{}{}: {}", rest, name, optional, ty)
+            })
+            .collect();
+
+        let return_text = if is_construct && return_type == TypeId::UNKNOWN {
+            "any".to_string()
+        } else {
+            self.format_type_for_assignability_message(return_type)
+        };
+        let prefix = if is_construct { "new " } else { "" };
+
+        if arrow {
+            format!(
+                "{}{}({}) => {}",
+                prefix,
+                type_params_text,
+                params_text.join(", "),
+                return_text
+            )
+        } else {
+            format!(
+                "{}{}({}): {}",
+                prefix,
+                type_params_text,
+                params_text.join(", "),
+                return_text
+            )
+        }
+    }
+
+    fn first_signature_parts(
+        &self,
+        ty: TypeId,
+        wants_construct: bool,
+    ) -> Option<(
+        Vec<tsz_solver::TypeParamInfo>,
+        Vec<tsz_solver::ParamInfo>,
+        TypeId,
+    )> {
+        if let Some(shape) = tsz_solver::type_queries::get_callable_shape(self.ctx.types, ty) {
+            if wants_construct {
+                if let Some(sig) = shape.construct_signatures.first() {
+                    return Some((sig.type_params.clone(), sig.params.clone(), sig.return_type));
+                }
+            } else if let Some(sig) = shape.call_signatures.first() {
+                return Some((sig.type_params.clone(), sig.params.clone(), sig.return_type));
+            }
+        }
+
+        if let Some(shape) = tsz_solver::type_queries::get_function_shape(self.ctx.types, ty)
+            && shape.is_constructor == wants_construct
+        {
+            return Some((
+                shape.type_params.clone(),
+                shape.params.clone(),
+                shape.return_type,
+            ));
+        }
+
+        None
+    }
+
+    fn missing_single_required_property(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<tsz_common::interner::Atom> {
+        if tsz_solver::is_primitive_type(self.ctx.types, source) {
+            return None;
+        }
+
+        let source_with_shape = {
+            let direct = source;
+            let resolved = self.resolve_type_for_property_access(direct);
+            let evaluated = self.judge_evaluate(resolved);
+            [direct, resolved, evaluated]
+                .into_iter()
+                .find(|candidate| {
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                })?
+        };
+        let target_with_shape = {
+            let direct = target;
+            let resolved = self.resolve_type_for_property_access(direct);
+            let evaluated = self.judge_evaluate(resolved);
+            [direct, resolved, evaluated]
+                .into_iter()
+                .find(|candidate| {
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                })?
+        };
+
+        let source_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, source_with_shape)?;
+        let target_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_with_shape)?;
+
+        if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+            return None;
+        }
+
+        let required_props: Vec<_> = target_shape
+            .properties
+            .iter()
+            .filter(|p| !p.optional)
+            .collect();
+        if required_props.len() != 1 {
+            return None;
+        }
+
+        let prop = required_props[0];
+        let source_has_prop = source_shape.properties.iter().any(|p| p.name == prop.name);
+        if source_has_prop {
+            return None;
+        }
+
+        let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+        if prop_name.as_ref() == "call" || prop_name.as_ref() == "apply" {
+            return Some(prop.name);
+        }
+
+        None
+    }
+
     fn elaborate_type_mismatch_detail(&mut self, source: TypeId, target: TypeId) -> Option<String> {
+        if let Some((target_tparams, target_params, target_return)) =
+            self.first_signature_parts(target, false)
+            && self.first_signature_parts(source, false).is_none()
+        {
+            let source_str = self.format_type_for_assignability_message(source);
+            let target_sig = self.format_signature_text(
+                &target_tparams,
+                &target_params,
+                target_return,
+                false,
+                false,
+            );
+            return Some(format_message(
+                diagnostic_messages::TYPE_PROVIDES_NO_MATCH_FOR_THE_SIGNATURE,
+                &[&source_str, &target_sig],
+            ));
+        }
+
+        if let Some((target_tparams, target_params, target_return)) =
+            self.first_signature_parts(target, true)
+        {
+            if let Some((source_tparams, source_params, source_return)) =
+                self.first_signature_parts(source, true)
+            {
+                let source_required = source_params
+                    .iter()
+                    .filter(|p| !p.optional && !p.rest)
+                    .count();
+                let target_arity = target_params.len();
+                if source_required > target_arity {
+                    let source_sig = self.format_signature_text(
+                        &source_tparams,
+                        &source_params,
+                        source_return,
+                        true,
+                        true,
+                    );
+                    let target_sig = self.format_signature_text(
+                        &target_tparams,
+                        &target_params,
+                        target_return,
+                        true,
+                        true,
+                    );
+                    let assignable = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_sig, &target_sig],
+                    );
+                    let arity = format_message(
+                        diagnostic_messages::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
+                        &[&source_required.to_string(), &target_arity.to_string()],
+                    );
+                    return Some(format!(
+                        "{} {} {}",
+                        diagnostic_messages::TYPES_OF_CONSTRUCT_SIGNATURES_ARE_INCOMPATIBLE,
+                        assignable,
+                        arity
+                    ));
+                }
+            } else {
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_sig = self.format_signature_text(
+                    &target_tparams,
+                    &target_params,
+                    target_return,
+                    true,
+                    false,
+                );
+                return Some(format_message(
+                    diagnostic_messages::TYPE_PROVIDES_NO_MATCH_FOR_THE_SIGNATURE,
+                    &[&source_str, &target_sig],
+                ));
+            }
+        }
+
         let source_with_shape = {
             let direct = source;
             let resolved = self.resolve_type_for_property_access(direct);
@@ -77,6 +320,21 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_object_shape(self.ctx.types, target_with_shape)?;
         let source_props = source_shape.properties.as_slice();
         let target_props = target_shape.properties.as_slice();
+
+        if target_shape.number_index.is_some() && source_shape.number_index.is_none() {
+            let source_str = self.format_type_for_assignability_message(source);
+            return Some(format_message(
+                diagnostic_messages::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
+                &["number", &source_str],
+            ));
+        }
+        if target_shape.string_index.is_some() && source_shape.string_index.is_none() {
+            let source_str = self.format_type_for_assignability_message(source);
+            return Some(format_message(
+                diagnostic_messages::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
+                &["string", &source_str],
+            ));
+        }
 
         for target_prop in target_props {
             let Some(source_prop) = source_props.iter().find(|p| p.name == target_prop.name) else {
@@ -343,6 +601,8 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
+        let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+
         // Suppress cascade errors from unresolved types
         if source == TypeId::ERROR
             || target == TypeId::ERROR
@@ -354,7 +614,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(loc) = self.get_source_location(idx) {
+        if let Some(loc) = self.get_source_location(anchor_idx) {
             // Precedence gate: suppress fallback TS2322 when a more specific
             // diagnostic is already present at the same span.
             if self.has_more_specific_diagnostic_at_span(loc.start, loc.length()) {
@@ -827,6 +1087,26 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
+                if depth == 0
+                    && let Some(property_name) =
+                        self.missing_single_required_property(source, target)
+                {
+                    let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+                    let source_str = self.format_type_for_assignability_message(source);
+                    let target_str = self.format_type_for_assignability_message(target);
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[&prop_name, &source_str, &target_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    );
+                }
+
                 let source_str = self.format_type_for_assignability_message(source);
                 let target_str = self.format_type_for_assignability_message(target);
                 let base = format_message(
