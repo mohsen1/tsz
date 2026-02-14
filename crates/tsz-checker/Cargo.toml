@@ -10,7 +10,6 @@ authors.workspace = true
 
 [features]
 default = []
-legacy-type-arena = []
 
 [dependencies]
 tsz-common = { workspace = true }

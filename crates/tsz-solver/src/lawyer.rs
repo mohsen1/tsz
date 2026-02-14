@@ -50,7 +50,7 @@
 //! have the same underlying value (e.g., both are `0`).
 //!
 //! **Implementation**:
-//! - Enum members are wrapped in `TypeKey::Enum(def_id, literal_type)`
+//! - Enum members are wrapped in `TypeData::Enum(def_id, literal_type)`
 //! - The `def_id` provides nominal identity (which enum)
 //! - The `literal_type` preserves the value (for assignability checks)
 //! - `enum_assignability_override` in `CompatChecker` enforces this rule

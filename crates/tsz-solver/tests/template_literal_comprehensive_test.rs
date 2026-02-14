@@ -17,7 +17,7 @@ fn test_uppercase_intrinsic_basic() {
 
     // Test Uppercase on a string literal
     let input = interner.literal_string("hello");
-    let upper = interner.intern(TypeKey::StringIntrinsic {
+    let upper = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uppercase,
         type_arg: input,
     });
@@ -25,7 +25,7 @@ fn test_uppercase_intrinsic_basic() {
     // Evaluate the intrinsic
     // Note: In the actual system, this would go through evaluation
     // For now, we're just testing that the type is created correctly
-    if let Some(TypeKey::StringIntrinsic { kind, type_arg }) = interner.lookup(upper) {
+    if let Some(TypeData::StringIntrinsic { kind, type_arg }) = interner.lookup(upper) {
         assert_eq!(kind, StringIntrinsicKind::Uppercase);
         assert_eq!(type_arg, input);
     } else {
@@ -44,13 +44,13 @@ fn test_uppercase_distributes_over_union() {
     let union = interner.union(vec![s1, s2, s3]);
 
     // Apply Uppercase to the union
-    let upper = interner.intern(TypeKey::StringIntrinsic {
+    let upper = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uppercase,
         type_arg: union,
     });
 
     // Should create a StringIntrinsic wrapping the union
-    if let Some(TypeKey::StringIntrinsic { kind, type_arg }) = interner.lookup(upper) {
+    if let Some(TypeData::StringIntrinsic { kind, type_arg }) = interner.lookup(upper) {
         assert_eq!(kind, StringIntrinsicKind::Uppercase);
         // The type_arg should be the union
         assert_eq!(type_arg, union);
@@ -66,65 +66,65 @@ fn test_all_string_intrinsics() {
     let input = interner.literal_string("hello");
 
     // Test Uppercase
-    let upper = interner.intern(TypeKey::StringIntrinsic {
+    let upper = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uppercase,
         type_arg: input,
     });
     assert!(matches!(
         interner.lookup(upper),
-        Some(TypeKey::StringIntrinsic {
+        Some(TypeData::StringIntrinsic {
             kind: StringIntrinsicKind::Uppercase,
             ..
         })
     ));
 
     // Test Lowercase
-    let lower = interner.intern(TypeKey::StringIntrinsic {
+    let lower = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Lowercase,
         type_arg: input,
     });
     assert!(matches!(
         interner.lookup(lower),
-        Some(TypeKey::StringIntrinsic {
+        Some(TypeData::StringIntrinsic {
             kind: StringIntrinsicKind::Lowercase,
             ..
         })
     ));
 
     // Test Capitalize
-    let capitalize = interner.intern(TypeKey::StringIntrinsic {
+    let capitalize = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Capitalize,
         type_arg: input,
     });
     assert!(matches!(
         interner.lookup(capitalize),
-        Some(TypeKey::StringIntrinsic {
+        Some(TypeData::StringIntrinsic {
             kind: StringIntrinsicKind::Capitalize,
             ..
         })
     ));
 
     // Test Uncapitalize
-    let uncapitalize = interner.intern(TypeKey::StringIntrinsic {
+    let uncapitalize = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uncapitalize,
         type_arg: input,
     });
     assert!(matches!(
         interner.lookup(uncapitalize),
-        Some(TypeKey::StringIntrinsic {
+        Some(TypeData::StringIntrinsic {
             kind: StringIntrinsicKind::Uncapitalize,
             ..
         })
     ));
 
     // Test Lowercase
-    let lower = interner.intern(TypeKey::StringIntrinsic {
+    let lower = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Lowercase,
         type_arg: input,
     });
     assert!(matches!(
         interner.lookup(lower),
-        Some(TypeKey::StringIntrinsic {
+        Some(TypeData::StringIntrinsic {
             kind: StringIntrinsicKind::Lowercase,
             ..
         })
@@ -149,7 +149,10 @@ fn test_template_literal_with_union() {
     ]);
 
     // The template should expand to a union of string literals
-    assert!(matches!(interner.lookup(template), Some(TypeKey::Union(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeData::Union(_))
+    ));
 }
 
 #[test]
@@ -176,7 +179,10 @@ fn test_template_literal_cartesian_product() {
     ]);
 
     // Should expand to a union of string literals
-    assert!(matches!(interner.lookup(template), Some(TypeKey::Union(_))));
+    assert!(matches!(
+        interner.lookup(template),
+        Some(TypeData::Union(_))
+    ));
 }
 
 #[test]
@@ -197,11 +203,11 @@ fn test_template_literal_pattern_matching() {
     // (The actual check happens in the subtype checker)
     assert!(matches!(
         interner.lookup(pattern),
-        Some(TypeKey::TemplateLiteral(_))
+        Some(TypeData::TemplateLiteral(_))
     ));
     assert!(matches!(
         interner.lookup(literal),
-        Some(TypeKey::Literal(LiteralValue::String(_)))
+        Some(TypeData::Literal(LiteralValue::String(_)))
     ));
 }
 
@@ -213,7 +219,7 @@ fn test_template_literal_with_string_intrinsic() {
     let input = interner.literal_string("hello");
 
     // Apply Uppercase intrinsic
-    let upper_input = interner.intern(TypeKey::StringIntrinsic {
+    let upper_input = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uppercase,
         type_arg: input,
     });
@@ -227,11 +233,11 @@ fn test_template_literal_with_string_intrinsic() {
     // Should create a template literal type
     assert!(matches!(
         interner.lookup(template),
-        Some(TypeKey::TemplateLiteral(_))
+        Some(TypeData::TemplateLiteral(_))
     ));
 
     // The template contains the string intrinsic
-    let TypeKey::TemplateLiteral(spans) = interner.lookup(template).unwrap() else {
+    let TypeData::TemplateLiteral(spans) = interner.lookup(template).unwrap() else {
         panic!("Expected template literal");
     };
 
@@ -241,7 +247,7 @@ fn test_template_literal_with_string_intrinsic() {
     if let TemplateSpan::Type(ty) = spans[1] {
         assert!(matches!(
             interner.lookup(ty),
-            Some(TypeKey::StringIntrinsic {
+            Some(TypeData::StringIntrinsic {
                 kind: StringIntrinsicKind::Uppercase,
                 ..
             })
@@ -271,7 +277,7 @@ fn test_nested_template_literals() {
 
     assert!(matches!(
         interner.lookup(outer_template),
-        Some(TypeKey::TemplateLiteral(_))
+        Some(TypeData::TemplateLiteral(_))
     ));
 }
 
@@ -287,7 +293,7 @@ fn test_template_literal_with_number() {
 
     assert!(matches!(
         interner.lookup(template),
-        Some(TypeKey::TemplateLiteral(_))
+        Some(TypeData::TemplateLiteral(_))
     ));
 }
 
@@ -304,7 +310,7 @@ fn test_template_literal_with_boolean() {
 
     // Should expand to union of two string literals
     match interner.lookup(template) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -324,7 +330,7 @@ fn test_template_literal_with_bigint() {
 
     assert!(matches!(
         interner.lookup(template),
-        Some(TypeKey::TemplateLiteral(_))
+        Some(TypeData::TemplateLiteral(_))
     ));
 }
 
@@ -343,6 +349,6 @@ fn test_template_literal_all_text() {
     // Should collapse to a single string literal "hello world"
     assert!(matches!(
         interner.lookup(template),
-        Some(TypeKey::Literal(LiteralValue::String(_)))
+        Some(TypeData::Literal(LiteralValue::String(_)))
     ));
 }

@@ -117,7 +117,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TSZ-4: Use type_reference_symbol_type to preserve nominal identity
-                // This ensures enum members return TypeKey::Enum instead of primitives
+                // This ensures enum members return TypeData::Enum instead of primitives
                 let mut result = self.type_reference_symbol_type(sym_id);
 
                 // For `import * as x from "m"; type T = x.A`, apply module augmentations
@@ -897,7 +897,7 @@ impl<'a> CheckerState<'a> {
                     //
                     // The flow is:
                     // 1. get_type_of_symbol() computes and caches the structural type in symbol_types
-                    // 2. create_lazy_type_ref() returns TypeKey::Lazy(DefId) for error formatting
+                    // 2. create_lazy_type_ref() returns TypeData::Lazy(DefId) for error formatting
                     // 3. resolve_lazy() returns the cached structural type for actual type checking
 
                     // Step 1: Ensure the structural type is computed and cached

@@ -11,8 +11,8 @@
 //!
 //! The transition from `SymbolRef` to `DefId` happens incrementally:
 //!
-//! 1. `TypeKey::Ref(SymbolRef)` remains for backward compatibility
-//! 2. New `TypeKey::Lazy(DefId)` is added for migrated code
+//! 1. `TypeData::Ref(SymbolRef)` remains for backward compatibility
+//! 2. New `TypeData::Lazy(DefId)` is added for migrated code
 //! 3. Eventually, `Ref(SymbolRef)` is removed entirely
 //!
 //! ## DefId Allocation Strategies

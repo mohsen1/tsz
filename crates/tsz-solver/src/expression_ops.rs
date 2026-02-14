@@ -9,7 +9,7 @@ use crate::TypeDatabase;
 use crate::TypeResolver;
 use crate::is_subtype_of;
 use crate::subtype::SubtypeChecker;
-use crate::types::{IntrinsicKind, LiteralValue, TypeId, TypeKey};
+use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
 ///
@@ -240,7 +240,7 @@ fn widen_literals(interner: &dyn TypeDatabase, types: &[TypeId]) -> Vec<TypeId> 
         .iter()
         .map(|&ty| {
             if let Some(key) = interner.lookup(ty) {
-                if let crate::types::TypeKey::Literal(ref lit) = key {
+                if let crate::types::TypeData::Literal(ref lit) = key {
                     return match lit {
                         crate::types::LiteralValue::String(_) => TypeId::STRING,
                         crate::types::LiteralValue::Number(_) => TypeId::NUMBER,
@@ -278,7 +278,7 @@ fn find_common_base_type(interner: &dyn TypeDatabase, types: &[TypeId]) -> Optio
 /// Get the base type of a type (for literals, this is the primitive type).
 fn get_base_type(interner: &dyn TypeDatabase, ty: TypeId) -> Option<TypeId> {
     match interner.lookup(ty) {
-        Some(crate::types::TypeKey::Literal(ref lit)) => {
+        Some(crate::types::TypeData::Literal(ref lit)) => {
             let base = match lit {
                 crate::types::LiteralValue::String(_) => TypeId::STRING,
                 crate::types::LiteralValue::Number(_) => TypeId::NUMBER,
@@ -309,7 +309,7 @@ fn common_parent_enum_type<R: TypeResolver>(
     let mut parent_def = None;
 
     for &ty in types {
-        let TypeKey::Enum(def_id, _) = interner.lookup(ty)? else {
+        let TypeData::Enum(def_id, _) = interner.lookup(ty)? else {
             return None;
         };
 
@@ -336,12 +336,12 @@ fn common_parent_enum_type<R: TypeResolver>(
 /// Checks if a type is definitely truthy.
 fn is_definitely_truthy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match interner.lookup(type_id) {
-        Some(TypeKey::Literal(LiteralValue::Boolean(true))) => true,
-        Some(TypeKey::Literal(LiteralValue::String(s))) if !s.is_none() => true,
+        Some(TypeData::Literal(LiteralValue::Boolean(true))) => true,
+        Some(TypeData::Literal(LiteralValue::String(s))) if !s.is_none() => true,
         // Non-zero, non-NaN numbers are truthy
-        Some(TypeKey::Literal(LiteralValue::Number(n))) => n.0 != 0.0 && !n.0.is_nan(),
-        Some(TypeKey::Object(_)) => true,
-        Some(TypeKey::Function(_)) => true,
+        Some(TypeData::Literal(LiteralValue::Number(n))) => n.0 != 0.0 && !n.0.is_nan(),
+        Some(TypeData::Object(_)) => true,
+        Some(TypeData::Function(_)) => true,
         _ => false,
     }
 }
@@ -349,13 +349,13 @@ fn is_definitely_truthy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Checks if a type is definitely falsy.
 fn is_definitely_falsy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match interner.lookup(type_id) {
-        Some(TypeKey::Literal(LiteralValue::Boolean(false))) => true,
-        Some(TypeKey::Literal(LiteralValue::String(s))) if s.is_none() => true,
+        Some(TypeData::Literal(LiteralValue::Boolean(false))) => true,
+        Some(TypeData::Literal(LiteralValue::String(s))) if s.is_none() => true,
         // 0, -0, and NaN are falsy
-        Some(TypeKey::Literal(LiteralValue::Number(n))) => n.0 == 0.0 || n.0.is_nan(),
-        Some(TypeKey::Intrinsic(IntrinsicKind::Null)) => true,
-        Some(TypeKey::Intrinsic(IntrinsicKind::Undefined)) => true,
-        Some(TypeKey::Intrinsic(IntrinsicKind::Void)) => true,
+        Some(TypeData::Literal(LiteralValue::Number(n))) => n.0 == 0.0 || n.0.is_nan(),
+        Some(TypeData::Intrinsic(IntrinsicKind::Null)) => true,
+        Some(TypeData::Intrinsic(IntrinsicKind::Undefined)) => true,
+        Some(TypeData::Intrinsic(IntrinsicKind::Void)) => true,
         _ => false,
     }
 }

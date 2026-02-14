@@ -16,7 +16,7 @@ use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
-use tsz_solver::{TypeId, TypeInterner, Visibility, types::RelationCacheKey, types::TypeKey};
+use tsz_solver::{TypeId, TypeInterner, Visibility, types::RelationCacheKey, types::TypeData};
 
 // =============================================================================
 // Basic Type Checker Tests
@@ -2155,7 +2155,7 @@ c.foo("ok");
 #[test]
 fn test_new_expression_infers_class_instance_type() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 class Foo {
@@ -2203,7 +2203,7 @@ const f = new Foo();
     let f_type = checker.get_type_of_symbol(f_sym);
     let f_key = types.lookup(f_type).expect("f type should exist");
     match f_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let props = shape.properties.as_slice();
             let name_atom = types.intern_string("name");
@@ -2246,7 +2246,7 @@ const f = new Foo();
 #[test]
 fn test_new_expression_infers_parameter_properties() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 class Foo {
@@ -2282,7 +2282,7 @@ const f = new Foo(1, "x", 2);
     let f_type = checker.get_type_of_symbol(f_sym);
     let f_key = types.lookup(f_type).expect("f type should exist");
     match f_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let props = shape.properties.as_slice();
             let id_atom = types.intern_string("id");
@@ -2318,7 +2318,7 @@ const f = new Foo(1, "x", 2);
 #[test]
 fn test_new_expression_infers_base_class_properties() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 class Base<T> {
@@ -2363,7 +2363,7 @@ const d = new Derived();
     let d_type = checker.get_type_of_symbol(d_sym);
     let d_key = types.lookup(d_type).expect("d type should exist");
     match d_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let props = shape.properties.as_slice();
             let value_atom = types.intern_string("value");
@@ -2391,7 +2391,7 @@ const d = new Derived();
 #[test]
 fn test_new_expression_infers_generic_class_type_params() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 class Box<T> {
@@ -2430,7 +2430,7 @@ const b = new Box("hi");
     let b_type = checker.get_type_of_symbol(b_sym);
     let b_key = types.lookup(b_type).expect("b type should exist");
     match b_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let props = shape.properties.as_slice();
             let value_atom = types.intern_string("value");
@@ -5386,7 +5386,7 @@ fn test_contextual_typing_for_function_parameters() {
 fn test_contextual_typing_skips_this_parameter() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 function takesHandler(fn: (this: { value: number }, x: string) => void) {}
@@ -5436,7 +5436,7 @@ takesHandler(function(this: { value: number }, x) {
     checker.get_type_of_node(call_idx);
 
     let func_type = checker.get_type_of_node(func_idx);
-    let Some(TypeKey::Function(shape_id)) = checker.ctx.types.lookup(func_type) else {
+    let Some(TypeData::Function(shape_id)) = checker.ctx.types.lookup(func_type) else {
         panic!("expected function type for argument");
     };
     let shape = checker.ctx.types.function_shape(shape_id);
@@ -6283,7 +6283,7 @@ fn test_strict_null_checks_undefined_type() {
 #[test]
 fn test_strict_null_checks_both_null_and_undefined() {
     use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-    use tsz_solver::{PropertyInfo, TypeId, TypeKey, Visibility};
+    use tsz_solver::{PropertyInfo, TypeData, TypeId, Visibility};
 
     // Test property access on type that is both null and undefined
     let types = TypeInterner::new();
@@ -6316,7 +6316,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
             // Cause should be a union of null | undefined
             let cause_key = types.lookup(cause);
             match cause_key {
-                Some(TypeKey::Union(members)) => {
+                Some(TypeData::Union(members)) => {
                     let members = types.type_list(members);
                     assert!(members.contains(&TypeId::NULL), "Cause should contain null");
                     assert!(
@@ -6525,7 +6525,7 @@ fn test_symbol_property_access_description() {
             // description should be string | undefined
             let key = types.lookup(prop_type).expect("Property type should exist");
             match key {
-                TypeKey::Union(members) => {
+                TypeData::Union(members) => {
                     let members = types.type_list(members);
                     assert_eq!(members.len(), 2);
                     assert!(members.contains(&TypeId::STRING));
@@ -6725,7 +6725,7 @@ const val = obj.x;
 #[test]
 fn test_checker_lowers_full_source_file() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 interface Foo { x: number; }
@@ -6765,7 +6765,7 @@ type Qux = { [key: string]: Foo };
     let foo_type = checker.get_type_of_symbol(foo_sym);
     let foo_key = types.lookup(foo_type).expect("Foo type should exist");
     match foo_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -6780,12 +6780,12 @@ type Qux = { [key: string]: Foo };
     let bar_type = checker.get_type_of_symbol(bar_sym);
     let bar_key = types.lookup(bar_type).expect("Bar type should exist");
     match bar_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             assert_eq!(members.len(), 2);
             assert!(members.contains(&TypeId::STRING));
             // The non-string member may be a lazy type reference to Foo
-            // (TypeKey::Lazy) or the resolved Object type. Either is valid.
+            // (TypeData::Lazy) or the resolved Object type. Either is valid.
             let non_string_member = *members.iter().find(|&&m| m != TypeId::STRING).unwrap();
             if non_string_member != foo_type {
                 // If not the same TypeId, verify it's a lazy reference (unevaluated Foo)
@@ -6793,7 +6793,7 @@ type Qux = { [key: string]: Foo };
                     .lookup(non_string_member)
                     .expect("member type should exist");
                 assert!(
-                    matches!(member_key, TypeKey::Lazy(_)),
+                    matches!(member_key, TypeData::Lazy(_)),
                     "Non-string member should be foo_type or a Lazy reference, got {:?}",
                     member_key
                 );
@@ -6805,7 +6805,7 @@ type Qux = { [key: string]: Foo };
     let baz_type = checker.get_type_of_symbol(baz_sym);
     let baz_key = types.lookup(baz_type).expect("Baz type should exist");
     match baz_key {
-        TypeKey::Tuple(elements) => {
+        TypeData::Tuple(elements) => {
             let elements = types.tuple_list(elements);
             assert_eq!(elements.len(), 2);
             assert_eq!(elements[0].type_id, TypeId::STRING);
@@ -6817,7 +6817,7 @@ type Qux = { [key: string]: Foo };
     let qux_type = checker.get_type_of_symbol(qux_sym);
     let qux_key = types.lookup(qux_type).expect("Qux type should exist");
     match qux_key {
-        TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let string_index = shape
                 .string_index
@@ -6828,7 +6828,7 @@ type Qux = { [key: string]: Foo };
                 .lookup(string_index.value_type)
                 .expect("Index value type should exist");
             match value_key {
-                TypeKey::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                TypeData::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
                 _ => panic!("Expected Foo lazy type, got {:?}", value_key),
             }
         }
@@ -7352,7 +7352,7 @@ interface Derived extends Base {
 #[test]
 fn test_checker_cross_namespace_type_reference() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 namespace Outer {
@@ -7391,7 +7391,7 @@ type Alias = Outer.Inner;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -7400,7 +7400,7 @@ type Alias = Outer.Inner;
                 .expect("Expected property y");
             assert_eq!(prop.type_id, TypeId::STRING);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -7626,7 +7626,7 @@ namespace Models {
 #[test]
 fn test_checker_module_augmentation_merges_exports() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 namespace Outer {
@@ -7678,7 +7678,7 @@ type AliasB = Outer.B;
         .lookup(alias_a_type)
         .expect("AliasA type should exist");
     match alias_a_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -7687,7 +7687,7 @@ type AliasB = Outer.B;
                 .expect("Expected property x");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -7701,7 +7701,7 @@ type AliasB = Outer.B;
         .lookup(alias_b_type)
         .expect("AliasB type should exist");
     match alias_b_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -7710,7 +7710,7 @@ type AliasB = Outer.B;
                 .expect("Expected property y");
             assert_eq!(prop.type_id, TypeId::STRING);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -7724,7 +7724,7 @@ type AliasB = Outer.B;
 #[test]
 fn test_checker_lower_generic_type_reference_applies_args() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 type Box<T> = { value: T };
@@ -7761,7 +7761,7 @@ type Alias = Box<string>;
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     // Generic type aliases are now eagerly resolved to Object types with instantiated properties
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -7775,7 +7775,7 @@ type Alias = Box<string>;
                 "Expected value property to be string"
             );
         }
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             // Also accept Application type if not eagerly resolved
             let app = types.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
@@ -7790,7 +7790,7 @@ type Alias = Box<string>;
 #[test]
 fn test_checker_lowers_generic_function_type_annotation_uses_type_params() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 const f: <T>(value: T) => T = (value) => value;
@@ -7823,7 +7823,7 @@ const f: <T>(value: T) => T = (value) => value;
     let f_type = checker.get_type_of_symbol(f_sym);
     let f_key = types.lookup(f_type).expect("f type should exist");
     match f_key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = types.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 1);
             assert_eq!(types.resolve_atom(shape.type_params[0].name), "T");
@@ -7833,7 +7833,7 @@ const f: <T>(value: T) => T = (value) => value;
                 .lookup(shape.params[0].type_id)
                 .expect("Param type should exist");
             match param_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
                 _ => panic!(
@@ -7846,7 +7846,7 @@ const f: <T>(value: T) => T = (value) => value;
                 .lookup(shape.return_type)
                 .expect("Return type should exist");
             match return_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
                 _ => panic!(
@@ -7862,7 +7862,7 @@ const f: <T>(value: T) => T = (value) => value;
 #[test]
 fn test_interface_generic_call_signature_uses_type_params() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 interface Callable {
@@ -7902,7 +7902,7 @@ interface Callable {
         .lookup(callable_type)
         .expect("Callable type should exist");
     match callable_key {
-        TypeKey::Callable(shape_id) => {
+        TypeData::Callable(shape_id) => {
             let shape = types.callable_shape(shape_id);
             assert_eq!(shape.call_signatures.len(), 1);
             let sig = &shape.call_signatures[0];
@@ -7914,7 +7914,7 @@ interface Callable {
                 .lookup(sig.params[0].type_id)
                 .expect("Param type should exist");
             match param_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
                 _ => panic!(
@@ -7927,7 +7927,7 @@ interface Callable {
                 .lookup(sig.return_type)
                 .expect("Return type should exist");
             match return_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
                 _ => panic!(
@@ -7946,7 +7946,7 @@ interface Callable {
 #[test]
 fn test_interface_generic_construct_signature_uses_type_params() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 interface Factory {
@@ -7986,7 +7986,7 @@ interface Factory {
         .lookup(factory_type)
         .expect("Factory type should exist");
     match factory_key {
-        TypeKey::Callable(shape_id) => {
+        TypeData::Callable(shape_id) => {
             let shape = types.callable_shape(shape_id);
             assert_eq!(shape.construct_signatures.len(), 1);
             let sig = &shape.construct_signatures[0];
@@ -7998,7 +7998,7 @@ interface Factory {
                 .lookup(sig.params[0].type_id)
                 .expect("Param type should exist");
             match param_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
                 _ => panic!(
@@ -8011,7 +8011,7 @@ interface Factory {
                 .lookup(sig.return_type)
                 .expect("Return type should exist");
             match return_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
                 _ => panic!(
@@ -8030,7 +8030,7 @@ interface Factory {
 #[test]
 fn test_checker_lowers_generic_function_declaration_uses_type_params() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 function id<T>(value: T): T {
@@ -8065,7 +8065,7 @@ function id<T>(value: T): T {
     let id_type = checker.get_type_of_symbol(id_sym);
     let id_key = types.lookup(id_type).expect("id type should exist");
     match id_key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = types.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 1);
             assert_eq!(types.resolve_atom(shape.type_params[0].name), "T");
@@ -8075,7 +8075,7 @@ function id<T>(value: T): T {
                 .lookup(shape.params[0].type_id)
                 .expect("Param type should exist");
             match param_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
                 _ => panic!(
@@ -8088,7 +8088,7 @@ function id<T>(value: T): T {
                 .lookup(shape.return_type)
                 .expect("Return type should exist");
             match return_key {
-                TypeKey::TypeParameter(info) => {
+                TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
                 _ => panic!(
@@ -8104,7 +8104,7 @@ function id<T>(value: T): T {
 #[test]
 fn test_function_return_type_inferred_from_body() {
     use crate::parser::ParserState;
-    use tsz_solver::{TypeId, TypeKey};
+    use tsz_solver::{TypeData, TypeId};
 
     let source = r#"
 function id(x: string) {
@@ -8139,7 +8139,7 @@ function id(x: string) {
     let id_type = checker.get_type_of_symbol(id_sym);
     let id_key = types.lookup(id_type).expect("id type should exist");
     match id_key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = types.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::STRING);
         }
@@ -8150,7 +8150,7 @@ function id(x: string) {
 #[test]
 fn test_arrow_function_return_type_inferred_union() {
     use crate::parser::ParserState;
-    use tsz_solver::{TypeId, TypeKey};
+    use tsz_solver::{TypeData, TypeId};
 
     let source = r#"
 const f = (flag: boolean) => {
@@ -8188,13 +8188,13 @@ const f = (flag: boolean) => {
     let f_type = checker.get_type_of_symbol(f_sym);
     let f_key = types.lookup(f_type).expect("f type should exist");
     match f_key {
-        TypeKey::Function(shape_id) => {
+        TypeData::Function(shape_id) => {
             let shape = types.function_shape(shape_id);
             let return_key = types
                 .lookup(shape.return_type)
                 .expect("return type should exist");
             match return_key {
-                TypeKey::Union(members) => {
+                TypeData::Union(members) => {
                     let members = types.type_list(members);
                     assert!(members.contains(&TypeId::NUMBER));
                     assert!(members.contains(&TypeId::STRING));
@@ -9427,7 +9427,7 @@ const value = arr[0];
 #[ignore = "TODO: Feature implementation in progress"]
 fn test_array_literal_best_common_type_prefers_supertype_element() {
     use crate::parser::ParserState;
-    use tsz_solver::{PropertyInfo, TypeId, TypeKey};
+    use tsz_solver::{PropertyInfo, TypeData, TypeId};
 
     let source = r#"
 const arr = [{ a: "x" }, { a: "y", b: 1 }];
@@ -9460,7 +9460,7 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
     let arr_type = checker.get_type_of_symbol(arr_sym);
     let arr_key = types.lookup(arr_type).expect("arr type should exist");
     match arr_key {
-        TypeKey::Array(elem) => {
+        TypeData::Array(elem) => {
             let expected = types.object(vec![PropertyInfo {
                 name: types.intern_string("a"),
                 type_id: TypeId::STRING,
@@ -9563,7 +9563,7 @@ const value = arr[0];
 #[test]
 fn test_checker_tuple_optional_element_access_includes_undefined() {
     use crate::parser::ParserState;
-    use tsz_solver::{TypeId, TypeKey};
+    use tsz_solver::{TypeData, TypeId};
 
     let source = r#"
 const tup: [string?] = ["a"];
@@ -9597,7 +9597,7 @@ const first = tup[0];
     let first_type = checker.get_type_of_symbol(first_sym);
     let first_key = types.lookup(first_type).expect("first type should exist");
     match first_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             assert!(members.contains(&TypeId::STRING));
             assert!(members.contains(&TypeId::UNDEFINED));
@@ -9685,7 +9685,9 @@ const length = arr["length"];
     let is_number = length_type == TypeId::NUMBER
         || matches!(
             types.lookup(length_type),
-            Some(TypeKey::Intrinsic(tsz_solver::types::IntrinsicKind::Number))
+            Some(TypeData::Intrinsic(
+                tsz_solver::types::IntrinsicKind::Number
+            ))
         );
     assert!(
         is_number,
@@ -9944,7 +9946,7 @@ const value = obj[key];
 #[test]
 fn test_checker_lowers_element_access_literal_key_union() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 interface Foo { a: number; b: string; }
@@ -9980,7 +9982,7 @@ const value = obj[key];
     let value_type = checker.get_type_of_symbol(value_sym);
     let value_key = types.lookup(value_type).expect("value type should exist");
     match value_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&TypeId::STRING));
@@ -9992,7 +9994,7 @@ const value = obj[key];
 #[test]
 fn test_checker_element_access_union_key_cross_product() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 type A = { kind: "a"; val: 1 } | { kind: "b"; val: 2 };
@@ -10028,7 +10030,7 @@ const value = obj[key];
     let value_type = checker.get_type_of_symbol(value_sym);
     let value_key = types.lookup(value_type).expect("value type should exist");
     match value_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             let lit_a = types.literal_string("a");
             let lit_b = types.literal_string("b");
@@ -10085,7 +10087,7 @@ const value = obj[key];
 #[test]
 fn test_checker_lowers_element_access_numeric_literal_union() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 const tup: [string, number, boolean] = ["a", 1, true];
@@ -10120,7 +10122,7 @@ const value = tup[idx];
     let value_type = checker.get_type_of_symbol(value_sym);
     let value_key = types.lookup(value_type).expect("value type should exist");
     match value_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             assert!(members.contains(&TypeId::STRING));
             assert!(members.contains(&TypeId::BOOLEAN));
@@ -10133,7 +10135,7 @@ const value = tup[idx];
 #[test]
 fn test_checker_lowers_element_access_mixed_literal_key_union() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 const arr: string[] = ["a"];
@@ -10168,7 +10170,7 @@ const value = arr[key];
     let value_type = checker.get_type_of_symbol(value_sym);
     let value_key = types.lookup(value_type).expect("value type should exist");
     match value_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             assert!(members.contains(&TypeId::STRING));
             assert!(members.contains(&TypeId::NUMBER));
@@ -10224,7 +10226,7 @@ const value = obj["a"];
 #[test]
 fn test_checker_element_access_optional_chain_nullable_object() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 type Foo = { a: number };
@@ -10259,7 +10261,7 @@ const value = obj?.["a"];
     let value_type = checker.get_type_of_symbol(value_sym);
     let value_key = types.lookup(value_type).expect("value type should exist");
     match value_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&TypeId::UNDEFINED));
@@ -10271,7 +10273,7 @@ const value = obj?.["a"];
 #[test]
 fn test_checker_property_access_optional_chain_nullable_object() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 type Foo = { a: number };
@@ -10306,7 +10308,7 @@ const value = obj?.a;
     let value_type = checker.get_type_of_symbol(value_sym);
     let value_key = types.lookup(value_type).expect("value type should exist");
     match value_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&TypeId::UNDEFINED));
@@ -10318,7 +10320,7 @@ const value = obj?.a;
 #[test]
 fn test_checker_property_access_union_type() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     // Test union property access WITHOUT narrowing
     // Using declare prevents CFA narrowing on initialization
@@ -10355,7 +10357,7 @@ const value = obj.a;
     let value_type = checker.get_type_of_symbol(value_sym);
     let value_key = types.lookup(value_type).expect("value type should exist");
     match value_key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = types.type_list(members);
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&TypeId::STRING));
@@ -10367,7 +10369,7 @@ const value = obj.a;
 #[test]
 fn test_checker_namespace_merges_with_class_exports() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 class Foo {}
@@ -10407,7 +10409,7 @@ type Alias = Foo.Bar;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10416,7 +10418,7 @@ type Alias = Foo.Bar;
                 .expect("Expected property x");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -10430,7 +10432,7 @@ type Alias = Foo.Bar;
 #[test]
 fn test_checker_namespace_merges_with_class_exports_reverse_order() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 namespace Foo {
@@ -10470,7 +10472,7 @@ type Alias = Foo.Bar;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10479,7 +10481,7 @@ type Alias = Foo.Bar;
                 .expect("Expected property x");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -10631,7 +10633,7 @@ const sum = Merge.a + Merge.b;
 #[test]
 fn test_checker_namespace_merges_across_decls_type_access() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 namespace Merge {
@@ -10678,7 +10680,7 @@ const value: Merge.B = { y: 1 };
         .lookup(resolved_type)
         .expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10687,7 +10689,7 @@ const value: Merge.B = { y: 1 };
                 .expect("Expected property x");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -10797,7 +10799,7 @@ const direct = Merge.extra;
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 function Merge() {}
@@ -10837,7 +10839,7 @@ type Alias = Merge.Extra;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10846,7 +10848,7 @@ type Alias = Merge.Extra;
                 .expect("Expected property value");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -10860,7 +10862,7 @@ type Alias = Merge.Extra;
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports_reverse_order() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 namespace Merge {
@@ -10900,7 +10902,7 @@ type Alias = Merge.Extra;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -10909,7 +10911,7 @@ type Alias = Merge.Extra;
                 .expect("Expected property value");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -11023,7 +11025,7 @@ const direct = Merge.extra;
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 enum Merge {
@@ -11065,7 +11067,7 @@ type Alias = Merge.Extra;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -11074,7 +11076,7 @@ type Alias = Merge.Extra;
                 .expect("Expected property value");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -11088,7 +11090,7 @@ type Alias = Merge.Extra;
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports_reverse_order() {
     use crate::parser::ParserState;
-    use tsz_solver::TypeKey;
+    use tsz_solver::TypeData;
 
     let source = r#"
 namespace Merge {
@@ -11130,7 +11132,7 @@ type Alias = Merge.Extra;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop = shape
                 .properties
@@ -11139,7 +11141,7 @@ type Alias = Merge.Extra;
                 .expect("Expected property value");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        TypeKey::Lazy(_def_id) => {
+        TypeData::Lazy(_def_id) => {
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
@@ -11201,7 +11203,7 @@ const direct = Foo["value"];
 #[test]
 fn test_checker_interface_typeof_value_reference() {
     use crate::parser::ParserState;
-    use tsz_solver::{SymbolRef, TypeKey};
+    use tsz_solver::{SymbolRef, TypeData};
 
     let source = r#"
 const Foo = 1;
@@ -11249,7 +11251,7 @@ interface Bar {
     let bar_type = checker.get_type_of_symbol(bar_sym);
     let bar_key = types.lookup(bar_type).expect("Bar type should exist");
     match bar_key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             let shape = types.object_shape(shape_id);
             let prop_names: Vec<String> = shape
                 .properties
@@ -11268,12 +11270,12 @@ interface Bar {
                 .unwrap_or_else(|| panic!("Expected property y, got {:?}", prop_names));
 
             match types.lookup(prop_x.type_id) {
-                Some(TypeKey::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, foo_sym.0),
+                Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, foo_sym.0),
                 other => panic!("Expected x to be typeof Foo, got {:?}", other),
             }
 
             match types.lookup(prop_y.type_id) {
-                Some(TypeKey::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, value_sym.0),
+                Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, value_sym.0),
                 other => panic!("Expected y to be typeof Ns.value, got {:?}", other),
             }
         }
@@ -11333,7 +11335,7 @@ type T = typeof Alias.value;
 #[test]
 fn test_checker_typeof_with_type_arguments() {
     use crate::parser::ParserState;
-    use tsz_solver::{SymbolRef, TypeKey};
+    use tsz_solver::{SymbolRef, TypeData};
 
     let source = r#"
 const Foo = <T>(value: T) => value;
@@ -11369,11 +11371,11 @@ type Alias = typeof Foo<string>;
     let alias_type = checker.get_type_of_symbol(alias_sym);
     let alias_key = types.lookup(alias_type).expect("Alias type should exist");
     match alias_key {
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = types.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match types.lookup(app.base) {
-                Some(TypeKey::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, foo_sym.0),
+                Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, foo_sym.0),
                 other => panic!("Expected TypeQuery base type, got {:?}", other),
             }
         }

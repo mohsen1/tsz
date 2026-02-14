@@ -184,19 +184,19 @@ fn test_base_constraint_assignability_compat() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
-    let v_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let v_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -1542,7 +1542,7 @@ fn test_no_unchecked_indexed_access_toggle() {
         number_index: None,
     });
 
-    let index_access = interner.intern(TypeKey::IndexAccess(indexed, TypeId::STRING));
+    let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::STRING));
     let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
 
     assert!(checker.is_assignable(index_access, TypeId::NUMBER));
@@ -1558,7 +1558,7 @@ fn test_no_unchecked_indexed_access_primitive_index() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let index_access = interner.intern(TypeKey::IndexAccess(TypeId::STRING, TypeId::NUMBER));
+    let index_access = interner.intern(TypeData::IndexAccess(TypeId::STRING, TypeId::NUMBER));
     let string_or_undefined = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
 
     assert!(checker.is_assignable(index_access, TypeId::STRING));
@@ -1575,7 +1575,7 @@ fn test_no_unchecked_indexed_access_array_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let string_array = interner.array(TypeId::STRING);
-    let index_access = interner.intern(TypeKey::IndexAccess(string_array, TypeId::NUMBER));
+    let index_access = interner.intern(TypeData::IndexAccess(string_array, TypeId::NUMBER));
     let string_or_undefined = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
 
     assert!(checker.is_assignable(index_access, TypeId::STRING));
@@ -1603,7 +1603,7 @@ fn test_no_unchecked_object_index_signature_assignable() {
         number_index: None,
     });
 
-    let index_access = interner.intern(TypeKey::IndexAccess(indexed, TypeId::NUMBER));
+    let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::NUMBER));
     let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
 
     assert!(checker.is_assignable(index_access, TypeId::NUMBER));
@@ -1637,7 +1637,7 @@ fn test_correlated_union_index_access_assignable() {
         interner.literal_string("a"),
         interner.literal_string("b"),
     ]);
-    let index_access = interner.intern(TypeKey::IndexAccess(union_obj, key_union));
+    let index_access = interner.intern(TypeData::IndexAccess(union_obj, key_union));
     let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
 
     assert!(checker.is_assignable(index_access, expected));
@@ -2573,7 +2573,7 @@ fn test_mapped_type_over_number_keys_assignable() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::NUMBER));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::NUMBER));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -2602,7 +2602,7 @@ fn test_mapped_type_over_string_keys_assignable() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::STRING));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::STRING));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -2631,7 +2631,7 @@ fn test_mapped_type_over_boolean_keys_assignable() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::BOOLEAN));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::BOOLEAN));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -2674,7 +2674,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -2683,7 +2683,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = interner.mapped(MappedType {
         type_param: key_param,
@@ -2708,7 +2708,7 @@ fn test_conditional_tuple_wrapper_no_distribution_assignable() {
     let mut checker = CompatChecker::new(&interner);
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2761,8 +2761,8 @@ fn test_keyof_intersection_assignable() {
     )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
-    let keyof_a = interner.intern(TypeKey::KeyOf(obj_a));
-    let keyof_intersection = interner.intern(TypeKey::KeyOf(intersection));
+    let keyof_a = interner.intern(TypeData::KeyOf(obj_a));
+    let keyof_intersection = interner.intern(TypeData::KeyOf(intersection));
 
     assert!(checker.is_assignable(keyof_a, keyof_intersection));
     assert!(!checker.is_assignable(keyof_intersection, keyof_a));
@@ -2797,7 +2797,7 @@ fn test_keyof_union_index_signature_assignable() {
     });
 
     let union = interner.union(vec![string_index, number_index]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union));
+    let keyof_union = interner.intern(TypeData::KeyOf(union));
 
     assert!(checker.is_assignable(keyof_union, TypeId::NUMBER));
     assert!(!checker.is_assignable(keyof_union, TypeId::STRING));
@@ -2815,7 +2815,7 @@ fn test_keyof_union_intersection_only_shared_keys() {
     let obj_ab = interner.object(vec![prop_a.clone(), prop_b]);
     let obj_ac = interner.object(vec![prop_a, prop_c]);
     let union = interner.union(vec![obj_ab, obj_ac]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union));
+    let keyof_union = interner.intern(TypeData::KeyOf(union));
 
     let key_a = interner.literal_string("a");
     let key_b = interner.literal_string("b");
@@ -2855,8 +2855,8 @@ fn test_unique_symbol_nominal_assignability() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
-    let sym_a = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
-    let sym_b = interner.intern(TypeKey::UniqueSymbol(SymbolRef(2)));
+    let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
+    let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
 
     assert!(checker.is_assignable(sym_a, TypeId::SYMBOL));
     assert!(!checker.is_assignable(TypeId::SYMBOL, sym_a));
@@ -3668,7 +3668,7 @@ fn test_compiler_options_independent_toggles() {
         }),
         number_index: None,
     });
-    let index_access = interner.intern(TypeKey::IndexAccess(indexed, TypeId::STRING));
+    let index_access = interner.intern(TypeData::IndexAccess(indexed, TypeId::STRING));
 
     // Reset exact mode for next test
     checker.set_exact_optional_property_types(false);
@@ -4258,10 +4258,10 @@ fn test_keyof_intersection_distributivity() {
     // keyof (A & B) should be keyof A | keyof B
     // Both have 'name', B also has 'age'
     let intersection_ab = interner.intersection(vec![type_a, type_b]);
-    let keyof_intersection = interner.intern(TypeKey::KeyOf(intersection_ab));
+    let keyof_intersection = interner.intern(TypeData::KeyOf(intersection_ab));
 
-    let name_literal = interner.intern(TypeKey::Literal(crate::LiteralValue::String(name)));
-    let age_literal = interner.intern(TypeKey::Literal(crate::LiteralValue::String(age)));
+    let name_literal = interner.intern(TypeData::Literal(crate::LiteralValue::String(name)));
+    let age_literal = interner.intern(TypeData::Literal(crate::LiteralValue::String(age)));
 
     // keyof (A & B) should include 'name' (common to both)
     assert!(
@@ -4318,11 +4318,11 @@ fn test_keyof_with_union_of_objects_with_common_properties() {
     // keyof (A | B) should be keyof A & keyof B
     // which is just "name" (the common property)
     let union_ab = interner.union(vec![type_a, type_b]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union_ab));
+    let keyof_union = interner.intern(TypeData::KeyOf(union_ab));
 
-    let name_literal = interner.intern(TypeKey::Literal(crate::LiteralValue::String(name)));
-    let age_literal = interner.intern(TypeKey::Literal(crate::LiteralValue::String(age)));
-    let email_literal = interner.intern(TypeKey::Literal(crate::LiteralValue::String(email)));
+    let name_literal = interner.intern(TypeData::Literal(crate::LiteralValue::String(name)));
+    let age_literal = interner.intern(TypeData::Literal(crate::LiteralValue::String(age)));
+    let email_literal = interner.intern(TypeData::Literal(crate::LiteralValue::String(email)));
 
     // keyof (A | B) should include 'name' (common to both)
     assert!(
@@ -4482,7 +4482,7 @@ fn test_private_brand_lazy_self_resolution_does_not_recurse() {
 
     let interner = TypeInterner::new();
     let def_id = DefId(42);
-    let lazy_type = interner.intern(TypeKey::Lazy(def_id));
+    let lazy_type = interner.intern(TypeData::Lazy(def_id));
     let resolver = SelfReferentialLazyResolver { def_id, lazy_type };
     let checker = CompatChecker::with_resolver(&interner, &resolver);
 

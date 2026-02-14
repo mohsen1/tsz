@@ -56,7 +56,7 @@ fn test_instantiate_type_parameter() {
     let t_name = interner.intern_string("T");
 
     // Create a type parameter T
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -81,7 +81,7 @@ fn test_instantiate_array() {
     let t_name = interner.intern_string("T");
 
     // Create Array<T>
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -105,7 +105,7 @@ fn test_instantiate_union() {
     let t_name = interner.intern_string("T");
 
     // Create T | null
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -129,7 +129,7 @@ fn test_instantiate_object() {
     let t_name = interner.intern_string("T");
 
     // Create { value: T }
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -159,7 +159,7 @@ fn test_instantiate_function() {
     let t_name = interner.intern_string("T");
 
     // Create (x: T) => T
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -214,7 +214,7 @@ fn test_instantiate_function_shadowed_type_params() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let func = interner.function(FunctionShape {
         type_params: vec![t_param.clone()],
         params: vec![ParamInfo {
@@ -258,13 +258,13 @@ fn test_instantiate_tuple() {
     let u_name = interner.intern_string("U");
 
     // Create [T, U]
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let type_param_u = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_u = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -314,7 +314,7 @@ fn test_instantiate_generic_convenience() {
     let interner = TypeInterner::new();
 
     // Create Array<T>
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -344,7 +344,7 @@ fn test_instantiate_nested() {
     let t_name = interner.intern_string("T");
 
     // Create Array<Array<T>>
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -374,7 +374,7 @@ fn test_instantiate_application_promise() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let promise_base = interner.lazy(DefId(1));
     let promise_t = interner.application(promise_base, vec![t_type]);
@@ -400,8 +400,8 @@ fn test_instantiate_application_map_nested() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeKey::TypeParameter(k_param.clone()));
-    let v_type = interner.intern(TypeKey::TypeParameter(v_param.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
+    let v_type = interner.intern(TypeData::TypeParameter(v_param.clone()));
     let array_v = interner.array(v_type);
 
     let map_base = interner.lazy(DefId(2));
@@ -457,7 +457,7 @@ fn test_instantiate_conditional() {
     let t_name = interner.intern_string("T");
 
     // Create T extends string ? T : never
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -499,7 +499,7 @@ fn test_instantiate_mapped_type_shadowed_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let mapped = interner.mapped(MappedType {
         type_param: t_param.clone(),
@@ -530,7 +530,7 @@ fn test_instantiation_depth_limit_returns_error() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
 
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -557,7 +557,7 @@ fn test_substitution_from_args_with_defaults() {
     let u_name = interner.intern_string("U");
 
     // Create type params where U's default is T
-    let t_type = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -630,7 +630,7 @@ fn test_instantiate_template_literal_with_string_literal() {
     let t_name = interner.intern_string("T");
 
     // Create `get${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -658,7 +658,7 @@ fn test_instantiate_template_literal_with_union() {
     let t_name = interner.intern_string("T");
 
     // Create `get${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -691,13 +691,13 @@ fn test_instantiate_template_literal_with_multiple_unions() {
     let u_name = interner.intern_string("U");
 
     // Create `${T}_${U}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let type_param_u = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_u = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -724,7 +724,7 @@ fn test_instantiate_template_literal_with_multiple_unions() {
     let result = instantiate_type(&interner, template, &subst);
 
     // Verify the result is a union of all combinations
-    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
         let members = interner.type_list(members);
         assert_eq!(members.len(), 4);
         // Check that we have the expected combinations
@@ -749,7 +749,7 @@ fn test_instantiate_template_literal_preserves_type_param() {
     let u_name = interner.intern_string("U");
 
     // Create `get${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -767,7 +767,7 @@ fn test_instantiate_template_literal_preserves_type_param() {
     let result = instantiate_type(&interner, template, &subst);
 
     // T should stay as is - result should still be a template literal
-    if let Some(TypeKey::TemplateLiteral(spans_id)) = interner.lookup(result) {
+    if let Some(TypeData::TemplateLiteral(spans_id)) = interner.lookup(result) {
         let spans = interner.template_list(spans_id);
         assert_eq!(spans.len(), 2);
         assert!(matches!(&spans[0], TemplateSpan::Text(_)));
@@ -786,7 +786,7 @@ fn test_instantiate_template_literal_with_string_intrinsic() {
     let t_name = interner.intern_string("T");
 
     // Create `prefix${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -804,7 +804,7 @@ fn test_instantiate_template_literal_with_string_intrinsic() {
     let result = instantiate_type(&interner, template, &subst);
 
     // Should still be a template literal (can't fully evaluate with `string`)
-    if let Some(TypeKey::TemplateLiteral(spans_id)) = interner.lookup(result) {
+    if let Some(TypeData::TemplateLiteral(spans_id)) = interner.lookup(result) {
         let spans = interner.template_list(spans_id);
         assert_eq!(spans.len(), 2);
     } else {
@@ -821,7 +821,7 @@ fn test_instantiate_template_literal_in_object() {
     let t_name = interner.intern_string("T");
 
     // Create a template literal type
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -845,7 +845,7 @@ fn test_instantiate_template_literal_in_object() {
     let result = instantiate_type(&interner, obj, &subst);
 
     // The property type should now be "key_name"
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         assert_eq!(shape.properties.len(), 1);
         let prop_type = shape.properties[0].type_id;
@@ -863,7 +863,7 @@ fn test_instantiate_template_literal_in_mapped_type_template() {
     let k_name = interner.intern_string("K");
 
     // Create type parameter T (outer, will be substituted)
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -877,7 +877,7 @@ fn test_instantiate_template_literal_in_mapped_type_template() {
         default: None,
         is_const: false,
     };
-    let type_param_k = interner.intern(TypeKey::TypeParameter(k_param.clone()));
+    let type_param_k = interner.intern(TypeData::TypeParameter(k_param.clone()));
 
     // Create template literal `${T}_${K}` as the mapped type's template
     let template = interner.template_literal(vec![
@@ -909,7 +909,7 @@ fn test_instantiate_template_literal_in_mapped_type_template() {
     // After substitution, T is replaced with "prefix" and K is shadowed.
     // Since the constraint is concrete ("a" | "b"), the mapped type is eagerly
     // evaluated to an object: { a: "prefix_a", b: "prefix_b" }
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         let props = &shape.properties;
         assert_eq!(props.len(), 2, "Expected 2 properties, got {}", props.len());
@@ -950,7 +950,7 @@ fn test_instantiate_template_literal_with_number_literal() {
     let t_name = interner.intern_string("T");
 
     // Create `value_${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -972,11 +972,11 @@ fn test_instantiate_template_literal_with_number_literal() {
     // to handle number -> string conversion (or it could be evaluated)
     // Check that it's either a literal string or template literal with the substituted type
     match interner.lookup(result) {
-        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "value_42");
         }
-        Some(TypeKey::TemplateLiteral(spans_id)) => {
+        Some(TypeData::TemplateLiteral(spans_id)) => {
             let spans = interner.template_list(spans_id);
             // Should have the number literal substituted
             assert!(spans.len() >= 1);
@@ -993,7 +993,7 @@ fn test_instantiate_template_literal_empty_string() {
     let t_name = interner.intern_string("T");
 
     // Create `${T}` template literal (just the type param)
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1018,7 +1018,7 @@ fn test_instantiate_template_literal_nested_in_union() {
     let t_name = interner.intern_string("T");
 
     // Create `get${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1039,7 +1039,7 @@ fn test_instantiate_template_literal_nested_in_union() {
     let result = instantiate_type(&interner, union_with_template, &subst);
 
     // Result should be "getName" | number
-    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
         let members = interner.type_list(members);
         assert_eq!(members.len(), 2);
         let expected_str = interner.literal_string("getName");
@@ -1056,7 +1056,7 @@ fn test_instantiate_template_literal_in_function_return() {
     let t_name = interner.intern_string("T");
 
     // Create `get${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1085,7 +1085,7 @@ fn test_instantiate_template_literal_in_function_return() {
     let result = instantiate_type(&interner, func, &subst);
 
     // Check the function's return type
-    if let Some(TypeKey::Function(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Function(shape_id)) = interner.lookup(result) {
         let shape = interner.function_shape(shape_id);
         let expected_return = interner.literal_string("getValue");
         assert_eq!(shape.return_type, expected_return);
@@ -1100,7 +1100,7 @@ fn test_instantiate_template_literal_in_conditional_type() {
     let t_name = interner.intern_string("T");
 
     // Create `prefix_${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1131,13 +1131,13 @@ fn test_instantiate_template_literal_in_conditional_type() {
     // after full evaluation of the conditional
     // For now, check that the conditional has the substituted template
     match interner.lookup(result) {
-        Some(TypeKey::Conditional(cond_id)) => {
+        Some(TypeData::Conditional(cond_id)) => {
             let cond = interner.conditional_type(cond_id);
             // The true_type should have the template evaluated
             let expected_true = interner.literal_string("prefix_test");
             assert_eq!(cond.true_type, expected_true);
         }
-        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
             // If the conditional was fully evaluated
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "prefix_test");
@@ -1158,13 +1158,13 @@ fn test_instantiate_string_intrinsic_uppercase_with_literal() {
     let t_name = interner.intern_string("T");
 
     // Create Uppercase<T>
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let uppercase = interner.intern(TypeKey::StringIntrinsic {
+    let uppercase = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uppercase,
         type_arg: type_param_t,
     });
@@ -1185,13 +1185,13 @@ fn test_instantiate_string_intrinsic_lowercase_with_union() {
     let t_name = interner.intern_string("T");
 
     // Create Lowercase<T>
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let lowercase = interner.intern(TypeKey::StringIntrinsic {
+    let lowercase = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Lowercase,
         type_arg: type_param_t,
     });
@@ -1217,13 +1217,13 @@ fn test_instantiate_string_intrinsic_capitalize() {
     let t_name = interner.intern_string("T");
 
     // Create Capitalize<T>
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let capitalize = interner.intern(TypeKey::StringIntrinsic {
+    let capitalize = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Capitalize,
         type_arg: type_param_t,
     });
@@ -1244,13 +1244,13 @@ fn test_instantiate_string_intrinsic_uncapitalize() {
     let t_name = interner.intern_string("T");
 
     // Create Uncapitalize<T>
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let uncapitalize = interner.intern(TypeKey::StringIntrinsic {
+    let uncapitalize = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uncapitalize,
         type_arg: type_param_t,
     });
@@ -1271,7 +1271,7 @@ fn test_instantiate_string_intrinsic_with_template_literal() {
     let t_name = interner.intern_string("T");
 
     // Create `get${T}` template literal
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1283,7 +1283,7 @@ fn test_instantiate_string_intrinsic_with_template_literal() {
     ]);
 
     // Create Uppercase<`get${T}`>
-    let uppercase = interner.intern(TypeKey::StringIntrinsic {
+    let uppercase = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uppercase,
         type_arg: template,
     });
@@ -1305,13 +1305,13 @@ fn test_instantiate_string_intrinsic_preserves_type_param() {
     let u_name = interner.intern_string("U");
 
     // Create Uppercase<T>
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let uppercase = interner.intern(TypeKey::StringIntrinsic {
+    let uppercase = interner.intern(TypeData::StringIntrinsic {
         kind: StringIntrinsicKind::Uppercase,
         type_arg: type_param_t,
     });
@@ -1323,10 +1323,10 @@ fn test_instantiate_string_intrinsic_preserves_type_param() {
     let result = instantiate_type(&interner, uppercase, &subst);
 
     // T should stay as is - result should still be StringIntrinsic<T>
-    if let Some(TypeKey::StringIntrinsic { kind, type_arg }) = interner.lookup(result) {
+    if let Some(TypeData::StringIntrinsic { kind, type_arg }) = interner.lookup(result) {
         assert_eq!(kind, StringIntrinsicKind::Uppercase);
         // type_arg should still be T
-        if let Some(TypeKey::TypeParameter(info)) = interner.lookup(type_arg) {
+        if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_arg) {
             assert_eq!(info.name, t_name);
         } else {
             panic!("Expected type parameter T in StringIntrinsic");
@@ -1364,8 +1364,8 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     // foo(t: T, u: U) — uses class-level T and U, no own type params
     let foo_sig = CallSignature {
@@ -1430,7 +1430,7 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
     let result = instantiate_type(&interner, callable, &subst);
 
     // Verify the result
-    if let Some(TypeKey::Callable(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Callable(shape_id)) = interner.lookup(result) {
         let shape = interner.callable_shape(shape_id);
         assert_eq!(shape.call_signatures.len(), 2);
 
@@ -1480,8 +1480,8 @@ fn test_object_property_does_not_contaminate_method_type_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
 
     // Method foo3<T>(t: T, u: U): T — shadows class T
     let method_type = interner.function(FunctionShape {
@@ -1531,7 +1531,7 @@ fn test_object_property_does_not_contaminate_method_type_param() {
     let result = instantiate_type(&interner, obj, &subst);
 
     // Verify
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         assert_eq!(shape.properties.len(), 3);
 
@@ -1563,7 +1563,7 @@ fn test_object_property_does_not_contaminate_method_type_param() {
 
         // Method foo3: should still have its own <T> with T unsubstituted in params
         let method_result = foo3_prop.type_id;
-        if let Some(TypeKey::Function(fn_shape_id)) = interner.lookup(method_result) {
+        if let Some(TypeData::Function(fn_shape_id)) = interner.lookup(method_result) {
             let fn_shape = interner.function_shape(fn_shape_id);
             assert_eq!(
                 fn_shape.type_params.len(),

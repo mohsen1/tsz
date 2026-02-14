@@ -50,7 +50,7 @@ fn test_interner_bigint_literal() {
         .expect("bigint literal should be interned");
 
     match key {
-        TypeKey::Literal(LiteralValue::BigInt(atom)) => {
+        TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "123");
         }
         _ => panic!("Expected bigint literal, got {:?}", key),
@@ -264,7 +264,7 @@ fn test_interner_object_property_lookup_cache() {
 
     let obj = interner.object(props);
     let shape_id = match interner.lookup(obj) {
-        Some(TypeKey::Object(shape_id)) => shape_id,
+        Some(TypeData::Object(shape_id)) => shape_id,
         other => panic!("expected object type, got {:?}", other),
     };
 
@@ -289,7 +289,7 @@ fn test_interner_object_property_lookup_cache() {
         TypeId::STRING,
     )]);
     let small_shape_id = match interner.lookup(small) {
-        Some(TypeKey::Object(shape_id)) => shape_id,
+        Some(TypeData::Object(shape_id)) => shape_id,
         other => panic!("expected object type, got {:?}", other),
     };
     assert_eq!(
@@ -334,10 +334,10 @@ fn test_tuple_list_interning_deduplication() {
     let tuple_a = interner.tuple(elements.clone());
     let tuple_b = interner.tuple(elements);
 
-    let Some(TypeKey::Tuple(list_a)) = interner.lookup(tuple_a) else {
+    let Some(TypeData::Tuple(list_a)) = interner.lookup(tuple_a) else {
         panic!("Expected tuple type");
     };
-    let Some(TypeKey::Tuple(list_b)) = interner.lookup(tuple_b) else {
+    let Some(TypeData::Tuple(list_b)) = interner.lookup(tuple_b) else {
         panic!("Expected tuple type");
     };
 
@@ -362,10 +362,10 @@ fn test_template_literal_list_interning_deduplication() {
     let template_a = interner.template_literal(spans.clone());
     let template_b = interner.template_literal(spans);
 
-    let Some(TypeKey::TemplateLiteral(list_a)) = interner.lookup(template_a) else {
+    let Some(TypeData::TemplateLiteral(list_a)) = interner.lookup(template_a) else {
         panic!("Expected template literal type");
     };
-    let Some(TypeKey::TemplateLiteral(list_b)) = interner.lookup(template_b) else {
+    let Some(TypeData::TemplateLiteral(list_b)) = interner.lookup(template_b) else {
         panic!("Expected template literal type");
     };
 
@@ -401,7 +401,7 @@ fn test_intersection_visibility_merging() {
     // Intersection should merge visibility (Private > Public = Private)
     let intersection = interner.intersection2(obj_private, obj_public);
 
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(intersection) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(intersection) {
         let shape = interner.object_shape(shape_id);
         assert_eq!(shape.properties.len(), 1);
         assert_eq!(shape.properties[0].visibility, Visibility::Private);
@@ -439,7 +439,7 @@ fn test_intersection_object_merging() {
 
     let intersection = interner.intersection2(obj1, obj2);
 
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(intersection) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(intersection) {
         let shape = interner.object_shape(shape_id);
         assert_eq!(shape.properties.len(), 2);
         let prop_names: Vec<_> = shape.properties.iter().map(|p| p.name.0).collect();
@@ -500,12 +500,12 @@ fn test_visibility_interning_distinct_shape_ids() {
 
     // They should also have different ObjectShapeIds
     let shape_public = match interner.lookup(obj_public) {
-        Some(TypeKey::Object(shape_id)) => shape_id,
+        Some(TypeData::Object(shape_id)) => shape_id,
         other => panic!("Expected object type, got {:?}", other),
     };
 
     let shape_private = match interner.lookup(obj_private) {
-        Some(TypeKey::Object(shape_id)) => shape_id,
+        Some(TypeData::Object(shape_id)) => shape_id,
         other => panic!("Expected object type, got {:?}", other),
     };
 
@@ -551,12 +551,12 @@ fn test_parent_id_interning_distinct_shape_ids() {
 
     // They should also have different ObjectShapeIds
     let shape_class1 = match interner.lookup(obj_class1) {
-        Some(TypeKey::Object(shape_id)) => shape_id,
+        Some(TypeData::Object(shape_id)) => shape_id,
         other => panic!("Expected object type, got {:?}", other),
     };
 
     let shape_class2 = match interner.lookup(obj_class2) {
-        Some(TypeKey::Object(shape_id)) => shape_id,
+        Some(TypeData::Object(shape_id)) => shape_id,
         other => panic!("Expected object type, got {:?}", other),
     };
 
@@ -692,7 +692,7 @@ fn test_partial_object_merging_in_intersection() {
     );
 
     // The result should be an intersection of merged object and boolean
-    if let Some(TypeKey::Intersection(members)) = interner.lookup(inter1) {
+    if let Some(TypeData::Intersection(members)) = interner.lookup(inter1) {
         let member_list = interner.type_list(members);
         assert_eq!(
             member_list.len(),
@@ -738,7 +738,7 @@ fn test_partial_callable_merging_in_intersection() {
     let inter = interner.intersection(vec![func1, func2, prim]);
 
     // The result should be an intersection of merged callable and boolean
-    if let Some(TypeKey::Intersection(members)) = interner.lookup(inter) {
+    if let Some(TypeData::Intersection(members)) = interner.lookup(inter) {
         let member_list = interner.type_list(members);
         assert_eq!(
             member_list.len(),
@@ -808,7 +808,7 @@ fn test_partial_object_and_callable_merging() {
     let inter = interner.intersection(vec![obj1, obj2, func1, func2]);
 
     // The result should be an intersection with 2 members: merged object + merged callable
-    if let Some(TypeKey::Intersection(members)) = interner.lookup(inter) {
+    if let Some(TypeData::Intersection(members)) = interner.lookup(inter) {
         let member_list = interner.type_list(members);
         assert_eq!(
             member_list.len(),
@@ -817,7 +817,7 @@ fn test_partial_object_and_callable_merging() {
         );
 
         // First member should be the merged object
-        if let Some(TypeKey::Object(_) | TypeKey::ObjectWithIndex(_)) =
+        if let Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) =
             interner.lookup(member_list[0])
         {
             // OK
@@ -826,7 +826,7 @@ fn test_partial_object_and_callable_merging() {
         }
 
         // Second member should be the merged callable
-        if let Some(TypeKey::Callable(shape_id)) = interner.lookup(member_list[1]) {
+        if let Some(TypeData::Callable(shape_id)) = interner.lookup(member_list[1]) {
             // OK - verify it has 2 call signatures
             let callable = interner.callable_shape(shape_id);
             assert_eq!(
@@ -881,7 +881,7 @@ fn test_template_empty_string_removal() {
 
     // Should be a literal empty string, not a template with empty type span
     match interner.lookup(template) {
-        Some(TypeKey::Literal(LiteralValue::String(s))) => {
+        Some(TypeData::Literal(LiteralValue::String(s))) => {
             let s = interner.resolve_atom_ref(s);
             assert!(s.is_empty(), "Should be empty string literal");
         }
@@ -897,7 +897,7 @@ fn test_template_empty_string_removal() {
 
     // Should be a literal "ab", not a template
     match interner.lookup(template2) {
-        Some(TypeKey::Literal(LiteralValue::String(s))) => {
+        Some(TypeData::Literal(LiteralValue::String(s))) => {
             let s = interner.resolve_atom_ref(s);
             assert_eq!(s.to_string(), "ab", "Should be merged 'ab' literal");
         }

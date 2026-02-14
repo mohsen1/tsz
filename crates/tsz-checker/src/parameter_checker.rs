@@ -521,7 +521,7 @@ impl<'a> CheckerState<'a> {
 
             // Check if the type is an array type
             // We need to use a Solver query to check this - following architecture rule
-            // that Checker never inspects TypeKey
+            // that Checker never inspects TypeData
             if !self.is_array_like_type(declared_type) {
                 self.error_at_node(
                     param.type_annotation,

@@ -8,7 +8,7 @@
 
 use crate::TypeDatabase;
 use crate::contextual::ContextualTypeContext;
-use crate::types::{ObjectFlags, PropertyInfo, TypeId, TypeKey};
+use crate::types::{ObjectFlags, PropertyInfo, TypeData, TypeId};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
@@ -138,15 +138,15 @@ impl<'a> ObjectLiteralBuilder<'a> {
         };
 
         match key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.db.object_shape(shape_id);
                 shape.properties.to_vec()
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.db.callable_shape(shape_id);
                 shape.properties.to_vec()
             }
-            TypeKey::Intersection(list_id) => {
+            TypeData::Intersection(list_id) => {
                 let members = self.db.type_list(list_id);
                 let mut merged: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
 

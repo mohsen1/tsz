@@ -1363,7 +1363,7 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::is_compiler_managed_type;
 
         // Skip built-in types that have special handling in TypeLowering
-        // These types use built-in TypeKey representations instead of Refs
+        // These types use built-in TypeData representations instead of Refs
         if let Some(node) = self.ctx.arena.get(idx)
             && let Some(ident) = self.ctx.arena.get_identifier(node)
         {

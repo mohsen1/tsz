@@ -4,7 +4,7 @@
 //! It uses:
 //!
 //! - **Ena**: For unification (Union-Find) in generic type inference
-//! - **Custom TypeKey**: Structural type representation with interning
+//! - **Custom TypeData**: Structural type representation with interning
 //! - **Cycle Detection**: Coinductive semantics for recursive types
 //!
 //! Key benefits:

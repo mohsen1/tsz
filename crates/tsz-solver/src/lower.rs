@@ -1679,35 +1679,35 @@ impl<'a> TypeLowering<'a> {
         };
 
         match key {
-            TypeKey::TypeParameter(_)
-            | TypeKey::Infer(_)
-            | TypeKey::ThisType
-            | TypeKey::TypeQuery(_)
-            | TypeKey::Conditional(_)
-            | TypeKey::Mapped(_)
-            | TypeKey::IndexAccess(_, _)
-            | TypeKey::KeyOf(_) => true,
-            TypeKey::Union(members) | TypeKey::Intersection(members) => {
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::ThisType
+            | TypeData::TypeQuery(_)
+            | TypeData::Conditional(_)
+            | TypeData::Mapped(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::KeyOf(_) => true,
+            TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 members
                     .iter()
                     .any(|member| self.contains_meta_type_inner(*member, visited))
             }
-            TypeKey::Array(elem) => self.contains_meta_type_inner(elem, visited),
-            TypeKey::Tuple(elements) => {
+            TypeData::Array(elem) => self.contains_meta_type_inner(elem, visited),
+            TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(elements);
                 elements
                     .iter()
                     .any(|elem| self.contains_meta_type_inner(elem.type_id, visited))
             }
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 shape
                     .properties
                     .iter()
                     .any(|prop| self.contains_meta_type_inner(prop.type_id, visited))
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 if shape
                     .properties
@@ -1730,7 +1730,7 @@ impl<'a> TypeLowering<'a> {
                 }
                 false
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 if shape
                     .params
@@ -1756,7 +1756,7 @@ impl<'a> TypeLowering<'a> {
                 }
                 false
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 for sig in &shape.call_signatures {
                     if sig
@@ -1811,7 +1811,7 @@ impl<'a> TypeLowering<'a> {
                     .iter()
                     .any(|prop| self.contains_meta_type_inner(prop.type_id, visited))
             }
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 if self.contains_meta_type_inner(app.base, visited) {
                     return true;
@@ -1820,29 +1820,29 @@ impl<'a> TypeLowering<'a> {
                     .iter()
                     .any(|arg| self.contains_meta_type_inner(*arg, visited))
             }
-            TypeKey::ReadonlyType(inner) => self.contains_meta_type_inner(inner, visited),
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::ReadonlyType(inner) => self.contains_meta_type_inner(inner, visited),
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 spans.iter().any(|span| match span {
                     TemplateSpan::Text(_) => false,
                     TemplateSpan::Type(inner) => self.contains_meta_type_inner(*inner, visited),
                 })
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => {
+            TypeData::StringIntrinsic { type_arg, .. } => {
                 self.contains_meta_type_inner(type_arg, visited)
             }
-            TypeKey::Enum(_def_id, member_type) => {
+            TypeData::Enum(_def_id, member_type) => {
                 self.contains_meta_type_inner(member_type, visited)
             }
-            TypeKey::Lazy(_)
-            | TypeKey::Recursive(_)
-            | TypeKey::BoundParameter(_)
-            | TypeKey::Intrinsic(_)
-            | TypeKey::Literal(_)
-            | TypeKey::UniqueSymbol(_)
-            | TypeKey::ModuleNamespace(_)
-            | TypeKey::Error => false,
-            TypeKey::NoInfer(inner) => self.contains_meta_type_inner(inner, visited),
+            TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Error => false,
+            TypeData::NoInfer(inner) => self.contains_meta_type_inner(inner, visited),
         }
     }
 
@@ -2020,7 +2020,7 @@ impl<'a> TypeLowering<'a> {
         };
 
         match key {
-            TypeKey::Infer(info) => {
+            TypeData::Infer(info) => {
                 self.add_type_param_binding(info.name, type_id);
                 if let Some(constraint) = info.constraint {
                     self.collect_infer_bindings(constraint, visited);
@@ -2029,26 +2029,26 @@ impl<'a> TypeLowering<'a> {
                     self.collect_infer_bindings(default, visited);
                 }
             }
-            TypeKey::Array(elem) => self.collect_infer_bindings(elem, visited),
-            TypeKey::Tuple(elements) => {
+            TypeData::Array(elem) => self.collect_infer_bindings(elem, visited),
+            TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(elements);
                 for element in elements.iter() {
                     self.collect_infer_bindings(element.type_id, visited);
                 }
             }
-            TypeKey::Union(members) | TypeKey::Intersection(members) => {
+            TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 for member in members.iter() {
                     self.collect_infer_bindings(*member, visited);
                 }
             }
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in shape.properties.iter() {
                     self.collect_infer_bindings(prop.type_id, visited);
                 }
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in &shape.properties {
                     self.collect_infer_bindings(prop.type_id, visited);
@@ -2062,7 +2062,7 @@ impl<'a> TypeLowering<'a> {
                     self.collect_infer_bindings(index.value_type, visited);
                 }
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 for param in &shape.params {
                     self.collect_infer_bindings(param.type_id, visited);
@@ -2077,7 +2077,7 @@ impl<'a> TypeLowering<'a> {
                     }
                 }
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
                 for sig in &shape.call_signatures {
                     for param in &sig.params {
@@ -2111,7 +2111,7 @@ impl<'a> TypeLowering<'a> {
                     self.collect_infer_bindings(prop.type_id, visited);
                 }
             }
-            TypeKey::TypeParameter(info) => {
+            TypeData::TypeParameter(info) => {
                 if let Some(constraint) = info.constraint {
                     self.collect_infer_bindings(constraint, visited);
                 }
@@ -2119,21 +2119,21 @@ impl<'a> TypeLowering<'a> {
                     self.collect_infer_bindings(default, visited);
                 }
             }
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 self.collect_infer_bindings(app.base, visited);
                 for &arg in &app.args {
                     self.collect_infer_bindings(arg, visited);
                 }
             }
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(cond_id);
                 self.collect_infer_bindings(cond.check_type, visited);
                 self.collect_infer_bindings(cond.extends_type, visited);
                 self.collect_infer_bindings(cond.true_type, visited);
                 self.collect_infer_bindings(cond.false_type, visited);
             }
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(mapped_id);
                 if let Some(constraint) = mapped.type_param.constraint {
                     self.collect_infer_bindings(constraint, visited);
@@ -2147,14 +2147,14 @@ impl<'a> TypeLowering<'a> {
                 }
                 self.collect_infer_bindings(mapped.template, visited);
             }
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 self.collect_infer_bindings(obj, visited);
                 self.collect_infer_bindings(idx, visited);
             }
-            TypeKey::KeyOf(inner) | TypeKey::ReadonlyType(inner) | TypeKey::NoInfer(inner) => {
+            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
                 self.collect_infer_bindings(inner, visited);
             }
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 for span in spans.iter() {
                     if let TemplateSpan::Type(inner) = span {
@@ -2162,22 +2162,22 @@ impl<'a> TypeLowering<'a> {
                     }
                 }
             }
-            TypeKey::StringIntrinsic { type_arg, .. } => {
+            TypeData::StringIntrinsic { type_arg, .. } => {
                 self.collect_infer_bindings(type_arg, visited);
             }
-            TypeKey::Enum(_def_id, member_type) => {
+            TypeData::Enum(_def_id, member_type) => {
                 self.collect_infer_bindings(member_type, visited);
             }
-            TypeKey::Intrinsic(_)
-            | TypeKey::Literal(_)
-            | TypeKey::Lazy(_)
-            | TypeKey::Recursive(_)
-            | TypeKey::BoundParameter(_)
-            | TypeKey::TypeQuery(_)
-            | TypeKey::UniqueSymbol(_)
-            | TypeKey::ThisType
-            | TypeKey::ModuleNamespace(_)
-            | TypeKey::Error => {}
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ThisType
+            | TypeData::ModuleNamespace(_)
+            | TypeData::Error => {}
         }
     }
 

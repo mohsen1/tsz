@@ -36,7 +36,7 @@ mod generic_strictness_tests {
             TypeId::NUMBER,
         )]);
 
-        let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: Some(identifiable_constraint),
             default: None,
@@ -64,7 +64,7 @@ mod generic_strictness_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Create an unconstrained generic parameter
-        let t_param_unconstrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        let t_param_unconstrained = interner.intern(TypeData::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: None,
             default: None,
@@ -103,7 +103,7 @@ mod generic_strictness_tests {
             TypeId::NUMBER,
         )]);
 
-        let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: Some(identifiable_constraint),
             default: None,
@@ -831,7 +831,7 @@ mod function_variance_tests {
         checker.set_strict_function_types(true);
 
         // <T>(x: T) => T
-        let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: None,
             default: None,
@@ -855,7 +855,7 @@ mod function_variance_tests {
 
         // <T>(x: T) => T where T extends number
         let number_constraint = TypeId::NUMBER;
-        let t_constrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        let t_constrained = interner.intern(TypeData::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: Some(number_constraint),
             default: None,
@@ -1446,7 +1446,7 @@ mod unknown_fallback_tests {
         let mut checker = CompatChecker::new(&interner);
 
         // Generic parameter without constraint should fallback to Unknown
-        let t_param_unconstrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+        let t_param_unconstrained = interner.intern(TypeData::TypeParameter(TypeParamInfo {
             name: interner.intern_string("T"),
             constraint: None, // No constraint - should use Unknown
             default: None,
@@ -2129,7 +2129,7 @@ mod typescript_parity_tuple_array_tests {
         // ["a", "b"] - tuple of string literals
         let tuple_literal = interner.tuple(vec![
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                type_id: interner.intern(TypeData::Literal(LiteralValue::String(
                     interner.intern_string("a"),
                 ))),
                 name: None,
@@ -2137,7 +2137,7 @@ mod typescript_parity_tuple_array_tests {
                 rest: false,
             },
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                type_id: interner.intern(TypeData::Literal(LiteralValue::String(
                     interner.intern_string("b"),
                 ))),
                 name: None,
@@ -2166,13 +2166,14 @@ mod typescript_parity_tuple_array_tests {
         // [1, "a"] - mixed tuple
         let mixed_tuple = interner.tuple(vec![
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+                type_id: interner
+                    .intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
                 name: None,
                 optional: false,
                 rest: false,
             },
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                type_id: interner.intern(TypeData::Literal(LiteralValue::String(
                     interner.intern_string("a"),
                 ))),
                 name: None,
@@ -2201,13 +2202,14 @@ mod typescript_parity_tuple_array_tests {
         // [1, "two", 3]
         let mixed_tuple = interner.tuple(vec![
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
+                type_id: interner
+                    .intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0)))),
                 name: None,
                 optional: false,
                 rest: false,
             },
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                type_id: interner.intern(TypeData::Literal(LiteralValue::String(
                     interner.intern_string("two"),
                 ))),
                 name: None,
@@ -2215,7 +2217,8 @@ mod typescript_parity_tuple_array_tests {
                 rest: false,
             },
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::Number(OrderedFloat(3.0)))),
+                type_id: interner
+                    .intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(3.0)))),
                 name: None,
                 optional: false,
                 rest: false,
@@ -2324,7 +2327,7 @@ mod typescript_parity_tuple_array_tests {
         // ["a", "b"]
         let tuple_literal = interner.tuple(vec![
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                type_id: interner.intern(TypeData::Literal(LiteralValue::String(
                     interner.intern_string("a"),
                 ))),
                 name: None,
@@ -2332,7 +2335,7 @@ mod typescript_parity_tuple_array_tests {
                 rest: false,
             },
             TupleElement {
-                type_id: interner.intern(TypeKey::Literal(LiteralValue::String(
+                type_id: interner.intern(TypeData::Literal(LiteralValue::String(
                     interner.intern_string("b"),
                 ))),
                 name: None,
@@ -2343,7 +2346,7 @@ mod typescript_parity_tuple_array_tests {
 
         // readonly string[]
         let readonly_string_array =
-            interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::STRING)));
+            interner.intern(TypeData::ReadonlyType(interner.array(TypeId::STRING)));
 
         // Tuple should be assignable to readonly array
         assert!(

@@ -2489,7 +2489,7 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Create def_id_resolver that converts SymbolIds to DefIds
-                // This is required for Phase 4.2 which uses TypeKey::Lazy(DefId) everywhere
+                // This is required for Phase 4.2 which uses TypeData::Lazy(DefId) everywhere
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
                     resolver(node_idx)
                         .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))

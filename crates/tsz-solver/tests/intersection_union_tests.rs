@@ -146,7 +146,7 @@ fn test_intersection_object_merge_properties() {
     let result = interner.intersection2(obj_a, obj_b);
 
     // Result should have both properties
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         assert_eq!(shape.properties.len(), 2, "Should have both properties");
 
@@ -189,7 +189,7 @@ fn test_intersection_object_same_property_intersect_types() {
 
     // The intersection creates an object with a property of type never
     // This is different from the whole intersection being never
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         let prop_x = shape
             .properties
@@ -223,7 +223,7 @@ fn test_intersection_required_wins_over_optional() {
     // optional & required = required (required wins)
     let result = interner.intersection2(obj_optional, obj_required);
 
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         let prop_x = shape
             .properties
@@ -253,7 +253,7 @@ fn test_intersection_readonly_is_cumulative() {
     // readonly & mutable = readonly (readonly is cumulative)
     let result = interner.intersection2(obj_readonly, obj_mutable);
 
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         let prop_x = shape
             .properties
@@ -283,7 +283,7 @@ fn test_intersection_both_optional_stays_optional() {
     // optional & optional = optional
     let result = interner.intersection2(obj_a, obj_b);
 
-    if let Some(TypeKey::Object(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Object(shape_id)) = interner.lookup(result) {
         let shape = interner.object_shape(shape_id);
         let prop_x = shape
             .properties
@@ -339,7 +339,7 @@ fn test_intersection_function_overloads() {
     // Intersection should create a callable with both signatures
     let result = interner.intersection2(func1, func2);
 
-    if let Some(TypeKey::Callable(shape_id)) = interner.lookup(result) {
+    if let Some(TypeData::Callable(shape_id)) = interner.lookup(result) {
         let shape = interner.callable_shape(shape_id);
         assert_eq!(
             shape.call_signatures.len(),
@@ -458,7 +458,7 @@ fn test_union_literals_without_primitive_stay_as_union() {
     // "hello" | "world" should stay as a union (no primitive present)
     let result = interner.union2(hello, world);
 
-    if let Some(TypeKey::Union(list_id)) = interner.lookup(result) {
+    if let Some(TypeData::Union(list_id)) = interner.lookup(result) {
         let members = interner.type_list(list_id);
         assert_eq!(members.len(), 2, "Should have both literals");
     } else {
@@ -526,7 +526,7 @@ fn test_union_multiple_never_removed() {
         TypeId::NEVER,
     ]);
 
-    if let Some(TypeKey::Union(list_id)) = interner.lookup(result) {
+    if let Some(TypeData::Union(list_id)) = interner.lookup(result) {
         let members = interner.type_list(list_id);
         assert_eq!(
             members.len(),
@@ -554,7 +554,7 @@ fn test_union_deduplicates() {
     // string | string | number should normalize to string | number
     let result = interner.union(vec![TypeId::STRING, TypeId::STRING, TypeId::NUMBER]);
 
-    if let Some(TypeKey::Union(list_id)) = interner.lookup(result) {
+    if let Some(TypeData::Union(list_id)) = interner.lookup(result) {
         let members = interner.type_list(list_id);
         assert_eq!(members.len(), 2, "Should deduplicate string");
     } else {
@@ -653,7 +653,7 @@ fn test_distributive_conditional_over_union() {
 
     // The result should be a conditional type with is_distributive flag set
     // Note: The actual distribution happens during type evaluation in the evaluator
-    if let Some(TypeKey::Conditional(cond_id)) = interner.lookup(result) {
+    if let Some(TypeData::Conditional(cond_id)) = interner.lookup(result) {
         let cond = interner.conditional_type(cond_id);
         assert!(cond.is_distributive, "Should be marked as distributive");
         assert_eq!(cond.check_type, union);

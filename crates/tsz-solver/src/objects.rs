@@ -158,18 +158,18 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 
         // 2. Handle different type variants
         match self.interner.lookup(resolved) {
-            Some(TypeKey::Intersection(members_id)) => {
+            Some(TypeData::Intersection(members_id)) => {
                 // Recursively collect from all intersection members
                 for &member in self.interner.type_list(members_id).iter() {
                     self.collect(member);
                 }
             }
-            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 self.merge_shape(&shape);
             }
             // Any type in intersection makes everything Any (commutative)
-            Some(TypeKey::Intrinsic(IntrinsicKind::Any)) => {
+            Some(TypeData::Intrinsic(IntrinsicKind::Any)) => {
                 self.found_any = true;
             }
             // Never in intersection makes the whole thing Never

@@ -60,13 +60,13 @@ fn test_type_kind_classification() {
 
     // Intersection types - use type parameters since the interner simplifies
     // primitive intersections to never and object intersections to merged objects
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -219,13 +219,13 @@ fn test_is_intersection_type() {
 
     // Use type parameters since the interner simplifies primitive intersections
     // to never and object intersections to merged objects
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -263,7 +263,7 @@ fn test_is_tuple_type() {
 fn test_is_type_parameter() {
     let interner = TypeInterner::new();
 
-    let param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -353,7 +353,7 @@ fn test_collect_all_types_function() {
 fn test_contains_type_parameters() {
     let interner = TypeInterner::new();
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -392,11 +392,11 @@ fn test_contains_type_matching() {
     let union = interner.union(vec![TypeId::NUMBER, lit]);
 
     let has_literal =
-        contains_type_matching(&interner, union, |key| matches!(key, TypeKey::Literal(_)));
+        contains_type_matching(&interner, union, |key| matches!(key, TypeData::Literal(_)));
     assert!(has_literal);
 
     let no_literal = contains_type_matching(&interner, TypeId::STRING, |key| {
-        matches!(key, TypeKey::Literal(_))
+        matches!(key, TypeData::Literal(_))
     });
     assert!(!no_literal);
 }
@@ -411,12 +411,12 @@ fn test_type_predicate_visitor() {
 
     let lit = interner.literal_string("test");
     let is_str_lit = test_type(&interner, lit, |key| {
-        matches!(key, TypeKey::Literal(LiteralValue::String(_)))
+        matches!(key, TypeData::Literal(LiteralValue::String(_)))
     });
     assert!(is_str_lit);
 
     let is_num_lit = test_type(&interner, lit, |key| {
-        matches!(key, TypeKey::Literal(LiteralValue::Number(_)))
+        matches!(key, TypeData::Literal(LiteralValue::Number(_)))
     });
     assert!(!is_num_lit);
 }
@@ -439,13 +439,13 @@ fn test_type_collector_visitor_basic() {
 fn test_type_list_extractors_for_union_and_intersection() {
     let interner = TypeInterner::new();
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -570,7 +570,7 @@ fn test_template_literal_and_index_access_extractors() {
     let spans = interner.template_list(template_id);
     assert_eq!(spans.len(), 2);
 
-    let index_access = interner.intern(TypeKey::IndexAccess(TypeId::OBJECT, TypeId::NUMBER));
+    let index_access = interner.intern(TypeData::IndexAccess(TypeId::OBJECT, TypeId::NUMBER));
     assert_eq!(
         index_access_parts(&interner, index_access),
         Some((TypeId::OBJECT, TypeId::NUMBER))
@@ -587,17 +587,17 @@ fn test_type_param_ref_and_lazy_extractors() {
         default: None,
         is_const: false,
     };
-    let param_type = interner.intern(TypeKey::TypeParameter(param_info.clone()));
+    let param_type = interner.intern(TypeData::TypeParameter(param_info.clone()));
     assert_eq!(type_param_info(&interner, param_type), Some(param_info));
 
-    // After SymbolRef to DefId migration, interner.reference() creates TypeKey::Lazy(DefId)
+    // After SymbolRef to DefId migration, interner.reference() creates TypeData::Lazy(DefId)
     // The ref_symbol function now returns None for Lazy types since they use DefId
     let symbol = SymbolRef(42);
     let ref_type = interner.reference(symbol);
     assert_eq!(ref_symbol(&interner, ref_type), None);
 
     let def_id = DefId(7);
-    let lazy_type = interner.intern(TypeKey::Lazy(def_id));
+    let lazy_type = interner.intern(TypeData::Lazy(def_id));
     assert_eq!(lazy_def_id(&interner, lazy_type), Some(def_id));
 }
 
@@ -646,7 +646,7 @@ fn test_keyof_readonly_query_and_unique_symbol_extractors() {
     let interner = TypeInterner::new();
 
     let obj = interner.object(vec![]);
-    let keyof_type = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_type = interner.intern(TypeData::KeyOf(obj));
     assert_eq!(keyof_inner_type(&interner, keyof_type), Some(obj));
 
     let readonly_type = interner.readonly_type(TypeId::STRING);
@@ -656,10 +656,10 @@ fn test_keyof_readonly_query_and_unique_symbol_extractors() {
     );
 
     let symbol = SymbolRef(99);
-    let query = interner.intern(TypeKey::TypeQuery(symbol));
+    let query = interner.intern(TypeData::TypeQuery(symbol));
     assert_eq!(type_query_symbol(&interner, query), Some(symbol));
 
-    let unique = interner.intern(TypeKey::UniqueSymbol(symbol));
+    let unique = interner.intern(TypeData::UniqueSymbol(symbol));
     assert_eq!(unique_symbol_ref(&interner, unique), Some(symbol));
 }
 
@@ -708,7 +708,7 @@ fn test_function_and_callable_extractors() {
 fn test_is_this_type_and_contains_this_type() {
     let interner = TypeInterner::new();
 
-    let this_type = interner.intern(TypeKey::ThisType);
+    let this_type = interner.intern(TypeData::ThisType);
     assert!(is_this_type(&interner, this_type));
     assert!(!is_this_type(&interner, TypeId::STRING));
 
@@ -721,7 +721,7 @@ fn test_is_this_type_and_contains_this_type() {
 fn test_contains_infer_types() {
     let interner = TypeInterner::new();
 
-    let infer_type = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_type = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("R"),
         constraint: None,
         default: None,
@@ -740,7 +740,7 @@ fn test_reference_and_namespace_predicates() {
     let symbol = SymbolRef(1);
     let ref_type = interner.reference(symbol);
     let app_type = interner.application(ref_type, vec![TypeId::STRING]);
-    let module_ns = interner.intern(TypeKey::ModuleNamespace(symbol));
+    let module_ns = interner.intern(TypeData::ModuleNamespace(symbol));
 
     assert!(is_type_reference(&interner, ref_type));
     assert!(!is_type_reference(&interner, TypeId::STRING));
@@ -774,7 +774,7 @@ fn test_meta_type_predicates() {
         readonly_modifier: None,
         optional_modifier: None,
     });
-    let index_access = interner.intern(TypeKey::IndexAccess(TypeId::OBJECT, TypeId::NUMBER));
+    let index_access = interner.intern(TypeData::IndexAccess(TypeId::OBJECT, TypeId::NUMBER));
     let template = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("t")),
         TemplateSpan::Type(TypeId::STRING),

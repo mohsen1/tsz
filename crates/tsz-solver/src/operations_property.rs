@@ -697,7 +697,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Reconstruct obj_type for PropertyNotFound result
         let obj_type = self
             .interner()
-            .intern(crate::types::TypeKey::ObjectWithIndex(ObjectShapeId(
+            .intern(crate::types::TypeData::ObjectWithIndex(ObjectShapeId(
                 shape_id,
             )));
 
@@ -1078,10 +1078,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
     /// For a mapped type like `{ [P in keyof T]: ... }`, returns `T`.
     /// Returns `None` if the mapped type is not homomorphic.
     fn get_homomorphic_source(&self, mapped: &MappedType) -> Option<TypeId> {
-        use crate::types::TypeKey;
+        use crate::types::TypeData;
 
         // Check if constraint is `keyof T`
-        if let Some(TypeKey::KeyOf(source)) = self.interner().lookup(mapped.constraint) {
+        if let Some(TypeData::KeyOf(source)) = self.interner().lookup(mapped.constraint) {
             return Some(source);
         }
 
@@ -1090,12 +1090,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     /// Check if a type is array-like (array, tuple, or type parameter constrained to array).
     fn is_array_like_type(&self, type_id: TypeId) -> bool {
-        use crate::types::TypeKey;
+        use crate::types::TypeData;
 
         match self.interner().lookup(type_id) {
-            Some(TypeKey::Array(_)) => true,
-            Some(TypeKey::Tuple(_)) => true,
-            Some(TypeKey::TypeParameter(info)) => {
+            Some(TypeData::Array(_)) => true,
+            Some(TypeData::Tuple(_)) => true,
+            Some(TypeData::TypeParameter(info)) => {
                 // Check if the type parameter has an array-like constraint
                 if let Some(constraint) = info.constraint {
                     self.is_array_like_type(constraint)
@@ -1103,13 +1103,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     false
                 }
             }
-            Some(TypeKey::ReadonlyType(inner)) => self.is_array_like_type(inner),
+            Some(TypeData::ReadonlyType(inner)) => self.is_array_like_type(inner),
             // Also check for union types where all members are array-like
-            Some(TypeKey::Union(members)) => {
+            Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);
                 !members.is_empty() && members.iter().all(|&m| self.is_array_like_type(m))
             }
-            Some(TypeKey::Intersection(members)) => {
+            Some(TypeData::Intersection(members)) => {
                 // For intersection, at least one member should be array-like
                 let members = self.interner().type_list(members);
                 members.iter().any(|&m| self.is_array_like_type(m))
@@ -1120,7 +1120,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     /// Check if a property name is valid in a mapped type's constraint.
     fn is_key_in_mapped_constraint(&self, constraint: TypeId, prop_name: &str) -> bool {
-        use crate::types::{LiteralValue, TypeKey};
+        use crate::types::{LiteralValue, TypeData};
 
         // Evaluate the constraint to try to reduce it
         let evaluated = self
@@ -1133,12 +1133,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         match key {
             // Single string literal - exact match
-            TypeKey::Literal(LiteralValue::String(s)) => {
+            TypeData::Literal(LiteralValue::String(s)) => {
                 self.interner().resolve_atom(s) == prop_name
             }
 
             // Union of literals - check if prop_name is in the union
-            TypeKey::Union(members) => {
+            TypeData::Union(members) => {
                 let members = self.interner().type_list(members);
                 for &member in members.iter() {
                     if member == TypeId::STRING {
@@ -1154,7 +1154,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // Intersection - key must be valid in ALL members
-            TypeKey::Intersection(members) => {
+            TypeData::Intersection(members) => {
                 let members = self.interner().type_list(members);
                 // For intersection of key types, a key is valid if it's in the intersection
                 // This is conservative - we check if it might be valid
@@ -1164,24 +1164,24 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // string type covers all string properties
-            TypeKey::Intrinsic(crate::types::IntrinsicKind::String) => true,
+            TypeData::Intrinsic(crate::types::IntrinsicKind::String) => true,
 
             // KeyOf that couldn't be fully evaluated - be permissive
             // This handles cases like `keyof T` where T is a type parameter
-            TypeKey::KeyOf(_) => true,
+            TypeData::KeyOf(_) => true,
 
             // Type parameters - we can't know the keys statically, be permissive
-            TypeKey::TypeParameter(_) => true,
+            TypeData::TypeParameter(_) => true,
 
             // Conditional types - try to evaluate them
             // If evaluation didn't reduce it, be permissive as we can't know statically
-            TypeKey::Conditional(_) => true,
+            TypeData::Conditional(_) => true,
 
             // Application types that didn't fully evaluate - be permissive
-            TypeKey::Application(_) => true,
+            TypeData::Application(_) => true,
 
             // Infer types in conditional context - be permissive
-            TypeKey::Infer(_) => true,
+            TypeData::Infer(_) => true,
 
             // Other types - be conservative and reject
             _ => false,
@@ -1190,12 +1190,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     /// Check if a mapped type has a string index signature (constraint includes `string`).
     fn mapped_has_string_index(&self, mapped: &MappedType) -> bool {
-        use crate::types::{IntrinsicKind, TypeKey};
+        use crate::types::{IntrinsicKind, TypeData};
 
         let constraint = mapped.constraint;
 
         // Evaluate keyof if needed
-        let evaluated = if let Some(TypeKey::KeyOf(operand)) = self.interner().lookup(constraint) {
+        let evaluated = if let Some(TypeData::KeyOf(operand)) = self.interner().lookup(constraint) {
             let keyof_type = self.interner().keyof(operand);
             self.db
                 .evaluate_type_with_options(keyof_type, self.no_unchecked_indexed_access)
@@ -1207,13 +1207,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return true;
         }
 
-        if let Some(TypeKey::Union(members)) = self.interner().lookup(evaluated) {
+        if let Some(TypeData::Union(members)) = self.interner().lookup(evaluated) {
             let members = self.interner().type_list(members);
             for &member in members.iter() {
                 if member == TypeId::STRING {
                     return true;
                 }
-                if let Some(TypeKey::Intrinsic(IntrinsicKind::String)) =
+                if let Some(TypeData::Intrinsic(IntrinsicKind::String)) =
                     self.interner().lookup(member)
                 {
                     return true;
@@ -1221,7 +1221,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
         }
 
-        if let Some(TypeKey::Intrinsic(IntrinsicKind::String)) = self.interner().lookup(evaluated) {
+        if let Some(TypeData::Intrinsic(IntrinsicKind::String)) = self.interner().lookup(evaluated)
+        {
             return true;
         }
 
@@ -1245,7 +1246,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let key_opt = self.interner().lookup(obj_type);
         if let Some(key) = key_opt {
             let result = match key {
-                TypeKey::Intrinsic(kind) => {
+                TypeData::Intrinsic(kind) => {
                     // Inline visitor logic for intrinsics
                     match kind {
                         IntrinsicKind::Any => Some(PropertyAccessResult::Success {
@@ -1275,27 +1276,27 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         _ => None,
                     }
                 }
-                TypeKey::Object(shape_id) => {
+                TypeData::Object(shape_id) => {
                     // Inline visitor logic for Object - calls visit_object implementation
                     self.visit_object_impl(shape_id.0, prop_name, prop_atom)
                 }
-                TypeKey::ObjectWithIndex(shape_id) => {
+                TypeData::ObjectWithIndex(shape_id) => {
                     // Inline visitor logic for ObjectWithIndex - calls visit_object_with_index implementation
                     self.visit_object_with_index_impl(shape_id.0, prop_name, prop_atom)
                 }
-                TypeKey::Array(_elem) => {
+                TypeData::Array(_elem) => {
                     // Inline visitor logic for Array
                     self.visit_array_impl(obj_type, prop_name, prop_atom)
                 }
-                TypeKey::Tuple(_list_id) => {
+                TypeData::Tuple(_list_id) => {
                     // Inline visitor logic for Tuple
                     self.visit_array_impl(obj_type, prop_name, prop_atom)
                 }
-                TypeKey::Union(list_id) => {
+                TypeData::Union(list_id) => {
                     // Inline visitor logic for Union - calls visit_union implementation
                     self.visit_union_impl(list_id.0, prop_name, prop_atom)
                 }
-                // Note: TypeKey::Application is handled in the fallback section with proper type substitution
+                // Note: TypeData::Application is handled in the fallback section with proper type substitution
                 _ => None, // Not yet migrated to visitor
             };
 
@@ -1319,7 +1320,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         match key {
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
@@ -1369,7 +1370,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
@@ -1415,13 +1416,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            TypeKey::Function(_) => {
+            TypeData::Function(_) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_function_property(obj_type, prop_name, prop_atom)
             }
 
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
@@ -1445,9 +1446,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 self.resolve_function_property(obj_type, prop_name, prop_atom)
             }
 
-            // TypeKey::Union - migrated to visitor pattern (see visit_union_impl)
+            // TypeData::Union - migrated to visitor pattern (see visit_union_impl)
             // This should never be reached since visitor handles it above
-            TypeKey::Intersection(members) => {
+            TypeData::Intersection(members) => {
                 let members = self.interner().type_list(members);
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
@@ -1553,11 +1554,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            TypeKey::ReadonlyType(inner) => {
+            TypeData::ReadonlyType(inner) => {
                 self.resolve_property_access_inner(inner, prop_name, prop_atom)
             }
 
-            TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+            TypeData::TypeParameter(info) | TypeData::Infer(info) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 if let Some(constraint) = info.constraint {
@@ -1577,7 +1578,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // TS apparent members: literals inherit primitive wrapper methods.
-            TypeKey::Literal(ref literal) => {
+            TypeData::Literal(ref literal) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 match literal {
@@ -1588,38 +1589,38 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 }
             }
 
-            TypeKey::TemplateLiteral(_) => {
+            TypeData::TemplateLiteral(_) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_string_property(prop_name, prop_atom)
             }
 
             // Built-in properties
-            TypeKey::Intrinsic(IntrinsicKind::String) => {
+            TypeData::Intrinsic(IntrinsicKind::String) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_string_property(prop_name, prop_atom)
             }
 
-            TypeKey::Intrinsic(IntrinsicKind::Number) => {
+            TypeData::Intrinsic(IntrinsicKind::Number) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_number_property(prop_name, prop_atom)
             }
 
-            TypeKey::Intrinsic(IntrinsicKind::Boolean) => {
+            TypeData::Intrinsic(IntrinsicKind::Boolean) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_boolean_property(prop_name, prop_atom)
             }
 
-            TypeKey::Intrinsic(IntrinsicKind::Bigint) => {
+            TypeData::Intrinsic(IntrinsicKind::Bigint) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_bigint_property(prop_name, prop_atom)
             }
 
-            TypeKey::Intrinsic(IntrinsicKind::Object) => {
+            TypeData::Intrinsic(IntrinsicKind::Object) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_object_member(prop_name, prop_atom).unwrap_or(
@@ -1630,20 +1631,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 )
             }
 
-            TypeKey::Array(_) => {
+            TypeData::Array(_) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_array_property(obj_type, prop_name, prop_atom)
             }
 
-            TypeKey::Tuple(_) => {
+            TypeData::Tuple(_) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 self.resolve_array_property(obj_type, prop_name, prop_atom)
             }
 
             // Application: handle nominally (preserve class/interface identity)
-            TypeKey::Application(app_id) => {
+            TypeData::Application(app_id) => {
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
                     None => {
@@ -1664,7 +1665,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // Mapped: try lazy property resolution first to avoid OOM on large mapped types
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
 
@@ -1710,7 +1711,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // TypeQuery types: typeof queries that need resolution to their structural form
-            TypeKey::TypeQuery(_) => {
+            TypeData::TypeQuery(_) => {
                 let evaluated = self
                     .db
                     .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
@@ -1735,7 +1736,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // Conditional types need evaluation to their resolved form
-            TypeKey::Conditional(_) => {
+            TypeData::Conditional(_) => {
                 // Add recursion guard for consistency with other recursive type resolutions
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
@@ -1775,7 +1776,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // Index access types need evaluation
-            TypeKey::IndexAccess(_, _) => {
+            TypeData::IndexAccess(_, _) => {
                 // Add recursion guard for consistency with other recursive type resolutions
                 let _guard = match self.enter_property_access_guard(obj_type) {
                     Some(guard) => guard,
@@ -1813,7 +1814,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // KeyOf types need evaluation
-            TypeKey::KeyOf(_) => {
+            TypeData::KeyOf(_) => {
                 let evaluated = self
                     .db
                     .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
@@ -1829,7 +1830,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // ThisType: represents 'this' type in a class/interface context
             // Should be resolved to the actual class type by the checker
-            TypeKey::ThisType => {
+            TypeData::ThisType => {
                 let prop_atom =
                     prop_atom.unwrap_or_else(|| self.interner().intern_string(prop_name));
                 if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
@@ -1844,7 +1845,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // Lazy types (interfaces, classes, type aliases) need resolution
-            TypeKey::Lazy(def_id) => {
+            TypeData::Lazy(def_id) => {
                 // CRITICAL: Add recursion guard for type aliases
                 // Type aliases can form cycles: type A = B; type B = A;
                 let _guard = match self.enter_property_access_guard(obj_type) {
@@ -1884,7 +1885,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Enum values inherit methods from their structural member type
             // (number for numeric enums, string for string enums)
-            TypeKey::Enum(_def_id, member_type) => {
+            TypeData::Enum(_def_id, member_type) => {
                 self.resolve_property_access_inner(member_type, prop_name, prop_atom)
             }
 
@@ -1984,7 +1985,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         // Handle Object types (e.g., test array interface setup)
-        if let TypeKey::Object(shape_id) = base_key {
+        if let TypeData::Object(shape_id) = base_key {
             let shape = self.interner().object_shape(shape_id);
 
             // Try to find the property in the Object's properties
@@ -2030,7 +2031,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Handle ObjectWithIndex types
-        if let TypeKey::ObjectWithIndex(shape_id) = base_key {
+        if let TypeData::ObjectWithIndex(shape_id) = base_key {
             let shape = self.interner().object_shape(ObjectShapeId(shape_id.0));
 
             // Try to find the property in the ObjectWithIndex's properties
@@ -2081,7 +2082,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Handle Callable types (e.g., Array constructor with instance methods as properties)
-        if let TypeKey::Callable(shape_id) = base_key {
+        if let TypeData::Callable(shape_id) = base_key {
             let shape = self.interner().callable_shape(shape_id);
 
             // Try to find the property in the Callable's properties
@@ -2137,7 +2138,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // We only handle Lazy types (def_id references)
-        let TypeKey::Lazy(def_id) = base_key else {
+        let TypeData::Lazy(def_id) = base_key else {
             // For non-Lazy bases (e.g., TypeParameter), fall back to structural evaluation
             let evaluated = self.db.evaluate_type_with_options(
                 self.interner().application(app.base, app.args.clone()),
@@ -2208,7 +2209,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Handle Object types (classes/interfaces)
         match body_key {
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
 
                 // Try to find the property in the shape
@@ -2506,7 +2507,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
     /// Recursively simplifies Array<T> Application types to T[] array types.
     fn simplify_array_application(&self, type_id: TypeId, array_base: TypeId) -> TypeId {
         match self.interner().lookup(type_id) {
-            Some(TypeKey::Application(app_id)) => {
+            Some(TypeData::Application(app_id)) => {
                 let app = self.interner().type_application(app_id);
                 // Check if this is Array<T>
                 if app.base == array_base && app.args.len() == 1 {
@@ -2516,7 +2517,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Not an array application, return as-is
                 type_id
             }
-            Some(TypeKey::Callable(callable_id)) => {
+            Some(TypeData::Callable(callable_id)) => {
                 // Simplify function return types
                 let shape = self.interner().callable_shape(callable_id);
                 let mut simplified_call_sigs = Vec::new();
@@ -2560,7 +2561,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     type_id
                 }
             }
-            Some(TypeKey::Union(list_id)) => {
+            Some(TypeData::Union(list_id)) => {
                 // Simplify union members
                 let members = self.interner().type_list(list_id);
                 let simplified_members: Vec<TypeId> = members
@@ -2579,7 +2580,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     type_id
                 }
             }
-            Some(TypeKey::Intersection(list_id)) => {
+            Some(TypeData::Intersection(list_id)) => {
                 // Simplify intersection members
                 let members = self.interner().type_list(list_id);
                 let simplified_members: Vec<TypeId> = members
@@ -2604,8 +2605,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     pub(crate) fn array_element_type(&self, array_type: TypeId) -> TypeId {
         match self.interner().lookup(array_type) {
-            Some(TypeKey::Array(elem)) => elem,
-            Some(TypeKey::Tuple(elements)) => {
+            Some(TypeData::Array(elem)) => elem,
+            Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner().tuple_list(elements);
                 self.tuple_element_union(&elements)
             }
@@ -2677,7 +2678,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
 pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
     match interner.lookup(type_id) {
-        Some(TypeKey::Lazy(_)) => {
+        Some(TypeData::Lazy(_)) => {
             // Resolve lazy types (interfaces, classes, type aliases) before checking readonly.
             // If evaluation returns the same type (e.g. namespace types that don't resolve
             // through the evaluator), return false to prevent infinite recursion.
@@ -2687,15 +2688,15 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
             }
             property_is_readonly(interner, resolved, prop_name)
         }
-        Some(TypeKey::ReadonlyType(inner)) => {
-            if let Some(TypeKey::Array(_) | TypeKey::Tuple(_)) = interner.lookup(inner)
+        Some(TypeData::ReadonlyType(inner)) => {
+            if let Some(TypeData::Array(_) | TypeData::Tuple(_)) = interner.lookup(inner)
                 && is_numeric_index_name(prop_name)
             {
                 return true;
             }
             property_is_readonly(interner, inner, prop_name)
         }
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             tracing::trace!(
                 "property_is_readonly: Object shape {:?} for prop {}",
                 shape_id,
@@ -2705,17 +2706,17 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
             tracing::trace!("property_is_readonly: Object result = {}", result);
             result
         }
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
             indexed_object_property_is_readonly(interner, shape_id, prop_name)
         }
-        Some(TypeKey::Union(types)) => {
+        Some(TypeData::Union(types)) => {
             // For unions: property is readonly if it's readonly in ANY constituent type
             let types = interner.type_list(types);
             types
                 .iter()
                 .any(|t| property_is_readonly(interner, *t, prop_name))
         }
-        Some(TypeKey::Intersection(types)) => {
+        Some(TypeData::Intersection(types)) => {
             // For intersections: property is readonly ONLY if it's readonly in ALL constituent types
             // This allows assignment to `{ readonly a: number } & { a: number }` (mixed readonly/mutable)
             let types = interner.type_list(types);
@@ -2793,7 +2794,7 @@ pub fn is_readonly_index_signature(
     use crate::index_signatures::{IndexKind, IndexSignatureResolver};
 
     // Handle Union types - index signature is readonly if ANY member has it readonly
-    if let Some(TypeKey::Union(types)) = interner.lookup(type_id) {
+    if let Some(TypeData::Union(types)) = interner.lookup(type_id) {
         let type_list = interner.type_list(types);
         let resolver = IndexSignatureResolver::new(interner);
         return type_list.iter().any(|&t| {

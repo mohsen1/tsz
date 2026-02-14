@@ -12,7 +12,7 @@ fn test_distributive_conditional_distributes_over_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -51,7 +51,7 @@ fn test_tuple_wrapper_prevents_distribution() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -102,13 +102,13 @@ fn test_exclude_utility_type_distributes() {
 
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -146,7 +146,7 @@ fn test_exclude_utility_type_distributes() {
 
     // The result should be "b" | "c" (a was excluded)
     // Check that "a" is NOT in the result
-    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
         let members = interner.type_list(members);
         // Should not contain "a"
         for &member in members.iter() {
@@ -168,13 +168,13 @@ fn test_extract_utility_type_distributes() {
 
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,

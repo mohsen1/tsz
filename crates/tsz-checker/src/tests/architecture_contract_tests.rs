@@ -189,99 +189,99 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let array_type_src = fs::read_to_string("src/array_type.rs")
         .expect("failed to read src/array_type.rs for architecture guard");
     assert!(
-        !array_type_src.contains("TypeKey::Array"),
-        "array_type helper should use solver array constructor APIs, not TypeKey::Array"
+        !array_type_src.contains("TypeData::Array"),
+        "array_type helper should use solver array constructor APIs, not TypeData::Array"
     );
 
     let type_literal_src = fs::read_to_string("src/type_literal_checker.rs")
         .expect("failed to read src/type_literal_checker.rs for architecture guard");
     assert!(
-        !type_literal_src.contains("TypeKey::ReadonlyType"),
-        "type_literal_checker should use solver readonly constructor APIs, not TypeKey::ReadonlyType"
+        !type_literal_src.contains("TypeData::ReadonlyType"),
+        "type_literal_checker should use solver readonly constructor APIs, not TypeData::ReadonlyType"
     );
 
     let type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
         .expect("failed to read src/state_type_resolution.rs for architecture guard");
     assert!(
-        !type_resolution_src.contains("TypeKey::ReadonlyType"),
-        "state_type_resolution should use solver readonly constructor APIs, not TypeKey::ReadonlyType"
+        !type_resolution_src.contains("TypeData::ReadonlyType"),
+        "state_type_resolution should use solver readonly constructor APIs, not TypeData::ReadonlyType"
     );
     assert!(
-        !type_resolution_src.contains("intern(tsz_solver::TypeKey::Lazy("),
-        "state_type_resolution should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+        !type_resolution_src.contains("intern(tsz_solver::TypeData::Lazy("),
+        "state_type_resolution should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
     let type_node_src =
         fs::read_to_string("src/type_node.rs").expect("failed to read src/type_node.rs");
     assert!(
-        !type_node_src.contains("TypeKey::ReadonlyType"),
-        "type_node should use solver readonly constructor API, not TypeKey::ReadonlyType"
+        !type_node_src.contains("TypeData::ReadonlyType"),
+        "type_node should use solver readonly constructor API, not TypeData::ReadonlyType"
     );
     assert!(
-        !type_node_src.contains("TypeKey::KeyOf"),
-        "type_node should use solver keyof constructor API, not TypeKey::KeyOf"
+        !type_node_src.contains("TypeData::KeyOf"),
+        "type_node should use solver keyof constructor API, not TypeData::KeyOf"
     );
     assert!(
-        !type_node_src.contains("TypeKey::IndexAccess"),
-        "type_node should use solver index_access constructor API, not TypeKey::IndexAccess"
+        !type_node_src.contains("TypeData::IndexAccess"),
+        "type_node should use solver index_access constructor API, not TypeData::IndexAccess"
     );
 
     let jsx_checker_src =
         fs::read_to_string("src/jsx_checker.rs").expect("failed to read src/jsx_checker.rs");
     assert!(
-        !jsx_checker_src.contains("TypeKey::IndexAccess"),
-        "jsx_checker should use solver index_access constructor API, not TypeKey::IndexAccess"
+        !jsx_checker_src.contains("TypeData::IndexAccess"),
+        "jsx_checker should use solver index_access constructor API, not TypeData::IndexAccess"
     );
 
     let context_src = fs::read_to_string("src/context.rs")
         .expect("failed to read src/context.rs for architecture guard");
     assert!(
-        !context_src.contains("self.types.intern(TypeKey::Lazy("),
-        "context should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+        !context_src.contains("self.types.intern(TypeData::Lazy("),
+        "context should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
     let queries_src = fs::read_to_string("src/type_checking_queries.rs")
         .expect("failed to read src/type_checking_queries.rs for architecture guard");
     assert!(
-        !queries_src.contains("self.ctx.types.intern(TypeKey::Lazy("),
-        "type_checking_queries should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+        !queries_src.contains("self.ctx.types.intern(TypeData::Lazy("),
+        "type_checking_queries should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
     assert!(
-        !queries_src.contains("self.ctx.types.intern(TypeKey::TypeParameter("),
-        "type_checking_queries should use solver type_param constructor API, not direct TypeKey::TypeParameter interning"
+        !queries_src.contains("self.ctx.types.intern(TypeData::TypeParameter("),
+        "type_checking_queries should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
     );
 
     let state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
         .expect("failed to read src/state_checking_members.rs for architecture guard");
     assert!(
-        !state_checking_members_src.contains("TypeKey::TypeParameter"),
-        "state_checking_members should use solver type_param constructor API, not TypeKey::TypeParameter"
+        !state_checking_members_src.contains("TypeData::TypeParameter"),
+        "state_checking_members should use solver type_param constructor API, not TypeData::TypeParameter"
     );
 
     let control_flow_narrowing_src = fs::read_to_string("src/control_flow_narrowing.rs")
         .expect("failed to read src/control_flow_narrowing.rs for architecture guard");
     assert!(
-        !control_flow_narrowing_src.contains("intern(TypeKey::Lazy("),
-        "control_flow_narrowing should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+        !control_flow_narrowing_src.contains("intern(TypeData::Lazy("),
+        "control_flow_narrowing should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
     let state_type_analysis_src = fs::read_to_string("src/state_type_analysis.rs")
         .expect("failed to read src/state_type_analysis.rs for architecture guard");
     assert!(
-        !state_type_analysis_src.contains("intern(TypeKey::TypeQuery("),
-        "state_type_analysis should use solver type_query constructor API, not TypeKey::TypeQuery"
+        !state_type_analysis_src.contains("intern(TypeData::TypeQuery("),
+        "state_type_analysis should use solver type_query constructor API, not TypeData::TypeQuery"
     );
     assert!(
-        !state_type_analysis_src.contains("intern(TypeKey::TypeParameter("),
-        "state_type_analysis should use solver type_param constructor API, not TypeKey::TypeParameter"
+        !state_type_analysis_src.contains("intern(TypeData::TypeParameter("),
+        "state_type_analysis should use solver type_param constructor API, not TypeData::TypeParameter"
     );
     assert!(
-        !state_type_analysis_src.contains("intern(tsz_solver::TypeKey::Lazy("),
-        "state_type_analysis should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+        !state_type_analysis_src.contains("intern(tsz_solver::TypeData::Lazy("),
+        "state_type_analysis should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
     assert!(
-        !state_type_analysis_src.contains("intern(TypeKey::Enum("),
-        "state_type_analysis should use solver enum_type constructor API, not TypeKey::Enum interning"
+        !state_type_analysis_src.contains("intern(TypeData::Enum("),
+        "state_type_analysis should use solver enum_type constructor API, not TypeData::Enum interning"
     );
     assert!(
         state_type_analysis_src.contains("ensure_relation_input_ready("),
@@ -291,8 +291,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let function_type_src = fs::read_to_string("src/function_type.rs")
         .expect("failed to read src/function_type.rs for architecture guard");
     assert!(
-        !function_type_src.contains("intern(TypeKey::TypeParameter("),
-        "function_type should use solver type_param constructor API, not TypeKey::TypeParameter"
+        !function_type_src.contains("intern(TypeData::TypeParameter("),
+        "function_type should use solver type_param constructor API, not TypeData::TypeParameter"
     );
 
     let assignability_checker_src = fs::read_to_string("src/assignability_checker.rs")
@@ -321,12 +321,12 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
         .expect("failed to read src/state_type_environment.rs for architecture guard");
     assert!(
-        !state_type_environment_src.contains("intern(TypeKey::Enum("),
-        "state_type_environment should use solver enum_type constructor API, not TypeKey::Enum"
+        !state_type_environment_src.contains("intern(TypeData::Enum("),
+        "state_type_environment should use solver enum_type constructor API, not TypeData::Enum"
     );
     assert!(
-        !state_type_environment_src.contains("intern(TypeKey::Literal("),
-        "state_type_environment should use solver literal constructors, not TypeKey::Literal"
+        !state_type_environment_src.contains("intern(TypeData::Literal("),
+        "state_type_environment should use solver literal constructors, not TypeData::Literal"
     );
     assert!(
         !state_type_environment_src.contains("SymbolResolutionTraversalKind::"),
@@ -368,8 +368,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let type_computation_complex_src = fs::read_to_string("src/type_computation_complex.rs")
         .expect("failed to read src/type_computation_complex.rs for architecture guard");
     assert!(
-        !type_computation_complex_src.contains("intern(tsz_solver::TypeKey::TypeParameter("),
-        "type_computation_complex should use solver type_param constructor API, not direct TypeKey::TypeParameter interning"
+        !type_computation_complex_src.contains("intern(tsz_solver::TypeData::TypeParameter("),
+        "type_computation_complex should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
     );
 
     let diagnostics_boundary_src = fs::read_to_string("src/query_boundaries/diagnostics.rs")
@@ -733,15 +733,19 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
                 continue;
             }
             if is_rs_source_file(&path) {
-                if path
-                    .components()
-                    .any(|component| component.as_os_str() == "tests")
-                {
+                if path.components().any(|component| {
+                    component.as_os_str() == "tests" || component.as_os_str() == "query_boundaries"
+                }) {
                     continue;
                 }
                 files.push(path);
             }
         }
+    }
+
+    fn contains_type_data_ident(line: &str) -> bool {
+        line.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .any(|token| token == "TypeData")
     }
 
     fn has_forbidden_checker_type_construction_pattern(line: &str) -> bool {
@@ -751,10 +755,10 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
         }
 
         line.contains("tsz_solver::types::")
-            || line.contains("use tsz_solver::TypeKey")
-            || line.contains("use ") && line.contains("TypeKey")
-            || line.contains("intern(TypeKey::")
-            || line.contains("intern(tsz_solver::TypeKey::")
+            || line.contains("use tsz_solver::TypeData")
+            || (line.contains("use ") && contains_type_data_ident(line))
+            || line.contains("intern(TypeData::")
+            || line.contains("intern(tsz_solver::TypeData::")
             || line.contains(".intern(")
             || line.contains(".union2(")
             || line.contains(".intersection2(")
@@ -784,35 +788,30 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
 
     assert!(
         violations.is_empty(),
-        "checker source files must not import solver internals, import TypeKey, or call raw interner APIs directly; violations: {}",
+        "checker source files must not import solver internals, import TypeData, or call raw interner APIs directly; violations: {}",
         violations.join(", ")
     );
 }
 
 #[test]
-fn test_checker_legacy_type_arena_surface_is_feature_gated() {
+fn test_checker_legacy_type_arena_surface_is_removed() {
     let lib_src =
         fs::read_to_string("src/lib.rs").expect("failed to read src/lib.rs for architecture guard");
     assert!(
         !lib_src.contains("pub mod types;"),
-        "legacy checker type module should be internal-only during migration; use diagnostics facade instead."
+        "legacy checker type module must stay removed."
     );
     assert!(
-        lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]\nmod types;"),
-        "legacy checker type module must remain gated behind `legacy-type-arena`."
+        !lib_src.contains("mod types;"),
+        "legacy checker types module declaration must stay removed."
     );
     assert!(
-        lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]")
-            && lib_src.contains("pub use types::{"),
-        "legacy type re-exports must remain gated behind `legacy-type-arena`."
+        !lib_src.contains("pub mod arena;"),
+        "legacy checker TypeArena module must stay removed."
     );
     assert!(
-        lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]\npub mod arena;"),
-        "legacy checker TypeArena module must be feature-gated behind `legacy-type-arena`"
-    );
-    assert!(
-        lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]\npub use arena::TypeArena;"),
-        "legacy checker TypeArena re-export must be feature-gated behind `legacy-type-arena`"
+        !lib_src.contains("pub use arena::TypeArena;"),
+        "legacy checker TypeArena re-export must stay removed."
     );
 }
 

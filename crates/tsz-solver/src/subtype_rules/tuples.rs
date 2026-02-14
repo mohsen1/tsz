@@ -405,7 +405,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return TypeId::ANY;
         }
 
-        if let Some(TypeKey::ReadonlyType(inner)) = self.interner.lookup(type_id) {
+        if let Some(TypeData::ReadonlyType(inner)) = self.interner.lookup(type_id) {
             return self.get_array_element_type(inner);
         }
 
@@ -415,8 +415,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Handle generic array applications like Array<T> / ReadonlyArray<T>
-        // which are represented as TypeKey::Application with a single type arg.
-        if let Some(TypeKey::Application(app_id)) = self.interner.lookup(type_id) {
+        // which are represented as TypeData::Application with a single type arg.
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) {
             let app = self.interner.type_application(app_id);
             if let Some(&first_arg) = app.args.first() {
                 return first_arg;

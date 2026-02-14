@@ -120,7 +120,7 @@ impl<'a> CheckerState<'a> {
 
             // CRITICAL FIX: Build TypeEnvironment with all symbols (including lib symbols)
             // This ensures Error, Math, JSON, etc. interfaces are registered for property resolution
-            // Without this, TypeKey::Ref(Error) returns ERROR, causing TS2339 false positives
+            // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives
             let env_start = Instant::now();
             let populated_env = self.build_type_environment();
             perf_log("build_type_environment", env_start);

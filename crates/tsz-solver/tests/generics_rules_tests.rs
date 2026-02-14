@@ -22,7 +22,7 @@ fn test_try_evaluate_mapped_constraint_keyof_object() {
         PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
     ]);
 
-    let constraint = interner.intern(TypeKey::KeyOf(obj));
+    let constraint = interner.intern(TypeData::KeyOf(obj));
     let keys = checker
         .try_evaluate_mapped_constraint(constraint)
         .expect("expected concrete keys");
@@ -126,7 +126,7 @@ fn test_try_expand_application_instantiates_type_params() {
         default: None,
         is_const: false,
     };
-    let param_type = interner.intern(TypeKey::TypeParameter(param_info.clone()));
+    let param_type = interner.intern(TypeData::TypeParameter(param_info.clone()));
 
     let def_id = DefId(20);
     let box_struct = interner.object(vec![PropertyInfo::new(
@@ -146,7 +146,7 @@ fn test_try_expand_application_instantiates_type_params() {
         .try_expand_application(app_id)
         .expect("expected expanded application");
 
-    let Some(TypeKey::Object(shape_id)) = interner.lookup(expanded) else {
+    let Some(TypeData::Object(shape_id)) = interner.lookup(expanded) else {
         panic!("expected expanded object type");
     };
     let shape = interner.object_shape(shape_id);

@@ -669,7 +669,7 @@ impl<'a> CheckerState<'a> {
 
     /// Resolve a lazy type (type alias) to its body type.
     ///
-    /// This function resolves `TypeKey::Lazy(DefId)` types by looking up the
+    /// This function resolves `TypeData::Lazy(DefId)` types by looking up the
     /// definition's body in the definition store. This is necessary for
     /// type aliases like `type Tuple = [string, number]` where the reference
     /// to `Tuple` is stored as a lazy type.

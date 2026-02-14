@@ -37,13 +37,13 @@ impl KeyofKeySet {
         };
 
         match key {
-            TypeKey::Union(members) => {
+            TypeData::Union(members) => {
                 let members = interner.type_list(members);
                 members
                     .iter()
                     .all(|&member| self.insert_type(interner, member))
             }
-            TypeKey::Intrinsic(kind) => match kind {
+            TypeData::Intrinsic(kind) => match kind {
                 IntrinsicKind::String => {
                     self.has_string = true;
                     true
@@ -59,7 +59,7 @@ impl KeyofKeySet {
                 IntrinsicKind::Never => true,
                 _ => false,
             },
-            TypeKey::Literal(LiteralValue::String(atom)) => {
+            TypeData::Literal(LiteralValue::String(atom)) => {
                 self.string_literals.insert(atom);
                 true
             }
@@ -81,7 +81,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // CRITICAL: Handle TemplateLiteral BEFORE Union to avoid incorrect intersection.
         // Template literals that expand to unions should return apparent keys of string,
         // not the intersection of individual literal keys.
-        if let Some(TypeKey::TemplateLiteral(_)) = self.interner().lookup(operand) {
+        if let Some(TypeData::TemplateLiteral(_)) = self.interner().lookup(operand) {
             return self.apparent_primitive_keyof(IntrinsicKind::String);
         }
 
@@ -89,7 +89,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // keyof (A | B) = keyof A & keyof B (distributive contravariance)
         // If we call evaluate(operand) first, unions get simplified and we lose members.
         // See test_keyof_union_string_index_and_literal_narrows
-        if let Some(TypeKey::Union(members)) = self.interner().lookup(operand) {
+        if let Some(TypeData::Union(members)) = self.interner().lookup(operand) {
             let member_list = self.interner().type_list(members);
 
             // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
@@ -116,8 +116,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             match key {
-                TypeKey::ReadonlyType(inner) => self.recurse_keyof(inner),
-                TypeKey::TypeQuery(sym) => {
+                TypeData::ReadonlyType(inner) => self.recurse_keyof(inner),
+                TypeData::TypeQuery(sym) => {
                     // Resolve typeof query before computing keyof
                     let resolved = if let Some(def_id) = self.resolver().symbol_to_def_id(sym) {
                         self.resolver().resolve_lazy(def_id, self.interner())
@@ -132,7 +132,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         TypeId::ERROR
                     }
                 }
-                TypeKey::TypeParameter(param) | TypeKey::Infer(param) => {
+                TypeData::TypeParameter(param) | TypeData::Infer(param) => {
                     if let Some(constraint) = param.constraint {
                         if constraint == evaluated_operand {
                             self.interner().keyof(operand)
@@ -143,7 +143,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().keyof(operand)
                     }
                 }
-                TypeKey::Object(shape_id) => {
+                TypeData::Object(shape_id) => {
                     let shape = self.interner().object_shape(shape_id);
                     if shape.properties.is_empty() {
                         return TypeId::NEVER;
@@ -155,7 +155,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .collect();
                     self.interner().union(key_types)
                 }
-                TypeKey::ObjectWithIndex(shape_id) => {
+                TypeData::ObjectWithIndex(shape_id) => {
                     let shape = self.interner().object_shape(shape_id);
                     let mut key_types: Vec<TypeId> = shape
                         .properties
@@ -176,8 +176,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().union(key_types)
                     }
                 }
-                TypeKey::Array(_) => self.interner().union(self.array_keyof_keys()),
-                TypeKey::Tuple(elements) => {
+                TypeData::Array(_) => self.interner().union(self.array_keyof_keys()),
+                TypeData::Tuple(elements) => {
                     let elements = self.interner().tuple_list(elements);
                     let mut key_types: Vec<TypeId> = Vec::new();
                     self.append_tuple_indices(&elements, 0, &mut key_types);
@@ -188,7 +188,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                     self.interner().union(key_types)
                 }
-                TypeKey::Intrinsic(kind) => match kind {
+                TypeData::Intrinsic(kind) => match kind {
                     IntrinsicKind::Any => {
                         // keyof any = string | number | symbol
                         self.interner()
@@ -210,21 +210,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     | IntrinsicKind::Bigint
                     | IntrinsicKind::Symbol => self.apparent_primitive_keyof(kind),
                 },
-                TypeKey::Literal(literal) => {
+                TypeData::Literal(literal) => {
                     if let Some(kind) = self.apparent_literal_kind(&literal) {
                         self.apparent_primitive_keyof(kind)
                     } else {
                         self.interner().keyof(operand)
                     }
                 }
-                TypeKey::TemplateLiteral(_) => self.apparent_primitive_keyof(IntrinsicKind::String),
+                TypeData::TemplateLiteral(_) => {
+                    self.apparent_primitive_keyof(IntrinsicKind::String)
+                }
                 // NOTE: Union is handled at the top of this function to avoid union simplification
-                TypeKey::Intersection(members) => {
+                TypeData::Intersection(members) => {
                     // keyof (A & B) = keyof A | keyof B (covariance)
                     self.keyof_intersection(members, operand)
                 }
                 // CRITICAL: Handle Lazy (type aliases) by attempting resolution via resolver
-                TypeKey::Lazy(def_id) => {
+                TypeData::Lazy(def_id) => {
                     match self.resolver().resolve_lazy(def_id, self.interner()) {
                         Some(resolved) => {
                             // Recursively compute keyof of the resolved type
@@ -237,7 +239,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 // CRITICAL: Handle Application (generic types) by evaluating them first
-                TypeKey::Application(_app_id) => {
+                TypeData::Application(_app_id) => {
                     // Evaluate the application to get the instantiated type
                     let evaluated = self.evaluate(evaluated_operand);
                     // Then compute keyof of the evaluated result
@@ -297,7 +299,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         for element in elements {
             if element.rest {
                 match self.interner().lookup(element.type_id) {
-                    Some(TypeKey::Tuple(rest_elements)) => {
+                    Some(TypeData::Tuple(rest_elements)) => {
                         let rest_elements = self.interner().tuple_list(rest_elements);
                         match self.append_tuple_indices(&rest_elements, index, out) {
                             Some(next) => {
@@ -307,7 +309,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             None => return None,
                         }
                     }
-                    Some(TypeKey::Array(_)) => return None,
+                    Some(TypeData::Array(_)) => return None,
                     _ => return None,
                 }
             } else {

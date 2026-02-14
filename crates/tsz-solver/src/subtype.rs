@@ -75,7 +75,7 @@ impl SubtypeResult {
 /// Only safe for primitives where identity implies structural equality.
 fn is_disjoint_unit_type(types: &dyn TypeDatabase, ty: TypeId) -> bool {
     match types.lookup(ty) {
-        Some(TypeKey::Literal(_)) | Some(TypeKey::UniqueSymbol(_)) => true,
+        Some(TypeData::Literal(_)) | Some(TypeData::UniqueSymbol(_)) => true,
         // Note: Tuples removed to avoid labeled tuple bug
         // TypeScript treats [a: 1] and [b: 1] as compatible even though they have different TypeIds
         _ => false,
@@ -117,7 +117,7 @@ pub trait TypeResolver {
 
     /// Resolve a DefId reference to its structural type.
     ///
-    /// This is the DefId equivalent of `resolve_ref`, used for `TypeKey::Lazy(DefId)`.
+    /// This is the DefId equivalent of `resolve_ref`, used for `TypeData::Lazy(DefId)`.
     /// DefIds are Solver-owned identifiers that decouple type references from the Binder.
     ///
     /// Returns None by default; implementations should override to support Lazy type resolution.
@@ -248,8 +248,8 @@ pub trait TypeResolver {
     /// types but NOT to enum members.
     ///
     /// Returns true if the TypeId is:
-    /// - A TypeKey::Enum where the Symbol has ENUM flag but not ENUM_MEMBER flag
-    /// - A Union of TypeKey::Enum members from the same parent enum
+    /// - A TypeData::Enum where the Symbol has ENUM flag but not ENUM_MEMBER flag
+    /// - A Union of TypeData::Enum members from the same parent enum
     ///
     /// Returns false for enum members or non-enum types.
     fn is_enum_type(&self, _type_id: TypeId, _interner: &dyn TypeDatabase) -> bool {
@@ -271,7 +271,7 @@ pub trait TypeResolver {
     ///
     /// This is used to distinguish between user-defined enums (like `enum E { A, B }`)
     /// and intrinsic types from lib.d.ts (like `type string = ...`) that are stored
-    /// as TypeKey::Enum for definition store purposes.
+    /// as TypeData::Enum for definition store purposes.
     ///
     /// Returns true if the DefId is a user-defined enum.
     /// Returns false for intrinsic types, type aliases, interfaces, etc.
@@ -389,7 +389,7 @@ pub struct TypeEnvironment {
     /// Type parameters for the Array<T> interface (usually just [T]).
     array_base_type_params: Vec<TypeParamInfo>,
     /// Maps DefIds to their resolved structural types (Phase 4.3 migration).
-    /// This enables `TypeKey::Lazy(DefId)` resolution.
+    /// This enables `TypeData::Lazy(DefId)` resolution.
     def_types: FxHashMap<u32, TypeId>,
     /// Maps DefIds to their type parameters (for generic types with Lazy refs).
     def_type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
@@ -1286,7 +1286,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // (deferred keyof - we don't know what keys T has)
         if matches!(
             self.checker.interner.lookup(inner_type),
-            Some(TypeKey::TypeParameter(_))
+            Some(TypeData::TypeParameter(_))
         ) {
             return SubtypeResult::False;
         }
@@ -1299,7 +1299,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             let all_primitive = members.iter().all(|&m| {
                 matches!(
                     self.checker.interner.lookup(m),
-                    Some(TypeKey::Intrinsic(
+                    Some(TypeData::Intrinsic(
                         IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Symbol
                     ))
                 )
@@ -1310,7 +1310,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         }
 
         // keyof is also subtype of the specific primitive if it matches
-        if let Some(TypeKey::Intrinsic(
+        if let Some(TypeData::Intrinsic(
             IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Symbol,
         )) = self.checker.interner.lookup(self.target)
         {
@@ -1370,7 +1370,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         }
 
         // unique symbol is always a subtype of symbol
-        if let Some(TypeKey::Intrinsic(IntrinsicKind::Symbol)) =
+        if let Some(TypeData::Intrinsic(IntrinsicKind::Symbol)) =
             self.checker.interner.lookup(self.target)
         {
             return SubtypeResult::True;
@@ -2933,7 +2933,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             if matches!(
                 self.interner.lookup(source),
-                Some(TypeKey::Literal(LiteralValue::Number(_)))
+                Some(TypeData::Literal(LiteralValue::Number(_)))
             ) && self.resolver.is_numeric_enum(t_def_id)
             {
                 return SubtypeResult::True;
@@ -2968,8 +2968,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Helper to extract DefId from Enum or Lazy types
         let get_enum_def_id = |type_id: TypeId| -> Option<DefId> {
             match self.interner.lookup(type_id) {
-                Some(TypeKey::Enum(def_id, _)) => Some(def_id),
-                Some(TypeKey::Lazy(def_id)) => Some(def_id),
+                Some(TypeData::Enum(def_id, _)) => Some(def_id),
+                Some(TypeData::Lazy(def_id)) => Some(def_id),
                 _ => None,
             }
         };
@@ -2989,7 +2989,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Also check for numeric literals (subtypes of number)
             if matches!(
                 self.interner.lookup(source),
-                Some(TypeKey::Literal(LiteralValue::Number(_)))
+                Some(TypeData::Literal(LiteralValue::Number(_)))
             ) {
                 if self.resolver.is_numeric_enum(t_def) {
                     // For numeric literals, we need to check if they're assignable to the enum
@@ -3431,7 +3431,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
     ) -> Option<SubtypeFailureReason> {
         // Resolve ref types (interfaces, type aliases) to their structural forms.
-        // Without this, interface types (TypeKey::Lazy) won't match the object_shape_id
+        // Without this, interface types (TypeData::Lazy) won't match the object_shape_id
         // check below, causing TS2322 instead of TS2741/TS2739/TS2740.
         let resolved_source = self.resolve_ref_type(source);
         let resolved_target = self.resolve_ref_type(target);

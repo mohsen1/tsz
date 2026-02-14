@@ -235,9 +235,9 @@ fn test_bct_enum_members_widen_to_parent_enum() {
     let member_a_def = DefId(101);
     let member_b_def = DefId(102);
 
-    let parent_enum_type = interner.intern(TypeKey::Enum(parent_def, TypeId::NUMBER));
-    let member_a = interner.intern(TypeKey::Enum(member_a_def, TypeId::NUMBER));
-    let member_b = interner.intern(TypeKey::Enum(member_b_def, TypeId::NUMBER));
+    let parent_enum_type = interner.intern(TypeData::Enum(parent_def, TypeId::NUMBER));
+    let member_a = interner.intern(TypeData::Enum(member_a_def, TypeId::NUMBER));
+    let member_b = interner.intern(TypeData::Enum(member_b_def, TypeId::NUMBER));
 
     let mut resolver = EnumParentResolver::new();
     resolver.parent_map.insert(member_a_def, parent_def);

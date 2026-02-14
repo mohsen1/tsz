@@ -158,7 +158,7 @@ fn test_conditional_instantiated_param_distributes() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -194,7 +194,7 @@ fn test_conditional_instantiated_param_distributes_branch_substitution() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -228,7 +228,7 @@ fn test_conditional_distributive_nested_extends() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -275,7 +275,7 @@ fn test_conditional_distributive_infer_extends_nested() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -283,7 +283,7 @@ fn test_conditional_distributive_infer_extends_nested() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -332,7 +332,7 @@ fn test_conditional_infer_true_branch_substitution() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -358,7 +358,7 @@ fn test_conditional_infer_false_branch_substitution() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -383,7 +383,7 @@ fn test_conditional_infer_array_element_extraction() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -391,7 +391,7 @@ fn test_conditional_infer_array_element_extraction() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -430,7 +430,7 @@ fn test_conditional_infer_array_element_non_array_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -438,7 +438,7 @@ fn test_conditional_infer_array_element_non_array_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -473,7 +473,7 @@ fn test_conditional_infer_array_element_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -481,7 +481,7 @@ fn test_conditional_infer_array_element_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -520,7 +520,7 @@ fn test_conditional_infer_array_element_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -528,7 +528,7 @@ fn test_conditional_infer_array_element_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -563,7 +563,7 @@ fn test_conditional_infer_array_element_from_tuple_rest() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -571,7 +571,7 @@ fn test_conditional_infer_array_element_from_tuple_rest() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -619,7 +619,7 @@ fn test_conditional_infer_array_element_from_tuple_rest_tuple() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -627,7 +627,7 @@ fn test_conditional_infer_array_element_from_tuple_rest_tuple() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -688,7 +688,7 @@ fn test_conditional_infer_array_element_from_optional_tuple_element() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -696,7 +696,7 @@ fn test_conditional_infer_array_element_from_optional_tuple_element() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -735,7 +735,7 @@ fn test_conditional_infer_array_element_with_constraint() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -743,7 +743,7 @@ fn test_conditional_infer_array_element_with_constraint() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -784,7 +784,7 @@ fn test_conditional_infer_array_element_non_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -792,7 +792,7 @@ fn test_conditional_infer_array_element_non_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -826,7 +826,7 @@ fn test_conditional_infer_array_element_non_distributive_tuple_wrapper() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -834,7 +834,7 @@ fn test_conditional_infer_array_element_non_distributive_tuple_wrapper() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -884,7 +884,7 @@ fn test_conditional_infer_object_property_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -892,7 +892,7 @@ fn test_conditional_infer_object_property_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -940,7 +940,7 @@ fn test_conditional_infer_object_property_with_constraint() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -948,7 +948,7 @@ fn test_conditional_infer_object_property_with_constraint() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -993,7 +993,7 @@ fn test_conditional_infer_object_property_readonly() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1001,7 +1001,7 @@ fn test_conditional_infer_object_property_readonly() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1045,7 +1045,7 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_input(
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1053,7 +1053,7 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_input(
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1097,7 +1097,7 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_branch
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1105,7 +1105,7 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_branch
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1144,7 +1144,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1152,7 +1152,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1165,7 +1165,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
         interner.intern_string("a"),
         infer_r,
     )]);
-    let extends_obj = interner.intern(TypeKey::ReadonlyType(extends_inner));
+    let extends_obj = interner.intern(TypeData::ReadonlyType(extends_inner));
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -1180,7 +1180,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
         interner.intern_string("a"),
         TypeId::STRING,
     )]);
-    let obj_string = interner.intern(TypeKey::ReadonlyType(obj_string_inner));
+    let obj_string = interner.intern(TypeData::ReadonlyType(obj_string_inner));
     let obj_number = interner.object(vec![PropertyInfo::new(
         interner.intern_string("a"),
         TypeId::NUMBER,
@@ -1199,7 +1199,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1207,7 +1207,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1220,7 +1220,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
         interner.intern_string("a"),
         infer_r,
     )]);
-    let extends_obj = interner.intern(TypeKey::ReadonlyType(extends_inner));
+    let extends_obj = interner.intern(TypeData::ReadonlyType(extends_inner));
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_obj,
@@ -1235,7 +1235,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
         interner.intern_string("a"),
         TypeId::STRING,
     )]);
-    let obj_string = interner.intern(TypeKey::ReadonlyType(obj_string_inner));
+    let obj_string = interner.intern(TypeData::ReadonlyType(obj_string_inner));
     subst.insert(t_name, interner.union(vec![obj_string, TypeId::NUMBER]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
@@ -1249,7 +1249,7 @@ fn test_conditional_infer_object_property_function_return_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1257,7 +1257,7 @@ fn test_conditional_infer_object_property_function_return_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1328,7 +1328,7 @@ fn test_conditional_infer_template_literal_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1336,7 +1336,7 @@ fn test_conditional_infer_template_literal_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1371,7 +1371,7 @@ fn test_conditional_infer_template_literal_with_prefix_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1379,7 +1379,7 @@ fn test_conditional_infer_template_literal_with_prefix_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1417,7 +1417,7 @@ fn test_conditional_infer_template_literal_with_suffix_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1425,7 +1425,7 @@ fn test_conditional_infer_template_literal_with_suffix_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1463,7 +1463,7 @@ fn test_conditional_infer_template_literal_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1471,7 +1471,7 @@ fn test_conditional_infer_template_literal_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1522,7 +1522,7 @@ fn test_conditional_infer_template_literal_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1530,7 +1530,7 @@ fn test_conditional_infer_template_literal_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1577,7 +1577,7 @@ fn test_conditional_infer_template_literal_non_distributive_template_union_input
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1585,7 +1585,7 @@ fn test_conditional_infer_template_literal_non_distributive_template_union_input
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1638,7 +1638,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1646,7 +1646,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -1697,7 +1697,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1705,7 +1705,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -1752,7 +1752,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1760,7 +1760,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1812,7 +1812,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1820,7 +1820,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -1868,7 +1868,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1876,7 +1876,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -1929,7 +1929,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1937,7 +1937,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -1987,7 +1987,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_matc
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -1995,7 +1995,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_matc
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2043,7 +2043,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_stri
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2051,7 +2051,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_stri
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2099,7 +2099,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_stri
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2107,7 +2107,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_stri
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2161,7 +2161,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_inp
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2169,14 +2169,14 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_inp
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -2230,7 +2230,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_non_match
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2238,14 +2238,14 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_non_match
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -2293,7 +2293,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_bra
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2301,14 +2301,14 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_bra
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -2355,7 +2355,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_union_in
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2363,7 +2363,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_union_in
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2414,7 +2414,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_union_br
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2422,7 +2422,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_union_br
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2470,7 +2470,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_matc
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2478,7 +2478,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_matc
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2525,7 +2525,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_stri
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2533,7 +2533,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_stri
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2580,7 +2580,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_stri
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2588,7 +2588,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_stri
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2640,7 +2640,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2648,7 +2648,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -2699,7 +2699,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2707,7 +2707,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -2754,7 +2754,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_union_in
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2762,7 +2762,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_union_in
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2813,7 +2813,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_union_br
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2821,7 +2821,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_union_br
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2869,7 +2869,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_non_matc
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2877,7 +2877,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_non_matc
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2924,7 +2924,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_non_stri
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2932,7 +2932,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_non_stri
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -2978,7 +2978,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -2986,7 +2986,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3037,7 +3037,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3045,7 +3045,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3093,7 +3093,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3101,14 +3101,14 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3164,7 +3164,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3172,14 +3172,14 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3229,7 +3229,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3237,14 +3237,14 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
     }));
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3292,7 +3292,7 @@ fn test_conditional_infer_template_literal_union_input_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3300,7 +3300,7 @@ fn test_conditional_infer_template_literal_union_input_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3343,7 +3343,7 @@ fn test_conditional_infer_template_literal_from_string_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3351,7 +3351,7 @@ fn test_conditional_infer_template_literal_from_string_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3383,7 +3383,7 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3391,7 +3391,7 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3424,7 +3424,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3432,7 +3432,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3471,7 +3471,7 @@ fn test_conditional_infer_template_literal_two_infers_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3479,14 +3479,14 @@ fn test_conditional_infer_template_literal_two_infers_distributive() {
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -3530,7 +3530,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_distributive()
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3538,7 +3538,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_distributive()
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3579,7 +3579,7 @@ fn test_conditional_infer_nested_object_property_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3587,7 +3587,7 @@ fn test_conditional_infer_nested_object_property_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3643,7 +3643,7 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_input() 
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3651,7 +3651,7 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_input() 
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3707,7 +3707,7 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_branch()
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3715,7 +3715,7 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_branch()
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3762,7 +3762,7 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3770,7 +3770,7 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -3827,7 +3827,7 @@ fn test_conditional_infer_nested_object_property_readonly() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3835,7 +3835,7 @@ fn test_conditional_infer_nested_object_property_readonly() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3891,7 +3891,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3899,7 +3899,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3912,7 +3912,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper() {
         interner.intern_string("b"),
         infer_r,
     )]);
-    let extends_inner = interner.intern(TypeKey::ReadonlyType(extends_inner_obj));
+    let extends_inner = interner.intern(TypeData::ReadonlyType(extends_inner_obj));
     let extends_obj = interner.object(vec![PropertyInfo::new(
         interner.intern_string("a"),
         extends_inner,
@@ -3931,7 +3931,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper() {
         interner.intern_string("b"),
         TypeId::STRING,
     )]);
-    let obj_a_string = interner.intern(TypeKey::ReadonlyType(obj_a_string_inner));
+    let obj_a_string = interner.intern(TypeData::ReadonlyType(obj_a_string_inner));
     let obj_a_number = interner.object(vec![PropertyInfo::new(
         interner.intern_string("b"),
         TypeId::NUMBER,
@@ -3958,7 +3958,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -3966,7 +3966,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -3979,7 +3979,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
         interner.intern_string("b"),
         infer_r,
     )]);
-    let extends_inner = interner.intern(TypeKey::ReadonlyType(extends_inner_obj));
+    let extends_inner = interner.intern(TypeData::ReadonlyType(extends_inner_obj));
     let extends_obj = interner.object(vec![PropertyInfo::new(
         interner.intern_string("a"),
         extends_inner,
@@ -3998,7 +3998,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
         interner.intern_string("b"),
         TypeId::STRING,
     )]);
-    let obj_a_string = interner.intern(TypeKey::ReadonlyType(obj_a_string_inner));
+    let obj_a_string = interner.intern(TypeData::ReadonlyType(obj_a_string_inner));
     let obj_a_number = interner.object(vec![PropertyInfo::new(
         interner.intern_string("b"),
         TypeId::NUMBER,
@@ -4025,7 +4025,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4033,7 +4033,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4046,7 +4046,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
         interner.intern_string("b"),
         infer_r,
     )]);
-    let extends_inner = interner.intern(TypeKey::ReadonlyType(extends_inner_obj));
+    let extends_inner = interner.intern(TypeData::ReadonlyType(extends_inner_obj));
     let extends_obj = interner.object(vec![PropertyInfo::new(
         interner.intern_string("a"),
         extends_inner,
@@ -4065,7 +4065,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
         interner.intern_string("b"),
         TypeId::STRING,
     )]);
-    let obj_a_string = interner.intern(TypeKey::ReadonlyType(obj_a_string_inner));
+    let obj_a_string = interner.intern(TypeData::ReadonlyType(obj_a_string_inner));
     let obj_string = interner.object(vec![PropertyInfo::new(
         interner.intern_string("a"),
         obj_a_string,
@@ -4083,7 +4083,7 @@ fn test_conditional_infer_nested_object_property_non_matching_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4091,7 +4091,7 @@ fn test_conditional_infer_nested_object_property_non_matching_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4148,7 +4148,7 @@ fn test_conditional_infer_nested_object_property_union_value() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4156,7 +4156,7 @@ fn test_conditional_infer_nested_object_property_union_value() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4201,7 +4201,7 @@ fn test_conditional_infer_object_property_non_object_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4209,7 +4209,7 @@ fn test_conditional_infer_object_property_non_object_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4250,7 +4250,7 @@ fn test_conditional_infer_object_property_non_distributive_non_object_union_bran
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4258,7 +4258,7 @@ fn test_conditional_infer_object_property_non_distributive_non_object_union_bran
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4307,7 +4307,7 @@ fn test_conditional_infer_object_index_signature_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4315,7 +4315,7 @@ fn test_conditional_infer_object_index_signature_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4366,7 +4366,7 @@ fn test_conditional_infer_number_index_signature_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4374,7 +4374,7 @@ fn test_conditional_infer_number_index_signature_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4425,7 +4425,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_input() 
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4433,7 +4433,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_input() 
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4484,7 +4484,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_branch()
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4492,7 +4492,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_branch()
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4538,7 +4538,7 @@ fn test_conditional_infer_object_index_signature_non_object_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4546,7 +4546,7 @@ fn test_conditional_infer_object_index_signature_non_object_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4592,7 +4592,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_input() 
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4600,7 +4600,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_input() 
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4651,7 +4651,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_branch()
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4659,7 +4659,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_branch()
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4705,7 +4705,7 @@ fn test_conditional_infer_optional_property_missing_object() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4713,7 +4713,7 @@ fn test_conditional_infer_optional_property_missing_object() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4749,7 +4749,7 @@ fn test_conditional_infer_optional_property_present_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4757,7 +4757,7 @@ fn test_conditional_infer_optional_property_present_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4801,7 +4801,7 @@ fn test_conditional_infer_optional_property_with_constraint() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4809,7 +4809,7 @@ fn test_conditional_infer_optional_property_with_constraint() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -4852,7 +4852,7 @@ fn test_conditional_infer_optional_property_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4860,7 +4860,7 @@ fn test_conditional_infer_optional_property_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4911,7 +4911,7 @@ fn test_conditional_infer_optional_property_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4919,7 +4919,7 @@ fn test_conditional_infer_optional_property_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -4968,7 +4968,7 @@ fn test_conditional_infer_object_property_intersection_check() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -4976,7 +4976,7 @@ fn test_conditional_infer_object_property_intersection_check() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5020,7 +5020,7 @@ fn test_conditional_infer_function_param_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5028,7 +5028,7 @@ fn test_conditional_infer_function_param_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5088,7 +5088,7 @@ fn test_conditional_infer_function_optional_param_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5096,7 +5096,7 @@ fn test_conditional_infer_function_optional_param_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5171,7 +5171,7 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5179,7 +5179,7 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5264,7 +5264,7 @@ fn test_conditional_infer_function_param_non_function_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5272,7 +5272,7 @@ fn test_conditional_infer_function_param_non_function_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5321,7 +5321,7 @@ fn test_conditional_infer_function_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5329,7 +5329,7 @@ fn test_conditional_infer_function_param_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5399,7 +5399,7 @@ fn test_conditional_infer_function_param_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5407,7 +5407,7 @@ fn test_conditional_infer_function_param_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5466,7 +5466,7 @@ fn test_conditional_infer_function_rest_param_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5474,7 +5474,7 @@ fn test_conditional_infer_function_rest_param_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5552,7 +5552,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5560,7 +5560,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5648,7 +5648,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5656,7 +5656,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5726,7 +5726,7 @@ fn test_conditional_infer_function_this_param_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5734,7 +5734,7 @@ fn test_conditional_infer_function_this_param_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5794,7 +5794,7 @@ fn test_conditional_infer_function_this_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5802,7 +5802,7 @@ fn test_conditional_infer_function_this_param_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5872,7 +5872,7 @@ fn test_conditional_infer_function_this_param_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5880,7 +5880,7 @@ fn test_conditional_infer_function_this_param_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -5940,7 +5940,7 @@ fn test_conditional_infer_function_return_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -5948,7 +5948,7 @@ fn test_conditional_infer_function_return_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6007,7 +6007,7 @@ fn test_conditional_infer_function_return_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6015,7 +6015,7 @@ fn test_conditional_infer_function_return_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6084,7 +6084,7 @@ fn test_conditional_infer_function_param_and_return_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6092,7 +6092,7 @@ fn test_conditional_infer_function_param_and_return_distributive() {
     }));
 
     let p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
@@ -6100,7 +6100,7 @@ fn test_conditional_infer_function_param_and_return_distributive() {
     }));
 
     let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -6205,7 +6205,7 @@ fn test_conditional_infer_function_return_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6213,7 +6213,7 @@ fn test_conditional_infer_function_return_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6272,7 +6272,7 @@ fn test_conditional_infer_function_param_and_return_non_distributive_union_input
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6280,7 +6280,7 @@ fn test_conditional_infer_function_param_and_return_non_distributive_union_input
     }));
 
     let p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
@@ -6288,7 +6288,7 @@ fn test_conditional_infer_function_param_and_return_non_distributive_union_input
     }));
 
     let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -6390,7 +6390,7 @@ fn test_conditional_infer_object_call_signature_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6398,7 +6398,7 @@ fn test_conditional_infer_object_call_signature_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6479,7 +6479,7 @@ fn test_conditional_infer_call_signature_param_from_function_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6487,7 +6487,7 @@ fn test_conditional_infer_call_signature_param_from_function_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6553,7 +6553,7 @@ fn test_conditional_infer_call_signature_return_from_function_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6561,7 +6561,7 @@ fn test_conditional_infer_call_signature_return_from_function_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6626,7 +6626,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6634,7 +6634,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6725,7 +6725,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6733,7 +6733,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6829,7 +6829,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6837,7 +6837,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -6943,7 +6943,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -6951,7 +6951,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7050,7 +7050,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7058,7 +7058,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7167,7 +7167,7 @@ fn test_conditional_infer_object_call_signature_non_callable_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7175,7 +7175,7 @@ fn test_conditional_infer_object_call_signature_non_callable_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7239,7 +7239,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_branch() 
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7247,7 +7247,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_branch() 
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7321,7 +7321,7 @@ fn test_conditional_infer_object_call_signature_overload_source_non_distributive
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7329,7 +7329,7 @@ fn test_conditional_infer_object_call_signature_overload_source_non_distributive
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7410,7 +7410,7 @@ fn test_conditional_infer_object_property_non_distributive_union_all_match() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7418,7 +7418,7 @@ fn test_conditional_infer_object_property_non_distributive_union_all_match() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7472,7 +7472,7 @@ fn test_conditional_infer_object_property_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7480,7 +7480,7 @@ fn test_conditional_infer_object_property_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7529,7 +7529,7 @@ fn test_conditional_infer_tuple_element_extraction() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7537,7 +7537,7 @@ fn test_conditional_infer_tuple_element_extraction() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7591,7 +7591,7 @@ fn test_conditional_infer_tuple_optional_element_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7599,7 +7599,7 @@ fn test_conditional_infer_tuple_optional_element_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7644,7 +7644,7 @@ fn test_conditional_infer_tuple_optional_element_non_distributive_union_input() 
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7652,7 +7652,7 @@ fn test_conditional_infer_tuple_optional_element_non_distributive_union_input() 
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7697,7 +7697,7 @@ fn test_conditional_infer_tuple_optional_element_non_distributive_union_branch()
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7705,7 +7705,7 @@ fn test_conditional_infer_tuple_optional_element_non_distributive_union_branch()
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7748,7 +7748,7 @@ fn test_conditional_infer_tuple_element_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7756,7 +7756,7 @@ fn test_conditional_infer_tuple_element_non_distributive_union_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7810,7 +7810,7 @@ fn test_conditional_infer_tuple_element_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7818,7 +7818,7 @@ fn test_conditional_infer_tuple_element_non_distributive_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7861,7 +7861,7 @@ fn test_conditional_infer_tuple_element_non_tuple_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7869,7 +7869,7 @@ fn test_conditional_infer_tuple_element_non_tuple_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -7912,7 +7912,7 @@ fn test_conditional_infer_tuple_element_with_constraint() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7920,7 +7920,7 @@ fn test_conditional_infer_tuple_element_with_constraint() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -7973,7 +7973,7 @@ fn test_conditional_infer_optional_tuple_element_with_constraint() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -7981,7 +7981,7 @@ fn test_conditional_infer_optional_tuple_element_with_constraint() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -8034,7 +8034,7 @@ fn test_conditional_infer_tuple_rest_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8042,7 +8042,7 @@ fn test_conditional_infer_tuple_rest_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8120,7 +8120,7 @@ fn test_conditional_infer_tuple_rest_with_head_infer_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8128,14 +8128,14 @@ fn test_conditional_infer_tuple_rest_with_head_infer_distributive() {
     }));
 
     let infer_h_name = interner.intern_string("H");
-    let infer_h = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_h = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_h_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
     let infer_r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_r_name,
         constraint: None,
         default: None,
@@ -8213,7 +8213,7 @@ fn test_conditional_infer_union_true_branch_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8221,7 +8221,7 @@ fn test_conditional_infer_union_true_branch_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8256,7 +8256,7 @@ fn test_conditional_infer_union_false_branch_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8264,7 +8264,7 @@ fn test_conditional_infer_union_false_branch_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8299,7 +8299,7 @@ fn test_conditional_infer_any_check_type_distributive() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8325,7 +8325,7 @@ fn test_conditional_infer_readonly_array_element_extraction() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8333,7 +8333,7 @@ fn test_conditional_infer_readonly_array_element_extraction() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8341,7 +8341,7 @@ fn test_conditional_infer_readonly_array_element_extraction() {
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | readonly number[].
-    let extends_array = interner.intern(TypeKey::ReadonlyType(interner.array(infer_r)));
+    let extends_array = interner.intern(TypeData::ReadonlyType(interner.array(infer_r)));
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_array,
@@ -8353,9 +8353,9 @@ fn test_conditional_infer_readonly_array_element_extraction() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::STRING)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::STRING)));
     let readonly_number_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::NUMBER)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::NUMBER)));
     subst.insert(
         t_name,
         interner.union(vec![readonly_string_array, readonly_number_array]),
@@ -8373,7 +8373,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_input() 
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8381,7 +8381,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_input() 
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8389,7 +8389,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_input() 
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | readonly number[] (no distribution).
-    let extends_array = interner.intern(TypeKey::ReadonlyType(interner.array(infer_r)));
+    let extends_array = interner.intern(TypeData::ReadonlyType(interner.array(infer_r)));
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_array,
@@ -8401,9 +8401,9 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_input() 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::STRING)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::STRING)));
     let readonly_number_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::NUMBER)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::NUMBER)));
     subst.insert(
         t_name,
         interner.union(vec![readonly_string_array, readonly_number_array]),
@@ -8421,7 +8421,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_branch()
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8429,7 +8429,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_branch()
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8437,7 +8437,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_branch()
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | number (no distribution).
-    let extends_array = interner.intern(TypeKey::ReadonlyType(interner.array(infer_r)));
+    let extends_array = interner.intern(TypeData::ReadonlyType(interner.array(infer_r)));
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_array,
@@ -8449,7 +8449,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_branch()
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::STRING)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::STRING)));
     subst.insert(
         t_name,
         interner.union(vec![readonly_string_array, TypeId::NUMBER]),
@@ -8466,7 +8466,7 @@ fn test_conditional_infer_readonly_array_element_non_array_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8474,7 +8474,7 @@ fn test_conditional_infer_readonly_array_element_non_array_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8482,7 +8482,7 @@ fn test_conditional_infer_readonly_array_element_non_array_union_branch() {
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | number.
-    let extends_array = interner.intern(TypeKey::ReadonlyType(interner.array(infer_r)));
+    let extends_array = interner.intern(TypeData::ReadonlyType(interner.array(infer_r)));
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_array,
@@ -8494,7 +8494,7 @@ fn test_conditional_infer_readonly_array_element_non_array_union_branch() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::STRING)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::STRING)));
     subst.insert(
         t_name,
         interner.union(vec![readonly_string_array, TypeId::NUMBER]),
@@ -8511,7 +8511,7 @@ fn test_conditional_infer_readonly_tuple_element_extraction() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8519,7 +8519,7 @@ fn test_conditional_infer_readonly_tuple_element_extraction() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8528,7 +8528,7 @@ fn test_conditional_infer_readonly_tuple_element_extraction() {
 
     // T extends readonly [infer R] ? R : never, with T = readonly [string] | readonly [number].
     let extends_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: infer_r,
             name: None,
             optional: false,
@@ -8545,14 +8545,14 @@ fn test_conditional_infer_readonly_tuple_element_extraction() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: TypeId::STRING,
             name: None,
             optional: false,
             rest: false,
         }])));
     let readonly_number_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: TypeId::NUMBER,
             name: None,
             optional: false,
@@ -8575,7 +8575,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_input() 
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8583,7 +8583,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_input() 
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8592,7 +8592,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_input() 
 
     // T extends readonly [infer R] ? R : never, with T = readonly [string] | readonly [number] (no distribution).
     let extends_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: infer_r,
             name: None,
             optional: false,
@@ -8609,14 +8609,14 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_input() 
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: TypeId::STRING,
             name: None,
             optional: false,
             rest: false,
         }])));
     let readonly_number_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: TypeId::NUMBER,
             name: None,
             optional: false,
@@ -8639,7 +8639,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_branch()
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8647,7 +8647,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_branch()
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8656,7 +8656,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_branch()
 
     // T extends readonly [infer R] ? R : never, with T = readonly [string] | number (no distribution).
     let extends_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: infer_r,
             name: None,
             optional: false,
@@ -8673,7 +8673,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_branch()
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: TypeId::STRING,
             name: None,
             optional: false,
@@ -8695,7 +8695,7 @@ fn test_conditional_infer_readonly_tuple_element_non_tuple_union_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8703,7 +8703,7 @@ fn test_conditional_infer_readonly_tuple_element_non_tuple_union_branch() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8712,7 +8712,7 @@ fn test_conditional_infer_readonly_tuple_element_non_tuple_union_branch() {
 
     // T extends readonly [infer R] ? R : never, with T = readonly [string] | number.
     let extends_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: infer_r,
             name: None,
             optional: false,
@@ -8729,7 +8729,7 @@ fn test_conditional_infer_readonly_tuple_element_non_tuple_union_branch() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_tuple =
-        interner.intern(TypeKey::ReadonlyType(interner.tuple(vec![TupleElement {
+        interner.intern(TypeData::ReadonlyType(interner.tuple(vec![TupleElement {
             type_id: TypeId::STRING,
             name: None,
             optional: false,
@@ -8751,7 +8751,7 @@ fn test_conditional_infer_readonly_array_mixed_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8759,7 +8759,7 @@ fn test_conditional_infer_readonly_array_mixed_input() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -8767,7 +8767,7 @@ fn test_conditional_infer_readonly_array_mixed_input() {
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | number[].
-    let extends_array = interner.intern(TypeKey::ReadonlyType(interner.array(infer_r)));
+    let extends_array = interner.intern(TypeData::ReadonlyType(interner.array(infer_r)));
     let cond = ConditionalType {
         check_type: t_param,
         extends_type: extends_array,
@@ -8779,7 +8779,7 @@ fn test_conditional_infer_readonly_array_mixed_input() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let readonly_string_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::STRING)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::STRING)));
     let number_array = interner.array(TypeId::NUMBER);
     subst.insert(
         t_name,
@@ -8798,7 +8798,7 @@ fn test_conditional_instantiated_param_tuple_wrapper_no_distribution() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8902,7 +8902,7 @@ fn test_conditional_deferred_type_parameter() {
 
     // T extends string ? number : boolean
     // Should remain deferred when T is an unsubstituted type parameter
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -8929,7 +8929,7 @@ fn test_conditional_infer_direct_match() {
     let interner = TypeInterner::new();
 
     let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -8954,7 +8954,7 @@ fn test_conditional_infer_constraint_mismatch() {
     let interner = TypeInterner::new();
 
     let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -8980,7 +8980,7 @@ fn test_conditional_distributive_infer_array_extends() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -8988,7 +8988,7 @@ fn test_conditional_distributive_infer_array_extends() {
     }));
 
     let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -9024,7 +9024,7 @@ fn test_conditional_nested_distributive_infer() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -9032,7 +9032,7 @@ fn test_conditional_nested_distributive_infer() {
     }));
 
     let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -9078,7 +9078,7 @@ fn test_conditional_infer_object_property() {
     let interner = TypeInterner::new();
 
     let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -9107,7 +9107,7 @@ fn test_conditional_infer_object_string_index_signature() {
     let interner = TypeInterner::new();
 
     let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -9574,7 +9574,7 @@ fn test_index_access_type_param_constraint() {
         TypeId::NUMBER,
     )]);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -9590,7 +9590,7 @@ fn test_index_access_type_param_constraint() {
 fn test_index_access_type_param_no_constraint_deferred() {
     let interner = TypeInterner::new();
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -9601,7 +9601,7 @@ fn test_index_access_type_param_no_constraint_deferred() {
     let result = evaluate_index_access(&interner, type_param, key_x);
 
     match interner.lookup(result) {
-        Some(TypeKey::IndexAccess(obj, idx)) => {
+        Some(TypeData::IndexAccess(obj, idx)) => {
             assert_eq!(obj, type_param);
             assert_eq!(idx, key_x);
         }
@@ -9746,7 +9746,7 @@ fn test_index_access_array_string_index() {
         .expect("expected union for array[string]");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&includes_type));
@@ -9770,7 +9770,7 @@ fn test_index_access_array_string_index_with_no_unchecked_indexed_access() {
         .expect("expected union for array[string]");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             assert!(members.contains(&TypeId::UNDEFINED));
         }
@@ -9798,7 +9798,7 @@ fn test_index_access_array_string_literal_method() {
 
     let result = evaluate_index_access(&interner, string_array, includes_key);
     match interner.lookup(result) {
-        Some(TypeKey::Function(func_id)) => {
+        Some(TypeData::Function(func_id)) => {
             let func = interner.function_shape(func_id);
             assert_eq!(func.return_type, TypeId::BOOLEAN);
             assert_eq!(func.params.len(), 1);
@@ -9828,7 +9828,7 @@ fn test_index_access_readonly_array() {
     let interner = TypeInterner::new();
 
     let array = interner.array(TypeId::STRING);
-    let readonly_array = interner.intern(TypeKey::ReadonlyType(array));
+    let readonly_array = interner.intern(TypeData::ReadonlyType(array));
 
     let result = evaluate_index_access(&interner, readonly_array, TypeId::NUMBER);
     assert_eq!(result, TypeId::STRING);
@@ -10086,7 +10086,7 @@ fn test_index_access_tuple_string_index() {
         .expect("expected union for tuple[string]");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             assert!(members.contains(&TypeId::STRING));
             assert!(members.contains(&TypeId::NUMBER));
@@ -10123,7 +10123,7 @@ fn test_index_access_tuple_string_index_with_no_unchecked_indexed_access() {
         .expect("expected union for tuple[string]");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             assert!(members.contains(&TypeId::UNDEFINED));
         }
@@ -10197,7 +10197,7 @@ fn test_index_access_readonly_tuple_literal() {
             rest: false,
         },
     ]);
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
     let one = interner.literal_number(1.0);
 
     let result = evaluate_index_access(&interner, readonly_tuple, one);
@@ -10257,7 +10257,7 @@ fn test_index_access_string_literal_member() {
     let to_string_key = interner.literal_string("toString");
     let to_string_type = evaluate_index_access(&interner, TypeId::STRING, to_string_key);
     match interner.lookup(to_string_type) {
-        Some(TypeKey::Function(func_id)) => {
+        Some(TypeData::Function(func_id)) => {
             let func = interner.function_shape(func_id);
             assert_eq!(func.return_type, TypeId::STRING);
             assert_eq!(func.params.len(), 1);
@@ -10290,7 +10290,7 @@ fn test_keyof_readonly_array() {
     let interner = TypeInterner::new();
 
     let array = interner.array(TypeId::STRING);
-    let readonly_array = interner.intern(TypeKey::ReadonlyType(array));
+    let readonly_array = interner.intern(TypeData::ReadonlyType(array));
 
     let result = evaluate_keyof(&interner, readonly_array);
     let key = interner
@@ -10298,7 +10298,7 @@ fn test_keyof_readonly_array() {
         .expect("expected union for keyof readonly array");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let length = interner.literal_string("length");
             let map = interner.literal_string("map");
@@ -10328,7 +10328,7 @@ fn test_keyof_readonly_tuple() {
             rest: false,
         },
     ]);
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
 
     let result = evaluate_keyof(&interner, readonly_tuple);
     let key = interner
@@ -10336,7 +10336,7 @@ fn test_keyof_readonly_tuple() {
         .expect("expected union for keyof readonly tuple");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let key_0 = interner.literal_string("0");
             let key_1 = interner.literal_string("1");
@@ -10361,7 +10361,7 @@ fn test_keyof_type_param_constraint() {
         PropertyInfo::new(interner.intern_string("y"), TypeId::STRING),
     ]);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
@@ -10385,14 +10385,14 @@ fn test_base_constraint_assignability_evaluate_keyof() {
         PropertyInfo::new(interner.intern_string("y"), TypeId::STRING),
     ]);
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: Some(constraint),
         default: None,
         is_const: false,
     }));
 
-    let key_of = interner.intern(TypeKey::KeyOf(type_param));
+    let key_of = interner.intern(TypeData::KeyOf(type_param));
     let result = evaluate_type(&interner, key_of);
     let expected = interner.union(vec![
         interner.literal_string("x"),
@@ -10405,7 +10405,7 @@ fn test_base_constraint_assignability_evaluate_keyof() {
 fn test_keyof_type_param_no_constraint_deferred() {
     let interner = TypeInterner::new();
 
-    let type_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -10414,7 +10414,7 @@ fn test_keyof_type_param_no_constraint_deferred() {
 
     let result = evaluate_keyof(&interner, type_param);
     match interner.lookup(result) {
-        Some(TypeKey::KeyOf(inner)) => assert_eq!(inner, type_param),
+        Some(TypeData::KeyOf(inner)) => assert_eq!(inner, type_param),
         other => panic!("Expected deferred KeyOf, got {:?}", other),
     }
 }
@@ -10782,7 +10782,7 @@ fn test_keyof_array() {
         .expect("expected union for keyof array");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let length = interner.literal_string("length");
             let map = interner.literal_string("map");
@@ -10821,7 +10821,7 @@ fn test_keyof_tuple() {
         .expect("expected union for keyof tuple");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let key_0 = interner.literal_string("0");
             let key_1 = interner.literal_string("1");
@@ -10877,7 +10877,7 @@ fn test_keyof_tuple_with_rest_tuple() {
         .expect("expected union for keyof tuple with rest");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let key_0 = interner.literal_string("0");
             let key_1 = interner.literal_string("1");
@@ -10945,7 +10945,7 @@ fn test_object_trifecta_keyof_object_interface() {
         .expect("expected union for keyof Object interface");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let to_string = interner.literal_string("toString");
             let value_of = interner.literal_string("valueOf");
@@ -10985,7 +10985,7 @@ fn test_keyof_string_apparent_members() {
         .expect("expected union for keyof string");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let length = interner.literal_string("length");
             let to_string = interner.literal_string("toString");
@@ -11007,7 +11007,7 @@ fn test_apparent_number_keyof_members() {
         .expect("expected union for keyof number");
 
     match key {
-        TypeKey::Union(members) => {
+        TypeData::Union(members) => {
             let members = interner.type_list(members);
             let to_fixed = interner.literal_string("toFixed");
             let value_of = interner.literal_string("valueOf");
@@ -11236,7 +11236,7 @@ fn test_keyof_mapped_type_remapped_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Create conditional: K extends "a" ? "a_key" : K extends "b" ? "b_key" : never
     let inner_cond = interner.conditional(ConditionalType {
@@ -11627,8 +11627,8 @@ fn test_keyof_intersection_with_index_signature() {
     // Simplified: should contain string
     let key = interner.lookup(result);
     match key {
-        Some(TypeKey::Intrinsic(IntrinsicKind::String)) => (),
-        Some(TypeKey::Union(_)) => (),
+        Some(TypeData::Intrinsic(IntrinsicKind::String)) => (),
+        Some(TypeData::Union(_)) => (),
         _ => panic!("Expected string or union type, got {:?}", key),
     }
 }
@@ -11749,7 +11749,7 @@ fn test_mapped_type_basic() {
 fn test_mapped_type_over_string_keys() {
     let interner = TypeInterner::new();
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::STRING));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::STRING));
     let mapped = MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -11768,7 +11768,7 @@ fn test_mapped_type_over_string_keys() {
     let key = interner.lookup(result).expect("Expected object type");
 
     match key {
-        TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::ObjectWithIndex(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let length = interner.intern_string("length");
             let to_string = interner.intern_string("toString");
@@ -11803,7 +11803,7 @@ fn test_mapped_type_over_string_keys() {
 fn test_mapped_type_over_number_keys() {
     let interner = TypeInterner::new();
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::NUMBER));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::NUMBER));
     let mapped = MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -11822,7 +11822,7 @@ fn test_mapped_type_over_number_keys() {
     let key = interner.lookup(result).expect("Expected object type");
 
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let to_fixed = interner.intern_string("toFixed");
             let value_of = interner.intern_string("valueOf");
@@ -11858,7 +11858,7 @@ fn test_mapped_type_over_number_keys() {
 fn test_mapped_type_over_number_keys_evaluate_type() {
     let interner = TypeInterner::new();
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::NUMBER));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::NUMBER));
     let mapped = interner.mapped(MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -11877,7 +11877,7 @@ fn test_mapped_type_over_number_keys_evaluate_type() {
     let key = interner.lookup(result).expect("Expected object type");
 
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let to_fixed = interner.intern_string("toFixed");
             let mut saw_to_fixed = false;
@@ -11899,7 +11899,7 @@ fn test_mapped_type_over_number_keys_evaluate_type() {
 fn test_mapped_type_over_boolean_keys() {
     let interner = TypeInterner::new();
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::BOOLEAN));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::BOOLEAN));
     let mapped = MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -11918,7 +11918,7 @@ fn test_mapped_type_over_boolean_keys() {
     let key = interner.lookup(result).expect("Expected object type");
 
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let to_string = interner.intern_string("toString");
             let value_of = interner.intern_string("valueOf");
@@ -11954,7 +11954,7 @@ fn test_mapped_type_over_boolean_keys() {
 fn test_mapped_type_over_symbol_keys() {
     let interner = TypeInterner::new();
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::SYMBOL));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::SYMBOL));
     let mapped = MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -11973,7 +11973,7 @@ fn test_mapped_type_over_symbol_keys() {
     let key = interner.lookup(result).expect("Expected object type");
 
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let description = interner.intern_string("description");
             let to_string = interner.intern_string("toString");
@@ -12009,7 +12009,7 @@ fn test_mapped_type_over_symbol_keys() {
 fn test_mapped_type_over_bigint_keys() {
     let interner = TypeInterner::new();
 
-    let constraint = interner.intern(TypeKey::KeyOf(TypeId::BIGINT));
+    let constraint = interner.intern(TypeData::KeyOf(TypeId::BIGINT));
     let mapped = MappedType {
         type_param: TypeParamInfo {
             name: interner.intern_string("K"),
@@ -12028,7 +12028,7 @@ fn test_mapped_type_over_bigint_keys() {
     let key = interner.lookup(result).expect("Expected object type");
 
     match key {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             let to_string = interner.intern_string("toString");
             let value_of = interner.intern_string("valueOf");
@@ -12082,7 +12082,7 @@ fn test_mapped_type_string_index_signature() {
     let key = interner.lookup(result).expect("Expected object type");
 
     match key {
-        TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::ObjectWithIndex(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties.is_empty());
             assert!(shape.number_index.is_none());
@@ -12122,7 +12122,7 @@ fn test_mapped_type_number_index_signature() {
     let key = interner.lookup(result).expect("Expected object type");
 
     match key {
-        TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::ObjectWithIndex(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties.is_empty());
             assert!(shape.string_index.is_none());
@@ -12246,7 +12246,7 @@ fn test_mapped_type_with_template_substitution() {
     let keys = interner.union(vec![key_x, key_y]);
 
     // Template is the type parameter K itself
-    let type_param_k = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_k = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("K"),
         constraint: None,
         default: None,
@@ -12295,7 +12295,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let name_type = interner.conditional(ConditionalType {
         check_type: key_param_id,
@@ -12304,7 +12304,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         false_type: key_param_id,
         is_distributive: true,
     });
-    let template = interner.intern(TypeKey::IndexAccess(obj, key_param_id));
+    let template = interner.intern(TypeData::IndexAccess(obj, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -12337,7 +12337,7 @@ fn test_mapped_type_deferred() {
 
     // { [K in T]: number } where T is a type parameter
     // Should remain as mapped type (deferred)
-    let type_param_t = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -12843,7 +12843,7 @@ fn test_mapped_type_key_remap_uppercase() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Create a conditional that maps "a" -> "A", "b" -> "B"
     let inner_cond = interner.conditional(ConditionalType {
@@ -12903,7 +12903,7 @@ fn test_mapped_type_key_remap_with_prefix() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Create conditional: K extends "name" ? "get_name" : K extends "age" ? "get_age" : never
     let inner_cond = interner.conditional(ConditionalType {
@@ -13035,7 +13035,7 @@ fn test_mapped_type_key_remap_filter_out_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // K extends "b" ? never : K
     let name_type = interner.conditional(ConditionalType {
@@ -13086,7 +13086,7 @@ fn test_mapped_type_preserves_source_types() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -13137,7 +13137,7 @@ fn test_mapped_type_basic_as_clause() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Create conditional: K extends "a" ? "a_key" : K extends "b" ? "b_key" : never
     let inner_cond = interner.conditional(ConditionalType {
@@ -13199,7 +13199,7 @@ fn test_mapped_type_as_extract_specific_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // K extends "a" | "c" ? K : never (Extract<K, "a" | "c">)
     let name_type = interner.conditional(ConditionalType {
@@ -13254,7 +13254,7 @@ fn test_mapped_type_as_template_literal() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Simulate template literal with conditional
     let inner_cond = interner.conditional(ConditionalType {
@@ -13327,7 +13327,7 @@ fn test_mapped_type_as_conditional_transformation() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // K extends "id" ? "id_number" : K extends "name" ? "name_string" : never
     let inner_cond = interner.conditional(ConditionalType {
@@ -13386,7 +13386,7 @@ fn test_mapped_type_as_exclude_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Exclude<K, "b"> = K extends "b" ? never : K
     let name_type = interner.conditional(ConditionalType {
@@ -13436,7 +13436,7 @@ fn test_mapped_type_as_identity() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // as K (identity)
     let mapped = MappedType {
@@ -13513,7 +13513,7 @@ fn test_mapped_type_as_single_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // as "prefix_only"
     let name_type = interner.conditional(ConditionalType {
@@ -13800,7 +13800,7 @@ fn test_conditional_infer_extract_state_pattern() {
     // Where Reducer<S, A> is represented as a function type: (state: S | undefined, action: A) => S
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: None,
         default: None,
@@ -13889,7 +13889,7 @@ fn test_conditional_infer_extract_action_pattern() {
     // Simulates: type ExtractAction<R> = R extends Reducer<any, infer A> ? A : never;
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -13981,7 +13981,7 @@ fn test_conditional_infer_extract_state_non_matching() {
     // Test that ExtractState returns never when given a non-Reducer type
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: None,
         default: None,
@@ -14045,7 +14045,7 @@ fn test_conditional_infer_extract_state_union_distributive() {
     // ExtractState<Reducer<number, A> | Reducer<string, A>> should give number | string
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -14053,7 +14053,7 @@ fn test_conditional_infer_extract_state_union_distributive() {
     }));
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: None,
         default: None,
@@ -14157,7 +14157,7 @@ fn test_application_ref_expansion_box_string() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14215,8 +14215,8 @@ fn test_application_ref_expansion_reducer_function() {
         default: None,
         is_const: false,
     };
-    let s_type = interner.intern(TypeKey::TypeParameter(s_param.clone()));
-    let a_type = interner.intern(TypeKey::TypeParameter(a_param.clone()));
+    let s_type = interner.intern(TypeData::TypeParameter(s_param.clone()));
+    let a_type = interner.intern(TypeData::TypeParameter(a_param.clone()));
 
     // Define: type Reducer<S, A> = (state: S | undefined, action: A) => S
     let state_name = interner.intern_string("state");
@@ -14294,7 +14294,7 @@ fn test_application_ref_expansion_nested() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14361,8 +14361,8 @@ fn test_application_ref_expansion_with_defaults() {
         default: Some(TypeId::UNDEFINED), // D = undefined
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let d_type = interner.intern(TypeKey::TypeParameter(d_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let d_type = interner.intern(TypeData::TypeParameter(d_param.clone()));
 
     // Define: type Optional<T, D = undefined> = T | D
     let optional_body = interner.union(vec![t_type, d_type]);
@@ -14429,7 +14429,7 @@ fn test_application_ref_expansion_with_constraints() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type NumericBox<T extends number> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14498,7 +14498,7 @@ fn test_application_ref_expansion_with_never_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14545,7 +14545,7 @@ fn test_application_ref_expansion_with_unknown_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14592,7 +14592,7 @@ fn test_application_ref_expansion_with_any_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14639,7 +14639,7 @@ fn test_application_ref_expansion_with_union_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14717,11 +14717,11 @@ fn test_application_ref_expansion_recursive() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Phase 4.2: Create Lazy(DefId) for List type alias (self-reference)
     let list_def_id = DefId(1);
-    let list_ref = interner.intern(TypeKey::Lazy(list_def_id));
+    let list_ref = interner.intern(TypeData::Lazy(list_def_id));
 
     // Create Application: List<T> (recursive reference in type body)
     let list_t = interner.application(list_ref, vec![t_type]);
@@ -14780,7 +14780,7 @@ fn test_application_ref_expansion_with_intersection_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -14831,7 +14831,7 @@ fn test_application_ref_expansion_multi_param() {
         default: None,
         is_const: false,
     };
-    let k_type = interner.intern(TypeKey::TypeParameter(k_param.clone()));
+    let k_type = interner.intern(TypeData::TypeParameter(k_param.clone()));
 
     // Define type parameter V
     let v_name = interner.intern_string("V");
@@ -14841,7 +14841,7 @@ fn test_application_ref_expansion_multi_param() {
         default: None,
         is_const: false,
     };
-    let v_type = interner.intern(TypeKey::TypeParameter(v_param.clone()));
+    let v_type = interner.intern(TypeData::TypeParameter(v_param.clone()));
 
     // Define: type Map<K, V> = { key: K, value: V }
     let key_name = interner.intern_string("key");
@@ -14896,7 +14896,7 @@ fn test_application_ref_expansion_with_conditional_body() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // For simplicity, we'll use a basic conditional that we can verify:
     // type IsString<T> = T extends string ? string : number
@@ -14961,7 +14961,7 @@ fn test_application_ref_expansion_with_tuple_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15023,7 +15023,7 @@ fn test_application_ref_expansion_with_array_body() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type ArrayOf<T> = T[]
     let array_body = interner.array(t_type);
@@ -15069,7 +15069,7 @@ fn test_application_ref_expansion_with_readonly_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type ReadonlyBox<T> = { readonly value: T }
     let value_name = interner.intern_string("value");
@@ -15125,7 +15125,7 @@ fn test_application_ref_expansion_with_optional_property() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type OptionalBox<T> = { value?: T }
     let value_name = interner.intern_string("value");
@@ -15181,7 +15181,7 @@ fn test_application_ref_expansion_with_method() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define method type: () => T
     let method_type = interner.function(FunctionShape {
@@ -15250,7 +15250,7 @@ fn test_application_ref_expansion_with_rest_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type VarArgs<T> = (...args: T[]) => void
     let args_name = interner.intern_string("args");
@@ -15321,7 +15321,7 @@ fn test_application_ref_expansion_with_index_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Dict<T> = { [key: string]: T }
     let dict_body = interner.object_with_index(ObjectShape {
@@ -15387,7 +15387,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type NumericDict<T> = { [index: number]: T }
     let numeric_dict_body = interner.object_with_index(ObjectShape {
@@ -15453,7 +15453,7 @@ fn test_application_ref_expansion_with_literal_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15503,7 +15503,7 @@ fn test_application_ref_expansion_with_numeric_literal_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15550,7 +15550,7 @@ fn test_application_ref_expansion_with_multiple_refs_to_same_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Pair<T> = { first: T; second: T }
     let first_name = interner.intern_string("first");
@@ -15604,7 +15604,7 @@ fn test_application_ref_expansion_with_boolean_literal_arg() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Box<T> = { value: T }
     let value_name = interner.intern_string("value");
@@ -15661,8 +15661,8 @@ fn test_application_ref_expansion_with_union_body() {
         default: None,
         is_const: false,
     };
-    let l_type = interner.intern(TypeKey::TypeParameter(l_param.clone()));
-    let r_type = interner.intern(TypeKey::TypeParameter(r_param.clone()));
+    let l_type = interner.intern(TypeData::TypeParameter(l_param.clone()));
+    let r_type = interner.intern(TypeData::TypeParameter(r_param.clone()));
 
     // Define: type Either<L, R> = L | R
     let either_body = interner.union(vec![l_type, r_type]);
@@ -15716,8 +15716,8 @@ fn test_application_ref_expansion_with_intersection_body() {
         default: None,
         is_const: false,
     };
-    let a_type = interner.intern(TypeKey::TypeParameter(a_param.clone()));
-    let b_type = interner.intern(TypeKey::TypeParameter(b_param.clone()));
+    let a_type = interner.intern(TypeData::TypeParameter(a_param.clone()));
+    let b_type = interner.intern(TypeData::TypeParameter(b_param.clone()));
 
     // Define: type Both<A, B> = A & B
     let both_body = interner.intersection(vec![a_type, b_type]);
@@ -15769,7 +15769,7 @@ fn test_application_ref_expansion_with_this_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type BoundMethod<T> = (this: T) => void
     let bound_method_body = interner.function(FunctionShape {
@@ -15835,7 +15835,7 @@ fn test_application_ref_expansion_with_optional_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type OptionalFn<T> = (x?: T) => T
     let x_name = interner.intern_string("x");
@@ -15903,11 +15903,11 @@ fn test_application_ref_expansion_with_readonly_array_body() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type ReadonlyArrayOf<T> = readonly T[]
     let t_array = interner.array(t_type);
-    let readonly_array_body = interner.intern(TypeKey::ReadonlyType(t_array));
+    let readonly_array_body = interner.intern(TypeData::ReadonlyType(t_array));
 
     // Create Ref(1) for ReadonlyArrayOf type alias
     let readonly_array_ref = interner.lazy(DefId(1));
@@ -15924,7 +15924,7 @@ fn test_application_ref_expansion_with_readonly_array_body() {
 
     // Expected: readonly number[]
     let number_array = interner.array(TypeId::NUMBER);
-    let expected = interner.intern(TypeKey::ReadonlyType(number_array));
+    let expected = interner.intern(TypeData::ReadonlyType(number_array));
 
     assert_eq!(
         result, expected,
@@ -15951,7 +15951,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Config<T> = { readonly id: string; value?: T }
     let id_name = interner.intern_string("id");
@@ -16030,8 +16030,8 @@ fn test_application_ref_expansion_with_callable_body() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let r_type = interner.intern(TypeKey::TypeParameter(r_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+    let r_type = interner.intern(TypeData::TypeParameter(r_param.clone()));
 
     // Define: type Callback<T, R> = { (arg: T): R }
     let arg_name = interner.intern_string("arg");
@@ -16107,7 +16107,7 @@ fn test_application_ref_expansion_with_construct_signature() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define: type Constructor<T> = { new (): T }
     let construct_sig = CallSignature {
@@ -16185,7 +16185,7 @@ fn test_application_ref_expansion_with_deeply_nested_param() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Define inner object: { value: T }
     let value_name = interner.intern_string("value");
@@ -16418,13 +16418,13 @@ fn test_conditional_infer_tuple_multiple_positions() {
     // Create infer placeholders for A and B
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: b_name,
         constraint: None,
         default: None,
@@ -16612,7 +16612,7 @@ fn test_conditional_infer_constraint_mismatch_edge() {
     let obj_number = interner.object(vec![PropertyInfo::new(x_name, TypeId::NUMBER)]);
 
     // Create infer T extends string
-    let infer_t = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
         name: t_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -16653,7 +16653,7 @@ fn test_template_literal_hyphen_prefix_extraction() {
     // Input: "hello-world" => R = "world"
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -16661,7 +16661,7 @@ fn test_template_literal_hyphen_prefix_extraction() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -16701,20 +16701,20 @@ fn test_template_literal_hyphen_two_part_extraction() {
     // Input: "foo-bar-baz" => First = "foo", Rest = "bar-baz"
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let infer_first = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_first = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("First"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_rest = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("Rest"),
         constraint: None,
         default: None,
@@ -16784,7 +16784,7 @@ fn test_template_literal_hyphen_suffix_pattern() {
     // Input: "click-handler" => R = "click"
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -16792,7 +16792,7 @@ fn test_template_literal_hyphen_suffix_pattern() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -16832,7 +16832,7 @@ fn test_template_literal_hyphen_distributive_union() {
     // Input: "event-click" | "event-load" => "click" | "load"
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -16840,7 +16840,7 @@ fn test_template_literal_hyphen_distributive_union() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -16885,7 +16885,7 @@ fn test_template_literal_hyphen_no_match_returns_never() {
     // Input: "other-value" (doesn't start with "prefix-") => never
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -16893,7 +16893,7 @@ fn test_template_literal_hyphen_no_match_returns_never() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -16933,7 +16933,7 @@ fn test_template_literal_prefix_infer_suffix_extraction() {
     // Input: "start-middle-end" => M = "middle"
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -16941,7 +16941,7 @@ fn test_template_literal_prefix_infer_suffix_extraction() {
     }));
 
     let infer_name = interner.intern_string("M");
-    let infer_m = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_m = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -16983,7 +16983,7 @@ fn test_template_literal_prefix_infer_suffix_multiple_hyphens() {
     // The infer captures everything between "api-" and "-handler"
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -16991,7 +16991,7 @@ fn test_template_literal_prefix_infer_suffix_multiple_hyphens() {
     }));
 
     let infer_name = interner.intern_string("Route");
-    let infer_route = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_route = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -17033,7 +17033,7 @@ fn test_template_literal_prefix_infer_suffix_distributive() {
     // Input: "on-click-event" | "on-load-event" => "click" | "load"
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -17041,7 +17041,7 @@ fn test_template_literal_prefix_infer_suffix_distributive() {
     }));
 
     let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -17093,7 +17093,7 @@ fn test_template_literal_extract_numeric_id() {
     // Common pattern for extracting numeric IDs from string keys
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -17101,7 +17101,7 @@ fn test_template_literal_extract_numeric_id() {
     }));
 
     let infer_name = interner.intern_string("Id");
-    let infer_id = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_id = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -17143,20 +17143,20 @@ fn test_template_literal_extract_version_numbers() {
     // Common pattern for parsing version strings
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let infer_major = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_major = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("Major"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_minor = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_minor = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("Minor"),
         constraint: None,
         default: None,
@@ -17228,7 +17228,7 @@ fn test_template_literal_extract_index_from_array_key() {
     // Common pattern for extracting array indices from bracket notation
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -17236,7 +17236,7 @@ fn test_template_literal_extract_index_from_array_key() {
     }));
 
     let infer_name = interner.intern_string("Index");
-    let infer_index = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_index = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -17286,7 +17286,7 @@ fn test_template_literal_extract_port_number() {
     // Common pattern for extracting port numbers from host strings
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -17294,7 +17294,7 @@ fn test_template_literal_extract_port_number() {
     }));
 
     let infer_name = interner.intern_string("Port");
-    let infer_port = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_port = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -17335,20 +17335,20 @@ fn test_template_literal_extract_coordinates() {
     // Common pattern for parsing coordinate pairs
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let infer_x = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("X"),
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_y = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_y = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("Y"),
         constraint: None,
         default: None,
@@ -17440,7 +17440,7 @@ fn test_variadic_tuple_spread_at_end() {
     // Verify the tuple was created as a tuple type
     assert!(matches!(
         interner.lookup(variadic_tuple),
-        Some(TypeKey::Tuple(_))
+        Some(TypeData::Tuple(_))
     ));
     assert_ne!(variadic_tuple, TypeId::NEVER);
     assert_ne!(variadic_tuple, TypeId::UNKNOWN);
@@ -17471,7 +17471,7 @@ fn test_variadic_tuple_spread_at_start() {
     // Verify the tuple was created as a tuple type
     assert!(matches!(
         interner.lookup(variadic_tuple),
-        Some(TypeKey::Tuple(_))
+        Some(TypeData::Tuple(_))
     ));
     assert_ne!(variadic_tuple, TypeId::NEVER);
     assert_ne!(variadic_tuple, TypeId::UNKNOWN);
@@ -17485,14 +17485,14 @@ fn test_variadic_tuple_infer_rest_elements() {
     let t_name = interner.intern_string("T");
     let rest_name = interner.intern_string("Rest");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let infer_rest = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: rest_name,
         constraint: None,
         default: None,
@@ -17580,21 +17580,21 @@ fn test_variadic_tuple_infer_first_element() {
     let first_name = interner.intern_string("First");
     let rest_name = interner.intern_string("Rest");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let infer_first = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_first = interner.intern(TypeData::Infer(TypeParamInfo {
         name: first_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let infer_rest = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: rest_name,
         constraint: None,
         default: None,
@@ -17667,14 +17667,14 @@ fn test_variadic_tuple_empty_rest() {
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -18126,7 +18126,7 @@ fn test_generator_function_return_type_extraction() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18134,7 +18134,7 @@ fn test_generator_function_return_type_extraction() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18189,7 +18189,7 @@ fn test_generator_function_yield_type_simulation() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18197,7 +18197,7 @@ fn test_generator_function_yield_type_simulation() {
     }));
 
     let infer_name = interner.intern_string("Y");
-    let infer_y = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_y = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18244,7 +18244,7 @@ fn test_generator_function_async_return() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18252,7 +18252,7 @@ fn test_generator_function_async_return() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18310,7 +18310,7 @@ fn test_generator_function_next_param_type() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18318,7 +18318,7 @@ fn test_generator_function_next_param_type() {
     }));
 
     let infer_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18375,7 +18375,7 @@ fn test_generator_function_multiple_params() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18383,7 +18383,7 @@ fn test_generator_function_multiple_params() {
     }));
 
     let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18440,7 +18440,7 @@ fn test_generator_function_multiple_params() {
         result == TypeId::NEVER
             || matches!(
                 interner.lookup(result),
-                Some(TypeKey::Tuple(_)) | Some(TypeKey::Array(_)) | Some(_)
+                Some(TypeData::Tuple(_)) | Some(TypeData::Array(_)) | Some(_)
             )
     );
 }
@@ -18457,7 +18457,7 @@ fn test_module_augmentation_object_merge() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18507,7 +18507,7 @@ fn test_module_augmentation_function_overload() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18515,7 +18515,7 @@ fn test_module_augmentation_function_overload() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18592,7 +18592,7 @@ fn test_module_augmentation_namespace_merge() {
 
     // The merged namespace should expose both sets of properties.
     match interner.lookup(merged_ns) {
-        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             let has_version = shape.properties.iter().any(|p| p.name == version_prop);
             let has_utils = shape.properties.iter().any(|p| p.name == utils_prop);
@@ -18611,7 +18611,7 @@ fn test_module_augmentation_class_extension() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18668,7 +18668,7 @@ fn test_module_augmentation_global_interface() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18676,7 +18676,7 @@ fn test_module_augmentation_global_interface() {
     }));
 
     let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18721,7 +18721,7 @@ fn test_array_covariance_element_extraction() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18729,7 +18729,7 @@ fn test_array_covariance_element_extraction() {
     }));
 
     let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18767,7 +18767,7 @@ fn test_array_covariance_union_element() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18775,7 +18775,7 @@ fn test_array_covariance_union_element() {
     }));
 
     let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18814,7 +18814,7 @@ fn test_array_covariance_readonly() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18822,7 +18822,7 @@ fn test_array_covariance_readonly() {
     }));
 
     let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18860,7 +18860,7 @@ fn test_array_covariance_nested() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18868,7 +18868,7 @@ fn test_array_covariance_nested() {
     }));
 
     let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18908,7 +18908,7 @@ fn test_array_covariance_non_array() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -18916,7 +18916,7 @@ fn test_array_covariance_non_array() {
     }));
 
     let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18959,7 +18959,7 @@ fn test_return_type_generic_function() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -18984,7 +18984,7 @@ fn test_return_type_generic_function() {
 
     // Source: generic function <U>(x: U) => U
     let u_name = interner.intern_string("U");
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -19031,7 +19031,7 @@ fn test_return_type_overloaded_function() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -19112,7 +19112,7 @@ fn test_return_type_type_predicate_function() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -19173,7 +19173,7 @@ fn test_parameters_rest_param_function() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -19234,7 +19234,7 @@ fn test_parameters_optional_and_rest_combination() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -19310,7 +19310,7 @@ fn test_constructor_parameters_basic() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -19379,7 +19379,7 @@ fn test_constructor_parameters_callable_construct_signature() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -19437,7 +19437,7 @@ fn test_constructor_parameters_callable_construct_signature() {
     // Should extract the constructor parameters as a tuple [string]
     // Check if result is a tuple with string element
     match interner.lookup(result) {
-        Some(TypeKey::Tuple(elems)) => {
+        Some(TypeData::Tuple(elems)) => {
             let elems = interner.tuple_list(elems);
             assert_eq!(elems.len(), 1);
             assert_eq!(elems[0].type_id, TypeId::STRING);
@@ -19453,7 +19453,7 @@ fn test_return_type_union_distributive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -19461,7 +19461,7 @@ fn test_return_type_union_distributive() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -19712,13 +19712,13 @@ fn test_infer_tuple_swap_pattern() {
     let infer_a_name = interner.intern_string("A");
     let infer_b_name = interner.intern_string("B");
 
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -19780,13 +19780,13 @@ fn test_infer_tuple_swap_second_position() {
     let infer_a_name = interner.intern_string("A");
     let infer_b_name = interner.intern_string("B");
 
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -19848,13 +19848,13 @@ fn test_infer_function_signature_param_and_return() {
     let infer_p_name = interner.intern_string("P");
     let infer_r_name = interner.intern_string("R");
 
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_r_name,
         constraint: None,
         default: None,
@@ -19924,13 +19924,13 @@ fn test_infer_function_multiple_params() {
     let infer_a_name = interner.intern_string("A");
     let infer_b_name = interner.intern_string("B");
 
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -20179,7 +20179,7 @@ fn test_infer_contravariant_single_param() {
     let interner = TypeInterner::new();
 
     let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: None,
         default: None,
@@ -20240,7 +20240,7 @@ fn test_infer_contravariant_intersection_from_multiple_candidates() {
     let interner = TypeInterner::new();
 
     let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_t_name,
         constraint: None,
         default: None,
@@ -20316,7 +20316,7 @@ fn test_infer_contravariant_callback_param() {
     let interner = TypeInterner::new();
 
     let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_t_name,
         constraint: None,
         default: None,
@@ -20413,13 +20413,13 @@ fn test_tuple_spread_infer_first_rest() {
     let infer_f_name = interner.intern_string("F");
     let infer_r_name = interner.intern_string("R");
 
-    let infer_f = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_f = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_f_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_r_name,
         constraint: None,
         default: None,
@@ -20548,7 +20548,7 @@ fn test_tuple_spread_length_check() {
     let interner = TypeInterner::new();
 
     let infer_l_name = interner.intern_string("L");
-    let infer_l = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_l_name,
         constraint: None,
         default: None,
@@ -20826,10 +20826,10 @@ fn test_readonly_nested_object_top_level_only() {
     )]);
 
     // Readonly: { readonly [K in keyof T]: T[K] }
-    let keyof_outer = interner.intern(TypeKey::KeyOf(outer_obj));
+    let keyof_outer = interner.intern(TypeData::KeyOf(outer_obj));
 
     let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: k_name,
         constraint: None,
         default: None,
@@ -20845,7 +20845,7 @@ fn test_readonly_nested_object_top_level_only() {
         },
         constraint: keyof_outer,
         name_type: None,
-        template: interner.intern(TypeKey::IndexAccess(outer_obj, k_param)),
+        template: interner.intern(TypeData::IndexAccess(outer_obj, k_param)),
         readonly_modifier: Some(MappedModifier::Add),
         optional_modifier: None,
     };
@@ -20854,7 +20854,7 @@ fn test_readonly_nested_object_top_level_only() {
 
     // Verify result structure
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             // Top-level property 'a' should be readonly
@@ -20865,7 +20865,7 @@ fn test_readonly_nested_object_top_level_only() {
 
             // The nested object should NOT be readonly (shallow Readonly)
             let inner_type = shape.properties[0].type_id;
-            if let Some(TypeKey::Object(inner_shape_id)) = interner.lookup(inner_type) {
+            if let Some(TypeData::Object(inner_shape_id)) = interner.lookup(inner_type) {
                 let inner_shape = interner.object_shape(inner_shape_id);
                 assert!(
                     !inner_shape.properties[0].readonly,
@@ -20895,9 +20895,9 @@ fn test_readonly_multiple_properties_nested() {
     ]);
 
     // Readonly mapped type
-    let keyof_outer = interner.intern(TypeKey::KeyOf(outer));
+    let keyof_outer = interner.intern(TypeData::KeyOf(outer));
     let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: k_name,
         constraint: None,
         default: None,
@@ -20913,7 +20913,7 @@ fn test_readonly_multiple_properties_nested() {
         },
         constraint: keyof_outer,
         name_type: None,
-        template: interner.intern(TypeKey::IndexAccess(outer, k_param)),
+        template: interner.intern(TypeData::IndexAccess(outer, k_param)),
         readonly_modifier: Some(MappedModifier::Add),
         optional_modifier: None,
     };
@@ -20922,7 +20922,7 @@ fn test_readonly_multiple_properties_nested() {
 
     // Verify both top-level properties are readonly
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
             assert!(
@@ -20960,9 +20960,9 @@ fn test_deep_readonly_pattern_structure() {
     )]);
 
     // Apply Readonly (single level) - simulating DeepReadonly on leaf
-    let keyof_obj = interner.intern(TypeKey::KeyOf(simple_obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(simple_obj));
     let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: k_name,
         constraint: None,
         default: None,
@@ -20978,7 +20978,7 @@ fn test_deep_readonly_pattern_structure() {
         },
         constraint: keyof_obj,
         name_type: None,
-        template: interner.intern(TypeKey::IndexAccess(simple_obj, k_param)),
+        template: interner.intern(TypeData::IndexAccess(simple_obj, k_param)),
         readonly_modifier: Some(MappedModifier::Add),
         optional_modifier: None,
     };
@@ -20987,7 +20987,7 @@ fn test_deep_readonly_pattern_structure() {
 
     // Verify readonly was applied
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert!(shape.properties[0].readonly);
@@ -21013,9 +21013,9 @@ fn test_deep_readonly_manual_nested_application() {
     )]);
 
     // Apply Readonly to inner
-    let keyof_inner = interner.intern(TypeKey::KeyOf(inner));
+    let keyof_inner = interner.intern(TypeData::KeyOf(inner));
     let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: k_name,
         constraint: None,
         default: None,
@@ -21031,7 +21031,7 @@ fn test_deep_readonly_manual_nested_application() {
         },
         constraint: keyof_inner,
         name_type: None,
-        template: interner.intern(TypeKey::IndexAccess(inner, k_param)),
+        template: interner.intern(TypeData::IndexAccess(inner, k_param)),
         readonly_modifier: Some(MappedModifier::Add),
         optional_modifier: None,
     };
@@ -21045,9 +21045,9 @@ fn test_deep_readonly_manual_nested_application() {
     )]);
 
     // Apply Readonly to outer
-    let keyof_outer = interner.intern(TypeKey::KeyOf(outer_with_readonly_inner));
+    let keyof_outer = interner.intern(TypeData::KeyOf(outer_with_readonly_inner));
     let k2_name = interner.intern_string("K2");
-    let k2_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let k2_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: k2_name,
         constraint: None,
         default: None,
@@ -21063,7 +21063,7 @@ fn test_deep_readonly_manual_nested_application() {
         },
         constraint: keyof_outer,
         name_type: None,
-        template: interner.intern(TypeKey::IndexAccess(outer_with_readonly_inner, k2_param)),
+        template: interner.intern(TypeData::IndexAccess(outer_with_readonly_inner, k2_param)),
         readonly_modifier: Some(MappedModifier::Add),
         optional_modifier: None,
     };
@@ -21072,14 +21072,14 @@ fn test_deep_readonly_manual_nested_application() {
 
     // Verify: { readonly a: { readonly b: string } }
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert!(shape.properties[0].readonly, "Outer 'a' should be readonly");
 
             // Check inner is also readonly
             let inner_type = shape.properties[0].type_id;
-            if let Some(TypeKey::Object(inner_shape_id)) = interner.lookup(inner_type) {
+            if let Some(TypeData::Object(inner_shape_id)) = interner.lookup(inner_type) {
                 let inner_shape = interner.object_shape(inner_shape_id);
                 assert!(
                     inner_shape.properties[0].readonly,
@@ -21107,9 +21107,9 @@ fn test_deep_readonly_with_array_property() {
     )]);
 
     // Apply Readonly
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
     let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: k_name,
         constraint: None,
         default: None,
@@ -21125,7 +21125,7 @@ fn test_deep_readonly_with_array_property() {
         },
         constraint: keyof_obj,
         name_type: None,
-        template: interner.intern(TypeKey::IndexAccess(obj, k_param)),
+        template: interner.intern(TypeData::IndexAccess(obj, k_param)),
         readonly_modifier: Some(MappedModifier::Add),
         optional_modifier: None,
     };
@@ -21134,7 +21134,7 @@ fn test_deep_readonly_with_array_property() {
 
     // Verify: { readonly items: string[] }
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert!(
@@ -21166,7 +21166,7 @@ fn test_awaited_simple_promise() {
 
     // Awaited pattern: T extends { then: infer R } ? R : T
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -21206,7 +21206,7 @@ fn test_awaited_nested_promise_one_level() {
 
     // Awaited pattern: T extends { then: infer R } ? R : T
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -21262,7 +21262,7 @@ fn test_awaited_union_of_promises() {
 
     // Awaited pattern with distributive conditional
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -21297,7 +21297,7 @@ fn test_awaited_non_promise_passthrough() {
 
     // Awaited pattern: T extends { then: infer R } ? R : T
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -21336,7 +21336,7 @@ fn test_awaited_mixed_union() {
 
     // Awaited pattern with distributive conditional
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -21375,7 +21375,7 @@ fn test_infer_mapped_type_value_extraction() {
     let interner = TypeInterner::new();
 
     let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_v_name,
         constraint: None,
         default: None,
@@ -21414,7 +21414,7 @@ fn test_infer_mapped_type_mixed_values() {
     let interner = TypeInterner::new();
 
     let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_v_name,
         constraint: None,
         default: None,
@@ -21459,7 +21459,7 @@ fn test_infer_mapped_type_key_and_value() {
     let interner = TypeInterner::new();
 
     let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_v_name,
         constraint: None,
         default: None,
@@ -21501,7 +21501,7 @@ fn test_infer_with_extends_constraint() {
     let interner = TypeInterner::new();
 
     let infer_u_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_u_name,
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
@@ -21560,7 +21560,7 @@ fn test_infer_with_constraint_violation() {
     let interner = TypeInterner::new();
 
     let infer_u_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_u_name,
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
@@ -21618,7 +21618,7 @@ fn test_infer_multiple_same_name_covariant() {
     let interner = TypeInterner::new();
 
     let infer_r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_r_name,
         constraint: None,
         default: None,
@@ -21681,7 +21681,7 @@ fn test_infer_template_literal_prefix() {
     let interner = TypeInterner::new();
 
     let infer_rest_name = interner.intern_string("Rest");
-    let infer_rest = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_rest_name,
         constraint: None,
         default: None,
@@ -21718,7 +21718,7 @@ fn test_infer_template_literal_suffix() {
     let interner = TypeInterner::new();
 
     let infer_prefix_name = interner.intern_string("Prefix");
-    let infer_prefix = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_prefix = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_prefix_name,
         constraint: None,
         default: None,
@@ -21754,7 +21754,7 @@ fn test_infer_template_literal_middle() {
     let interner = TypeInterner::new();
 
     let infer_middle_name = interner.intern_string("Middle");
-    let infer_middle = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_middle = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_middle_name,
         constraint: None,
         default: None,
@@ -21792,7 +21792,7 @@ fn test_infer_template_literal_no_match() {
     let interner = TypeInterner::new();
 
     let infer_rest_name = interner.intern_string("Rest");
-    let infer_rest = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_rest_name,
         constraint: None,
         default: None,
@@ -21830,8 +21830,8 @@ fn test_unique_symbol_type_distinct() {
     // Two unique symbols with different SymbolRefs should be distinct
     let interner = TypeInterner::new();
 
-    let sym1 = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
-    let sym2 = interner.intern(TypeKey::UniqueSymbol(SymbolRef(2)));
+    let sym1 = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
+    let sym2 = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
 
     // Unique symbols with different refs are distinct types
     assert_ne!(sym1, sym2);
@@ -21842,8 +21842,8 @@ fn test_unique_symbol_type_same_ref() {
     // Two unique symbols with same SymbolRef should intern to same TypeId
     let interner = TypeInterner::new();
 
-    let sym1 = interner.intern(TypeKey::UniqueSymbol(SymbolRef(42)));
-    let sym2 = interner.intern(TypeKey::UniqueSymbol(SymbolRef(42)));
+    let sym1 = interner.intern(TypeData::UniqueSymbol(SymbolRef(42)));
+    let sym2 = interner.intern(TypeData::UniqueSymbol(SymbolRef(42)));
 
     // Same SymbolRef produces same TypeId
     assert_eq!(sym1, sym2);
@@ -21854,7 +21854,7 @@ fn test_unique_symbol_not_assignable_to_base_symbol() {
     // unique symbol should be distinct from base symbol type
     let interner = TypeInterner::new();
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
 
     // Unique symbol is a separate type from base symbol
     assert_ne!(unique_sym, TypeId::SYMBOL);
@@ -21865,7 +21865,7 @@ fn test_symbol_union_with_unique() {
     // symbol | unique symbol should create a union
     let interner = TypeInterner::new();
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
     let union = interner.union(vec![TypeId::SYMBOL, unique_sym]);
 
     // Union should be created (not collapsed)
@@ -21888,7 +21888,7 @@ fn test_iterator_result_type_done_false() {
 
     // Verify it's a valid object type
     match interner.lookup(iter_result) {
-        Some(TypeKey::Object(_)) => {}
+        Some(TypeData::Object(_)) => {}
         _ => panic!("Expected Object type"),
     }
 }
@@ -21908,7 +21908,7 @@ fn test_iterator_result_type_done_true() {
 
     // Verify it's a valid object type
     match interner.lookup(iter_result) {
-        Some(TypeKey::Object(_)) => {}
+        Some(TypeData::Object(_)) => {}
         _ => panic!("Expected Object type"),
     }
 }
@@ -21935,7 +21935,7 @@ fn test_iterator_result_union() {
 
     // Verify it's a union type
     match interner.lookup(result_union) {
-        Some(TypeKey::Union(_)) => {}
+        Some(TypeData::Union(_)) => {}
         _ => panic!("Expected Union type"),
     }
 }
@@ -21981,7 +21981,7 @@ fn test_iterable_with_symbol_iterator() {
 
     // Verify iterator structure
     match interner.lookup(iterator) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert_eq!(shape.properties[0].name, next_name);
@@ -21996,10 +21996,10 @@ fn test_well_known_symbol_unique_type() {
     let interner = TypeInterner::new();
 
     // Each well-known symbol has a unique SymbolRef
-    let sym_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(100)));
-    let sym_async_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(101)));
-    let sym_to_string_tag = interner.intern(TypeKey::UniqueSymbol(SymbolRef(102)));
-    let sym_has_instance = interner.intern(TypeKey::UniqueSymbol(SymbolRef(103)));
+    let sym_iterator = interner.intern(TypeData::UniqueSymbol(SymbolRef(100)));
+    let sym_async_iterator = interner.intern(TypeData::UniqueSymbol(SymbolRef(101)));
+    let sym_to_string_tag = interner.intern(TypeData::UniqueSymbol(SymbolRef(102)));
+    let sym_has_instance = interner.intern(TypeData::UniqueSymbol(SymbolRef(103)));
 
     // Each is a distinct type
     assert_ne!(sym_iterator, sym_async_iterator);
@@ -22014,7 +22014,7 @@ fn test_symbol_keyed_property() {
     // Represented as object with unique symbol property
     let interner = TypeInterner::new();
 
-    let sym_iterator = interner.intern(TypeKey::UniqueSymbol(SymbolRef(100)));
+    let sym_iterator = interner.intern(TypeData::UniqueSymbol(SymbolRef(100)));
 
     // Iterator function type
     let iter_fn = interner.function(FunctionShape {
@@ -22033,7 +22033,7 @@ fn test_symbol_keyed_property() {
 
     // The function type is valid
     match interner.lookup(iter_fn) {
-        Some(TypeKey::Function(_)) => {}
+        Some(TypeData::Function(_)) => {}
         _ => panic!("Expected Function type"),
     }
 }
@@ -22043,7 +22043,7 @@ fn test_conditional_with_symbol() {
     // T extends symbol ? true : false
     let interner = TypeInterner::new();
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
 
     // unique symbol extends symbol should be true
     let cond = ConditionalType {
@@ -22075,7 +22075,7 @@ fn test_keyof_with_symbol_property() {
         PropertyInfo::new(bar_name, TypeId::NUMBER),
     ]);
 
-    let keyof_obj = interner.intern(TypeKey::KeyOf(obj));
+    let keyof_obj = interner.intern(TypeData::KeyOf(obj));
 
     // keyof should produce union of literal string keys
     // Evaluating keyof is implementation-dependent
@@ -22103,7 +22103,7 @@ fn test_async_iterator_result() {
 
     // Verify structure
     match interner.lookup(promise_iter) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert_eq!(shape.properties[0].name, then_name);
@@ -22127,7 +22127,7 @@ fn test_exclude_basic_union() {
 
     // Exclude pattern: T extends string ? never : T
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -22193,7 +22193,7 @@ fn test_extract_basic_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -22370,7 +22370,7 @@ fn test_distributive_conditional_with_type_param() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -22400,7 +22400,7 @@ fn test_non_distributive_conditional() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -22587,18 +22587,18 @@ fn test_noinfer_identity_behavior() {
     let interner = TypeInterner::new();
 
     // NoInfer<string> = string
-    let noinfer_string = interner.intern(TypeKey::NoInfer(TypeId::STRING));
+    let noinfer_string = interner.intern(TypeData::NoInfer(TypeId::STRING));
     let evaluated = evaluate_type(&interner, noinfer_string);
     assert_eq!(evaluated, TypeId::STRING);
 
     // NoInfer<number> = number
-    let noinfer_number = interner.intern(TypeKey::NoInfer(TypeId::NUMBER));
+    let noinfer_number = interner.intern(TypeData::NoInfer(TypeId::NUMBER));
     let evaluated = evaluate_type(&interner, noinfer_number);
     assert_eq!(evaluated, TypeId::NUMBER);
 
     // Test with literal type
     let lit_hello = interner.literal_string("hello");
-    let noinfer_lit = interner.intern(TypeKey::NoInfer(lit_hello));
+    let noinfer_lit = interner.intern(TypeData::NoInfer(lit_hello));
     let evaluated = evaluate_type(&interner, noinfer_lit);
     assert_eq!(evaluated, lit_hello); // Identity property
 }
@@ -22611,12 +22611,12 @@ fn test_noinfer_with_union_type() {
     let interner = TypeInterner::new();
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let noinfer_union = interner.intern(TypeKey::NoInfer(union));
+    let noinfer_union = interner.intern(TypeData::NoInfer(union));
 
     // NoInfer preserves the type structure
     let evaluated = evaluate_type(&interner, noinfer_union);
     match interner.lookup(evaluated) {
-        Some(TypeKey::Union(_)) => {} // Correct - still a union
+        Some(TypeData::Union(_)) => {} // Correct - still a union
         other => panic!("Expected Union type, got {:?}", other),
     }
 }
@@ -22634,7 +22634,7 @@ fn test_noinfer_in_function_param_position() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -22649,7 +22649,7 @@ fn test_noinfer_in_function_param_position() {
         .unwrap();
 
     // Parameter b: NoInfer<T> - should NOT contribute to inference
-    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+    let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
     // This should return Ok(()) immediately without adding candidates
     ctx.infer_from_types(number_type, noinfer_t, InferencePriority::NakedTypeVariable)
         .unwrap();
@@ -22673,7 +22673,7 @@ fn test_noinfer_inference_priority() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -22688,7 +22688,7 @@ fn test_noinfer_inference_priority() {
         .unwrap();
 
     // Parameter b: NoInfer<T> - should NOT contribute
-    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+    let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
     ctx.infer_from_types(lit_123, noinfer_t, InferencePriority::NakedTypeVariable)
         .unwrap();
 
@@ -22709,7 +22709,7 @@ fn test_noinfer_with_conditional_type() {
     let yes = interner.literal_string("yes");
     let no = interner.literal_string("no");
 
-    let noinfer_string = interner.intern(TypeKey::NoInfer(TypeId::STRING));
+    let noinfer_string = interner.intern(TypeData::NoInfer(TypeId::STRING));
     let cond = ConditionalType {
         check_type: noinfer_string,
         extends_type: TypeId::STRING,
@@ -22731,8 +22731,8 @@ fn test_noinfer_nested() {
     let interner = TypeInterner::new();
 
     let lit_42 = interner.literal_number(42.0);
-    let noinfer_42 = interner.intern(TypeKey::NoInfer(lit_42));
-    let noinfer_noinfer_42 = interner.intern(TypeKey::NoInfer(noinfer_42));
+    let noinfer_42 = interner.intern(TypeData::NoInfer(lit_42));
+    let noinfer_noinfer_42 = interner.intern(TypeData::NoInfer(noinfer_42));
 
     // NoInfer<NoInfer<42>> should evaluate to 42
     let evaluated = evaluate_type(&interner, noinfer_noinfer_42);
@@ -22749,7 +22749,7 @@ fn test_noinfer_with_object_property() {
     let t_param = TypeId::STRING;
 
     // Object with property value: NoInfer<string>
-    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+    let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
     let obj = interner.object(vec![PropertyInfo {
         name: value_name,
         type_id: noinfer_t,
@@ -22763,7 +22763,7 @@ fn test_noinfer_with_object_property() {
 
     // Object preserves NoInfer in property types (structurally unchanged)
     match interner.lookup(obj) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             // Property type is NoInfer<string>
@@ -22786,7 +22786,7 @@ fn test_noinfer_preserves_constraints() {
     let t_name = interner.intern_string("T");
 
     // T with constraint: extends string
-    let t_constrained = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_constrained = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -22796,7 +22796,7 @@ fn test_noinfer_preserves_constraints() {
     // NoInfer<T> should still have the constraint information
     // The type parameter structure is preserved
     match interner.lookup(t_constrained) {
-        Some(TypeKey::TypeParameter(info)) => {
+        Some(TypeData::TypeParameter(info)) => {
             assert_eq!(info.constraint, Some(TypeId::STRING));
         }
         _ => panic!("Expected TypeParameter"),
@@ -22812,7 +22812,7 @@ fn test_noinfer_with_array() {
 
     // NoInfer<string[]> should still be string[]
     match interner.lookup(string_array) {
-        Some(TypeKey::Array(elem)) => {
+        Some(TypeData::Array(elem)) => {
             assert_eq!(elem, TypeId::STRING);
         }
         _ => panic!("Expected Array type"),
@@ -22840,7 +22840,7 @@ fn test_noinfer_with_tuple() {
     ]);
 
     match interner.lookup(tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert_eq!(elements.len(), 2);
             assert_eq!(elements[0].type_id, TypeId::STRING);
@@ -22867,7 +22867,7 @@ fn test_noinfer_default_parameter() {
         is_const: false,
     };
 
-    let t_param = interner.intern(TypeKey::TypeParameter(t_with_default.clone()));
+    let t_param = interner.intern(TypeData::TypeParameter(t_with_default.clone()));
 
     let func = interner.function(FunctionShape {
         type_params: vec![t_with_default],
@@ -22880,7 +22880,7 @@ fn test_noinfer_default_parameter() {
     });
 
     match interner.lookup(func) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params[0].default, Some(TypeId::STRING));
         }
@@ -22897,14 +22897,14 @@ fn test_noinfer_multiple_type_params() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -22963,7 +22963,7 @@ fn test_noinfer_multiple_type_params() {
     });
 
     match interner.lookup(func) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 2);
             assert_eq!(shape.params.len(), 2);
@@ -22983,7 +22983,7 @@ fn test_noinfer_union_distribution() {
     // NoInfer<string | number> = string | number (as a unit)
     // Unlike distributive conditionals, NoInfer doesn't distribute
     match interner.lookup(union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -22998,7 +22998,7 @@ fn test_noinfer_in_return_position() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -23026,7 +23026,7 @@ fn test_noinfer_in_return_position() {
     });
 
     match interner.lookup(func) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, t_param);
         }
@@ -23041,7 +23041,7 @@ fn test_noinfer_conditional_true_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -23061,7 +23061,7 @@ fn test_noinfer_conditional_true_branch() {
 
     // Verify it's a conditional type
     match interner.lookup(cond_type) {
-        Some(TypeKey::Conditional(_)) => {}
+        Some(TypeData::Conditional(_)) => {}
         _ => panic!("Expected Conditional type"),
     }
 }
@@ -23073,7 +23073,7 @@ fn test_noinfer_with_infer_keyword() {
     let interner = TypeInterner::new();
 
     let u_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -23118,7 +23118,7 @@ fn test_record_string_keys() {
     });
 
     match interner.lookup(record) {
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.string_index.is_some());
             assert_eq!(
@@ -23148,7 +23148,7 @@ fn test_record_number_keys() {
     });
 
     match interner.lookup(record) {
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.number_index.is_some());
             assert_eq!(
@@ -23175,7 +23175,7 @@ fn test_record_literal_keys() {
     ]);
 
     match interner.lookup(record) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
         }
@@ -23204,7 +23204,7 @@ fn test_record_with_object_value() {
     });
 
     match interner.lookup(record) {
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.string_index.is_some());
             let idx = shape.string_index.as_ref().unwrap();
@@ -23248,7 +23248,7 @@ fn test_partial_simple_object() {
     ]);
 
     match interner.lookup(partial_obj) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties[0].optional);
             assert!(shape.properties[1].optional);
@@ -23289,12 +23289,12 @@ fn test_partial_nested_object() {
     }]);
 
     match interner.lookup(partial_outer) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties[0].optional);
             // Inner object retains its structure
             match interner.lookup(shape.properties[0].type_id) {
-                Some(TypeKey::Object(inner_shape_id)) => {
+                Some(TypeData::Object(inner_shape_id)) => {
                     let inner = interner.object_shape(inner_shape_id);
                     assert!(!inner.properties[0].optional); // Not affected by Partial
                 }
@@ -23343,12 +23343,12 @@ fn test_partial_deep_nesting() {
         interner.object(vec![PropertyInfo::opt(point_name, deep_partial_point)]);
 
     match interner.lookup(deep_partial_outer) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties[0].optional);
             // Verify nested is also optional
             match interner.lookup(shape.properties[0].type_id) {
-                Some(TypeKey::Object(inner_id)) => {
+                Some(TypeData::Object(inner_id)) => {
                     let inner = interner.object_shape(inner_id);
                     assert!(inner.properties[0].optional);
                     assert!(inner.properties[1].optional);
@@ -23393,7 +23393,7 @@ fn test_required_simple_object() {
     ]);
 
     match interner.lookup(required_obj) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(!shape.properties[0].optional);
             assert!(!shape.properties[1].optional);
@@ -23434,12 +23434,12 @@ fn test_required_nested_optionals() {
     }]);
 
     match interner.lookup(required_outer) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(!shape.properties[0].optional); // Outer is required
             // Inner still has optional property
             match interner.lookup(shape.properties[0].type_id) {
-                Some(TypeKey::Object(inner_id)) => {
+                Some(TypeData::Object(inner_id)) => {
                     let inner = interner.object_shape(inner_id);
                     assert!(inner.properties[0].optional); // Still optional
                 }
@@ -23475,7 +23475,7 @@ fn test_required_mapped_type() {
     let mapped_id = interner.mapped(mapped);
 
     match interner.lookup(mapped_id) {
-        Some(TypeKey::Mapped(mapped_id)) => {
+        Some(TypeData::Mapped(mapped_id)) => {
             let m = interner.mapped_type(mapped_id);
             assert_eq!(m.optional_modifier, Some(MappedModifier::Remove));
         }
@@ -23515,7 +23515,7 @@ fn test_readonly_simple_object() {
     ]);
 
     match interner.lookup(readonly_obj) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties[0].readonly);
             assert!(shape.properties[1].readonly);
@@ -23530,10 +23530,10 @@ fn test_readonly_array() {
     let interner = TypeInterner::new();
 
     let string_array = interner.array(TypeId::STRING);
-    let readonly_array = interner.intern(TypeKey::ReadonlyType(string_array));
+    let readonly_array = interner.intern(TypeData::ReadonlyType(string_array));
 
     match interner.lookup(readonly_array) {
-        Some(TypeKey::ReadonlyType(inner)) => {
+        Some(TypeData::ReadonlyType(inner)) => {
             assert_eq!(inner, string_array);
         }
         _ => panic!("Expected ReadonlyType"),
@@ -23560,14 +23560,14 @@ fn test_readonly_tuple() {
         },
     ]);
 
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
 
     match interner.lookup(readonly_tuple) {
-        Some(TypeKey::ReadonlyType(inner)) => {
+        Some(TypeData::ReadonlyType(inner)) => {
             assert_eq!(inner, tuple);
             // Verify inner is still a tuple
             match interner.lookup(inner) {
-                Some(TypeKey::Tuple(_)) => {}
+                Some(TypeData::Tuple(_)) => {}
                 _ => panic!("Expected Tuple inside ReadonlyType"),
             }
         }
@@ -23595,12 +23595,12 @@ fn test_readonly_nested() {
     }]);
 
     match interner.lookup(readonly_obj) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties[0].readonly);
             // The array type itself is not wrapped in ReadonlyType
             match interner.lookup(shape.properties[0].type_id) {
-                Some(TypeKey::Array(_)) => {} // Regular array
+                Some(TypeData::Array(_)) => {} // Regular array
                 _ => panic!("Expected Array type"),
             }
         }
@@ -23632,7 +23632,7 @@ fn test_readonly_mapped_type() {
     let mapped_id = interner.mapped(mapped);
 
     match interner.lookup(mapped_id) {
-        Some(TypeKey::Mapped(mapped_id)) => {
+        Some(TypeData::Mapped(mapped_id)) => {
             let m = interner.mapped_type(mapped_id);
             assert_eq!(m.readonly_modifier, Some(MappedModifier::Add));
         }
@@ -23660,12 +23660,12 @@ fn test_record_with_union_value() {
     });
 
     match interner.lookup(record) {
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             let idx = shape.string_index.as_ref().unwrap();
             // Verify value is a union
             match interner.lookup(idx.value_type) {
-                Some(TypeKey::Union(_)) => {}
+                Some(TypeData::Union(_)) => {}
                 _ => panic!("Expected Union value type"),
             }
         }
@@ -23701,7 +23701,7 @@ fn test_partial_with_methods() {
     }]);
 
     match interner.lookup(partial_obj) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties[0].optional);
             assert!(shape.properties[0].is_method);
@@ -23728,7 +23728,7 @@ fn test_readonly_with_index_signature() {
     });
 
     match interner.lookup(readonly_indexed) {
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.string_index.as_ref().unwrap().readonly);
         }
@@ -23759,7 +23759,7 @@ fn test_partial_required_inverse() {
     }]);
 
     match interner.lookup(required_partial) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(!shape.properties[0].optional);
         }
@@ -23787,7 +23787,7 @@ fn test_readonly_with_optional() {
     }]);
 
     match interner.lookup(readonly_optional) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties[0].optional);
             assert!(shape.properties[0].readonly);
@@ -23807,7 +23807,7 @@ fn test_template_infer_prefix_extraction() {
     let interner = TypeInterner::new();
 
     let infer_rest_name = interner.intern_string("Rest");
-    let infer_rest = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_rest_name,
         constraint: None,
         default: None,
@@ -23842,7 +23842,7 @@ fn test_template_infer_suffix_extraction() {
     let interner = TypeInterner::new();
 
     let infer_start_name = interner.intern_string("Start");
-    let infer_start = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_start = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_start_name,
         constraint: None,
         default: None,
@@ -23876,7 +23876,7 @@ fn test_template_infer_middle_extraction() {
     let interner = TypeInterner::new();
 
     let infer_middle_name = interner.intern_string("Middle");
-    let infer_middle = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_middle = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_middle_name,
         constraint: None,
         default: None,
@@ -23912,7 +23912,7 @@ fn test_template_infer_no_match() {
     let interner = TypeInterner::new();
 
     let infer_rest_name = interner.intern_string("Rest");
-    let infer_rest = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_rest_name,
         constraint: None,
         default: None,
@@ -23946,7 +23946,7 @@ fn test_template_multiple_infers() {
     let interner = TypeInterner::new();
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -23954,7 +23954,7 @@ fn test_template_multiple_infers() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -24006,7 +24006,7 @@ fn test_template_three_infers() {
     let interner = TypeInterner::new();
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -24014,7 +24014,7 @@ fn test_template_three_infers() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -24022,7 +24022,7 @@ fn test_template_three_infers() {
     }));
 
     let infer_c_name = interner.intern_string("C");
-    let infer_c = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_c = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_c_name,
         constraint: None,
         default: None,
@@ -24079,7 +24079,7 @@ fn test_template_union_distribution_simple() {
     let interner = TypeInterner::new();
 
     let infer_x_name = interner.intern_string("X");
-    let infer_x = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_x_name,
         constraint: None,
         default: None,
@@ -24113,7 +24113,7 @@ fn test_template_union_prefix_distribution() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("Name");
-    let infer_name_type = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_name_type = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -24151,7 +24151,7 @@ fn test_template_union_all_match() {
     let interner = TypeInterner::new();
 
     let infer_event_name = interner.intern_string("Event");
-    let infer_event = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_event = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_event_name,
         constraint: None,
         default: None,
@@ -24188,7 +24188,7 @@ fn test_template_constrained_infer_string() {
     let interner = TypeInterner::new();
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -24223,7 +24223,7 @@ fn test_template_constrained_infer_literal_union() {
     let constraint = interner.union(vec![lit_a, lit_b]);
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: Some(constraint),
         default: None,
@@ -24259,7 +24259,7 @@ fn test_template_constrained_infer_violation() {
     let constraint = interner.union(vec![lit_a, lit_b]);
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: Some(constraint),
         default: None,
@@ -24291,7 +24291,7 @@ fn test_template_constrained_prefix_infer() {
     let interner = TypeInterner::new();
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -24364,7 +24364,7 @@ fn test_omit_this_parameter_basic() {
 
     // Verify original has this
     match interner.lookup(fn_with_this) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert!(shape.this_type.is_some());
         }
@@ -24373,7 +24373,7 @@ fn test_omit_this_parameter_basic() {
 
     // Verify result has no this
     match interner.lookup(fn_without_this) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert!(shape.this_type.is_none());
         }
@@ -24403,7 +24403,7 @@ fn test_omit_this_parameter_no_this() {
     });
 
     match interner.lookup(fn_no_this) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert!(shape.this_type.is_none());
             assert_eq!(shape.params.len(), 1);
@@ -24420,7 +24420,7 @@ fn test_omit_this_preserves_generics() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -24457,7 +24457,7 @@ fn test_omit_this_preserves_generics() {
     });
 
     match interner.lookup(fn_result) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 2);
             assert!(shape.this_type.is_none());
@@ -24488,7 +24488,7 @@ fn test_parameters_simple() {
     ]);
 
     match interner.lookup(params_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert_eq!(elements.len(), 2);
             assert_eq!(elements[0].type_id, TypeId::STRING);
@@ -24519,7 +24519,7 @@ fn test_parameters_with_optional() {
     ]);
 
     match interner.lookup(params_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert!(!elements[0].optional);
             assert!(elements[1].optional);
@@ -24551,7 +24551,7 @@ fn test_parameters_with_rest() {
     ]);
 
     match interner.lookup(params_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert!(!elements[0].rest);
             assert!(elements[1].rest);
@@ -24568,7 +24568,7 @@ fn test_parameters_empty() {
     let params_tuple = interner.tuple(vec![]);
 
     match interner.lookup(params_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert_eq!(elements.len(), 0);
         }
@@ -24626,7 +24626,7 @@ fn test_parameters_with_overloads() {
     });
 
     match interner.lookup(callable) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             assert_eq!(shape.call_signatures.len(), 2);
             let last = &shape.call_signatures[1];
@@ -24659,7 +24659,7 @@ fn test_constructor_parameters_simple() {
     });
 
     match interner.lookup(ctor) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert!(shape.is_constructor);
             assert_eq!(shape.params.len(), 1);
@@ -24675,7 +24675,7 @@ fn test_constructor_parameters_simple() {
     }]);
 
     match interner.lookup(params_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert_eq!(elements.len(), 1);
         }
@@ -24723,7 +24723,7 @@ fn test_constructor_parameters_callable() {
     });
 
     match interner.lookup(callable) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             assert_eq!(shape.construct_signatures.len(), 1);
             assert_eq!(shape.construct_signatures[0].params.len(), 2);
@@ -24753,7 +24753,7 @@ fn test_instance_type_simple() {
     });
 
     match interner.lookup(ctor) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert!(shape.is_constructor);
             assert_eq!(shape.return_type, foo_type);
@@ -24789,7 +24789,7 @@ fn test_instance_type_callable() {
     });
 
     match interner.lookup(callable) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             let ctor = &shape.construct_signatures[0];
             assert_eq!(ctor.return_type, instance);
@@ -24804,7 +24804,7 @@ fn test_instance_type_with_generics() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -24837,11 +24837,11 @@ fn test_instance_type_with_generics() {
     });
 
     match interner.lookup(ctor) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 1);
             match interner.lookup(shape.return_type) {
-                Some(TypeKey::Object(obj_id)) => {
+                Some(TypeData::Object(obj_id)) => {
                     let obj = interner.object_shape(obj_id);
                     assert_eq!(obj.properties[0].type_id, t_param);
                 }
@@ -24878,7 +24878,7 @@ fn test_this_parameter_type() {
     });
 
     match interner.lookup(fn_with_this) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.this_type, Some(foo_type));
         }
@@ -24902,7 +24902,7 @@ fn test_return_type_simple() {
     });
 
     match interner.lookup(func) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::STRING);
         }
@@ -24947,7 +24947,7 @@ fn test_return_type_overloads() {
     });
 
     match interner.lookup(callable) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             let last = &shape.call_signatures[shape.call_signatures.len() - 1];
             assert_eq!(last.return_type, TypeId::NUMBER);
@@ -24998,7 +24998,7 @@ fn test_distributive_large_union_15_members() {
 
     // Type parameter T for check type
     let t_name = interner.intern_string("T");
-    let _t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let _t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -25160,7 +25160,7 @@ fn test_nested_distributive_with_infer() {
     let interner = TypeInterner::new();
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -25372,7 +25372,7 @@ fn test_never_filtering_exclude_pattern() {
 
     // T param for distributive check
     let t_name = interner.intern_string("T");
-    let _t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let _t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -25483,7 +25483,7 @@ fn test_awaited_basic_promise() {
 
     // Using infer pattern: T extends { then: infer U } ? U : T
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25515,7 +25515,7 @@ fn test_awaited_promise_number() {
     let promise_number = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::NUMBER)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25551,7 +25551,7 @@ fn test_awaited_nested_promise() {
 
     // First unwrap: extracts Promise<string>
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25593,7 +25593,7 @@ fn test_awaited_string_passthrough() {
     let then_name = interner.intern_string("then");
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25624,7 +25624,7 @@ fn test_awaited_number_passthrough() {
     let then_name = interner.intern_string("then");
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25653,7 +25653,7 @@ fn test_awaited_null_undefined_passthrough() {
     let then_name = interner.intern_string("then");
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25698,7 +25698,7 @@ fn test_awaited_promise_union_distributive() {
     let promise_number = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::NUMBER)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25731,7 +25731,7 @@ fn test_awaited_promise_union_distributive() {
     // Combined result would be string | number
     let awaited_union = interner.union(vec![result_string, result_number]);
     match interner.lookup(awaited_union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -25749,7 +25749,7 @@ fn test_awaited_mixed_promise_union() {
     let promise_string = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::STRING)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25783,7 +25783,7 @@ fn test_awaited_mixed_promise_union() {
     // Combined: string | number
     let mixed_result = interner.union(vec![result_promise, result_number]);
     match interner.lookup(mixed_result) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -25801,7 +25801,7 @@ fn test_awaited_promise_void() {
     let promise_void = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::VOID)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25832,7 +25832,7 @@ fn test_awaited_promise_never() {
     let promise_never = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::NEVER)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25863,7 +25863,7 @@ fn test_awaited_promise_any() {
     let promise_any = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::ANY)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25897,7 +25897,7 @@ fn test_awaited_promise_object() {
     let promise_obj = interner.object(vec![PropertyInfo::readonly(then_name, inner_obj)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25929,7 +25929,7 @@ fn test_awaited_promise_array() {
     let promise_array = interner.object(vec![PropertyInfo::readonly(then_name, string_array)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -25967,7 +25967,7 @@ fn test_awaited_triple_nested() {
     let level3 = interner.object(vec![PropertyInfo::readonly(then_name, level2)]);
 
     let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -26049,7 +26049,7 @@ fn test_recursive_type_simple_tree() {
 
     // Verify the tree structure was evaluated (produces Object type)
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             // Should have 3 properties: left, right, value
             assert_eq!(shape.properties.len(), 3);
@@ -26077,7 +26077,7 @@ fn test_recursive_type_linked_list() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // Create Ref(1) for List type alias
     let list_ref = interner.lazy(DefId(1));
@@ -26108,7 +26108,7 @@ fn test_recursive_type_linked_list() {
 
     // Verify the list structure was evaluated (produces Object type)
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             // Should have 2 properties: value and next
             assert_eq!(shape.properties.len(), 2);
@@ -26159,7 +26159,7 @@ fn test_recursive_type_json_value() {
 
     // Verify the union contains 6 members
     match interner.lookup(json_body).unwrap() {
-        TypeKey::Union(list_id) => {
+        TypeData::Union(list_id) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 6);
         }
@@ -26198,7 +26198,7 @@ fn test_recursive_type_expression_ast() {
 
     // Verify the union
     match interner.lookup(expr_body).unwrap() {
-        TypeKey::Union(list_id) => {
+        TypeData::Union(list_id) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -26239,7 +26239,7 @@ fn test_recursive_type_dom_node() {
 
     // Verify the object structure
     match interner.lookup(node_body).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 3);
             // First property (tagName) should be STRING
@@ -26278,7 +26278,7 @@ fn test_mutually_recursive_types_a_b() {
 
     // Verify both types have 2 properties each
     match interner.lookup(a_body).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
             // At least one property should be NUMBER
@@ -26289,7 +26289,7 @@ fn test_mutually_recursive_types_a_b() {
     }
 
     match interner.lookup(b_body).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
             // At least one property should be STRING
@@ -26327,7 +26327,7 @@ fn test_mutually_recursive_types_parent_child() {
 
     // Verify structures
     match interner.lookup(parent_body).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
         }
@@ -26335,7 +26335,7 @@ fn test_mutually_recursive_types_parent_child() {
     }
 
     match interner.lookup(child_body).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
         }
@@ -26362,15 +26362,15 @@ fn test_mutually_recursive_types_three_way() {
 
     // Verify all three types created successfully
     match interner.lookup(x_body).unwrap() {
-        TypeKey::Object(_) => {}
+        TypeData::Object(_) => {}
         _ => panic!("Expected Object type for X"),
     }
     match interner.lookup(y_body).unwrap() {
-        TypeKey::Object(_) => {}
+        TypeData::Object(_) => {}
         _ => panic!("Expected Object type for Y"),
     }
     match interner.lookup(z_body).unwrap() {
-        TypeKey::Object(_) => {}
+        TypeData::Object(_) => {}
         _ => panic!("Expected Object type for Z"),
     }
 }
@@ -26414,7 +26414,7 @@ fn test_mutually_recursive_types_state_machine() {
     // Verify all state types
     for body in [state_a_body, state_b_body, state_c_body] {
         match interner.lookup(body).unwrap() {
-            TypeKey::Object(shape_id) => {
+            TypeData::Object(shape_id) => {
                 let shape = interner.object_shape(shape_id);
                 assert_eq!(shape.properties.len(), 2);
             }
@@ -26440,7 +26440,7 @@ fn test_mutually_recursive_types_request_response() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     let request_ref = interner.lazy(DefId(1));
     let response_ref = interner.lazy(DefId(2));
@@ -26474,7 +26474,7 @@ fn test_mutually_recursive_types_request_response() {
     let result = evaluator.evaluate(request_string);
 
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             // Should have 2 properties: id and response
             assert_eq!(shape.properties.len(), 2);
@@ -26630,7 +26630,7 @@ fn test_recursive_conditional_type_deep_readonly() {
     let result = evaluate_conditional(&interner, &cond);
     // Object extends object is true
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert!(shape.properties[0].readonly);
         }
@@ -26667,7 +26667,7 @@ fn test_depth_limited_recursion_level_1() {
     // Should expand one level, keeping inner Node as reference
     let value_atom = interner.intern_string("value");
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
             let value_prop = shape
@@ -26751,7 +26751,7 @@ fn test_depth_limited_recursion_tuple_builder() {
 
     // Verify tuple lengths
     match interner.lookup(level_0).unwrap() {
-        TypeKey::Tuple(list_id) => {
+        TypeData::Tuple(list_id) => {
             let elems = interner.tuple_list(list_id);
             assert_eq!(elems.len(), 0);
         }
@@ -26759,7 +26759,7 @@ fn test_depth_limited_recursion_tuple_builder() {
     }
 
     match interner.lookup(level_1).unwrap() {
-        TypeKey::Tuple(list_id) => {
+        TypeData::Tuple(list_id) => {
             let elems = interner.tuple_list(list_id);
             assert_eq!(elems.len(), 1);
         }
@@ -26767,7 +26767,7 @@ fn test_depth_limited_recursion_tuple_builder() {
     }
 
     match interner.lookup(level_2).unwrap() {
-        TypeKey::Tuple(list_id) => {
+        TypeData::Tuple(list_id) => {
             let elems = interner.tuple_list(list_id);
             assert_eq!(elems.len(), 2);
         }
@@ -26799,7 +26799,7 @@ fn test_depth_limited_recursion_max_expansion() {
 
     // Should not hang - evaluator limits expansion depth
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             // The inner 'next' property should still reference the type
@@ -26834,7 +26834,7 @@ fn test_depth_limited_recursion_path_tracking() {
 
     // Should handle circular reference without infinite loop
     match interner.lookup(result).unwrap() {
-        TypeKey::Object(shape_id) => {
+        TypeData::Object(shape_id) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
         }
@@ -26853,7 +26853,7 @@ fn test_infer_optional_property_present() {
     let interner = TypeInterner::new();
 
     let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: None,
         default: None,
@@ -26892,7 +26892,7 @@ fn test_infer_optional_property_missing() {
     let interner = TypeInterner::new();
 
     let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: None,
         default: None,
@@ -26928,7 +26928,7 @@ fn test_infer_optional_property_with_undefined() {
     let interner = TypeInterner::new();
 
     let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: None,
         default: None,
@@ -26968,7 +26968,7 @@ fn test_infer_with_default_type_used() {
     let interner = TypeInterner::new();
 
     let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: None,
         default: Some(TypeId::STRING),
@@ -27006,7 +27006,7 @@ fn test_infer_with_default_type_fallback() {
     let interner = TypeInterner::new();
 
     let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: None,
         default: Some(TypeId::STRING),
@@ -27046,7 +27046,7 @@ fn test_infer_with_default_and_constraint() {
     let empty_object = interner.object(vec![]);
 
     let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: Some(TypeId::OBJECT),
         default: Some(empty_object),
@@ -27089,7 +27089,7 @@ fn test_infer_discriminated_union_kind() {
     let interner = TypeInterner::new();
 
     let infer_k_name = interner.intern_string("K");
-    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_k = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_k_name,
         constraint: None,
         default: None,
@@ -27137,7 +27137,7 @@ fn test_infer_discriminated_union_with_extra_props() {
     let interner = TypeInterner::new();
 
     let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_t_name,
         constraint: None,
         default: None,
@@ -27145,7 +27145,7 @@ fn test_infer_discriminated_union_with_extra_props() {
     }));
 
     let infer_d_name = interner.intern_string("D");
-    let infer_d = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_d = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_d_name,
         constraint: None,
         default: None,
@@ -27242,7 +27242,7 @@ fn test_multiple_infers_both_constrained() {
     let interner = TypeInterner::new();
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -27250,7 +27250,7 @@ fn test_multiple_infers_both_constrained() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -27343,7 +27343,7 @@ fn test_multiple_infers_constraint_violation() {
     let interner = TypeInterner::new();
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -27351,7 +27351,7 @@ fn test_multiple_infers_constraint_violation() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: Some(TypeId::STRING), // Constraint: string
         default: None,
@@ -27442,7 +27442,7 @@ fn test_multiple_infers_same_constraint() {
     let interner = TypeInterner::new();
 
     let infer_x_name = interner.intern_string("X");
-    let infer_x = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_x_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -27450,7 +27450,7 @@ fn test_multiple_infers_same_constraint() {
     }));
 
     let infer_y_name = interner.intern_string("Y");
-    let infer_y = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_y = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_y_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -27505,7 +27505,7 @@ fn test_multiple_infers_different_constraints() {
     let interner = TypeInterner::new();
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: Some(TypeId::STRING),
         default: None,
@@ -27513,7 +27513,7 @@ fn test_multiple_infers_different_constraints() {
     }));
 
     let infer_n_name = interner.intern_string("N");
-    let infer_n = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_n = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_n_name,
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -27521,7 +27521,7 @@ fn test_multiple_infers_different_constraints() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: Some(TypeId::BOOLEAN),
         default: None,
@@ -27594,7 +27594,7 @@ fn test_typeof_variable_reference_basic() {
     let sym = SymbolRef(1);
     env.insert(sym, TypeId::NUMBER);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27617,7 +27617,7 @@ fn test_typeof_variable_reference_object_type() {
     let sym = SymbolRef(1);
     env.insert(sym, obj);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27637,7 +27637,7 @@ fn test_typeof_variable_reference_array_type() {
     let sym = SymbolRef(1);
     env.insert(sym, string_array);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27656,7 +27656,7 @@ fn test_typeof_imported_value_basic() {
     let imported_sym = SymbolRef(100);
     env.insert(imported_sym, TypeId::BOOLEAN);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(imported_sym));
+    let type_query = interner.intern(TypeData::TypeQuery(imported_sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27679,7 +27679,7 @@ fn test_typeof_imported_value_complex() {
     let imported_sym = SymbolRef(200);
     env.insert(imported_sym, config_type);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(imported_sym));
+    let type_query = interner.intern(TypeData::TypeQuery(imported_sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27712,7 +27712,7 @@ fn test_typeof_function_type() {
     let sym = SymbolRef(1);
     env.insert(sym, fn_type);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27753,7 +27753,7 @@ fn test_typeof_function_multiple_params() {
     let sym = SymbolRef(1);
     env.insert(sym, fn_type);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27773,7 +27773,7 @@ fn test_typeof_const_string_literal() {
     let sym = SymbolRef(1);
     env.insert(sym, hello_literal);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27793,7 +27793,7 @@ fn test_typeof_const_number_literal() {
     let sym = SymbolRef(1);
     env.insert(sym, num_literal);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27832,12 +27832,12 @@ fn test_typeof_const_tuple_readonly() {
             rest: false,
         },
     ]);
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
 
     let sym = SymbolRef(1);
     env.insert(sym, readonly_tuple);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27864,7 +27864,7 @@ fn test_typeof_const_object_readonly() {
     let sym = SymbolRef(1);
     env.insert(sym, readonly_obj);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
 
@@ -27880,7 +27880,7 @@ fn test_typeof_unresolved_passes_through() {
     let env = TypeEnvironment::new();
 
     let unknown_sym = SymbolRef(999);
-    let type_query = interner.intern(TypeKey::TypeQuery(unknown_sym));
+    let type_query = interner.intern(TypeData::TypeQuery(unknown_sym));
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(type_query);
@@ -27902,8 +27902,8 @@ fn test_typeof_in_union() {
     env.insert(sym_x, TypeId::STRING);
     env.insert(sym_y, TypeId::NUMBER);
 
-    let query_x = interner.intern(TypeKey::TypeQuery(sym_x));
-    let query_y = interner.intern(TypeKey::TypeQuery(sym_y));
+    let query_x = interner.intern(TypeData::TypeQuery(sym_x));
+    let query_y = interner.intern(TypeData::TypeQuery(sym_y));
     let union = interner.union(vec![query_x, query_y]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
@@ -27911,7 +27911,7 @@ fn test_typeof_in_union() {
 
     // Should evaluate to string | number - verify by checking it's a union containing string and number
     match interner.lookup(result) {
-        Some(TypeKey::Union(members)) => {
+        Some(TypeData::Union(members)) => {
             let members = interner.type_list(members);
             // Verify the union contains string and number (TypeQuery should be resolved)
             // The union evaluator may not recursively resolve TypeQuery in members
@@ -27941,8 +27941,8 @@ fn test_typeof_in_keyof() {
     let sym = SymbolRef(1);
     env.insert(sym, obj);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
-    let keyof = interner.intern(TypeKey::KeyOf(type_query));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
+    let keyof = interner.intern(TypeData::KeyOf(type_query));
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
     let result = evaluator.evaluate(keyof);
@@ -27970,7 +27970,7 @@ fn test_typeof_indexed_access() {
     let sym = SymbolRef(1);
     env.insert(sym, obj);
 
-    let type_query = interner.intern(TypeKey::TypeQuery(sym));
+    let type_query = interner.intern(TypeData::TypeQuery(sym));
     let key_a = interner.literal_string("a");
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
@@ -28040,7 +28040,7 @@ fn test_uppercase_union_distributive() {
     // Combined result is "A" | "B"
     let result_union = interner.union(vec![result_a, result_b]);
     match interner.lookup(result_union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -28101,7 +28101,7 @@ fn test_lowercase_union_distributive() {
 
     let result_union = interner.union(vec![result_abc, result_def]);
     match interner.lookup(result_union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -28161,7 +28161,7 @@ fn test_capitalize_union_distributive() {
 
     let result_union = interner.union(vec![result_name, result_value]);
     match interner.lookup(result_union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -28221,7 +28221,7 @@ fn test_uncapitalize_union_distributive() {
 
     let result_union = interner.union(vec![result_name, result_value]);
     match interner.lookup(result_union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -28277,7 +28277,7 @@ fn test_string_template_infer_prefix_pattern() {
     let input = interner.literal_string("prefix-value");
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -28310,7 +28310,7 @@ fn test_string_template_infer_suffix_pattern() {
     let input = interner.literal_string("value-suffix");
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -28343,7 +28343,7 @@ fn test_string_template_infer_middle_pattern() {
     let input = interner.literal_string("start-middle-end");
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -28377,7 +28377,7 @@ fn test_string_template_infer_no_match_pattern() {
     let input = interner.literal_string("different");
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -28409,7 +28409,7 @@ fn test_template_infer_two_parts() {
     let input = interner.literal_string("first_second");
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -28417,7 +28417,7 @@ fn test_template_infer_two_parts() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -28464,7 +28464,7 @@ fn test_template_infer_union_distributive() {
     let input_b = interner.literal_string("get-bar");
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -28503,7 +28503,7 @@ fn test_template_infer_union_distributive() {
     // Combined: "foo" | "bar"
     let result_union = interner.union(vec![result_a, result_b]);
     match interner.lookup(result_union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -28520,7 +28520,7 @@ fn test_template_multi_segment_extraction() {
     let input = interner.literal_string("item-123-end");
 
     let infer_name = interner.intern_string("N");
-    let infer_n = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_n = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -28699,7 +28699,7 @@ fn test_literal_matches_template_via_infer() {
     let literal = interner.literal_string("prefix-value");
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -28789,7 +28789,7 @@ fn test_mapped_type_uppercase_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Map "a" -> "A", "b" -> "B" via nested conditionals
     let inner_cond = interner.conditional(ConditionalType {
@@ -28848,7 +28848,7 @@ fn test_mapped_type_template_literal_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Map via nested conditionals
     let inner_cond = interner.conditional(ConditionalType {
@@ -28995,7 +28995,7 @@ fn test_satisfies_literal_widening_preserved_string() {
     assert!(checker.is_subtype_of(hello, TypeId::STRING));
     // The type is still the literal, not widened
     match interner.lookup(hello) {
-        Some(TypeKey::Literal(LiteralValue::String(_))) => {} // Expected - literal preserved
+        Some(TypeData::Literal(LiteralValue::String(_))) => {} // Expected - literal preserved
         other => panic!("Expected Literal(String), got {:?}", other),
     }
 }
@@ -29012,7 +29012,7 @@ fn test_satisfies_literal_widening_preserved_number() {
 
     assert!(checker.is_subtype_of(forty_two, TypeId::NUMBER));
     match interner.lookup(forty_two) {
-        Some(TypeKey::Literal(LiteralValue::Number(_))) => {} // Expected - literal preserved
+        Some(TypeData::Literal(LiteralValue::Number(_))) => {} // Expected - literal preserved
         other => panic!("Expected Literal(Number), got {:?}", other),
     }
 }
@@ -29029,7 +29029,7 @@ fn test_satisfies_literal_widening_preserved_boolean() {
 
     assert!(checker.is_subtype_of(lit_true, TypeId::BOOLEAN));
     match interner.lookup(lit_true) {
-        Some(TypeKey::Literal(LiteralValue::Boolean(true))) => {} // Expected - literal preserved
+        Some(TypeData::Literal(LiteralValue::Boolean(true))) => {} // Expected - literal preserved
         other => panic!("Expected Literal(Boolean(true)), got {:?}", other),
     }
 }
@@ -29288,7 +29288,7 @@ fn test_satisfies_with_generic_function() {
     let t_name = interner.intern_string("T");
     let x_name = interner.intern_string("x");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -29346,7 +29346,7 @@ fn test_satisfies_preserves_narrower_type() {
 
     // But the type itself remains the literal
     match interner.lookup(hello_lit) {
-        Some(TypeKey::Literal(LiteralValue::String(_))) => {} // Expected
+        Some(TypeData::Literal(LiteralValue::String(_))) => {} // Expected
         other => panic!("Expected Literal(String), got {:?}", other),
     }
 }
@@ -29403,7 +29403,7 @@ fn test_noinfer_blocks_inference_in_target() {
     let t_name = interner.intern_string("T");
 
     let var_t = ctx.fresh_type_param(t_name, false);
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -29411,7 +29411,7 @@ fn test_noinfer_blocks_inference_in_target() {
     }));
 
     let hello_lit = interner.literal_string("hello");
-    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+    let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
 
     // Source is "hello", target is NoInfer<T>
     // Should block inference (return Ok(()) without adding candidates)
@@ -29430,12 +29430,12 @@ fn test_noinfer_in_union_distribution() {
     let interner = TypeInterner::new();
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let noinfer_union = interner.intern(TypeKey::NoInfer(union));
+    let noinfer_union = interner.intern(TypeData::NoInfer(union));
 
     // Evaluate should strip NoInfer but preserve union structure
     let evaluated = evaluate_type(&interner, noinfer_union);
     match interner.lookup(evaluated) {
-        Some(TypeKey::Union(_)) => {} // Union preserved
+        Some(TypeData::Union(_)) => {} // Union preserved
         other => panic!("Expected Union, got {:?}", other),
     }
 }
@@ -29448,11 +29448,11 @@ fn test_noinfer_with_array_elements() {
     let interner = TypeInterner::new();
 
     let string_array = interner.array(TypeId::STRING);
-    let noinfer_array = interner.intern(TypeKey::NoInfer(string_array));
+    let noinfer_array = interner.intern(TypeData::NoInfer(string_array));
 
     let evaluated = evaluate_type(&interner, noinfer_array);
     match interner.lookup(evaluated) {
-        Some(TypeKey::Array(elem)) => {
+        Some(TypeData::Array(elem)) => {
             assert_eq!(elem, TypeId::STRING);
         }
         other => panic!("Expected Array, got {:?}", other),
@@ -29481,7 +29481,7 @@ fn test_noinfer_visitor_traversal() {
     }
 
     let interner = TypeInterner::new();
-    let noinfer_string = interner.intern(TypeKey::NoInfer(TypeId::STRING));
+    let noinfer_string = interner.intern(TypeData::NoInfer(TypeId::STRING));
 
     let mut visitor = TestVisitor {
         visited_noinfer: false,
@@ -29523,14 +29523,14 @@ fn test_noinfer_contains_type_param() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let noinfer_t = interner.intern(TypeKey::NoInfer(t_param));
+    let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
 
     let mut collector = CollectParams {
         params: Vec::new(),
@@ -29614,7 +29614,7 @@ fn test_bigint_literal_union() {
     let union = interner.union(vec![bigint_1, bigint_2, bigint_3]);
 
     match interner.lookup(union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 3);
         }
@@ -29687,7 +29687,7 @@ fn test_symbol_extends_symbol() {
 fn test_unique_symbol_extends_symbol() {
     let interner = TypeInterner::new();
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(42)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(42)));
 
     // unique symbol extends symbol ? true : false
     let cond = ConditionalType {
@@ -29707,14 +29707,14 @@ fn test_unique_symbol_extends_symbol() {
 fn test_unique_symbol_distinct_refs() {
     let interner = TypeInterner::new();
 
-    let sym_a = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
-    let sym_b = interner.intern(TypeKey::UniqueSymbol(SymbolRef(2)));
+    let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
+    let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
 
     // Different refs produce different types
     assert_ne!(sym_a, sym_b);
 
     // Same ref produces same type
-    let sym_a_dup = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
+    let sym_a_dup = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
     assert_eq!(sym_a, sym_a_dup);
 }
 
@@ -29723,11 +29723,11 @@ fn test_unique_symbol_distinct_refs() {
 fn test_unique_symbol_union_with_symbol() {
     let interner = TypeInterner::new();
 
-    let unique_sym = interner.intern(TypeKey::UniqueSymbol(SymbolRef(1)));
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
     let union = interner.union(vec![unique_sym, TypeId::SYMBOL]);
 
     match interner.lookup(union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             // Union should have 2 members (unique symbol and symbol)
             assert_eq!(members.len(), 2);
@@ -29741,15 +29741,15 @@ fn test_unique_symbol_union_with_symbol() {
 fn test_unique_symbol_in_union() {
     let interner = TypeInterner::new();
 
-    let sym1 = interner.intern(TypeKey::UniqueSymbol(SymbolRef(100)));
-    let sym2 = interner.intern(TypeKey::UniqueSymbol(SymbolRef(101)));
-    let sym3 = interner.intern(TypeKey::UniqueSymbol(SymbolRef(102)));
+    let sym1 = interner.intern(TypeData::UniqueSymbol(SymbolRef(100)));
+    let sym2 = interner.intern(TypeData::UniqueSymbol(SymbolRef(101)));
+    let sym3 = interner.intern(TypeData::UniqueSymbol(SymbolRef(102)));
 
     // Create union of unique symbols
     let union = interner.union(vec![sym1, sym2, sym3]);
 
     match interner.lookup(union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 3);
         }
@@ -29826,7 +29826,7 @@ fn test_number_literal_union() {
     let union = interner.union(vec![num_1, num_2, num_3]);
 
     match interner.lookup(union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 3);
         }
@@ -29898,7 +29898,7 @@ fn test_mixed_numeric_literal_types() {
     // Create union of number and bigint literals
     let union = interner.union(vec![num_42, bigint_42]);
     match interner.lookup(union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -30033,11 +30033,11 @@ fn test_boolean_literal_union() {
 
     // Either it's BOOLEAN or a union of two
     match interner.lookup(union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert!(members.len() == 2);
         }
-        Some(TypeKey::Intrinsic(IntrinsicKind::Boolean)) => {
+        Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => {
             // Simplified to boolean
         }
         _ => panic!("Expected union or boolean"),
@@ -30218,7 +30218,7 @@ fn test_const_object_literal_readonly_properties() {
 
     // Verify the object was created
     match interner.lookup(const_obj) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 2);
             // All properties should be readonly
@@ -30251,14 +30251,14 @@ fn test_const_object_literal_nested() {
     )]);
 
     match interner.lookup(outer) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert!(shape.properties[0].readonly);
             // The inner type should also be an object
             let inner_type = shape.properties[0].type_id;
             match interner.lookup(inner_type) {
-                Some(TypeKey::Object(inner_shape_id)) => {
+                Some(TypeData::Object(inner_shape_id)) => {
                     let inner_shape = interner.object_shape(inner_shape_id);
                     assert!(inner_shape.properties[0].readonly);
                 }
@@ -30333,14 +30333,14 @@ fn test_const_array_literal_tuple() {
     ]);
 
     // Wrap in ReadonlyType for as const
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
 
     match interner.lookup(readonly_tuple) {
-        Some(TypeKey::ReadonlyType(inner)) => {
+        Some(TypeData::ReadonlyType(inner)) => {
             assert_eq!(inner, tuple);
             // Verify inner is a tuple
             match interner.lookup(inner) {
-                Some(TypeKey::Tuple(list_id)) => {
+                Some(TypeData::Tuple(list_id)) => {
                     let elements = interner.tuple_list(list_id);
                     assert_eq!(elements.len(), 3);
                 }
@@ -30382,11 +30382,11 @@ fn test_const_array_mixed_types() {
         },
     ]);
 
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
 
     match interner.lookup(readonly_tuple) {
-        Some(TypeKey::ReadonlyType(inner)) => match interner.lookup(inner) {
-            Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::ReadonlyType(inner)) => match interner.lookup(inner) {
+            Some(TypeData::Tuple(list_id)) => {
                 let elements = interner.tuple_list(list_id);
                 assert_eq!(elements.len(), 3);
                 assert_eq!(elements[0].type_id, one);
@@ -30424,7 +30424,7 @@ fn test_const_array_nested() {
             rest: false,
         },
     ]);
-    let inner1_readonly = interner.intern(TypeKey::ReadonlyType(inner1));
+    let inner1_readonly = interner.intern(TypeData::ReadonlyType(inner1));
 
     let inner2 = interner.tuple(vec![
         TupleElement {
@@ -30440,7 +30440,7 @@ fn test_const_array_nested() {
             rest: false,
         },
     ]);
-    let inner2_readonly = interner.intern(TypeKey::ReadonlyType(inner2));
+    let inner2_readonly = interner.intern(TypeData::ReadonlyType(inner2));
 
     let outer = interner.tuple(vec![
         TupleElement {
@@ -30456,18 +30456,18 @@ fn test_const_array_nested() {
             rest: false,
         },
     ]);
-    let outer_readonly = interner.intern(TypeKey::ReadonlyType(outer));
+    let outer_readonly = interner.intern(TypeData::ReadonlyType(outer));
 
     match interner.lookup(outer_readonly) {
-        Some(TypeKey::ReadonlyType(inner)) => {
+        Some(TypeData::ReadonlyType(inner)) => {
             match interner.lookup(inner) {
-                Some(TypeKey::Tuple(list_id)) => {
+                Some(TypeData::Tuple(list_id)) => {
                     let elements = interner.tuple_list(list_id);
                     assert_eq!(elements.len(), 2);
                     // Each element should be ReadonlyType
                     for elem in elements.iter() {
                         match interner.lookup(elem.type_id) {
-                            Some(TypeKey::ReadonlyType(_)) => {}
+                            Some(TypeData::ReadonlyType(_)) => {}
                             other => panic!("Expected nested ReadonlyType, got {:?}", other),
                         }
                     }
@@ -30513,8 +30513,8 @@ fn test_const_array_vs_mutable() {
     assert!(checker.is_subtype_of(mutable_tuple, number_array));
 
     // Readonly version
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(mutable_tuple));
-    let readonly_array = interner.intern(TypeKey::ReadonlyType(number_array));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(mutable_tuple));
+    let readonly_array = interner.intern(TypeData::ReadonlyType(number_array));
 
     // Readonly tuple is subtype of readonly number[]
     assert!(checker.is_subtype_of(readonly_tuple, readonly_array));
@@ -30526,10 +30526,10 @@ fn test_readonly_type_wrapper() {
     let interner = TypeInterner::new();
 
     let arr = interner.array(TypeId::STRING);
-    let readonly_arr = interner.intern(TypeKey::ReadonlyType(arr));
+    let readonly_arr = interner.intern(TypeData::ReadonlyType(arr));
 
     match interner.lookup(readonly_arr) {
-        Some(TypeKey::ReadonlyType(inner)) => {
+        Some(TypeData::ReadonlyType(inner)) => {
             assert_eq!(inner, arr);
         }
         other => panic!("Expected ReadonlyType, got {:?}", other),
@@ -30547,10 +30547,10 @@ fn test_readonly_inference_object() {
     )]);
 
     // Wrap in ReadonlyType
-    let readonly_obj = interner.intern(TypeKey::ReadonlyType(obj));
+    let readonly_obj = interner.intern(TypeData::ReadonlyType(obj));
 
     match interner.lookup(readonly_obj) {
-        Some(TypeKey::ReadonlyType(inner)) => {
+        Some(TypeData::ReadonlyType(inner)) => {
             assert_eq!(inner, obj);
         }
         other => panic!("Expected ReadonlyType, got {:?}", other),
@@ -30586,7 +30586,7 @@ fn test_readonly_keyof() {
             rest: false,
         },
     ]);
-    let readonly_tuple = interner.intern(TypeKey::ReadonlyType(tuple));
+    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
 
     // keyof readonly tuple
     let result = evaluate_keyof(&interner, readonly_tuple);
@@ -30594,7 +30594,7 @@ fn test_readonly_keyof() {
     // Should include tuple indices: "0" | "1" | "2" | array methods
     // At minimum, verify it returns a union containing the indices
     match interner.lookup(result) {
-        Some(TypeKey::Union(_)) => {} // Expected - union of keys
+        Some(TypeData::Union(_)) => {} // Expected - union of keys
         other => panic!("Expected Union from keyof readonly tuple, got {:?}", other),
     }
 }
@@ -30609,7 +30609,7 @@ fn test_template_literal_const_basic() {
 
     // A simple template literal `hello` with as const is just "hello"
     match interner.lookup(hello) {
-        Some(TypeKey::Literal(LiteralValue::String(_))) => {}
+        Some(TypeData::Literal(LiteralValue::String(_))) => {}
         other => panic!("Expected LiteralString, got {:?}", other),
     }
 }
@@ -30625,7 +30625,7 @@ fn test_template_literal_const_interpolation() {
     let hello_world = interner.literal_string("hello world");
 
     match interner.lookup(hello_world) {
-        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
             assert_eq!(interner.resolve_atom(atom), "hello world");
         }
         other => panic!("Expected LiteralString, got {:?}", other),
@@ -30647,7 +30647,7 @@ fn test_template_literal_type_structure() {
     ]);
 
     match interner.lookup(template) {
-        Some(TypeKey::TemplateLiteral(spans_id)) => {
+        Some(TypeData::TemplateLiteral(spans_id)) => {
             let spans = interner.template_list(spans_id);
             assert_eq!(spans.len(), 3);
             match &spans[0] {
@@ -30712,7 +30712,7 @@ fn test_const_enum_like_object() {
 
     // Each key literal is a subtype of string
     match interner.lookup(keys) {
-        Some(TypeKey::Union(members_id)) => {
+        Some(TypeData::Union(members_id)) => {
             let members = interner.type_list(members_id);
             assert_eq!(members.len(), 4);
             for member in members.iter() {
@@ -30756,10 +30756,10 @@ fn test_pick_basic() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
     // Template: T[P] - index access
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -30804,9 +30804,9 @@ fn test_pick_single_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -30856,9 +30856,9 @@ fn test_pick_preserves_optional() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -30873,7 +30873,7 @@ fn test_pick_preserves_optional() {
 
     // Result should have optional property
     match interner.lookup(result) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             // Note: Pick may or may not preserve optional depending on implementation
@@ -30918,9 +30918,9 @@ fn test_omit_basic() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -30973,9 +30973,9 @@ fn test_omit_union_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -31020,9 +31020,9 @@ fn test_omit_single_key() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -31069,9 +31069,9 @@ fn test_pick_with_conditional_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -31140,7 +31140,7 @@ fn test_exclude_for_omit() {
     // Combined: "a" | never | "c" = "a" | "c"
     let result_union = interner.union(vec![result_a, result_b, result_c]);
     match interner.lookup(result_union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             // Should be 2 members (never is filtered out)
             assert_eq!(members.len(), 2);
@@ -31198,7 +31198,7 @@ fn test_extract_for_pick() {
     // Combined: "a" | never | "c" = "a" | "c"
     let result_union = interner.union(vec![result_a, result_b, result_c]);
     match interner.lookup(result_union) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -31224,9 +31224,9 @@ fn test_omit_all_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -31265,9 +31265,9 @@ fn test_pick_no_keys() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -31307,9 +31307,9 @@ fn test_pick_with_readonly() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -31324,7 +31324,7 @@ fn test_pick_with_readonly() {
 
     // Result should have readonly property
     match interner.lookup(result) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             // Property should be readonly
@@ -31365,9 +31365,9 @@ fn test_omit_preserves_readonly() {
         default: None,
         is_const: false,
     };
-    let key_param_id = interner.intern(TypeKey::TypeParameter(key_param.clone()));
+    let key_param_id = interner.intern(TypeData::TypeParameter(key_param.clone()));
 
-    let index_access = interner.intern(TypeKey::IndexAccess(original, key_param_id));
+    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
 
     let mapped = MappedType {
         type_param: key_param,
@@ -31382,7 +31382,7 @@ fn test_omit_preserves_readonly() {
 
     // Check result has readonly property
     match interner.lookup(result) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             // Note: Whether readonly is preserved depends on implementation
@@ -31880,7 +31880,7 @@ fn test_deferred_unresolved_type_param_check() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -31911,7 +31911,7 @@ fn test_deferred_unresolved_type_param_extends() {
     let interner = TypeInterner::new();
 
     let u_name = interner.intern_string("U");
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -31942,7 +31942,7 @@ fn test_deferred_constrained_type_param() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: Some(TypeId::STRING), // T extends string
         default: None,
@@ -31973,7 +31973,7 @@ fn test_deferred_nested_type_params() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -31981,7 +31981,7 @@ fn test_deferred_nested_type_params() {
     }));
 
     let u_name = interner.intern_string("U");
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -32021,7 +32021,7 @@ fn test_partially_deferred_outer_resolves() {
     let interner = TypeInterner::new();
 
     let u_name = interner.intern_string("U");
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -32061,7 +32061,7 @@ fn test_deferred_with_default_type_param() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: Some(TypeId::STRING), // default to string
@@ -32097,7 +32097,7 @@ fn test_distributive_large_union_basic() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32145,7 +32145,7 @@ fn test_distributive_large_union_all_match() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32185,7 +32185,7 @@ fn test_distributive_large_union_none_match() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32223,7 +32223,7 @@ fn test_distributive_nested_conditional() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32278,7 +32278,7 @@ fn test_distributive_with_infer_filter() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32286,7 +32286,7 @@ fn test_distributive_with_infer_filter() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -32330,7 +32330,7 @@ fn test_distributive_with_mapped_branches() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32384,7 +32384,7 @@ fn test_distributive_with_infer_in_true_branch() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32392,7 +32392,7 @@ fn test_distributive_with_infer_in_true_branch() {
     }));
 
     let infer_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -32439,7 +32439,7 @@ fn test_distributive_exclude_utility() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32478,7 +32478,7 @@ fn test_distributive_extract_utility() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32518,7 +32518,7 @@ fn test_distributive_non_nullable_utility() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32565,7 +32565,7 @@ fn test_distributive_deeply_nested_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32633,7 +32633,7 @@ fn test_distributive_with_never_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32668,7 +32668,7 @@ fn test_distributive_with_any_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32705,7 +32705,7 @@ fn test_distributive_single_member_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32741,7 +32741,7 @@ fn test_distributive_with_duplicate_results() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32789,7 +32789,7 @@ fn test_distributive_preserves_tuple_structure() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32797,7 +32797,7 @@ fn test_distributive_preserves_tuple_structure() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -32852,7 +32852,7 @@ fn test_distributive_with_constrained_infer() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32860,7 +32860,7 @@ fn test_distributive_with_constrained_infer() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING), // R extends string constraint
         default: None,
@@ -32903,7 +32903,7 @@ fn test_distributive_intrinsic_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -32949,7 +32949,7 @@ fn test_distributive_function_types() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33025,7 +33025,7 @@ fn test_distributive_readonly_array() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33033,14 +33033,14 @@ fn test_distributive_readonly_array() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let extends_array = interner.intern(TypeKey::ReadonlyType(interner.array(infer_r)));
+    let extends_array = interner.intern(TypeData::ReadonlyType(interner.array(infer_r)));
 
     let cond = ConditionalType {
         check_type: t_param,
@@ -33054,9 +33054,9 @@ fn test_distributive_readonly_array() {
     let mut subst = TypeSubstitution::new();
 
     let readonly_string_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::STRING)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::STRING)));
     let readonly_number_array =
-        interner.intern(TypeKey::ReadonlyType(interner.array(TypeId::NUMBER)));
+        interner.intern(TypeData::ReadonlyType(interner.array(TypeId::NUMBER)));
     subst.insert(
         t_name,
         interner.union(vec![
@@ -33082,7 +33082,7 @@ fn test_distributive_literal_union_exhaustive() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33146,7 +33146,7 @@ fn test_distributive_multiple_arrays() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33154,7 +33154,7 @@ fn test_distributive_multiple_arrays() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -33201,7 +33201,7 @@ fn test_distributive_keyof_filter() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33248,7 +33248,7 @@ fn test_distributive_mixed_primitive_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33301,7 +33301,7 @@ fn test_distributive_very_large_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33351,7 +33351,7 @@ fn test_distributive_all_to_same_result() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33393,7 +33393,7 @@ fn test_distributive_identity_preservation() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33432,7 +33432,7 @@ fn test_distributive_two_infers_different_positions() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33440,7 +33440,7 @@ fn test_distributive_two_infers_different_positions() {
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -33448,7 +33448,7 @@ fn test_distributive_two_infers_different_positions() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -33545,7 +33545,7 @@ fn test_distributive_infer_return_type() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33553,7 +33553,7 @@ fn test_distributive_infer_return_type() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -33621,7 +33621,7 @@ fn test_distributive_union_of_unions() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33668,7 +33668,7 @@ fn test_distributive_boolean_literals() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33721,7 +33721,7 @@ fn test_distributive_with_unknown() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33756,7 +33756,7 @@ fn test_distributive_partial_object_match() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33769,7 +33769,8 @@ fn test_distributive_partial_object_match() {
 
     let extends_obj = interner.object(vec![PropertyInfo::new(x_atom, TypeId::ANY)]);
 
-    let index_access = interner.intern(TypeKey::IndexAccess(t_param, interner.literal_string("x")));
+    let index_access =
+        interner.intern(TypeData::IndexAccess(t_param, interner.literal_string("x")));
 
     let cond = ConditionalType {
         check_type: t_param,
@@ -33805,7 +33806,7 @@ fn test_distributive_hundred_member_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33855,7 +33856,7 @@ fn test_distributive_triple_nested_conditional() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33929,7 +33930,7 @@ fn test_distributive_no_false_branch_matches() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -33967,7 +33968,7 @@ fn test_distributive_empty_object_match() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34017,7 +34018,7 @@ fn test_distributive_literal_type_filter() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34062,7 +34063,7 @@ fn test_distributive_numeric_literal_filter() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34128,7 +34129,7 @@ fn test_distributive_with_void() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34172,7 +34173,7 @@ fn test_distributive_chained_conditionals() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34223,7 +34224,7 @@ fn test_distributive_with_intersection_check() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34275,7 +34276,7 @@ fn test_distributive_with_bigint_literals() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34314,7 +34315,7 @@ fn test_distributive_filter_nullables() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34357,7 +34358,7 @@ fn test_distributive_with_symbol() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34392,7 +34393,7 @@ fn test_distributive_with_object_keyword() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34440,14 +34441,14 @@ fn test_distributive_infer_with_fallback() {
     let t_name = interner.intern_string("T");
     let v_name = interner.intern_string("V");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let v_infer = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let v_infer = interner.intern(TypeData::Infer(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
@@ -34490,21 +34491,21 @@ fn test_distributive_tuple_check() {
     let first_name = interner.intern_string("First");
     let rest_name = interner.intern_string("Rest");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let first_infer = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let first_infer = interner.intern(TypeData::Infer(TypeParamInfo {
         name: first_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let rest_infer = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let rest_infer = interner.intern(TypeData::Infer(TypeParamInfo {
         name: rest_name,
         constraint: None,
         default: None,
@@ -34577,7 +34578,7 @@ fn test_distributive_with_literal_numbers() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34620,7 +34621,7 @@ fn test_distributive_with_boolean_literal_union() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34661,21 +34662,21 @@ fn test_distributive_readonly_array_unwrap() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let u_infer = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let u_infer = interner.intern(TypeData::Infer(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let readonly_array = interner.intern(TypeKey::ReadonlyType(interner.array(u_infer)));
+    let readonly_array = interner.intern(TypeData::ReadonlyType(interner.array(u_infer)));
 
     let cond = ConditionalType {
         check_type: t_param,
@@ -34689,8 +34690,8 @@ fn test_distributive_readonly_array_unwrap() {
 
     let string_array = interner.array(TypeId::STRING);
     let number_array = interner.array(TypeId::NUMBER);
-    let readonly_string = interner.intern(TypeKey::ReadonlyType(string_array));
-    let readonly_number = interner.intern(TypeKey::ReadonlyType(number_array));
+    let readonly_string = interner.intern(TypeData::ReadonlyType(string_array));
+    let readonly_number = interner.intern(TypeData::ReadonlyType(number_array));
 
     let mut subst = TypeSubstitution::new();
     subst.insert(
@@ -34715,14 +34716,14 @@ fn test_distributive_promise_like_unwrap() {
     let t_name = interner.intern_string("T");
     let v_name = interner.intern_string("V");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let v_infer = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let v_infer = interner.intern(TypeData::Infer(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
@@ -34845,7 +34846,7 @@ fn test_return_type_async_promise_unwrapping() {
     });
 
     match interner.lookup(async_func) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, promise_string);
         }
@@ -34869,7 +34870,7 @@ fn test_return_type_void_function() {
     });
 
     match interner.lookup(void_func) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::VOID);
         }
@@ -34894,7 +34895,7 @@ fn test_return_type_never_function() {
     });
 
     match interner.lookup(never_func) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::NEVER);
         }
@@ -34933,13 +34934,13 @@ fn test_return_type_union_of_functions() {
     // When extracting return type from union of functions,
     // we should get union of return types
     match interner.lookup(union_funcs) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
             // Both should be functions
             for member in members.iter() {
                 match interner.lookup(*member) {
-                    Some(TypeKey::Function(_)) => {}
+                    Some(TypeData::Function(_)) => {}
                     _ => panic!("Expected Function in union"),
                 }
             }
@@ -34955,7 +34956,7 @@ fn test_return_type_conditional_return() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -34991,10 +34992,10 @@ fn test_return_type_conditional_return() {
     });
 
     match interner.lookup(generic_func) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             match interner.lookup(shape.return_type) {
-                Some(TypeKey::Conditional(_)) => {}
+                Some(TypeData::Conditional(_)) => {}
                 _ => panic!("Expected Conditional return type"),
             }
         }
@@ -35034,7 +35035,7 @@ fn test_return_type_constructor_signature() {
     });
 
     match interner.lookup(ctor) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             assert_eq!(shape.construct_signatures.len(), 1);
             assert_eq!(shape.construct_signatures[0].return_type, instance_type);
@@ -35070,7 +35071,7 @@ fn test_parameters_this_parameter() {
     });
 
     match interner.lookup(func_with_this) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             // params should only contain 'x', not 'this'
             assert_eq!(shape.params.len(), 1);
@@ -35105,7 +35106,7 @@ fn test_parameters_labeled_tuple_elements() {
     ]);
 
     match interner.lookup(params_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert_eq!(elements[0].name, Some(first_name));
             assert_eq!(elements[1].name, Some(second_name));
@@ -35141,7 +35142,7 @@ fn test_parameters_multiple_optional() {
     ]);
 
     match interner.lookup(params_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert_eq!(elements.len(), 3);
             assert!(elements.iter().all(|e| e.optional));
@@ -35178,7 +35179,7 @@ fn test_parameters_rest_with_tuple_type() {
     ]);
 
     match interner.lookup(rest_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert_eq!(elements.len(), 3);
             assert_eq!(elements[0].type_id, TypeId::STRING);
@@ -35226,7 +35227,7 @@ fn test_parameters_constructor_signature() {
     });
 
     match interner.lookup(ctor) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             let params = &shape.construct_signatures[0].params;
             assert_eq!(params.len(), 2);
@@ -35247,14 +35248,14 @@ fn test_return_type_with_infer_in_conditional() {
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
 
-    let _t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let _t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -35310,7 +35311,7 @@ fn test_parameters_with_infer_in_conditional() {
 
     let p_name = interner.intern_string("P");
 
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
@@ -35391,7 +35392,7 @@ fn test_return_type_generic_with_constraint() {
         is_method: false,
     });
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: Some(func_type),
         default: None,
@@ -35400,7 +35401,7 @@ fn test_return_type_generic_with_constraint() {
 
     // T has constraint to function type
     match interner.lookup(t_param) {
-        Some(TypeKey::TypeParameter(info)) => {
+        Some(TypeData::TypeParameter(info)) => {
             assert!(info.constraint.is_some());
         }
         _ => panic!("Expected TypeParameter"),
@@ -35414,7 +35415,7 @@ fn test_parameters_variadic_tuple_type() {
 
     let t_name = interner.intern_string("T");
     let t_array = interner.array(TypeId::ANY);
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: Some(t_array),
         default: None,
@@ -35438,7 +35439,7 @@ fn test_parameters_variadic_tuple_type() {
     ]);
 
     match interner.lookup(variadic_tuple) {
-        Some(TypeKey::Tuple(list_id)) => {
+        Some(TypeData::Tuple(list_id)) => {
             let elements = interner.tuple_list(list_id);
             assert_eq!(elements.len(), 2);
             assert!(elements[0].rest);
@@ -35478,7 +35479,7 @@ fn test_return_type_intersection_of_functions() {
 
     // Functions in intersection are merged into a callable with overloaded signatures
     match interner.lookup(intersection) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             assert_eq!(
                 shape.call_signatures.len(),
@@ -35545,7 +35546,7 @@ fn test_parameters_union_of_functions_with_different_arities() {
     let union_funcs = interner.union(vec![func1, func2]);
 
     match interner.lookup(union_funcs) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
@@ -35562,24 +35563,24 @@ fn test_return_type_mapped_type_method() {
     let t_name = interner.intern_string("T");
     let k_name = interner.intern_string("K");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let keyof_t = interner.intern(TypeKey::KeyOf(t_param));
+    let keyof_t = interner.intern(TypeData::KeyOf(t_param));
     let k_param_info = TypeParamInfo {
         name: k_name,
         constraint: Some(keyof_t),
         default: None,
         is_const: false,
     };
-    let k_param = interner.intern(TypeKey::TypeParameter(k_param_info.clone()));
+    let k_param = interner.intern(TypeData::TypeParameter(k_param_info.clone()));
 
     // T[K] - index access
-    let index_access = interner.intern(TypeKey::IndexAccess(t_param, k_param));
+    let index_access = interner.intern(TypeData::IndexAccess(t_param, k_param));
 
     // Mapped type that transforms each property
     let mapped = MappedType {
@@ -35617,7 +35618,7 @@ fn test_this_parameter_type_extraction() {
     });
 
     match interner.lookup(func_with_this) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.this_type, Some(window_type));
         }
@@ -35669,10 +35670,10 @@ fn test_omit_this_parameter() {
     });
 
     match interner.lookup(func_with_this) {
-        Some(TypeKey::Function(with_id)) => {
+        Some(TypeData::Function(with_id)) => {
             let with_shape = interner.function_shape(with_id);
             match interner.lookup(func_without_this) {
-                Some(TypeKey::Function(without_id)) => {
+                Some(TypeData::Function(without_id)) => {
                     let without_shape = interner.function_shape(without_id);
                     // Same params
                     assert_eq!(with_shape.params.len(), without_shape.params.len());
@@ -35731,7 +35732,7 @@ fn test_instance_type_from_constructor() {
 
     // InstanceType extracts the return type of construct signature
     match interner.lookup(ctor) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             assert_eq!(shape.construct_signatures.len(), 1);
             let extracted_instance = shape.construct_signatures[0].return_type;
@@ -35747,7 +35748,7 @@ fn test_constructor_parameters_with_generics() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -35786,7 +35787,7 @@ fn test_constructor_parameters_with_generics() {
     });
 
     match interner.lookup(generic_ctor) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = interner.callable_shape(shape_id);
             let sig = &shape.construct_signatures[0];
             // Has type parameter
@@ -35837,7 +35838,7 @@ fn test_awaited_with_nested_promises() {
     )]);
 
     match interner.lookup(outer_promise) {
-        Some(TypeKey::Object(shape_id)) => {
+        Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert!(!shape.properties.is_empty());
         }
@@ -35853,7 +35854,7 @@ fn test_readonly_array_type() {
     let readonly_arr = interner.array(TypeId::STRING);
 
     match interner.lookup(readonly_arr) {
-        Some(TypeKey::Array(element)) => {
+        Some(TypeData::Array(element)) => {
             assert_eq!(element, TypeId::STRING);
         }
         _ => panic!("Expected Array type"),
@@ -35866,7 +35867,7 @@ fn test_nonnullable_type() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -36144,7 +36145,7 @@ fn test_non_distributive_wrapped_type_param() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -36257,7 +36258,7 @@ fn test_distributive_infer_in_extends() {
     let interner = TypeInterner::new();
 
     let u_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
@@ -36292,14 +36293,14 @@ fn test_distributive_multiple_type_params() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
 
-    let u_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
@@ -36464,7 +36465,7 @@ fn test_infer_variadic_tuple_head() {
     let interner = TypeInterner::new();
 
     let infer_h_name = interner.intern_string("H");
-    let infer_h = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_h = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_h_name,
         constraint: None,
         default: None,
@@ -36472,7 +36473,7 @@ fn test_infer_variadic_tuple_head() {
     }));
 
     let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_t_name,
         constraint: None,
         default: None,
@@ -36536,7 +36537,7 @@ fn test_infer_variadic_tuple_tail() {
     let interner = TypeInterner::new();
 
     let infer_h_name = interner.intern_string("H");
-    let infer_h = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_h = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_h_name,
         constraint: None,
         default: None,
@@ -36544,7 +36545,7 @@ fn test_infer_variadic_tuple_tail() {
     }));
 
     let infer_l_name = interner.intern_string("L");
-    let infer_l = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_l_name,
         constraint: None,
         default: None,
@@ -36608,7 +36609,7 @@ fn test_infer_variadic_tuple_middle() {
     let interner = TypeInterner::new();
 
     let infer_f_name = interner.intern_string("F");
-    let infer_f = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_f = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_f_name,
         constraint: None,
         default: None,
@@ -36616,7 +36617,7 @@ fn test_infer_variadic_tuple_middle() {
     }));
 
     let infer_m_name = interner.intern_string("M");
-    let infer_m = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_m = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_m_name,
         constraint: None,
         default: None,
@@ -36624,7 +36625,7 @@ fn test_infer_variadic_tuple_middle() {
     }));
 
     let infer_l_name = interner.intern_string("L");
-    let infer_l = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_l_name,
         constraint: None,
         default: None,
@@ -36704,7 +36705,7 @@ fn test_infer_from_overloaded_callable() {
     let interner = TypeInterner::new();
 
     let infer_r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_r_name,
         constraint: None,
         default: None,
@@ -36784,7 +36785,7 @@ fn test_infer_from_construct_signature() {
     let interner = TypeInterner::new();
 
     let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_t_name,
         constraint: None,
         default: None,
@@ -36848,7 +36849,7 @@ fn test_infer_with_index_access_result() {
     let interner = TypeInterner::new();
 
     let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_p_name,
         constraint: None,
         default: None,
@@ -36868,8 +36869,10 @@ fn test_infer_with_index_access_result() {
     )]);
 
     // Index access: input["prop"]
-    let index_access =
-        interner.intern(TypeKey::IndexAccess(input, interner.literal_string("prop")));
+    let index_access = interner.intern(TypeData::IndexAccess(
+        input,
+        interner.literal_string("prop"),
+    ));
 
     let cond = ConditionalType {
         check_type: input,
@@ -36890,7 +36893,7 @@ fn test_infer_from_index_signature_value() {
     let interner = TypeInterner::new();
 
     let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_v_name,
         constraint: None,
         default: None,
@@ -36946,7 +36949,7 @@ fn test_infer_promise_like_unwrap() {
     let interner = TypeInterner::new();
 
     let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_t_name,
         constraint: None,
         default: None,
@@ -37048,7 +37051,7 @@ fn test_infer_from_mapped_type_output() {
     let interner = TypeInterner::new();
 
     let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_v_name,
         constraint: None,
         default: None,
@@ -37086,7 +37089,7 @@ fn test_infer_same_name_different_values() {
     let interner = TypeInterner::new();
 
     let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_v_name,
         constraint: None,
         default: None,
@@ -37128,7 +37131,7 @@ fn test_infer_with_keyof_constraint() {
     let interner = TypeInterner::new();
 
     let infer_k_name = interner.intern_string("K");
-    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_k = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_k_name,
         constraint: Some(TypeId::STRING), // K extends string
         default: None,
@@ -37184,7 +37187,7 @@ fn test_infer_from_branded_intersection() {
     let interner = TypeInterner::new();
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -37228,7 +37231,7 @@ fn test_infer_ignores_readonly() {
     let interner = TypeInterner::new();
 
     let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_t_name,
         constraint: None,
         default: None,
@@ -37272,7 +37275,7 @@ fn test_infer_optional_tuple_element() {
     let interner = TypeInterner::new();
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -37280,7 +37283,7 @@ fn test_infer_optional_tuple_element() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -37363,7 +37366,7 @@ fn test_template_literal_with_number_type() {
 
     // Verify template structure is created
     match interner.lookup(template) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
+        Some(TypeData::TemplateLiteral(_)) => (),
         _ => panic!("Expected TemplateLiteral type"),
     }
 }
@@ -37381,7 +37384,7 @@ fn test_template_literal_with_boolean_type() {
 
     // Should expand to union of two string literals
     match interner.lookup(template) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(
                 members.len(),
@@ -37391,7 +37394,7 @@ fn test_template_literal_with_boolean_type() {
             // Both should be string literals
             for member in members.iter() {
                 match interner.lookup(*member) {
-                    Some(TypeKey::Literal(LiteralValue::String(_))) => (),
+                    Some(TypeData::Literal(LiteralValue::String(_))) => (),
                     other => panic!("Expected string literal in union, got {:?}", other),
                 }
             }
@@ -37422,7 +37425,7 @@ fn test_template_literal_cartesian_product() {
     // With optimization, template literals with expandable unions are expanded immediately
     // `${"a"|"b"}_${"1"|"2"}` becomes "a_1" | "a_2" | "b_1" | "b_2"
     match interner.lookup(template) {
-        Some(TypeKey::Union(members_id)) => {
+        Some(TypeData::Union(members_id)) => {
             let members = interner.type_list(members_id);
             assert_eq!(
                 members.len(),
@@ -37479,7 +37482,7 @@ fn test_template_literal_concatenation() {
     // With optimization, string literal interpolations are expanded and concatenated
     // So `${"hello"}${"world"}` becomes "helloworld" string literal
     match interner.lookup(template) {
-        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
             let s = interner.resolve_atom_ref(atom);
             assert_eq!(
                 s.as_ref(),
@@ -37526,7 +37529,7 @@ fn test_template_literal_pattern_infer_numeric() {
     let interner = TypeInterner::new();
 
     let n_name = interner.intern_string("N");
-    let infer_n = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_n = interner.intern(TypeData::Infer(TypeParamInfo {
         name: n_name,
         constraint: Some(TypeId::NUMBER),
         default: None,
@@ -37572,7 +37575,7 @@ fn test_template_literal_multiple_adjacent_types() {
     // With optimization, string literal interpolations are expanded and concatenated
     // So `${"x"}${"y"}${"z"}` becomes "xyz" string literal
     match interner.lookup(template) {
-        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
             let s = interner.resolve_atom_ref(atom);
             assert_eq!(s.as_ref(), "xyz", "Expected concatenated string literal");
         }
@@ -37602,7 +37605,7 @@ fn test_template_literal_union_in_middle() {
     // With optimization, template literals with expandable unions become a union of string literals
     // `pre_${"a"|"b"|"c"}_suf` becomes "pre_a_suf" | "pre_b_suf" | "pre_c_suf"
     match interner.lookup(template) {
-        Some(TypeKey::Union(members_id)) => {
+        Some(TypeData::Union(members_id)) => {
             let members = interner.type_list(members_id);
             assert_eq!(members.len(), 3, "Expected 3 members in union");
         }
@@ -37624,7 +37627,7 @@ fn test_template_literal_bigint_type() {
     ]);
 
     match interner.lookup(template) {
-        Some(TypeKey::TemplateLiteral(_)) => (),
+        Some(TypeData::TemplateLiteral(_)) => (),
         _ => panic!("Expected TemplateLiteral type"),
     }
 }
@@ -37640,7 +37643,7 @@ fn test_template_literal_null_undefined() {
 
     // Both should expand to string literals
     match interner.lookup(template_null) {
-        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
             let s = interner.resolve_atom_ref(atom);
             assert_eq!(s.as_ref(), "null", "Expected 'null' string literal");
         }
@@ -37650,7 +37653,7 @@ fn test_template_literal_null_undefined() {
         ),
     }
     match interner.lookup(template_undefined) {
-        Some(TypeKey::Literal(LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(LiteralValue::String(atom))) => {
             let s = interner.resolve_atom_ref(atom);
             assert_eq!(
                 s.as_ref(),
@@ -38043,13 +38046,13 @@ fn test_callable_param_infer_union_of_signatures() {
 
     let t_name = interner.intern_string("T");
     let p_name = interner.intern_string("P");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
@@ -38118,13 +38121,13 @@ fn test_callable_param_infer_overloaded_callable() {
 
     let t_name = interner.intern_string("T");
     let p_name = interner.intern_string("P");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
@@ -38207,13 +38210,13 @@ fn test_callable_param_infer_mixed_union() {
 
     let t_name = interner.intern_string("T");
     let p_name = interner.intern_string("P");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
@@ -38271,19 +38274,19 @@ fn test_callable_return_and_param_infer_separately() {
     let t_name = interner.intern_string("T");
     let p_name = interner.intern_string("P");
     let r_name = interner.intern_string("R");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_p = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -38369,19 +38372,19 @@ fn test_callable_multiple_params_infer() {
     let t_name = interner.intern_string("T");
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: a_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: b_name,
         constraint: None,
         default: None,
@@ -38476,7 +38479,7 @@ fn test_mapped_type_homomorphic_preserves_optional() {
         PropertyInfo::opt(interner.intern_string("optional"), TypeId::NUMBER),
     ]);
 
-    let keyof_source = interner.intern(TypeKey::KeyOf(source));
+    let keyof_source = interner.intern(TypeData::KeyOf(source));
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -38506,7 +38509,7 @@ fn test_mapped_type_homomorphic_preserves_readonly() {
         PropertyInfo::readonly(interner.intern_string("immutable"), TypeId::NUMBER),
     ]);
 
-    let keyof_source = interner.intern(TypeKey::KeyOf(source));
+    let keyof_source = interner.intern(TypeData::KeyOf(source));
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -38667,7 +38670,7 @@ fn test_mapped_type_union_key_constraint() {
     )]);
 
     let union = interner.union(vec![obj_a, obj_b]);
-    let keyof_union = interner.intern(TypeKey::KeyOf(union));
+    let keyof_union = interner.intern(TypeData::KeyOf(union));
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -38703,7 +38706,7 @@ fn test_mapped_type_intersection_source() {
     )]);
 
     let intersection = interner.intersection(vec![obj_a, obj_b]);
-    let keyof_intersection = interner.intern(TypeKey::KeyOf(intersection));
+    let keyof_intersection = interner.intern(TypeData::KeyOf(intersection));
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -38970,13 +38973,13 @@ fn test_infer_return_void_vs_undefined() {
 
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -39031,13 +39034,13 @@ fn test_infer_return_promise_like() {
 
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -39105,13 +39108,13 @@ fn test_infer_return_union() {
 
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -39169,13 +39172,13 @@ fn test_infer_return_never() {
 
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
     }));
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
@@ -40277,7 +40280,7 @@ fn test_conditional_infer_template_with_keyof_result() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -40285,7 +40288,7 @@ fn test_conditional_infer_template_with_keyof_result() {
     }));
 
     let infer_name = interner.intern_string("K");
-    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_k = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -40346,7 +40349,7 @@ fn test_template_literal_with_uppercase_intrinsic_pattern() {
     // With optimization, template literals with expandable unions are expanded immediately
     // `on${"a"|"b"}Change` becomes "onaChange" | "onbChange"
     match interner.lookup(template) {
-        Some(TypeKey::Union(members_id)) => {
+        Some(TypeData::Union(members_id)) => {
             let members = interner.type_list(members_id);
             assert_eq!(members.len(), 2, "Expected 2 members in expanded union");
         }
@@ -40364,7 +40367,7 @@ fn test_nested_conditional_template_literal_infer() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -40372,7 +40375,7 @@ fn test_nested_conditional_template_literal_infer() {
     }));
 
     let infer_r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_r_name,
         constraint: None,
         default: None,
@@ -40380,7 +40383,7 @@ fn test_nested_conditional_template_literal_infer() {
     }));
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: None,
         default: None,
@@ -40437,7 +40440,7 @@ fn test_template_literal_conditional_extends_template() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -40481,7 +40484,7 @@ fn test_template_literal_escape_sequences() {
     )]);
 
     // With optimization, text-only template literals become string literals
-    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
+    if let Some(TypeData::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
         let resolved = interner.resolve_atom_ref(atom);
         // The escape sequence should be preserved in the string
         assert!(
@@ -40503,7 +40506,7 @@ fn test_template_literal_infer_with_special_chars() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -40539,7 +40542,7 @@ fn test_complex_keyof_template_infer_composition() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -40547,7 +40550,7 @@ fn test_complex_keyof_template_infer_composition() {
     }));
 
     let infer_k_name = interner.intern_string("K");
-    let infer_k = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_k = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_k_name,
         constraint: None,
         default: None,
@@ -40587,7 +40590,7 @@ fn test_complex_keyof_template_infer_composition() {
     let result = evaluate_type(&interner, instantiated);
 
     // Should extract "Name" | "Age" from the keys
-    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
         let members = interner.type_list(members);
         assert_eq!(members.len(), 2);
     } else {
@@ -40607,7 +40610,7 @@ fn test_template_literal_with_number_interpolation() {
     ]);
 
     // Verify template was created
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
+    if let Some(TypeData::TemplateLiteral(spans)) = interner.lookup(template) {
         let spans = interner.template_list(spans);
         assert_eq!(spans.len(), 2);
     } else {
@@ -40622,7 +40625,7 @@ fn test_template_literal_two_infers_union_input() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -40630,7 +40633,7 @@ fn test_template_literal_two_infers_union_input() {
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -40638,7 +40641,7 @@ fn test_template_literal_two_infers_union_input() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -40679,7 +40682,7 @@ fn test_template_literal_two_infers_union_input() {
     let result = evaluate_type(&interner, instantiated);
 
     // Should return "foo-bar" | "baz-qux"
-    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
         let members = interner.type_list(members);
         assert_eq!(members.len(), 2);
     } else {
@@ -40694,7 +40697,7 @@ fn test_template_literal_constrained_infer() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -40702,7 +40705,7 @@ fn test_template_literal_constrained_infer() {
     }));
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: Some(TypeId::STRING), // Constrained to string
         default: None,
@@ -40755,7 +40758,7 @@ fn test_keyof_object_with_template_literal_computed_keys() {
     let result = evaluate_keyof(&interner, obj);
 
     // Should return "getName" | "getAge"
-    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
         let members = interner.type_list(members);
         assert_eq!(members.len(), 2);
     } else {
@@ -40773,7 +40776,7 @@ fn test_empty_template_literal() {
     let template = interner.template_literal(vec![]);
 
     // With the template literal optimization, empty template literals become empty string literals
-    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
+    if let Some(TypeData::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
         let s = interner.resolve_atom_ref(atom);
         assert_eq!(
             s.as_ref(),
@@ -40799,7 +40802,7 @@ fn test_template_literal_only_text() {
         interner.template_literal(vec![TemplateSpan::Text(interner.intern_string("hello"))]);
 
     // With the template literal optimization, text-only template literals become string literals
-    if let Some(TypeKey::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
+    if let Some(TypeData::Literal(LiteralValue::String(atom))) = interner.lookup(template) {
         let s = interner.resolve_atom_ref(atom);
         assert_eq!(
             s.as_ref(),
@@ -40828,7 +40831,7 @@ fn test_template_literal_only_type_interpolation() {
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
 
     // Verify it was created
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(template) {
+    if let Some(TypeData::TemplateLiteral(spans)) = interner.lookup(template) {
         let spans = interner.template_list(spans);
         assert_eq!(spans.len(), 1);
     } else {
@@ -40848,7 +40851,7 @@ fn test_distributive_conditional_template_union() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -40878,7 +40881,7 @@ fn test_distributive_conditional_template_union() {
     let result = evaluate_conditional(&interner, &cond);
 
     // Should extract "a" | "b" (the "c" doesn't match and becomes never)
-    if let Some(TypeKey::Union(members)) = interner.lookup(result) {
+    if let Some(TypeData::Union(members)) = interner.lookup(result) {
         let members = interner.type_list(members);
         assert_eq!(members.len(), 2);
     } else {
@@ -40893,7 +40896,7 @@ fn test_non_distributive_conditional_template_union() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,
@@ -40947,7 +40950,7 @@ fn test_template_literal_with_boolean_interpolation() {
 
     // TypeScript expands boolean interpolation to union
     match interner.lookup(template) {
-        Some(TypeKey::Union(list_id)) => {
+        Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2, "Expected 2 members for boolean expansion");
         }
@@ -41017,7 +41020,7 @@ fn test_template_literal_mapped_type_pattern() {
     let interner = TypeInterner::new();
 
     let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_s_name,
         constraint: None,
         default: None,
@@ -41031,7 +41034,7 @@ fn test_template_literal_mapped_type_pattern() {
     ]);
 
     // Verify the pattern was created
-    if let Some(TypeKey::TemplateLiteral(spans)) = interner.lookup(pattern_template) {
+    if let Some(TypeData::TemplateLiteral(spans)) = interner.lookup(pattern_template) {
         let spans = interner.template_list(spans);
         assert_eq!(spans.len(), 2);
     } else {
@@ -41046,7 +41049,7 @@ fn test_template_literal_multiple_infers_complex_pattern() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
@@ -41054,7 +41057,7 @@ fn test_template_literal_multiple_infers_complex_pattern() {
     }));
 
     let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_a_name,
         constraint: None,
         default: None,
@@ -41062,7 +41065,7 @@ fn test_template_literal_multiple_infers_complex_pattern() {
     }));
 
     let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
@@ -41127,7 +41130,7 @@ fn test_template_literal_nested_union_interpolation() {
     // The nested union is flattened to "a" | "b" | "c" | "d" and template expands to
     // "prefixa" | "prefixb" | "prefixc" | "prefixd"
     match interner.lookup(template) {
-        Some(TypeKey::Union(members_id)) => {
+        Some(TypeData::Union(members_id)) => {
             let members = interner.type_list(members_id);
             assert_eq!(members.len(), 4, "Expected 4 members in expanded union");
         }
@@ -41145,7 +41148,7 @@ fn test_template_literal_matches_template_literal() {
     let interner = TypeInterner::new();
 
     let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeKey::Infer(TypeParamInfo {
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_name,
         constraint: None,
         default: None,

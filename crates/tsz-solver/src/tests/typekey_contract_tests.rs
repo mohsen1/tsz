@@ -47,7 +47,7 @@ fn test_direct_typekey_construction_is_quarantined_to_intern() {
             if trimmed.starts_with("//") {
                 continue;
             }
-            if line.contains(".intern(TypeKey::") {
+            if line.contains(".intern(TypeData::") {
                 violations.push(format!("{}:{}", path.display(), line_index + 1));
             }
         }
@@ -55,7 +55,7 @@ fn test_direct_typekey_construction_is_quarantined_to_intern() {
 
     assert!(
         violations.is_empty(),
-        "solver TypeKey construction via .intern(TypeKey::...) should be done only in intern.rs; violations: {}",
+        "solver TypeData construction via .intern(TypeData::...) should be done only in intern.rs; violations: {}",
         violations.join(", ")
     );
 }

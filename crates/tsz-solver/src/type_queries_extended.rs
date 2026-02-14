@@ -5,10 +5,10 @@
 //!
 //! These functions provide structured classification enums for various
 //! type-checking scenarios, allowing the checker layer to handle types
-//! without directly matching on TypeKey.
+//! without directly matching on TypeData.
 
 use crate::def::DefId;
-use crate::{TypeDatabase, TypeId, TypeKey};
+use crate::{TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
 
 // =============================================================================
@@ -44,12 +44,12 @@ pub fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralT
     };
 
     match key {
-        TypeKey::Literal(crate::LiteralValue::String(atom)) => LiteralTypeKind::String(atom),
-        TypeKey::Literal(crate::LiteralValue::Number(ordered_float)) => {
+        TypeData::Literal(crate::LiteralValue::String(atom)) => LiteralTypeKind::String(atom),
+        TypeData::Literal(crate::LiteralValue::Number(ordered_float)) => {
             LiteralTypeKind::Number(ordered_float.0)
         }
-        TypeKey::Literal(crate::LiteralValue::BigInt(atom)) => LiteralTypeKind::BigInt(atom),
-        TypeKey::Literal(crate::LiteralValue::Boolean(value)) => LiteralTypeKind::Boolean(value),
+        TypeData::Literal(crate::LiteralValue::BigInt(atom)) => LiteralTypeKind::BigInt(atom),
+        TypeData::Literal(crate::LiteralValue::Boolean(value)) => LiteralTypeKind::Boolean(value),
         _ => LiteralTypeKind::NotLiteral,
     }
 }
@@ -134,7 +134,7 @@ fn is_invalid_index_type_inner(
     }
 
     match db.lookup(type_id) {
-        Some(TypeKey::Intrinsic(kind)) => matches!(
+        Some(TypeData::Intrinsic(kind)) => matches!(
             kind,
             crate::IntrinsicKind::Void
                 | crate::IntrinsicKind::Null
@@ -144,21 +144,21 @@ fn is_invalid_index_type_inner(
                 | crate::IntrinsicKind::Object
                 | crate::IntrinsicKind::Function
         ),
-        Some(TypeKey::Literal(value)) => matches!(
+        Some(TypeData::Literal(value)) => matches!(
             value,
             crate::LiteralValue::Boolean(_) | crate::LiteralValue::BigInt(_)
         ),
-        Some(TypeKey::Array(_))
-        | Some(TypeKey::Tuple(_))
-        | Some(TypeKey::Object(_))
-        | Some(TypeKey::ObjectWithIndex(_))
-        | Some(TypeKey::Function(_))
-        | Some(TypeKey::Callable(_)) => true,
-        Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => db
+        Some(TypeData::Array(_))
+        | Some(TypeData::Tuple(_))
+        | Some(TypeData::Object(_))
+        | Some(TypeData::ObjectWithIndex(_))
+        | Some(TypeData::Function(_))
+        | Some(TypeData::Callable(_)) => true,
+        Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => db
             .type_list(list_id)
             .iter()
             .any(|&member| is_invalid_index_type_inner(db, member, visited)),
-        Some(TypeKey::TypeParameter(info)) => info
+        Some(TypeData::TypeParameter(info)) => info
             .constraint
             .is_some_and(|constraint| is_invalid_index_type_inner(db, constraint, visited)),
         _ => false,
@@ -172,7 +172,7 @@ fn is_invalid_index_type_inner(
 /// Classification for spread operations.
 ///
 /// This enum provides a structured way to handle spread types without
-/// directly matching on TypeKey in the checker layer.
+/// directly matching on TypeData in the checker layer.
 #[derive(Debug, Clone)]
 pub enum SpreadTypeKind {
     /// Array type - element type for spread
@@ -211,19 +211,19 @@ pub fn classify_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> SpreadTyp
     };
 
     match key {
-        TypeKey::Array(element_type) => SpreadTypeKind::Array(element_type),
-        TypeKey::Tuple(tuple_id) => SpreadTypeKind::Tuple(tuple_id),
-        TypeKey::Object(shape_id) => SpreadTypeKind::Object(shape_id),
-        TypeKey::ObjectWithIndex(shape_id) => SpreadTypeKind::ObjectWithIndex(shape_id),
-        TypeKey::Literal(crate::LiteralValue::String(atom)) => SpreadTypeKind::StringLiteral(atom),
-        TypeKey::Lazy(def_id) => SpreadTypeKind::Lazy(def_id),
+        TypeData::Array(element_type) => SpreadTypeKind::Array(element_type),
+        TypeData::Tuple(tuple_id) => SpreadTypeKind::Tuple(tuple_id),
+        TypeData::Object(shape_id) => SpreadTypeKind::Object(shape_id),
+        TypeData::ObjectWithIndex(shape_id) => SpreadTypeKind::ObjectWithIndex(shape_id),
+        TypeData::Literal(crate::LiteralValue::String(atom)) => SpreadTypeKind::StringLiteral(atom),
+        TypeData::Lazy(def_id) => SpreadTypeKind::Lazy(def_id),
         _ => SpreadTypeKind::Other,
     }
 }
 
 /// Check if a type has Symbol.iterator or is otherwise iterable.
 ///
-/// This is a helper for checking iterability without matching on TypeKey.
+/// This is a helper for checking iterability without matching on TypeData.
 pub fn is_iterable_type_kind(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Handle intrinsic string type
     if type_id == TypeId::STRING {
@@ -235,9 +235,9 @@ pub fn is_iterable_type_kind(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     };
 
     match key {
-        TypeKey::Array(_) | TypeKey::Tuple(_) => true,
-        TypeKey::Literal(crate::LiteralValue::String(_)) => true,
-        TypeKey::Object(shape_id) => {
+        TypeData::Array(_) | TypeData::Tuple(_) => true,
+        TypeData::Literal(crate::LiteralValue::String(_)) => true,
+        TypeData::Object(shape_id) => {
             // Check for [Symbol.iterator] method
             let shape = db.object_shape(shape_id);
             shape.properties.iter().any(|prop| {
@@ -260,8 +260,8 @@ pub fn get_iterable_element_type_from_db(db: &dyn TypeDatabase, type_id: TypeId)
     let key = db.lookup(type_id)?;
 
     match key {
-        TypeKey::Array(elem_type) => Some(elem_type),
-        TypeKey::Tuple(tuple_list_id) => {
+        TypeData::Array(elem_type) => Some(elem_type),
+        TypeData::Tuple(tuple_list_id) => {
             let elements = db.tuple_list(tuple_list_id);
             if elements.is_empty() {
                 Some(TypeId::NEVER)
@@ -270,8 +270,8 @@ pub fn get_iterable_element_type_from_db(db: &dyn TypeDatabase, type_id: TypeId)
                 Some(db.union(types))
             }
         }
-        TypeKey::Literal(crate::LiteralValue::String(_)) => Some(TypeId::STRING),
-        TypeKey::Object(shape_id) => {
+        TypeData::Literal(crate::LiteralValue::String(_)) => Some(TypeId::STRING),
+        TypeData::Object(shape_id) => {
             // For objects with [Symbol.iterator], we'd need to infer the element type
             // from the iterator's return type. For now, return Any as a fallback.
             let shape = db.object_shape(shape_id);
@@ -297,7 +297,7 @@ pub fn get_iterable_element_type_from_db(db: &dyn TypeDatabase, type_id: TypeId)
 /// Classification for type parameter types.
 ///
 /// This enum provides a structured way to handle type parameters without
-/// directly matching on TypeKey in the checker layer.
+/// directly matching on TypeData in the checker layer.
 #[derive(Debug, Clone)]
 pub enum TypeParameterKind {
     /// Type parameter with info
@@ -325,18 +325,18 @@ pub fn classify_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> TypePa
     };
 
     match key {
-        TypeKey::TypeParameter(info) => TypeParameterKind::TypeParameter(info.clone()),
-        TypeKey::Infer(info) => TypeParameterKind::Infer(info.clone()),
-        TypeKey::Application(app_id) => TypeParameterKind::Application(app_id),
-        TypeKey::Union(list_id) => {
+        TypeData::TypeParameter(info) => TypeParameterKind::TypeParameter(info.clone()),
+        TypeData::Infer(info) => TypeParameterKind::Infer(info.clone()),
+        TypeData::Application(app_id) => TypeParameterKind::Application(app_id),
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             TypeParameterKind::Union(members.to_vec())
         }
-        TypeKey::Intersection(list_id) => {
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             TypeParameterKind::Intersection(members.to_vec())
         }
-        TypeKey::Callable(shape_id) => TypeParameterKind::Callable(shape_id),
+        TypeData::Callable(shape_id) => TypeParameterKind::Callable(shape_id),
         _ => TypeParameterKind::NotTypeParameter,
     }
 }
@@ -352,7 +352,7 @@ pub fn is_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
 /// Get the type parameter default if this is a type parameter.
 pub fn get_type_param_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info.default,
+        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info.default,
         _ => None,
     }
 }
@@ -360,7 +360,7 @@ pub fn get_type_param_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 /// Get the callable type parameter count.
 pub fn get_callable_type_param_count(db: &dyn TypeDatabase, type_id: TypeId) -> usize {
     match db.lookup(type_id) {
-        Some(TypeKey::Callable(shape_id)) => {
+        Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
             shape
                 .call_signatures
@@ -380,7 +380,7 @@ pub fn get_callable_type_param_count(db: &dyn TypeDatabase, type_id: TypeId) -> 
 /// Classification for promise-like types.
 ///
 /// This enum provides a structured way to handle promise types without
-/// directly matching on TypeKey in the checker layer.
+/// directly matching on TypeData in the checker layer.
 #[derive(Debug, Clone)]
 pub enum PromiseTypeKind {
     /// Type application (like Promise<T>) - contains base and args
@@ -409,7 +409,7 @@ pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseT
     };
 
     match key {
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = db.type_application(app_id);
             PromiseTypeKind::Application {
                 app_id,
@@ -417,9 +417,9 @@ pub fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseT
                 args: app.args.clone(),
             }
         }
-        TypeKey::Lazy(def_id) => PromiseTypeKind::Lazy(def_id),
-        TypeKey::Object(shape_id) => PromiseTypeKind::Object(shape_id),
-        TypeKey::Union(list_id) => {
+        TypeData::Lazy(def_id) => PromiseTypeKind::Lazy(def_id),
+        TypeData::Object(shape_id) => PromiseTypeKind::Object(shape_id),
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             PromiseTypeKind::Union(members.to_vec())
         }
@@ -460,29 +460,29 @@ pub fn classify_for_new_expression(
     };
 
     match key {
-        TypeKey::Callable(shape_id) => NewExpressionTypeKind::Callable(shape_id),
-        TypeKey::Function(shape_id) => NewExpressionTypeKind::Function(shape_id),
-        TypeKey::TypeQuery(sym_ref) => NewExpressionTypeKind::TypeQuery(sym_ref),
-        TypeKey::Intersection(list_id) => {
+        TypeData::Callable(shape_id) => NewExpressionTypeKind::Callable(shape_id),
+        TypeData::Function(shape_id) => NewExpressionTypeKind::Function(shape_id),
+        TypeData::TypeQuery(sym_ref) => NewExpressionTypeKind::TypeQuery(sym_ref),
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             NewExpressionTypeKind::Intersection(members.to_vec())
         }
-        TypeKey::Union(list_id) => {
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             NewExpressionTypeKind::Union(members.to_vec())
         }
-        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             NewExpressionTypeKind::TypeParameter {
                 constraint: info.constraint,
             }
         }
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             // Objects might contain callable properties that represent construct signatures
             // Check if the object has a "new" property or if any property is callable with construct signatures
             let shape = db.object_shape(shape_id);
             for prop in shape.properties.iter() {
                 // Check if this property is a callable type with construct signatures
-                if let Some(TypeKey::Callable(callable_shape_id)) = db.lookup(prop.type_id) {
+                if let Some(TypeData::Callable(callable_shape_id)) = db.lookup(prop.type_id) {
                     let callable_shape = db.callable_shape(callable_shape_id);
                     if !callable_shape.construct_signatures.is_empty() {
                         // Found a callable property with construct signatures
@@ -523,12 +523,12 @@ pub fn classify_for_abstract_check(
     };
 
     match key {
-        TypeKey::TypeQuery(sym_ref) => AbstractClassCheckKind::TypeQuery(sym_ref),
-        TypeKey::Union(list_id) => {
+        TypeData::TypeQuery(sym_ref) => AbstractClassCheckKind::TypeQuery(sym_ref),
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             AbstractClassCheckKind::Union(members.to_vec())
         }
-        TypeKey::Intersection(list_id) => {
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             AbstractClassCheckKind::Intersection(members.to_vec())
         }
@@ -576,24 +576,24 @@ pub fn classify_for_construct_signature(
     };
 
     match key {
-        TypeKey::Callable(shape_id) => ConstructSignatureKind::Callable(shape_id),
-        TypeKey::Lazy(def_id) => ConstructSignatureKind::Lazy(def_id),
-        TypeKey::TypeQuery(sym_ref) => ConstructSignatureKind::TypeQuery(sym_ref),
-        TypeKey::Application(app_id) => ConstructSignatureKind::Application(app_id),
-        TypeKey::Union(list_id) => {
+        TypeData::Callable(shape_id) => ConstructSignatureKind::Callable(shape_id),
+        TypeData::Lazy(def_id) => ConstructSignatureKind::Lazy(def_id),
+        TypeData::TypeQuery(sym_ref) => ConstructSignatureKind::TypeQuery(sym_ref),
+        TypeData::Application(app_id) => ConstructSignatureKind::Application(app_id),
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             ConstructSignatureKind::Union(members.to_vec())
         }
-        TypeKey::Intersection(list_id) => {
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             ConstructSignatureKind::Intersection(members.to_vec())
         }
-        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             ConstructSignatureKind::TypeParameter {
                 constraint: info.constraint,
             }
         }
-        TypeKey::Function(shape_id) => ConstructSignatureKind::Function(shape_id),
+        TypeData::Function(shape_id) => ConstructSignatureKind::Function(shape_id),
         _ => ConstructSignatureKind::NoConstruct,
     }
 }
@@ -618,7 +618,7 @@ pub fn classify_for_keyof(db: &dyn TypeDatabase, type_id: TypeId) -> KeyOfTypeKi
     };
 
     match key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             KeyOfTypeKind::Object(shape_id)
         }
         _ => KeyOfTypeKind::NoKeys,
@@ -650,10 +650,10 @@ pub fn classify_for_string_literal_keys(
     };
 
     match key {
-        TypeKey::Literal(crate::types::LiteralValue::String(name)) => {
+        TypeData::Literal(crate::types::LiteralValue::String(name)) => {
             StringLiteralKeyKind::SingleString(name)
         }
-        TypeKey::Union(list_id) => {
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             StringLiteralKeyKind::Union(members.to_vec())
         }
@@ -668,7 +668,7 @@ pub fn get_string_literal_value(
     type_id: TypeId,
 ) -> Option<tsz_common::interner::Atom> {
     match db.lookup(type_id) {
-        Some(TypeKey::Literal(crate::types::LiteralValue::String(name))) => Some(name),
+        Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
         _ => None,
     }
 }
@@ -695,10 +695,10 @@ pub fn classify_for_class_decl(db: &dyn TypeDatabase, type_id: TypeId) -> ClassD
     };
 
     match key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             ClassDeclTypeKind::Object(shape_id)
         }
-        TypeKey::Union(list_id) | TypeKey::Intersection(list_id) => {
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             ClassDeclTypeKind::Members(members.to_vec())
         }
@@ -728,15 +728,15 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
     };
 
     match key {
-        TypeKey::Callable(shape_id) => CallSignaturesKind::Callable(shape_id),
-        TypeKey::Union(list_id) => {
+        TypeData::Callable(shape_id) => CallSignaturesKind::Callable(shape_id),
+        TypeData::Union(list_id) => {
             // For unions, collect call signatures from all callable members
             let members = db.type_list(list_id);
             let mut call_signatures = Vec::new();
 
             for &member in members.iter() {
                 match db.lookup(member) {
-                    Some(TypeKey::Callable(shape_id)) => {
+                    Some(TypeData::Callable(shape_id)) => {
                         let shape = db.callable_shape(shape_id);
                         // Extend with call signatures from this member
                         call_signatures.extend(shape.call_signatures.iter().cloned());
@@ -766,7 +766,7 @@ pub fn get_application_info(
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
     match db.lookup(type_id) {
-        Some(TypeKey::Application(app_id)) => {
+        Some(TypeData::Application(app_id)) => {
             let app = db.type_application(app_id);
             Some((app.base, app.args.clone()))
         }
@@ -807,18 +807,20 @@ pub fn classify_for_type_parameter_content(
     };
 
     match key {
-        TypeKey::TypeParameter(_) | TypeKey::Infer(_) => TypeParameterContentKind::IsTypeParameter,
-        TypeKey::Array(elem) => TypeParameterContentKind::Array(elem),
-        TypeKey::Tuple(list_id) => TypeParameterContentKind::Tuple(list_id),
-        TypeKey::Union(list_id) => {
+        TypeData::TypeParameter(_) | TypeData::Infer(_) => {
+            TypeParameterContentKind::IsTypeParameter
+        }
+        TypeData::Array(elem) => TypeParameterContentKind::Array(elem),
+        TypeData::Tuple(list_id) => TypeParameterContentKind::Tuple(list_id),
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             TypeParameterContentKind::Union(members.to_vec())
         }
-        TypeKey::Intersection(list_id) => {
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             TypeParameterContentKind::Intersection(members.to_vec())
         }
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = db.type_application(app_id);
             TypeParameterContentKind::Application {
                 base: app.base,
@@ -855,13 +857,13 @@ pub fn classify_for_type_depth(db: &dyn TypeDatabase, type_id: TypeId) -> TypeDe
     };
 
     match key {
-        TypeKey::Array(elem) => TypeDepthKind::Array(elem),
-        TypeKey::Tuple(list_id) => TypeDepthKind::Tuple(list_id),
-        TypeKey::Union(list_id) | TypeKey::Intersection(list_id) => {
+        TypeData::Array(elem) => TypeDepthKind::Array(elem),
+        TypeData::Tuple(list_id) => TypeDepthKind::Tuple(list_id),
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             TypeDepthKind::Members(members.to_vec())
         }
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = db.type_application(app_id);
             TypeDepthKind::Application {
                 base: app.base,
@@ -899,11 +901,11 @@ pub fn classify_for_spread_properties(
     };
 
     match key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             SpreadPropertyKind::Object(shape_id)
         }
-        TypeKey::Callable(shape_id) => SpreadPropertyKind::Callable(shape_id),
-        TypeKey::Intersection(list_id) => {
+        TypeData::Callable(shape_id) => SpreadPropertyKind::Callable(shape_id),
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             SpreadPropertyKind::Intersection(members.to_vec())
         }
@@ -937,7 +939,7 @@ pub fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> L
     };
 
     match key {
-        TypeKey::Lazy(def_id) => LazyTypeKind::Lazy(def_id),
+        TypeData::Lazy(def_id) => LazyTypeKind::Lazy(def_id),
         _ => LazyTypeKind::NotLazy,
     }
 }
@@ -986,25 +988,25 @@ pub fn classify_for_constructor_check(
     };
 
     match key {
-        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             ConstructorCheckKind::TypeParameter {
                 constraint: info.constraint,
             }
         }
-        TypeKey::Intersection(members_id) => {
+        TypeData::Intersection(members_id) => {
             let members = db.type_list(members_id);
             ConstructorCheckKind::Intersection(members.to_vec())
         }
-        TypeKey::Union(members_id) => {
+        TypeData::Union(members_id) => {
             let members = db.type_list(members_id);
             ConstructorCheckKind::Union(members.to_vec())
         }
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = db.type_application(app_id);
             ConstructorCheckKind::Application { base: app.base }
         }
-        TypeKey::Lazy(def_id) => ConstructorCheckKind::Lazy(def_id),
-        TypeKey::TypeQuery(sym_ref) => ConstructorCheckKind::TypeQuery(sym_ref),
+        TypeData::Lazy(def_id) => ConstructorCheckKind::Lazy(def_id),
+        TypeData::TypeQuery(sym_ref) => ConstructorCheckKind::TypeQuery(sym_ref),
         _ => ConstructorCheckKind::Other,
     }
 }
@@ -1017,7 +1019,12 @@ pub fn is_narrowable_type_key(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Without this, discriminant narrowing fails for types stored as lazy references
     matches!(
         db.lookup(type_id),
-        Some(TypeKey::Union(_) | TypeKey::TypeParameter(_) | TypeKey::Infer(_) | TypeKey::Lazy(_))
+        Some(
+            TypeData::Union(_)
+                | TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::Lazy(_)
+        )
     )
 }
 
@@ -1039,10 +1046,10 @@ pub enum PrivateBrandKind {
 /// Classify a type for private brand extraction.
 pub fn classify_for_private_brand(db: &dyn TypeDatabase, type_id: TypeId) -> PrivateBrandKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
             PrivateBrandKind::Object(shape_id)
         }
-        Some(TypeKey::Callable(shape_id)) => PrivateBrandKind::Callable(shape_id),
+        Some(TypeData::Callable(shape_id)) => PrivateBrandKind::Callable(shape_id),
         _ => PrivateBrandKind::None,
     }
 }
@@ -1050,10 +1057,10 @@ pub fn classify_for_private_brand(db: &dyn TypeDatabase, type_id: TypeId) -> Pri
 /// Get the widened type for a literal type.
 pub fn get_widened_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Literal(crate::LiteralValue::String(_))) => Some(TypeId::STRING),
-        Some(TypeKey::Literal(crate::LiteralValue::Number(_))) => Some(TypeId::NUMBER),
-        Some(TypeKey::Literal(crate::LiteralValue::BigInt(_))) => Some(TypeId::BIGINT),
-        Some(TypeKey::Literal(crate::LiteralValue::Boolean(_))) => Some(TypeId::BOOLEAN),
+        Some(TypeData::Literal(crate::LiteralValue::String(_))) => Some(TypeId::STRING),
+        Some(TypeData::Literal(crate::LiteralValue::Number(_))) => Some(TypeId::NUMBER),
+        Some(TypeData::Literal(crate::LiteralValue::BigInt(_))) => Some(TypeId::BIGINT),
+        Some(TypeData::Literal(crate::LiteralValue::Boolean(_))) => Some(TypeId::BOOLEAN),
         _ => None,
     }
 }
@@ -1064,7 +1071,7 @@ pub fn get_tuple_list_id(
     type_id: TypeId,
 ) -> Option<crate::types::TupleListId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Tuple(list_id)) => Some(list_id),
+        Some(TypeData::Tuple(list_id)) => Some(list_id),
         _ => None,
     }
 }
@@ -1072,7 +1079,7 @@ pub fn get_tuple_list_id(
 /// Get the base type of an application type.
 pub fn get_application_base(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Application(app_id)) => Some(db.type_application(app_id).base),
+        Some(TypeData::Application(app_id)) => Some(db.type_application(app_id).base),
         _ => None,
     }
 }
@@ -1093,13 +1100,13 @@ pub enum LiteralKeyKind {
 /// Classify a type for literal key extraction.
 pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKeyKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Literal(crate::LiteralValue::String(atom))) => {
+        Some(TypeData::Literal(crate::LiteralValue::String(atom))) => {
             LiteralKeyKind::StringLiteral(atom)
         }
-        Some(TypeKey::Literal(crate::LiteralValue::Number(num))) => {
+        Some(TypeData::Literal(crate::LiteralValue::Number(num))) => {
             LiteralKeyKind::NumberLiteral(num.0)
         }
-        Some(TypeKey::Union(members_id)) => {
+        Some(TypeData::Union(members_id)) => {
             LiteralKeyKind::Union(db.type_list(members_id).to_vec())
         }
         _ => LiteralKeyKind::Other,
@@ -1109,7 +1116,7 @@ pub fn classify_literal_key(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKe
 /// Get literal value from a type if it's a literal.
 pub fn get_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::LiteralValue> {
     match db.lookup(type_id) {
-        Some(TypeKey::Literal(value)) => Some(value),
+        Some(TypeData::Literal(value)) => Some(value),
         _ => None,
     }
 }
@@ -1124,7 +1131,7 @@ pub fn get_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate
 /// Non-literal types are returned unchanged.
 pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     match db.lookup(type_id) {
-        Some(TypeKey::Literal(ref lit)) => match lit {
+        Some(TypeData::Literal(ref lit)) => match lit {
             crate::LiteralValue::String(_) => TypeId::STRING,
             crate::LiteralValue::Number(_) => TypeId::NUMBER,
             crate::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
@@ -1143,7 +1150,7 @@ pub fn get_object_property_type(
     property_name: &str,
 ) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
             for prop in &shape.properties {
                 let prop_name = db.resolve_atom_ref(prop.name);
@@ -1162,7 +1169,7 @@ pub fn get_object_property_type(
 /// Used for checking if a function's return type is promise-like in async iterator contexts.
 pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Function(shape_id)) => {
+        Some(TypeData::Function(shape_id)) => {
             let shape = db.function_shape(shape_id);
             Some(shape.return_type)
         }
@@ -1172,9 +1179,9 @@ pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Optio
 
 /// Check if a type is specifically an object type with index signatures.
 ///
-/// Returns true only for TypeKey::ObjectWithIndex, not for TypeKey::Object.
+/// Returns true only for TypeData::ObjectWithIndex, not for TypeData::Object.
 pub fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    matches!(db.lookup(type_id), Some(TypeKey::ObjectWithIndex(_)))
+    matches!(db.lookup(type_id), Some(TypeData::ObjectWithIndex(_)))
 }
 
 // =============================================================================
@@ -1195,15 +1202,17 @@ pub enum ArrayLikeKind {
 /// Classify a type for array-like checking.
 pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Array(elem)) => ArrayLikeKind::Array(elem),
-        Some(TypeKey::Tuple(_)) => ArrayLikeKind::Tuple,
-        Some(TypeKey::ReadonlyType(inner)) => ArrayLikeKind::Readonly(inner),
-        Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => info
+        Some(TypeData::Array(elem)) => ArrayLikeKind::Array(elem),
+        Some(TypeData::Tuple(_)) => ArrayLikeKind::Tuple,
+        Some(TypeData::ReadonlyType(inner)) => ArrayLikeKind::Readonly(inner),
+        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info
             .constraint
             .map(|constraint| classify_array_like(db, constraint))
             .unwrap_or(ArrayLikeKind::Other),
-        Some(TypeKey::Union(members_id)) => ArrayLikeKind::Union(db.type_list(members_id).to_vec()),
-        Some(TypeKey::Intersection(members_id)) => {
+        Some(TypeData::Union(members_id)) => {
+            ArrayLikeKind::Union(db.type_list(members_id).to_vec())
+        }
+        Some(TypeData::Intersection(members_id)) => {
             ArrayLikeKind::Intersection(db.type_list(members_id).to_vec())
         }
         _ => ArrayLikeKind::Other,
@@ -1228,11 +1237,11 @@ pub enum IndexKeyKind {
 /// Classify a type for index key checking.
 pub fn classify_index_key(db: &dyn TypeDatabase, type_id: TypeId) -> IndexKeyKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Intrinsic(crate::IntrinsicKind::String)) => IndexKeyKind::String,
-        Some(TypeKey::Intrinsic(crate::IntrinsicKind::Number)) => IndexKeyKind::Number,
-        Some(TypeKey::Literal(crate::LiteralValue::String(_))) => IndexKeyKind::StringLiteral,
-        Some(TypeKey::Literal(crate::LiteralValue::Number(_))) => IndexKeyKind::NumberLiteral,
-        Some(TypeKey::Union(members_id)) => IndexKeyKind::Union(db.type_list(members_id).to_vec()),
+        Some(TypeData::Intrinsic(crate::IntrinsicKind::String)) => IndexKeyKind::String,
+        Some(TypeData::Intrinsic(crate::IntrinsicKind::Number)) => IndexKeyKind::Number,
+        Some(TypeData::Literal(crate::LiteralValue::String(_))) => IndexKeyKind::StringLiteral,
+        Some(TypeData::Literal(crate::LiteralValue::Number(_))) => IndexKeyKind::NumberLiteral,
+        Some(TypeData::Union(members_id)) => IndexKeyKind::Union(db.type_list(members_id).to_vec()),
         _ => IndexKeyKind::Other,
     }
 }
@@ -1256,23 +1265,23 @@ pub enum ElementIndexableKind {
 /// Classify a type for element indexing capability.
 pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> ElementIndexableKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Array(_)) => ElementIndexableKind::Array,
-        Some(TypeKey::Tuple(_)) => ElementIndexableKind::Tuple,
-        Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Array(_)) => ElementIndexableKind::Array,
+        Some(TypeData::Tuple(_)) => ElementIndexableKind::Tuple,
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
             ElementIndexableKind::ObjectWithIndex {
                 has_string: shape.string_index.is_some(),
                 has_number: shape.number_index.is_some(),
             }
         }
-        Some(TypeKey::Union(members_id)) => {
+        Some(TypeData::Union(members_id)) => {
             ElementIndexableKind::Union(db.type_list(members_id).to_vec())
         }
-        Some(TypeKey::Intersection(members_id)) => {
+        Some(TypeData::Intersection(members_id)) => {
             ElementIndexableKind::Intersection(db.type_list(members_id).to_vec())
         }
-        Some(TypeKey::Literal(crate::LiteralValue::String(_))) => ElementIndexableKind::StringLike,
-        Some(TypeKey::Intrinsic(crate::IntrinsicKind::String)) => ElementIndexableKind::StringLike,
+        Some(TypeData::Literal(crate::LiteralValue::String(_))) => ElementIndexableKind::StringLike,
+        Some(TypeData::Intrinsic(crate::IntrinsicKind::String)) => ElementIndexableKind::StringLike,
         _ => ElementIndexableKind::Other,
     }
 }
@@ -1298,14 +1307,16 @@ pub enum TypeQueryKind {
 /// Classify a type for type query resolution.
 pub fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryKind {
     match db.lookup(type_id) {
-        Some(TypeKey::TypeQuery(sym_ref)) => TypeQueryKind::TypeQuery(sym_ref),
-        Some(TypeKey::Application(app_id)) => {
+        Some(TypeData::TypeQuery(sym_ref)) => TypeQueryKind::TypeQuery(sym_ref),
+        Some(TypeData::Application(app_id)) => {
             let app = db.type_application(app_id);
             match db.lookup(app.base) {
-                Some(TypeKey::TypeQuery(base_sym_ref)) => TypeQueryKind::ApplicationWithTypeQuery {
-                    base_sym_ref,
-                    args: app.args.clone(),
-                },
+                Some(TypeData::TypeQuery(base_sym_ref)) => {
+                    TypeQueryKind::ApplicationWithTypeQuery {
+                        base_sym_ref,
+                        args: app.args.clone(),
+                    }
+                }
                 _ => TypeQueryKind::Application { app_id },
             }
         }
@@ -1331,8 +1342,8 @@ pub enum SymbolRefKind {
 /// Classify a type as a symbol reference.
 pub fn classify_symbol_ref(db: &dyn TypeDatabase, type_id: TypeId) -> SymbolRefKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Lazy(def_id)) => SymbolRefKind::Lazy(def_id),
-        Some(TypeKey::TypeQuery(sym_ref)) => SymbolRefKind::TypeQuery(sym_ref),
+        Some(TypeData::Lazy(def_id)) => SymbolRefKind::Lazy(def_id),
+        Some(TypeData::TypeQuery(sym_ref)) => SymbolRefKind::TypeQuery(sym_ref),
         _ => SymbolRefKind::Other,
     }
 }
@@ -1369,27 +1380,27 @@ pub enum TypeContainsKind {
 /// Classify a type for recursive traversal.
 pub fn classify_for_contains_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeContainsKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Array(elem)) => TypeContainsKind::Array(elem),
-        Some(TypeKey::Tuple(list_id)) => TypeContainsKind::Tuple(list_id),
-        Some(TypeKey::Union(list_id)) | Some(TypeKey::Intersection(list_id)) => {
+        Some(TypeData::Array(elem)) => TypeContainsKind::Array(elem),
+        Some(TypeData::Tuple(list_id)) => TypeContainsKind::Tuple(list_id),
+        Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => {
             TypeContainsKind::Members(db.type_list(list_id).to_vec())
         }
-        Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
             TypeContainsKind::Object(shape_id)
         }
-        Some(TypeKey::Function(shape_id)) => TypeContainsKind::Function(shape_id),
-        Some(TypeKey::Callable(shape_id)) => TypeContainsKind::Callable(shape_id),
-        Some(TypeKey::Application(app_id)) => TypeContainsKind::Application(app_id),
-        Some(TypeKey::Conditional(cond_id)) => TypeContainsKind::Conditional(cond_id),
-        Some(TypeKey::Mapped(mapped_id)) => TypeContainsKind::Mapped(mapped_id),
-        Some(TypeKey::IndexAccess(base, index)) => TypeContainsKind::IndexAccess { base, index },
-        Some(TypeKey::TemplateLiteral(template_id)) => {
+        Some(TypeData::Function(shape_id)) => TypeContainsKind::Function(shape_id),
+        Some(TypeData::Callable(shape_id)) => TypeContainsKind::Callable(shape_id),
+        Some(TypeData::Application(app_id)) => TypeContainsKind::Application(app_id),
+        Some(TypeData::Conditional(cond_id)) => TypeContainsKind::Conditional(cond_id),
+        Some(TypeData::Mapped(mapped_id)) => TypeContainsKind::Mapped(mapped_id),
+        Some(TypeData::IndexAccess(base, index)) => TypeContainsKind::IndexAccess { base, index },
+        Some(TypeData::TemplateLiteral(template_id)) => {
             TypeContainsKind::TemplateLiteral(template_id)
         }
-        Some(TypeKey::KeyOf(inner)) | Some(TypeKey::ReadonlyType(inner)) => {
+        Some(TypeData::KeyOf(inner)) | Some(TypeData::ReadonlyType(inner)) => {
             TypeContainsKind::Inner(inner)
         }
-        Some(TypeKey::TypeParameter(info)) | Some(TypeKey::Infer(info)) => {
+        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
             TypeContainsKind::TypeParam {
                 constraint: info.constraint,
                 default: info.default,
@@ -1416,10 +1427,10 @@ pub enum NamespaceMemberKind {
 /// Classify a type for namespace member resolution.
 pub fn classify_namespace_member(db: &dyn TypeDatabase, type_id: TypeId) -> NamespaceMemberKind {
     match db.lookup(type_id) {
-        Some(TypeKey::Callable(shape_id)) => NamespaceMemberKind::Callable(shape_id),
-        Some(TypeKey::Lazy(def_id)) => NamespaceMemberKind::Lazy(def_id),
-        // TSZ-4: Handle TypeKey::Enum for enum member property access (E.A)
-        Some(TypeKey::Enum(def_id, _)) => NamespaceMemberKind::Enum(def_id),
+        Some(TypeData::Callable(shape_id)) => NamespaceMemberKind::Callable(shape_id),
+        Some(TypeData::Lazy(def_id)) => NamespaceMemberKind::Lazy(def_id),
+        // TSZ-4: Handle TypeData::Enum for enum member property access (E.A)
+        Some(TypeData::Enum(def_id, _)) => NamespaceMemberKind::Enum(def_id),
         _ => NamespaceMemberKind::Other,
     }
 }
@@ -1427,7 +1438,7 @@ pub fn classify_namespace_member(db: &dyn TypeDatabase, type_id: TypeId) -> Name
 /// Unwrap readonly type wrapper if present.
 pub fn unwrap_readonly_for_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     match db.lookup(type_id) {
-        Some(TypeKey::ReadonlyType(inner)) => inner,
+        Some(TypeData::ReadonlyType(inner)) => inner,
         _ => type_id,
     }
 }
@@ -1438,7 +1449,7 @@ pub fn unwrap_readonly_for_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
 
 /// Create a string literal type from a string value.
 ///
-/// This abstracts away the TypeKey construction from the checker layer.
+/// This abstracts away the TypeData construction from the checker layer.
 pub fn create_string_literal_type(db: &dyn TypeDatabase, value: &str) -> TypeId {
     let atom = db.intern_string(value);
     db.literal_string_atom(atom)
@@ -1446,14 +1457,14 @@ pub fn create_string_literal_type(db: &dyn TypeDatabase, value: &str) -> TypeId 
 
 /// Create a number literal type from a numeric value.
 ///
-/// This abstracts away the TypeKey construction from the checker layer.
+/// This abstracts away the TypeData construction from the checker layer.
 pub fn create_number_literal_type(db: &dyn TypeDatabase, value: f64) -> TypeId {
     db.literal_number(value)
 }
 
 /// Create a boolean literal type.
 ///
-/// This abstracts away the TypeKey construction from the checker layer.
+/// This abstracts away the TypeData construction from the checker layer.
 pub fn create_boolean_literal_type(db: &dyn TypeDatabase, value: bool) -> TypeId {
     db.literal_boolean(value)
 }
@@ -1492,27 +1503,27 @@ pub fn classify_for_instance_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ins
     };
 
     match key {
-        TypeKey::Callable(shape_id) => InstanceTypeKind::Callable(shape_id),
-        TypeKey::Function(shape_id) => InstanceTypeKind::Function(shape_id),
-        TypeKey::Intersection(list_id) => {
+        TypeData::Callable(shape_id) => InstanceTypeKind::Callable(shape_id),
+        TypeData::Function(shape_id) => InstanceTypeKind::Function(shape_id),
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             InstanceTypeKind::Intersection(members.to_vec())
         }
-        TypeKey::Union(list_id) => {
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             InstanceTypeKind::Union(members.to_vec())
         }
-        TypeKey::ReadonlyType(inner) => InstanceTypeKind::Readonly(inner),
-        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => InstanceTypeKind::TypeParameter {
+        TypeData::ReadonlyType(inner) => InstanceTypeKind::Readonly(inner),
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => InstanceTypeKind::TypeParameter {
             constraint: info.constraint,
         },
         // TypeQuery (typeof expressions) needs resolution to instance type
-        TypeKey::TypeQuery(sym_ref) => InstanceTypeKind::SymbolRef(sym_ref),
-        TypeKey::Conditional(_)
-        | TypeKey::Mapped(_)
-        | TypeKey::IndexAccess(_, _)
-        | TypeKey::KeyOf(_)
-        | TypeKey::Application(_) => InstanceTypeKind::NeedsEvaluation,
+        TypeData::TypeQuery(sym_ref) => InstanceTypeKind::SymbolRef(sym_ref),
+        TypeData::Conditional(_)
+        | TypeData::Mapped(_)
+        | TypeData::IndexAccess(_, _)
+        | TypeData::KeyOf(_)
+        | TypeData::Application(_) => InstanceTypeKind::NeedsEvaluation,
         _ => InstanceTypeKind::NotConstructor,
     }
 }
@@ -1544,9 +1555,9 @@ pub fn classify_for_constructor_return_merge(
     };
 
     match key {
-        TypeKey::Callable(shape_id) => ConstructorReturnMergeKind::Callable(shape_id),
-        TypeKey::Function(shape_id) => ConstructorReturnMergeKind::Function(shape_id),
-        TypeKey::Intersection(list_id) => {
+        TypeData::Callable(shape_id) => ConstructorReturnMergeKind::Callable(shape_id),
+        TypeData::Function(shape_id) => ConstructorReturnMergeKind::Function(shape_id),
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             ConstructorReturnMergeKind::Intersection(members.to_vec())
         }
@@ -1584,9 +1595,9 @@ pub fn classify_for_abstract_constructor(
     };
 
     match key {
-        TypeKey::TypeQuery(sym_ref) => AbstractConstructorKind::TypeQuery(sym_ref),
-        TypeKey::Callable(shape_id) => AbstractConstructorKind::Callable(shape_id),
-        TypeKey::Application(app_id) => AbstractConstructorKind::Application(app_id),
+        TypeData::TypeQuery(sym_ref) => AbstractConstructorKind::TypeQuery(sym_ref),
+        TypeData::Callable(shape_id) => AbstractConstructorKind::Callable(shape_id),
+        TypeData::Application(app_id) => AbstractConstructorKind::Application(app_id),
         _ => AbstractConstructorKind::NotAbstract,
     }
 }
@@ -1630,28 +1641,28 @@ pub fn classify_for_property_access_resolution(
     };
 
     match key {
-        TypeKey::TypeQuery(sym_ref) => PropertyAccessResolutionKind::TypeQuery(sym_ref),
-        TypeKey::Lazy(def_id) => PropertyAccessResolutionKind::Lazy(def_id),
-        TypeKey::Application(app_id) => PropertyAccessResolutionKind::Application(app_id),
-        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+        TypeData::TypeQuery(sym_ref) => PropertyAccessResolutionKind::TypeQuery(sym_ref),
+        TypeData::Lazy(def_id) => PropertyAccessResolutionKind::Lazy(def_id),
+        TypeData::Application(app_id) => PropertyAccessResolutionKind::Application(app_id),
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             PropertyAccessResolutionKind::TypeParameter {
                 constraint: info.constraint,
             }
         }
-        TypeKey::Conditional(_)
-        | TypeKey::Mapped(_)
-        | TypeKey::IndexAccess(_, _)
-        | TypeKey::KeyOf(_) => PropertyAccessResolutionKind::NeedsEvaluation,
-        TypeKey::Union(list_id) => {
+        TypeData::Conditional(_)
+        | TypeData::Mapped(_)
+        | TypeData::IndexAccess(_, _)
+        | TypeData::KeyOf(_) => PropertyAccessResolutionKind::NeedsEvaluation,
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             PropertyAccessResolutionKind::Union(members.to_vec())
         }
-        TypeKey::Intersection(list_id) => {
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             PropertyAccessResolutionKind::Intersection(members.to_vec())
         }
-        TypeKey::ReadonlyType(inner) => PropertyAccessResolutionKind::Readonly(inner),
-        TypeKey::Function(_) | TypeKey::Callable(_) => PropertyAccessResolutionKind::FunctionLike,
+        TypeData::ReadonlyType(inner) => PropertyAccessResolutionKind::Readonly(inner),
+        TypeData::Function(_) | TypeData::Callable(_) => PropertyAccessResolutionKind::FunctionLike,
         _ => PropertyAccessResolutionKind::Resolved,
     }
 }
@@ -1689,18 +1700,18 @@ pub fn classify_for_contextual_literal(
     };
 
     match key {
-        TypeKey::Union(list_id) | TypeKey::Intersection(list_id) => {
+        TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             ContextualLiteralAllowKind::Members(members.to_vec())
         }
-        TypeKey::TypeParameter(info) | TypeKey::Infer(info) => {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             ContextualLiteralAllowKind::TypeParameter {
                 constraint: info.constraint,
             }
         }
-        TypeKey::Application(_) => ContextualLiteralAllowKind::Application,
-        TypeKey::Mapped(_) => ContextualLiteralAllowKind::Mapped,
-        TypeKey::TemplateLiteral(_) => ContextualLiteralAllowKind::TemplateLiteral,
+        TypeData::Application(_) => ContextualLiteralAllowKind::Application,
+        TypeData::Mapped(_) => ContextualLiteralAllowKind::Mapped,
+        TypeData::TemplateLiteral(_) => ContextualLiteralAllowKind::TemplateLiteral,
         _ => ContextualLiteralAllowKind::NotAllowed,
     }
 }
@@ -1727,8 +1738,8 @@ pub fn classify_mapped_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Map
     };
 
     match key {
-        TypeKey::KeyOf(operand) => MappedConstraintKind::KeyOf(operand),
-        TypeKey::Union(_) | TypeKey::Literal(_) => MappedConstraintKind::Resolved,
+        TypeData::KeyOf(operand) => MappedConstraintKind::KeyOf(operand),
+        TypeData::Union(_) | TypeData::Literal(_) => MappedConstraintKind::Resolved,
         _ => MappedConstraintKind::Other,
     }
 }
@@ -1755,8 +1766,8 @@ pub fn classify_for_type_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> T
     };
 
     match key {
-        TypeKey::Lazy(def_id) => TypeResolutionKind::Lazy(def_id),
-        TypeKey::Application(_) => TypeResolutionKind::Application,
+        TypeData::Lazy(def_id) => TypeResolutionKind::Lazy(def_id),
+        TypeData::Application(_) => TypeResolutionKind::Application,
         _ => TypeResolutionKind::Resolved,
     }
 }
@@ -1786,8 +1797,8 @@ pub fn classify_for_type_argument_extraction(
     };
 
     match key {
-        TypeKey::Function(shape_id) => TypeArgumentExtractionKind::Function(shape_id),
-        TypeKey::Callable(shape_id) => TypeArgumentExtractionKind::Callable(shape_id),
+        TypeData::Function(shape_id) => TypeArgumentExtractionKind::Function(shape_id),
+        TypeData::Callable(shape_id) => TypeArgumentExtractionKind::Callable(shape_id),
         _ => TypeArgumentExtractionKind::Other,
     }
 }
@@ -1819,14 +1830,14 @@ pub fn classify_for_base_instance_merge(
     };
 
     match key {
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             BaseInstanceMergeKind::Object(shape_id)
         }
-        TypeKey::Intersection(list_id) => {
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             BaseInstanceMergeKind::Intersection(members.to_vec())
         }
-        TypeKey::Union(list_id) => {
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             BaseInstanceMergeKind::Union(members.to_vec())
         }
@@ -1863,13 +1874,13 @@ pub fn classify_for_excess_properties(
     };
 
     match key {
-        TypeKey::Object(shape_id) => ExcessPropertiesKind::Object(shape_id),
-        TypeKey::ObjectWithIndex(shape_id) => ExcessPropertiesKind::ObjectWithIndex(shape_id),
-        TypeKey::Union(list_id) => {
+        TypeData::Object(shape_id) => ExcessPropertiesKind::Object(shape_id),
+        TypeData::ObjectWithIndex(shape_id) => ExcessPropertiesKind::ObjectWithIndex(shape_id),
+        TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             ExcessPropertiesKind::Union(members.to_vec())
         }
-        TypeKey::Intersection(list_id) => {
+        TypeData::Intersection(list_id) => {
             let members = db.type_list(list_id);
             ExcessPropertiesKind::Intersection(members.to_vec())
         }
@@ -1902,8 +1913,8 @@ pub fn classify_for_constructor_access(
     };
 
     match key {
-        TypeKey::TypeQuery(sym_ref) => ConstructorAccessKind::SymbolRef(sym_ref),
-        TypeKey::Application(app_id) => ConstructorAccessKind::Application(app_id),
+        TypeData::TypeQuery(sym_ref) => ConstructorAccessKind::SymbolRef(sym_ref),
+        TypeData::Application(app_id) => ConstructorAccessKind::Application(app_id),
         _ => ConstructorAccessKind::Other,
     }
 }
@@ -1933,11 +1944,11 @@ pub fn classify_for_assignability_eval(
     };
 
     match key {
-        TypeKey::Application(_) | TypeKey::Lazy(_) => AssignabilityEvalKind::Application,
-        TypeKey::IndexAccess(_, _)
-        | TypeKey::KeyOf(_)
-        | TypeKey::Mapped(_)
-        | TypeKey::Conditional(_) => AssignabilityEvalKind::NeedsEnvEval,
+        TypeData::Application(_) | TypeData::Lazy(_) => AssignabilityEvalKind::Application,
+        TypeData::IndexAccess(_, _)
+        | TypeData::KeyOf(_)
+        | TypeData::Mapped(_)
+        | TypeData::Conditional(_) => AssignabilityEvalKind::NeedsEnvEval,
         _ => AssignabilityEvalKind::Resolved,
     }
 }
@@ -1969,9 +1980,9 @@ pub fn classify_for_binding_element(
     };
 
     match key {
-        TypeKey::Array(elem) => BindingElementTypeKind::Array(elem),
-        TypeKey::Tuple(list_id) => BindingElementTypeKind::Tuple(list_id),
-        TypeKey::Object(shape_id) => BindingElementTypeKind::Object(shape_id),
+        TypeData::Array(elem) => BindingElementTypeKind::Array(elem),
+        TypeData::Tuple(list_id) => BindingElementTypeKind::Tuple(list_id),
+        TypeData::Object(shape_id) => BindingElementTypeKind::Object(shape_id),
         _ => BindingElementTypeKind::Other,
     }
 }
@@ -1983,7 +1994,7 @@ pub fn classify_for_binding_element(
 /// Get the DefId from a Lazy type.
 pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Lazy(def_id)) => Some(def_id),
+        Some(TypeData::Lazy(def_id)) => Some(def_id),
         _ => None,
     }
 }
@@ -1991,7 +2002,7 @@ pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
 /// Get the DefId from a Lazy type.
 pub fn get_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Lazy(def_id)) => Some(def_id),
+        Some(TypeData::Lazy(def_id)) => Some(def_id),
         _ => None,
     }
 }
@@ -2003,7 +2014,7 @@ pub fn get_type_identity(
     type_id: TypeId,
 ) -> (Option<crate::types::SymbolRef>, Option<crate::def::DefId>) {
     match db.lookup(type_id) {
-        Some(TypeKey::Lazy(def_id)) => (None, Some(def_id)),
+        Some(TypeData::Lazy(def_id)) => (None, Some(def_id)),
         _ => (None, None),
     }
 }
@@ -2018,7 +2029,7 @@ pub fn get_enum_components(
     type_id: TypeId,
 ) -> Option<(crate::def::DefId, TypeId)> {
     match db.lookup(type_id) {
-        Some(TypeKey::Enum(def_id, member_type)) => Some((def_id, member_type)),
+        Some(TypeData::Enum(def_id, member_type)) => Some((def_id, member_type)),
         _ => None,
     }
 }
@@ -2029,7 +2040,7 @@ pub fn get_mapped_type_id(
     type_id: TypeId,
 ) -> Option<crate::types::MappedTypeId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Mapped(mapped_id)) => Some(mapped_id),
+        Some(TypeData::Mapped(mapped_id)) => Some(mapped_id),
         _ => None,
     }
 }
@@ -2040,7 +2051,7 @@ pub fn get_conditional_type_id(
     type_id: TypeId,
 ) -> Option<crate::types::ConditionalTypeId> {
     match db.lookup(type_id) {
-        Some(TypeKey::Conditional(cond_id)) => Some(cond_id),
+        Some(TypeData::Conditional(cond_id)) => Some(cond_id),
         _ => None,
     }
 }
@@ -2048,7 +2059,7 @@ pub fn get_conditional_type_id(
 /// Get the keyof inner type if the type is a KeyOf type.
 pub fn get_keyof_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeKey::KeyOf(inner)) => Some(inner),
+        Some(TypeData::KeyOf(inner)) => Some(inner),
         _ => None,
     }
 }
@@ -2110,7 +2121,7 @@ pub fn classify_for_symbol_resolution_traversal(
     };
 
     match key {
-        TypeKey::Application(app_id) => {
+        TypeData::Application(app_id) => {
             let app = db.type_application(app_id);
             SymbolResolutionTraversalKind::Application {
                 app_id,
@@ -2118,32 +2129,32 @@ pub fn classify_for_symbol_resolution_traversal(
                 args: app.args.clone(),
             }
         }
-        TypeKey::Lazy(def_id) => SymbolResolutionTraversalKind::Lazy(def_id),
-        TypeKey::TypeParameter(param) | TypeKey::Infer(param) => {
+        TypeData::Lazy(def_id) => SymbolResolutionTraversalKind::Lazy(def_id),
+        TypeData::TypeParameter(param) | TypeData::Infer(param) => {
             SymbolResolutionTraversalKind::TypeParameter {
                 constraint: param.constraint,
                 default: param.default,
             }
         }
-        TypeKey::Union(members_id) | TypeKey::Intersection(members_id) => {
+        TypeData::Union(members_id) | TypeData::Intersection(members_id) => {
             let members = db.type_list(members_id);
             SymbolResolutionTraversalKind::Members(members.to_vec())
         }
-        TypeKey::Function(shape_id) => SymbolResolutionTraversalKind::Function(shape_id),
-        TypeKey::Callable(shape_id) => SymbolResolutionTraversalKind::Callable(shape_id),
-        TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+        TypeData::Function(shape_id) => SymbolResolutionTraversalKind::Function(shape_id),
+        TypeData::Callable(shape_id) => SymbolResolutionTraversalKind::Callable(shape_id),
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             SymbolResolutionTraversalKind::Object(shape_id)
         }
-        TypeKey::Array(elem) => SymbolResolutionTraversalKind::Array(elem),
-        TypeKey::Tuple(elems_id) => SymbolResolutionTraversalKind::Tuple(elems_id),
-        TypeKey::Conditional(cond_id) => SymbolResolutionTraversalKind::Conditional(cond_id),
-        TypeKey::Mapped(mapped_id) => SymbolResolutionTraversalKind::Mapped(mapped_id),
-        TypeKey::ReadonlyType(inner) => SymbolResolutionTraversalKind::Readonly(inner),
-        TypeKey::IndexAccess(obj, idx) => SymbolResolutionTraversalKind::IndexAccess {
+        TypeData::Array(elem) => SymbolResolutionTraversalKind::Array(elem),
+        TypeData::Tuple(elems_id) => SymbolResolutionTraversalKind::Tuple(elems_id),
+        TypeData::Conditional(cond_id) => SymbolResolutionTraversalKind::Conditional(cond_id),
+        TypeData::Mapped(mapped_id) => SymbolResolutionTraversalKind::Mapped(mapped_id),
+        TypeData::ReadonlyType(inner) => SymbolResolutionTraversalKind::Readonly(inner),
+        TypeData::IndexAccess(obj, idx) => SymbolResolutionTraversalKind::IndexAccess {
             object: obj,
             index: idx,
         },
-        TypeKey::KeyOf(inner) => SymbolResolutionTraversalKind::KeyOf(inner),
+        TypeData::KeyOf(inner) => SymbolResolutionTraversalKind::KeyOf(inner),
         _ => SymbolResolutionTraversalKind::Terminal,
     }
 }

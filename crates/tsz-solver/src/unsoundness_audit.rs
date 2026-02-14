@@ -599,7 +599,7 @@ impl UnsoundnessAudit {
             implementation_files: vec!["src/solver/subtype.rs"],
             test_coverage: 0.85,
             dependencies: vec![],
-            notes: "Implemented via TypeKey::UniqueSymbol. Only identical unique symbols match; they widen to generic Symbol.",
+            notes: "Implemented via TypeData::UniqueSymbol. Only identical unique symbols match; they widen to generic Symbol.",
         });
 
         rules.insert(38, RuleImplementation {

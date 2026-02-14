@@ -1944,7 +1944,7 @@ impl<'a> CheckerState<'a> {
 
     /// Compute the type of an enum member symbol.
     ///
-    /// Returns a TypeKey::Enum type with the member's literal type and DefId
+    /// Returns a TypeData::Enum type with the member's literal type and DefId
     /// for nominal identity (ensures E.A is not assignable to E.B).
     fn compute_enum_member_symbol_type(
         &mut self,
@@ -2043,16 +2043,16 @@ impl<'a> CheckerState<'a> {
             return self.compute_class_symbol_type(sym_id, flags, value_decl, &declarations);
         }
 
-        // Enum - return TypeKey::Enum with DefId for nominal identity checking.
+        // Enum - return TypeData::Enum with DefId for nominal identity checking.
         // The Enum type provides proper enum subtype checking via DefId-based
         // symbol resolution and type equality.
         //
         // CRITICAL: We must compute and cache a structural type (union of member types)
-        // before returning TypeKey::Enum to prevent infinite recursion in ensure_refs_resolved.
+        // before returning TypeData::Enum to prevent infinite recursion in ensure_refs_resolved.
         //
         // IMPORTANT: This check must come BEFORE the NAMESPACE_MODULE check below because
         // enum-namespace merges have both ENUM and NAMESPACE_MODULE flags. We want to
-        // handle them as enums (returning TypeKey::Enum) rather than as namespaces (returning Lazy).
+        // handle them as enums (returning TypeData::Enum) rather than as namespaces (returning Lazy).
         if flags & symbol_flags::ENUM != 0 {
             // Create DefId first
             let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -2125,12 +2125,12 @@ impl<'a> CheckerState<'a> {
             };
 
             // Cache the structural type in type_env for compatibility
-            // Note: Enum types now use TypeKey::Enum(def_id, member_type) directly
+            // Note: Enum types now use TypeData::Enum(def_id, member_type) directly
             if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
                 env.insert_def(def_id, structural_type);
             }
 
-            // CRITICAL: Return TypeKey::Enum(def_id, structural_type) NOT Lazy(def_id)
+            // CRITICAL: Return TypeData::Enum(def_id, structural_type) NOT Lazy(def_id)
             // - Lazy(def_id) creates infinite recursion in ensure_refs_resolved
             // - structural_type alone loses nominal identity (E1 becomes 0 | 1)
             // - Enum(def_id, structural_type) preserves both:
@@ -2171,7 +2171,7 @@ impl<'a> CheckerState<'a> {
         //
         // IMPORTANT: This check must come AFTER the ENUM check above because
         // enum-namespace merges have both ENUM and NAMESPACE_MODULE flags. We want to
-        // handle them as enums (returning TypeKey::Enum) rather than as namespaces.
+        // handle them as enums (returning TypeData::Enum) rather than as namespaces.
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
             && flags & symbol_flags::FUNCTION == 0
         {

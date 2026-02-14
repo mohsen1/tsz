@@ -21,7 +21,7 @@ fn test_build_object_type() {
     let obj_type = builder.build_object_type(properties);
 
     let key = db.lookup(obj_type).unwrap();
-    assert!(matches!(key, TypeKey::Object(_)));
+    assert!(matches!(key, TypeData::Object(_)));
 }
 
 #[test]

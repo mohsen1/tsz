@@ -29,7 +29,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match key {
             // Handle unions - distribute the operation over each member
             // Use recurse_string_intrinsic to respect depth limits
-            TypeKey::Union(members) => {
+            TypeData::Union(members) => {
                 let members = self.interner().type_list(members);
                 let transformed: Vec<TypeId> = members
                     .iter()
@@ -39,7 +39,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // String literal types - apply the transformation
-            TypeKey::Literal(LiteralValue::String(atom)) => {
+            TypeData::Literal(LiteralValue::String(atom)) => {
                 let s = self.interner().resolve_atom_ref(atom);
                 let transformed = match kind {
                     StringIntrinsicKind::Uppercase => s.to_uppercase().to_string(),
@@ -77,22 +77,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Template literal types - apply the transformation
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 self.apply_string_intrinsic_to_template_literal(kind, spans)
             }
 
             // The intrinsic string type passes through unchanged
-            TypeKey::Intrinsic(IntrinsicKind::String) => TypeId::STRING,
+            TypeData::Intrinsic(IntrinsicKind::String) => TypeId::STRING,
 
             // For type parameters and other deferred types, keep as StringIntrinsic
-            TypeKey::TypeParameter(_)
-            | TypeKey::Infer(_)
-            | TypeKey::KeyOf(_)
-            | TypeKey::IndexAccess(_, _) => self.interner().string_intrinsic(kind, evaluated_arg),
+            TypeData::TypeParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::KeyOf(_)
+            | TypeData::IndexAccess(_, _) => self.interner().string_intrinsic(kind, evaluated_arg),
 
             // Handle chained string intrinsics: Uppercase<Lowercase<T>>
             // The inner intrinsic already wraps the type, so wrap again with outer
-            TypeKey::StringIntrinsic {
+            TypeData::StringIntrinsic {
                 kind: _inner_kind,
                 type_arg: _inner_arg,
             } => {

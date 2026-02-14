@@ -483,7 +483,7 @@ fn test_contextual_generic_call_union_preserves_literal() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
     let func = FunctionShape {
         type_params: vec![t_param],
         params: vec![ParamInfo {
@@ -938,7 +938,7 @@ fn test_contextual_generic_function_parameter() {
         default: None,
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
     // <T>(x: T) => void
     let generic_fn = interner.function(FunctionShape {

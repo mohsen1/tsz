@@ -278,7 +278,7 @@ impl<'a> SoundLawyer<'a> {
         let target_key = self.db.lookup(target)?;
 
         // Check for Array<S> -> Array<T> where S <: T but S != T
-        if let (TypeKey::Array(s_elem), TypeKey::Array(t_elem)) = (&source_key, &target_key) {
+        if let (TypeData::Array(s_elem), TypeData::Array(t_elem)) = (&source_key, &target_key) {
             if s_elem != t_elem {
                 // Different element types - this is potentially unsafe covariance
                 let mut checker = SubtypeChecker::with_resolver(self.db, self.env);
