@@ -757,9 +757,9 @@ impl<'a> CheckerState<'a> {
             TypeId::UNDEFINED
         };
 
-        // Ensure all Application type symbols are resolved before assignability check
-        self.ensure_application_symbols_resolved(return_type);
-        self.ensure_application_symbols_resolved(expected_type);
+        // Ensure relation preconditions before assignability check.
+        self.ensure_relation_input_ready(return_type);
+        self.ensure_relation_input_ready(expected_type);
 
         // Check if the return type is assignable to the expected type.
         // Constructors are validated holistically by TS2409 at declaration level,
