@@ -830,44 +830,39 @@ impl BinderState {
                     break;
                 };
 
-                if let Some(sym_id) = scope.table.get(name) {
-                    if let Some(found) = consider(sym_id) {
-                        return Some(found);
-                    }
+                if let Some(sym_id) = scope.table.get(name)
+                    && let Some(found) = consider(sym_id)
+                {
+                    return Some(found);
                 }
 
-                if scope.kind == ContainerKind::Module {
-                    if let Some(container_sym_id) = self.get_node_symbol(scope.container_node) {
-                        if let Some(container_symbol) =
-                            self.get_symbol_with_libs(container_sym_id, lib_binders)
-                        {
-                            if let Some(exports) = container_symbol.exports.as_ref() {
-                                if let Some(member_id) = exports.get(name) {
-                                    if let Some(found) = consider(member_id) {
-                                        return Some(found);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if scope.kind == ContainerKind::Module
+                    && let Some(container_sym_id) = self.get_node_symbol(scope.container_node)
+                    && let Some(container_symbol) =
+                        self.get_symbol_with_libs(container_sym_id, lib_binders)
+                    && let Some(exports) = container_symbol.exports.as_ref()
+                    && let Some(member_id) = exports.get(name)
+                    && let Some(found) = consider(member_id)
+                {
+                    return Some(found);
                 }
 
                 scope_id = scope.parent;
             }
         }
 
-        if let Some(sym_id) = self.file_locals.get(name) {
-            if let Some(found) = consider(sym_id) {
-                return Some(found);
-            }
+        if let Some(sym_id) = self.file_locals.get(name)
+            && let Some(found) = consider(sym_id)
+        {
+            return Some(found);
         }
 
         if !self.lib_symbols_merged {
             for lib_binder in lib_binders {
-                if let Some(sym_id) = lib_binder.file_locals.get(name) {
-                    if let Some(found) = consider(sym_id) {
-                        return Some(found);
-                    }
+                if let Some(sym_id) = lib_binder.file_locals.get(name)
+                    && let Some(found) = consider(sym_id)
+                {
+                    return Some(found);
                 }
             }
         }
@@ -1274,10 +1269,10 @@ impl BinderState {
                 break;
             };
             if expr.kind == SyntaxKind::StringLiteral as u16 {
-                if let Some(lit) = arena.get_literal(expr) {
-                    if lit.text == "use strict" {
-                        return true;
-                    }
+                if let Some(lit) = arena.get_literal(expr)
+                    && lit.text == "use strict"
+                {
+                    return true;
                 }
             } else {
                 break; // Non-string expression, stop looking for prologues
@@ -1492,14 +1487,12 @@ impl BinderState {
                 };
 
                 // Remap parent
-                if !lib_sym.parent.is_none() {
-                    if let Some(&new_parent) =
+                if !lib_sym.parent.is_none()
+                    && let Some(&new_parent) =
                         lib_symbol_remap.get(&(lib_binder_ptr, lib_sym.parent))
-                    {
-                        if let Some(sym) = self.symbols.get_mut(new_id) {
-                            sym.parent = new_parent;
-                        }
-                    }
+                    && let Some(sym) = self.symbols.get_mut(new_id)
+                {
+                    sym.parent = new_parent;
                 }
 
                 // Remap exports
@@ -1512,15 +1505,15 @@ impl BinderState {
                             remapped_exports.set(name.clone(), new_export_id);
                         }
                     }
-                    if !remapped_exports.is_empty() {
-                        if let Some(sym) = self.symbols.get_mut(new_id) {
-                            if sym.exports.is_none() {
-                                sym.exports = Some(Box::new(remapped_exports));
-                            } else if let Some(existing) = sym.exports.as_mut() {
-                                for (name, id) in remapped_exports.iter() {
-                                    if !existing.has(name) {
-                                        existing.set(name.clone(), *id);
-                                    }
+                    if !remapped_exports.is_empty()
+                        && let Some(sym) = self.symbols.get_mut(new_id)
+                    {
+                        if sym.exports.is_none() {
+                            sym.exports = Some(Box::new(remapped_exports));
+                        } else if let Some(existing) = sym.exports.as_mut() {
+                            for (name, id) in remapped_exports.iter() {
+                                if !existing.has(name) {
+                                    existing.set(name.clone(), *id);
                                 }
                             }
                         }
@@ -1537,15 +1530,15 @@ impl BinderState {
                             remapped_members.set(name.clone(), new_member_id);
                         }
                     }
-                    if !remapped_members.is_empty() {
-                        if let Some(sym) = self.symbols.get_mut(new_id) {
-                            if sym.members.is_none() {
-                                sym.members = Some(Box::new(remapped_members));
-                            } else if let Some(existing) = sym.members.as_mut() {
-                                for (name, id) in remapped_members.iter() {
-                                    if !existing.has(name) {
-                                        existing.set(name.clone(), *id);
-                                    }
+                    if !remapped_members.is_empty()
+                        && let Some(sym) = self.symbols.get_mut(new_id)
+                    {
+                        if sym.members.is_none() {
+                            sym.members = Some(Box::new(remapped_members));
+                        } else if let Some(existing) = sym.members.as_mut() {
+                            for (name, id) in remapped_members.iter() {
+                                if !existing.has(name) {
+                                    existing.set(name.clone(), *id);
                                 }
                             }
                         }
@@ -2226,13 +2219,11 @@ impl BinderState {
                         if let Some(loop_data) = arena.get_loop(node) {
                             // Hoist var declarations from initializer (e.g., `for (var i = 0; ...)`)
                             let init = loop_data.initializer;
-                            if !init.is_none() {
-                                if let Some(init_node) = arena.get(init) {
-                                    if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                                    {
-                                        self.collect_hoisted_var_decl(arena, init);
-                                    }
-                                }
+                            if !init.is_none()
+                                && let Some(init_node) = arena.get(init)
+                                && init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                            {
+                                self.collect_hoisted_var_decl(arena, init);
                             }
                             // Hoist from the loop body
                             self.collect_hoisted_from_node(arena, loop_data.statement);
@@ -2244,10 +2235,10 @@ impl BinderState {
                         if let Some(for_data) = arena.get_for_in_of(node) {
                             // Hoist var declarations from the initializer (e.g., `for (var x in obj)`)
                             let init = for_data.initializer;
-                            if let Some(init_node) = arena.get(init) {
-                                if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                                    self.collect_hoisted_var_decl(arena, init);
-                                }
+                            if let Some(init_node) = arena.get(init)
+                                && init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                            {
+                                self.collect_hoisted_var_decl(arena, init);
                             }
                             // Hoist from the loop body
                             self.collect_hoisted_from_node(arena, for_data.statement);
@@ -2258,12 +2249,11 @@ impl BinderState {
                             // Hoist from try block
                             self.collect_hoisted_from_node(arena, try_data.try_block);
                             // Hoist from catch clause's block
-                            if !try_data.catch_clause.is_none() {
-                                if let Some(catch_data) =
+                            if !try_data.catch_clause.is_none()
+                                && let Some(catch_data) =
                                     arena.get_catch_clause_at(try_data.catch_clause)
-                                {
-                                    self.collect_hoisted_from_node(arena, catch_data.block);
-                                }
+                            {
+                                self.collect_hoisted_from_node(arena, catch_data.block);
                             }
                             // Hoist from finally block
                             if !try_data.finally_block.is_none() {
@@ -2764,25 +2754,24 @@ impl BinderState {
                     self.bind_node(arena, assign.expression);
 
                     // If the expression is an identifier, resolve it and copy its exports
-                    if let Some(name) = self.get_identifier_name(arena, assign.expression) {
-                        if let Some(sym_id) = self
+                    if let Some(name) = self.get_identifier_name(arena, assign.expression)
+                        && let Some(sym_id) = self
                             .current_scope
                             .get(name)
                             .or_else(|| self.file_locals.get(name))
-                        {
-                            // Track the explicit `export =` target so require-import resolution
-                            // can recover the assigned symbol directly.
-                            self.file_locals.set("export=".to_string(), sym_id);
+                    {
+                        // Track the explicit `export =` target so require-import resolution
+                        // can recover the assigned symbol directly.
+                        self.file_locals.set("export=".to_string(), sym_id);
 
-                            // Copy the symbol's exports to the current module's exports
-                            // This makes export = Namespace; work correctly
-                            if let Some(symbol) = self.symbols.get(sym_id) {
-                                if let Some(ref exports) = symbol.exports {
-                                    // Add all exports from the target symbol to file_locals
-                                    for (export_name, &export_sym_id) in exports.iter() {
-                                        self.file_locals.set(export_name.clone(), export_sym_id);
-                                    }
-                                }
+                        // Copy the symbol's exports to the current module's exports
+                        // This makes export = Namespace; work correctly
+                        if let Some(symbol) = self.symbols.get(sym_id)
+                            && let Some(ref exports) = symbol.exports
+                        {
+                            // Add all exports from the target symbol to file_locals
+                            for (export_name, &export_sym_id) in exports.iter() {
+                                self.file_locals.set(export_name.clone(), export_sym_id);
                             }
                         }
                     }

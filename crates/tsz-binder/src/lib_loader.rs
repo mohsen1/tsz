@@ -54,11 +54,11 @@ impl LibLoader {
         ];
 
         for candidate in &candidates {
-            if candidate.exists() {
-                if let Ok(content) = std::fs::read_to_string(candidate) {
-                    self.cache.insert(normalized.clone(), content);
-                    return self.cache.get(&normalized).map(|s| s.as_str());
-                }
+            if candidate.exists()
+                && let Ok(content) = std::fs::read_to_string(candidate)
+            {
+                self.cache.insert(normalized.clone(), content);
+                return self.cache.get(&normalized).map(|s| s.as_str());
             }
         }
 
