@@ -527,6 +527,14 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
             && class_checker_src.contains("should_report_member_type_mismatch_bivariant("),
         "class member compatibility should use centralized class query-boundary mismatch helpers"
     );
+
+    let generic_checker_src = fs::read_to_string("src/generic_checker.rs")
+        .expect("failed to read src/generic_checker.rs for architecture guard");
+    assert!(
+        !generic_checker_src.contains("self.ensure_refs_resolved(type_arg);")
+            && !generic_checker_src.contains("self.ensure_refs_resolved(instantiated_constraint);"),
+        "generic constraint checks should rely on centralized assignability preconditions instead of local ref-resolution traversal"
+    );
 }
 
 #[test]
