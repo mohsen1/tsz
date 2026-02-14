@@ -4,6 +4,7 @@
 //! containing complex type computation methods for new expressions,
 //! call expressions, constructability, union/keyof types, and identifiers.
 
+use crate::query_boundaries::type_computation_complex as query;
 use crate::state::CheckerState;
 use tracing::trace;
 use tsz_binder::SymbolId;
@@ -541,7 +542,6 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_binder::SymbolId;
         use tsz_binder::symbol_flags;
-        use tsz_solver::type_queries::{AbstractClassCheckKind, classify_for_abstract_check};
 
         // Prevent infinite loops in circular type references
         if !visited.insert(type_id) {
@@ -549,9 +549,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Special handling for Callable types - check if the symbol is abstract
-        if let Some(callable_shape) =
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, type_id)
-        {
+        if let Some(callable_shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
             if let Some(sym_id) = callable_shape.symbol {
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                     return (symbol.flags & symbol_flags::ABSTRACT) != 0;
@@ -561,7 +559,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Special handling for Lazy types - need to check via context
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, type_id) {
+        if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
             // Try to get the SymbolId for this DefId
             if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
@@ -585,10 +583,10 @@ impl<'a> CheckerState<'a> {
             // If we can't map to a symbol, fall through to general classification
         }
 
-        match classify_for_abstract_check(self.ctx.types, type_id) {
+        match query::classify_for_abstract_check(self.ctx.types, type_id) {
             // TypeQuery is `typeof ClassName` - check if the symbol is abstract
             // Since get_type_from_type_query now uses real SymbolIds, we can directly look up
-            AbstractClassCheckKind::TypeQuery(sym_ref) => {
+            query::AbstractClassCheckKind::TypeQuery(sym_ref) => {
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_ref.0))
                     && symbol.flags & symbol_flags::ABSTRACT != 0
                 {
@@ -597,14 +595,14 @@ impl<'a> CheckerState<'a> {
                 false
             }
             // Union type - check if ANY constituent is abstract
-            AbstractClassCheckKind::Union(members) => members
+            query::AbstractClassCheckKind::Union(members) => members
                 .iter()
                 .any(|&member| self.type_contains_abstract_class_inner(member, visited)),
             // Intersection type - check if ANY constituent is abstract
-            AbstractClassCheckKind::Intersection(members) => members
+            query::AbstractClassCheckKind::Intersection(members) => members
                 .iter()
                 .any(|&member| self.type_contains_abstract_class_inner(member, visited)),
-            AbstractClassCheckKind::NotAbstract => false,
+            query::AbstractClassCheckKind::NotAbstract => false,
         }
     }
 
@@ -620,10 +618,8 @@ impl<'a> CheckerState<'a> {
     /// This is important for new expressions where we need the actual constructor type
     /// with construct signatures, not just a symbolic reference.
     pub(crate) fn resolve_ref_type(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries::{LazyTypeKind, classify_for_lazy_resolution};
-
-        match classify_for_lazy_resolution(self.ctx.types, type_id) {
-            LazyTypeKind::Lazy(def_id) => {
+        match query::classify_for_lazy_resolution(self.ctx.types, type_id) {
+            query::LazyTypeKind::Lazy(def_id) => {
                 if let Some(symbol_id) = self.ctx.def_to_symbol_id(def_id) {
                     let symbol_type = self.get_type_of_symbol(symbol_id);
                     if symbol_type == type_id {
@@ -647,7 +643,7 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
             }
-            LazyTypeKind::NotLazy => type_id,
+            query::LazyTypeKind::NotLazy => type_id,
             _ => type_id, // Handle deprecated variants for compatibility
         }
     }
@@ -660,8 +656,7 @@ impl<'a> CheckerState<'a> {
     /// lacks the type environment. This method pre-resolves the constraint so the
     /// solver can find construct signatures.
     fn resolve_type_param_for_construct(&mut self, type_id: TypeId) -> TypeId {
-        let Some(info) = tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, type_id)
-        else {
+        let Some(info) = query::type_parameter_info(self.ctx.types, type_id) else {
             return type_id;
         };
 
@@ -879,17 +874,13 @@ impl<'a> CheckerState<'a> {
         &self,
         type_id: TypeId,
     ) -> Vec<tsz_common::interner::Atom> {
-        use tsz_solver::type_queries::{
-            StringLiteralKeyKind, classify_for_string_literal_keys, get_string_literal_value,
-        };
-
-        match classify_for_string_literal_keys(self.ctx.types, type_id) {
-            StringLiteralKeyKind::SingleString(name) => vec![name],
-            StringLiteralKeyKind::Union(members) => members
+        match query::classify_for_string_literal_keys(self.ctx.types, type_id) {
+            query::StringLiteralKeyKind::SingleString(name) => vec![name],
+            query::StringLiteralKeyKind::Union(members) => members
                 .iter()
-                .filter_map(|&member| get_string_literal_value(self.ctx.types, member))
+                .filter_map(|&member| query::string_literal_value(self.ctx.types, member))
                 .collect(),
-            StringLiteralKeyKind::NotStringLiteral => Vec::new(),
+            query::StringLiteralKeyKind::NotStringLiteral => Vec::new(),
         }
     }
 
@@ -916,7 +907,6 @@ impl<'a> CheckerState<'a> {
         }
 
         use tsz_binder::SymbolId;
-        use tsz_solver::type_queries::{ClassDeclTypeKind, classify_for_class_decl};
 
         fn parse_brand_name(name: &str) -> Option<Result<SymbolId, NodeIndex>> {
             const NODE_PREFIX: &str = "__private_brand_node_";
@@ -939,8 +929,8 @@ impl<'a> CheckerState<'a> {
             type_id: TypeId,
             out: &mut Vec<NodeIndex>,
         ) {
-            match classify_for_class_decl(checker.ctx.types, type_id) {
-                ClassDeclTypeKind::Object(shape_id) => {
+            match query::classify_for_class_decl(checker.ctx.types, type_id) {
+                query::ClassDeclTypeKind::Object(shape_id) => {
                     let shape = checker.ctx.types.object_shape(shape_id);
                     for prop in &shape.properties {
                         let name = checker.ctx.types.resolve_atom_ref(prop.name);
@@ -955,12 +945,12 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                ClassDeclTypeKind::Members(members) => {
+                query::ClassDeclTypeKind::Members(members) => {
                     for member in members {
                         collect_candidates(checker, member, out);
                     }
                 }
-                ClassDeclTypeKind::NotObject => {}
+                query::ClassDeclTypeKind::NotObject => {}
             }
         }
 
@@ -1142,17 +1132,15 @@ impl<'a> CheckerState<'a> {
             callee_type
         };
 
-        let classification = tsz_solver::type_queries::classify_for_call_signatures(
-            self.ctx.types,
-            callee_type_for_resolution,
-        );
+        let classification =
+            query::classify_for_call_signatures(self.ctx.types, callee_type_for_resolution);
         trace!(
             callee_type_for_resolution = ?callee_type_for_resolution,
             classification = ?classification,
             "Call signatures classified"
         );
         let overload_signatures = match classification {
-            tsz_solver::type_queries::CallSignaturesKind::Callable(shape_id) => {
+            query::CallSignaturesKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape.call_signatures.len() > 1 {
                     Some(shape.call_signatures.clone())
@@ -1160,14 +1148,14 @@ impl<'a> CheckerState<'a> {
                     None
                 }
             }
-            tsz_solver::type_queries::CallSignaturesKind::MultipleSignatures(signatures) => {
+            query::CallSignaturesKind::MultipleSignatures(signatures) => {
                 if signatures.len() > 1 {
                     Some(signatures)
                 } else {
                     None
                 }
             }
-            tsz_solver::type_queries::CallSignaturesKind::NoSignatures => None,
+            query::CallSignaturesKind::NoSignatures => None,
         };
 
         // Overload candidates need signature-specific contextual typing.
@@ -2033,7 +2021,7 @@ impl<'a> CheckerState<'a> {
                 // check_variable_declaration overwriting the symbol_types cache with the
                 // Lazy annotation type for `declare var X: X` patterns, and DefId
                 // collisions corrupting the type_env), force recompute the symbol type.
-                if tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, value_type).is_some() {
+                if query::lazy_def_id(self.ctx.types, value_type).is_some() {
                     self.ctx.symbol_types.remove(&sym_id);
                     let recomputed = self.get_type_of_symbol(sym_id);
                     if recomputed != value_type
@@ -2091,9 +2079,7 @@ impl<'a> CheckerState<'a> {
                         resolver.has_index_signature(declared_type, IndexKind::String)
                             || resolver.has_index_signature(declared_type, IndexKind::Number)
                     };
-                    if tsz_solver::type_queries::is_readonly_type(self.ctx.types, declared_type)
-                        || has_index_sig
-                    {
+                    if query::is_readonly_type(self.ctx.types, declared_type) || has_index_sig {
                         declared_type
                     } else {
                         flow_type
@@ -2613,8 +2599,7 @@ impl<'a> CheckerState<'a> {
     /// If `type_id` is an object type with a synthetic `"new"` member, return that member type.
     /// This supports constructor-like interfaces that lower construct signatures as properties.
     fn constructor_type_from_new_property(&self, type_id: TypeId) -> Option<TypeId> {
-        let Some(shape_id) = tsz_solver::type_queries::get_object_shape_id(self.ctx.types, type_id)
-        else {
+        let Some(shape_id) = query::object_shape_id(self.ctx.types, type_id) else {
             return None;
         };
 
