@@ -298,10 +298,27 @@ while true; do
   CODexLoopRun_PID=$!
   last_output_ts="$(date +%s)"
   progress_ts="$last_output_ts"
+  rollout_warning_count=0
 
   exec 3<"$ITER_PIPE"
   while true; do
     if IFS= read -r -t 1 -u 3 line 2>/dev/null; then
+      if [[ "$line" == *"state db missing rollout path"* ]]; then
+        rollout_warning_count=$(( rollout_warning_count + 1 ))
+        if (( rollout_warning_count <= 5 || rollout_warning_count % 20 == 0 )); then
+          echo "$line" | tee -a "$LOG_FILE"
+        fi
+        last_output_ts="$(date +%s)"
+        progress_ts="$last_output_ts"
+        if (( rollout_warning_count >= 200 )); then
+          TERMINAL_FAILURE_DETECTED="true"
+          echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i repeated rollout-path warnings without progress; treating as terminal failure (count=$rollout_warning_count)" | tee -a "$LOG_FILE"
+          break
+        fi
+        continue
+      fi
+
+      rollout_warning_count=0
       echo "$line" | tee -a "$LOG_FILE"
       last_output_ts="$(date +%s)"
       progress_ts="$last_output_ts"
