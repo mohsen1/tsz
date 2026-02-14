@@ -953,6 +953,118 @@ fn test_ts2322_check_js_false_does_not_enforce_nested_annotation_types() {
 }
 
 #[test]
+fn test_ts2322_check_jsx_true_reports_javascript_annotation_mismatch() {
+    let source = r#"
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.jsx",
+        CheckerOptions {
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 for .jsx JSDoc mismatch when checkJs is enabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_jsx_false_does_not_enforce_annotation_type() {
+    let source = r#"
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.jsx",
+        CheckerOptions {
+            check_js: false,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for .jsx when checkJs is disabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_jsx_strict_nullability_effect() {
+    let source = r#"
+        // @ts-check
+        /** @type {number} */
+        const maybeNumber = null;
+    "#;
+
+    let loose = compile_with_options(
+        source,
+        "test.jsx",
+        CheckerOptions {
+            check_js: true,
+            strict: false,
+            ..Default::default()
+        },
+    );
+    let strict = compile_with_options(
+        source,
+        "test.jsx",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let strict_has_2322 = strict
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        strict_has_2322,
+        "Expected strict+checkJs to emit TS2322 for .jsx nullability mismatch, got: {strict:?}"
+    );
+    assert!(
+        strict.len() > loose.len(),
+        "Expected strict mode to increase diagnostics for .jsx nullability in checkJs source"
+    );
+}
+
+#[test]
+fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_jsx() {
+    let source = r#"
+        // @ts-check
+        /** @returns {number} */
+        function id(value) {
+            return "string";
+        }
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.jsx",
+        CheckerOptions {
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for .jsx generic identity-style JSDoc return annotations, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode() {
     let source = r#"
         // @ts-check

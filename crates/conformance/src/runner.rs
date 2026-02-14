@@ -237,8 +237,7 @@ impl Runner {
                                         error_freq.record_extra(*code);
                                     }
                                     for fingerprint in &missing_fingerprints {
-                                        error_freq
-                                            .record_missing_fingerprint(fingerprint.clone());
+                                        error_freq.record_missing_fingerprint(fingerprint.clone());
                                     }
                                     for fingerprint in &extra_fingerprints {
                                         error_freq.record_extra_fingerprint(fingerprint.clone());
