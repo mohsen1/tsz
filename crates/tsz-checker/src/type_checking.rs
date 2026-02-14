@@ -2208,11 +2208,14 @@ impl<'a> CheckerState<'a> {
     /// Check if an initializer is a valid const initializer for ambient contexts.
     /// Valid initializers are string literals, numeric literals, or negative numeric literals.
     pub(crate) fn is_valid_ambient_const_initializer(&self, init_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+
         let Some(node) = self.ctx.arena.get(init_idx) else {
             return false;
         };
         match node.kind {
             k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
+                || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
                 || k == tsz_scanner::SyntaxKind::NumericLiteral as u16 =>
             {
                 true
@@ -2226,6 +2229,32 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 false
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                    return false;
+                };
+                let Some(sym_id) = self.resolve_identifier_symbol(access.expression) else {
+                    return false;
+                };
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    return false;
+                };
+                if symbol.flags & symbol_flags::ENUM == 0 {
+                    return false;
+                }
+                if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    return true;
+                }
+                let Some(arg_node) = self.ctx.arena.get(access.name_or_argument) else {
+                    return false;
+                };
+                arg_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                    || arg_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                    || arg_node.kind
+                        == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
             }
             _ => false,
         }
