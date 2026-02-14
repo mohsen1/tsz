@@ -1175,6 +1175,14 @@ pub fn unique_symbol_ref(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Sy
     })
 }
 
+/// Extract the module namespace symbol ref if this is a module namespace type.
+pub fn module_namespace_symbol_ref(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef> {
+    extract_type_data(types, type_id, |key| match key {
+        TypeKey::ModuleNamespace(sym_ref) => Some(*sym_ref),
+        _ => None,
+    })
+}
+
 /// Check if a type is the special `this` type.
 pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     extract_type_data(types, type_id, |key| match key {

@@ -1043,14 +1043,14 @@ impl<'a> UsageAnalyzer<'a> {
             }
 
             // Extract ModuleNamespace(SymbolRef) - marks namespace import as used
-            if let Some(type_key) = self.type_interner.lookup(other_type_id) {
-                if let tsz_solver::TypeKey::ModuleNamespace(sym_ref) = type_key {
-                    let sym_id = tsz_binder::SymbolId(sym_ref.0);
-                    self.mark_symbol_used(
-                        sym_id,
-                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
-                    );
-                }
+            if let Some(sym_ref) =
+                visitor::module_namespace_symbol_ref(self.type_interner, other_type_id)
+            {
+                let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                self.mark_symbol_used(
+                    sym_id,
+                    crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
+                );
             }
 
             // Extract Object nominal symbols (Class instances)
