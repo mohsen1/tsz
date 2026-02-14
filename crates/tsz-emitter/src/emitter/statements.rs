@@ -63,13 +63,16 @@ impl<'a> Printer<'a> {
             is_single_statement && self.is_single_line(node) && !needs_this_capture;
 
         if should_emit_single_line {
+            self.ctx.block_scope_state.enter_scope();
             self.write("{ ");
             self.emit(block.statements.nodes[0]);
             self.write(" }");
+            self.ctx.block_scope_state.exit_scope();
             // Trailing comments are handled by the calling context
             return;
         }
 
+        self.ctx.block_scope_state.enter_scope();
         self.write("{");
         self.write_line();
         self.increase_indent();
@@ -129,6 +132,7 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+        self.ctx.block_scope_state.exit_scope();
         // Trailing comments after the block's closing brace are handled by
         // the calling context (class member loop, statement loop, etc.)
     }

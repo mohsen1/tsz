@@ -104,7 +104,17 @@ function hashString(str: string): string {
 }
 
 function getCacheKey(source: string, target: number, module: number, alwaysStrict: boolean, declaration: boolean, sourceMap: boolean = false, downlevelIteration: boolean = false, noEmitHelpers: boolean = false): string {
-  return hashString(`${source}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${downlevelIteration}:${noEmitHelpers}`);
+  const tszBin = process.env.TSZ_BIN;
+  let engineSalt = '';
+  if (tszBin) {
+    try {
+      const st = fs.statSync(tszBin);
+      engineSalt = `${tszBin}:${st.size}:${st.mtimeMs}`;
+    } catch {
+      engineSalt = tszBin;
+    }
+  }
+  return hashString(`${source}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${downlevelIteration}:${noEmitHelpers}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();

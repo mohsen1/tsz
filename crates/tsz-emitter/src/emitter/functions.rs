@@ -14,6 +14,23 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Parser recovery parity: malformed return type like `(a): => {}` should
+        // preserve recovered shape instead of applying arrow lowering.
+        if self.is_recovery_arrow_missing_return_type(node, func) {
+            self.write("(");
+            self.emit_function_parameters_js(&func.parameters.nodes);
+            self.write(")");
+            if let Some(body_node) = self.arena.get(func.body)
+                && body_node.kind == syntax_kind_ext::BLOCK
+            {
+                self.write(";");
+                self.write_line();
+                self.emit(func.body);
+                self.write_line();
+            }
+            return;
+        }
+
         if self.ctx.target_es5 {
             let captures_this = contains_this_reference(self.arena, _idx);
             let captures_arguments = contains_arguments_reference(self.arena, _idx);
@@ -22,6 +39,35 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_arrow_function_native(func);
+    }
+
+    fn is_recovery_arrow_missing_return_type(
+        &self,
+        node: &Node,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        if let Some(text) = self.source_text {
+            let start = node.pos as usize;
+            let end = node.end as usize;
+            if start < end && end <= text.len() {
+                let slice = &text[start..end];
+                if slice.contains("): =>") || slice.contains("):=>") {
+                    return true;
+                }
+            }
+        }
+
+        if func.type_annotation.is_none() {
+            return false;
+        }
+
+        let Some(type_node) = self.arena.get(func.type_annotation) else {
+            return false;
+        };
+
+        // Parser recovery can surface malformed return types as bare identifier
+        // placeholders; treat them as invalid arrow return type annotations.
+        type_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
     }
 
     /// Emit native ES6+ arrow function syntax

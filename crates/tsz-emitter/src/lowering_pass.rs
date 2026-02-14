@@ -1459,6 +1459,23 @@ impl<'a> LoweringPass<'a> {
         };
 
         if self.ctx.target_es5 {
+            let malformed_return_type = !arrow.type_annotation.is_none()
+                && self
+                    .arena
+                    .get(arrow.type_annotation)
+                    .map(|n| n.kind == SyntaxKind::Identifier as u16)
+                    .unwrap_or(false);
+
+            if self.is_recovery_malformed_arrow(node) || malformed_return_type {
+                for &param_idx in &arrow.parameters.nodes {
+                    self.visit(param_idx);
+                }
+                if !arrow.body.is_none() {
+                    self.visit(arrow.body);
+                }
+                return;
+            }
+
             let captures_this = contains_this_reference(self.arena, idx);
             let captures_arguments = contains_arguments_reference(self.arena, idx);
 
@@ -1534,6 +1551,20 @@ impl<'a> LoweringPass<'a> {
                 self.arguments_capture_level -= 1;
             }
         }
+    }
+
+    fn is_recovery_malformed_arrow(&self, node: &Node) -> bool {
+        let start = node.pos as usize;
+        let end = node.end as usize;
+
+        self.arena.source_files.iter().any(|sf| {
+            if end <= sf.text.len() && start < end {
+                let slice = &sf.text[start..end];
+                slice.contains("): =>") || slice.contains("):=>")
+            } else {
+                false
+            }
+        })
     }
 
     /// Visit a constructor declaration
