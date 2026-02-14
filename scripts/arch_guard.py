@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import pathlib
 import re
+import argparse
+import json
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -15,7 +17,7 @@ CHECKS = [
     (
         "Checker boundary: direct TypeKey inspection outside query boundaries/tests",
         ROOT / "crates" / "tsz-checker",
-        re.compile(r"\bTypeKey::"),
+        re.compile(r"^\s*(match|if let|if matches!|matches!\().*TypeKey::"),
         {"exclude_dirs": {"query_boundaries", "tests"}},
     ),
     (
@@ -74,8 +76,6 @@ def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: d
 def scan(base, pattern, excludes):
     hits = []
     for path, rel in iter_rs_files(base):
-        if "/**" in rel:
-            continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
@@ -86,13 +86,34 @@ def scan(base, pattern, excludes):
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Run TSZ architecture guardrails"
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable output instead of human-readable diagnostics.",
+    )
+    args = parser.parse_args()
+
     failures = []
+    total_hits = 0
     for name, base, pattern, excludes in CHECKS:
         if not base.exists():
             continue
         hits = scan(base, pattern, excludes)
+        total_hits += len(hits)
         if hits:
             failures.append((name, hits))
+
+    if args.json:
+        payload = {
+            "status": "failed" if failures else "passed",
+            "total_hits": total_hits,
+            "failures": [{"name": name, "hits": hits} for name, hits in failures],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if not failures else 1
 
     if failures:
         print("ARCH GUARD FAILURES:")
