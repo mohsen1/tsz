@@ -3201,7 +3201,14 @@ impl<'a> CheckerState<'a> {
                             self.get_type_of_symbol(sym_to_check)
                         };
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_to_check) {
-                            if symbol.flags & symbol_flags::MODULE != 0 {
+                            let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
+                            // Merged declarations like `namespace N {}` + `class N {}`
+                            // are valid values in `extends`. Only emit TS2708 for
+                            // namespace-only symbols.
+                            let has_non_namespace_value = (symbol.flags
+                                & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE))
+                                != 0;
+                            if is_namespace && !has_non_namespace_value {
                                 if let Some(name) = self.heritage_name_text(expr_idx) {
                                     if is_class_declaration && is_extends_clause {
                                         self.error_namespace_used_as_value_at(&name, expr_idx);
