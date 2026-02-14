@@ -1,4 +1,4 @@
-use tsz_solver::{CallSignature, FunctionShape, TypeDatabase, TypeId, types::LiteralValue};
+use tsz_solver::{CallSignature, FunctionShape, TypeDatabase, TypeId};
 
 pub(crate) use tsz_solver::type_queries::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind,
@@ -60,7 +60,7 @@ pub(crate) fn is_string_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 pub(crate) fn is_string_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
-        db.lookup(type_id),
-        Some(tsz_solver::types::TypeKey::Literal(LiteralValue::String(_)))
+        tsz_solver::type_queries::classify_for_literal_value(db, type_id),
+        tsz_solver::type_queries::LiteralValueKind::String(_)
     )
 }
