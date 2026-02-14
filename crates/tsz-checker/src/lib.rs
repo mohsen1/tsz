@@ -1,7 +1,7 @@
 //! Type checker module for TypeScript AST.
 //!
 //! This module is organized into several submodules:
-//! - `types` - Type definitions (Type enum, flags, diagnostics)
+//! - `types` - Legacy checker type definitions (Type enum, flags) used only for transition.
 //! - `arena` - Legacy checker TypeArena for migration-only paths
 //! - `context` - CheckerContext for shared state
 //! - `expr` - Expression type checking
@@ -15,7 +15,8 @@
 //! - `error_reporter` - Error reporting utilities
 //!
 //! Note: The thin checker is the unified checker pipeline; `CheckerState`
-//! is an alias to the thin checker. The types module is shared with the solver.
+//! is an alias to the thin checker. The legacy checker `types` surface is
+//! migration-only and should not be used as the canonical typing model.
 
 pub mod accessibility;
 pub mod accessor_checker;
@@ -93,8 +94,14 @@ pub mod type_literal_checker;
 pub mod type_node;
 pub mod type_parameter;
 pub mod type_query;
-pub mod types;
+mod types;
 pub mod union_type;
+pub mod diagnostics {
+    pub use crate::types::diagnostics::{
+        Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+        diagnostic_messages, format_message,
+    };
+}
 
 // Tests that don't depend on root crate's test_fixtures
 #[cfg(test)]
@@ -185,9 +192,10 @@ pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;
 pub use type_node::TypeNodeChecker;
+#[cfg(feature = "legacy-type-arena")]
 pub use types::{
     ArrayTypeInfo, ConditionalType, EnumTypeInfo, FunctionType, IndexInfo, IndexType,
     IndexedAccessType, IntersectionType, IntrinsicType, LiteralType, LiteralValue, MappedType,
     ObjectType, Signature, TemplateLiteralType, TupleTypeInfo, Type, TypeId, TypeParameter,
-    TypeReference, UnionType, diagnostic_codes, object_flags, signature_flags, type_flags,
+    TypeReference, UnionType, object_flags, signature_flags, type_flags,
 };
