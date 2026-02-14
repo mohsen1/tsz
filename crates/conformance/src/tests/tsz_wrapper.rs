@@ -178,21 +178,25 @@ fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
                 if let Ok(code) = code_str.parse::<u32>() {
                     // Create a simple diagnostic placeholder
                     // Real implementation would parse the full diagnostic
-                    diagnostics.push(Diagnostic {
-                        file_name: "test.ts".to_string(),
-                        span: Span::new(0, 0),
-                        message: line.to_string(),
-                        severity: DiagnosticSeverity::Error,
+                    diagnostics.push(Diagnostic::error(
+                        "test.ts".to_string(),
+                        Span::new(0, 0),
+                        line.to_string(),
                         code,
-                        related: Vec::new(),
-                        source: Some("typescript".to_string()),
-                    });
+                    ));
                 }
             }
         }
     }
 
     diagnostics
+}
+
+fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect()
 }
 
 #[test]

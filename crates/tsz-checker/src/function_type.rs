@@ -1880,18 +1880,17 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let (params, return_type) = match self.ctx.types.lookup(object_type) {
-            Some(tsz_solver::TypeKey::Function(shape_id)) => {
-                let shape = self.ctx.types.function_shape(shape_id);
+        use tsz_solver::type_queries::{get_callable_shape, get_function_shape};
+
+        let (params, return_type) =
+            if let Some(shape) = get_function_shape(self.ctx.types, object_type) {
                 (shape.params.clone(), shape.return_type)
-            }
-            Some(tsz_solver::TypeKey::Callable(shape_id)) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
+            } else if let Some(shape) = get_callable_shape(self.ctx.types, object_type) {
                 let sig = shape.call_signatures.first()?;
                 (sig.params.clone(), sig.return_type)
-            }
-            _ => return None,
-        };
+            } else {
+                return None;
+            };
 
         let tuple_elements: Vec<tsz_solver::TupleElement> = params
             .iter()

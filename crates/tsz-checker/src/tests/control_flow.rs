@@ -143,13 +143,8 @@ if (x && typeof x === "string") {}
     let target_idx = binary.left;
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let narrowed = analyzer.narrow_type_by_condition(
-        union,
-        condition_idx,
-        target_idx,
-        true,
-        FlowNodeId::NONE,
-    );
+    let narrowed =
+        analyzer.narrow_type_by_condition(union, condition_idx, target_idx, true, FlowNodeId::NONE);
     assert_eq!(narrowed, TypeId::STRING);
 }
 
@@ -184,13 +179,8 @@ if (x === "a" || x === "b") {}
     let lit_c = types.literal_string("c");
     let union = types.union(vec![lit_a, lit_b, lit_c]);
 
-    let narrowed_true = analyzer.narrow_type_by_condition(
-        union,
-        condition_idx,
-        target_idx,
-        true,
-        FlowNodeId::NONE,
-    );
+    let narrowed_true =
+        analyzer.narrow_type_by_condition(union, condition_idx, target_idx, true, FlowNodeId::NONE);
     let narrowed_false = analyzer.narrow_type_by_condition(
         union,
         condition_idx,
@@ -257,13 +247,8 @@ if (action.type === "add") {}
     }]);
 
     let union = types.union(vec![add_member, remove_member]);
-    let narrowed_true = analyzer.narrow_type_by_condition(
-        union,
-        condition_idx,
-        target_idx,
-        true,
-        FlowNodeId::NONE,
-    );
+    let narrowed_true =
+        analyzer.narrow_type_by_condition(union, condition_idx, target_idx, true, FlowNodeId::NONE);
     let narrowed_false = analyzer.narrow_type_by_condition(
         union,
         condition_idx,
@@ -331,13 +316,8 @@ if (x === "a") {}
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let literal_a = types.literal_string("a");
-    let narrowed = analyzer.narrow_type_by_condition(
-        union,
-        condition_idx,
-        target_idx,
-        true,
-        FlowNodeId::NONE,
-    );
+    let narrowed =
+        analyzer.narrow_type_by_condition(union, condition_idx, target_idx, true, FlowNodeId::NONE);
 
     assert_eq!(narrowed, literal_a);
 }
@@ -369,13 +349,8 @@ if (x == null) {}
     let union = types.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
     let expected_true = types.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
 
-    let narrowed_true = analyzer.narrow_type_by_condition(
-        union,
-        condition_idx,
-        target_idx,
-        true,
-        FlowNodeId::NONE,
-    );
+    let narrowed_true =
+        analyzer.narrow_type_by_condition(union, condition_idx, target_idx, true, FlowNodeId::NONE);
     let narrowed_false = analyzer.narrow_type_by_condition(
         union,
         condition_idx,
