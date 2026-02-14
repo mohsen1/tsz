@@ -746,7 +746,15 @@ impl<'a> CheckerState<'a> {
             self.check_await_expression(return_data.expression);
 
             let prev_context = self.ctx.contextual_type;
-            if expected_type != TypeId::ANY && !self.type_contains_error(expected_type) {
+            let should_contextualize = self
+                .ctx
+                .arena
+                .get(return_data.expression)
+                .is_some_and(|expr_node| expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16);
+            if should_contextualize
+                && expected_type != TypeId::ANY
+                && !self.type_contains_error(expected_type)
+            {
                 self.ctx.contextual_type = Some(expected_type);
                 // Clear cached type to force recomputation with contextual type
                 // This is necessary because the expression might have been previously typed

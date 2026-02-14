@@ -841,7 +841,9 @@ fn compile_inner(
     let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
-    let no_types_and_symbols = sources_have_no_types_and_symbols(&sources);
+    // `@noTypesAndSymbols` in source comments is a conformance-harness directive,
+    // not a tsc command-line input. Only honor the explicit compiler option here.
+    let no_types_and_symbols = resolved.checker.no_types_and_symbols;
     let lib_paths: Vec<PathBuf> =
         if resolved.checker.no_lib || disable_default_libs || no_types_and_symbols {
             Vec::new()

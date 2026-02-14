@@ -4,7 +4,7 @@ use crate::db::QueryDatabase;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeId, TypeKey};
-use crate::visitor::{TypeVisitor, is_empty_object_type_db};
+use crate::visitor::{TypeVisitor, intrinsic_kind, is_empty_object_type_db, lazy_def_id};
 use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -230,6 +230,33 @@ impl<'a> CompatChecker<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> CompatChecker<'a, R> {
+    fn is_function_target_member(&self, member: TypeId) -> bool {
+        let is_function_object_shape = match self.interner.lookup(member) {
+            Some(TypeKey::Object(shape_id)) | Some(TypeKey::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                let apply = self.interner.intern_string("apply");
+                let call = self.interner.intern_string("call");
+                let has_apply = shape.properties.iter().any(|prop| prop.name == apply);
+                let has_call = shape.properties.iter().any(|prop| prop.name == call);
+                has_apply && has_call
+            }
+            _ => false,
+        };
+
+        intrinsic_kind(self.interner, member) == Some(IntrinsicKind::Function)
+            || is_function_object_shape
+            || self
+                .subtype
+                .resolver
+                .get_boxed_type(IntrinsicKind::Function)
+                .is_some_and(|boxed| boxed == member)
+            || lazy_def_id(self.interner, member).is_some_and(|def_id| {
+                self.subtype
+                    .resolver
+                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
+            })
+    }
+
     /// Create a new compatibility checker with a resolver.
     /// Note: Callers should configure strict_function_types explicitly via set_strict_function_types()
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
@@ -655,6 +682,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Check fast-path assignability conditions.
     /// Returns Some(result) if fast path applies, None if need to do full check.
     fn check_assignable_fast_path(&self, source: TypeId, target: TypeId) -> Option<bool> {
+        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target)
+            && let Some(resolved_target) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
+            && resolved_target != target
+        {
+            return self.check_assignable_fast_path(source, resolved_target);
+        }
+
         // Same type
         if source == target {
             return Some(true);
@@ -697,10 +731,28 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return Some(false);
         }
 
+        // Compatibility: unions containing `Function` should accept callable sources.
+        // Example: `setTimeout(() => {}, 0)` where first arg is `string | Function`.
+        if let Some(TypeKey::Union(members_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(members_id);
+            if members.iter().any(|&member| self.is_function_target_member(member))
+                && crate::type_queries::is_callable_type(self.interner, source)
+            {
+                return Some(true);
+            }
+        }
+
         None // Need full check
     }
 
     pub fn is_assignable_strict(&mut self, source: TypeId, target: TypeId) -> bool {
+        if let Some(TypeKey::Lazy(def_id)) = self.interner.lookup(target)
+            && let Some(resolved_target) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
+            && resolved_target != target
+        {
+            return self.is_assignable_strict(source, resolved_target);
+        }
+
         // Always use strict function types
         if source == target {
             return true;
@@ -725,6 +777,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
         if source == TypeId::UNKNOWN {
             return false;
+        }
+        if let Some(TypeKey::Union(members_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(members_id);
+            if members.iter().any(|&member| self.is_function_target_member(member))
+                && crate::type_queries::is_callable_type(self.interner, source)
+            {
+                return true;
+            }
         }
         if self.is_empty_object_target(target) {
             return self.is_assignable_to_empty_object(source);
@@ -876,11 +936,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         for member in members.iter() {
             let resolved_member = self.resolve_weak_type_ref(*member);
+            // Weak-union checks only apply when ALL union members are object-like.
+            // If any member is primitive/non-object (e.g. `string | Function`),
+            // TypeScript does not apply TS2559-style weak-type rejection.
             let member_shape_id = match extractor.extract(resolved_member) {
                 Some(id) => id,
-                None => {
-                    continue;
-                }
+                None => return false,
             };
 
             let member_shape = self

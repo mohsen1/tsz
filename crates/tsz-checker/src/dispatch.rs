@@ -800,6 +800,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
 
+            // Type predicate nodes appear in function return type positions
+            // (`x is T`) and are not value expressions.
+            k if k == syntax_kind_ext::TYPE_PREDICATE => TypeId::BOOLEAN,
+
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
