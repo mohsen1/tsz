@@ -618,6 +618,7 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
   * Expanded checker architecture contract tests to fail on direct raw interner usage (`.intern(...)`) in checker source files.
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Hardened `scripts/arch_guard.py` checker-side `TypeKey` leakage detection to also fail on fully-qualified raw constructor usage (`intern(tsz_solver::TypeKey::...)`) and direct `TypeKey::...` construction references in non-test checker code.
+  * Tuned the same guardrail to ignore comment-only lines so boundary checks fail on executable code usage, not migration/docs commentary text.
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Migrated checker non-test code from solver-internal module paths (`tsz_solver::types::...`) to public solver exports (`tsz_solver::...`) across relation flags, symbol refs, visibility, intrinsic/index helpers, and index signatures.
   * Strengthened architecture contract coverage to fail if non-test checker source imports `tsz_solver::types::...`, preventing new solver-internal module coupling.

@@ -30,7 +30,7 @@ CHECKS = [
             r"|\bintern\(\s*tsz_solver::TypeKey::"
             r"|\bTypeKey::"
         ),
-        {"exclude_dirs": {"tests"}},
+        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
     ),
     (
         "Checker boundary: direct solver internal imports",
@@ -89,6 +89,9 @@ def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: d
         return matches
 
     for i, line in enumerate(file_text.splitlines(), start=1):
+        if excludes.get("ignore_comment_lines", False):
+            if line.lstrip().startswith("//"):
+                continue
         if pattern.search(line):
             matches.append(i)
     return matches
