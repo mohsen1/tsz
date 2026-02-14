@@ -182,7 +182,9 @@ impl<'a> ClassES5Emitter<'a> {
                 i += 1;
             }
             let ident_start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
+            {
                 i += 1;
             }
             if ident_start == i {
@@ -404,6 +406,20 @@ mod tests {
         assert!(
             output.contains("} // OK"),
             "Constructor trailing comment should be preserved: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_var_function_recovery_supports_dollar_identifier() {
+        let output = emit_class(
+            r#"class C {
+            var $constructor() { }
+        }"#,
+        );
+        assert!(
+            output.contains("var $constructor;"),
+            "Recovery emit should keep `$` in identifier: {}",
             output
         );
     }
