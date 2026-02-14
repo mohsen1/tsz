@@ -300,7 +300,6 @@ while true; do
       last_output_ts="$(date +%s)"
       progress_ts="$last_output_ts"
       if [[ "$line" == *"You've hit your usage limit"* ]] \
-        || [[ "$line" == *"state db missing rollout path"* ]] \
         || [[ "$line" == *"model_not_found"* ]] \
         || [[ "$line" == *"The requested model"* && "$line" == *"does not exist"* ]]; then
         TERMINAL_FAILURE_DETECTED="true"
