@@ -354,6 +354,13 @@ impl<'a> CheckerState<'a> {
         self.ctx.has_parse_errors
     }
 
+    /// Check if the source file has real syntax errors (not just conflict markers).
+    /// Conflict markers (TS1185) are treated as trivia and don't affect AST structure,
+    /// so they should not suppress TS2304 errors.
+    pub(crate) fn has_syntax_parse_errors(&self) -> bool {
+        self.ctx.has_syntax_parse_errors
+    }
+
     /// Apply `this` type substitution to a method call's return type.
     ///
     /// When a method returns `this`, the return type should be the type of the receiver.
