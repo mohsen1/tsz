@@ -11,6 +11,12 @@
 //! - Path mapping from tsconfig (paths, baseUrl)
 //! - Package.json exports/imports fields
 //! - TypeScript-specific extensions (.ts, .tsx, .d.ts)
+//!
+//! Resolver invariants:
+//! - Module existence truth comes from `resolve_with_kind` outcomes.
+//! - Diagnostic code selection for module-not-found family (TS2307/TS2792/TS2834/TS2835/TS5097/TS2732)
+//!   is owned here and propagated to checker via resolution records.
+//! - Callers should not recompute not-found codes/messages from partial checker state.
 
 use crate::config::{JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
