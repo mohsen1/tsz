@@ -121,18 +121,20 @@ impl<'a> Printer<'a> {
         let saved_counter = self.ctx.destructuring_state.temp_var_counter;
         let saved_names = std::mem::take(&mut self.generated_temp_names);
         let saved_for_of = self.first_for_of_emitted;
+        let saved_preallocated = std::mem::take(&mut self.preallocated_temp_names);
         self.temp_scope_stack
-            .push((saved_counter, saved_names, saved_for_of));
+            .push((saved_counter, saved_names, saved_for_of, saved_preallocated));
         self.ctx.destructuring_state.temp_var_counter = 0;
         self.first_for_of_emitted = false;
     }
 
     /// Restore the previous temp naming state when leaving a function scope.
     pub(super) fn pop_temp_scope(&mut self) {
-        if let Some((counter, names, for_of)) = self.temp_scope_stack.pop() {
+        if let Some((counter, names, for_of, preallocated)) = self.temp_scope_stack.pop() {
             self.ctx.destructuring_state.temp_var_counter = counter;
             self.generated_temp_names = names;
             self.first_for_of_emitted = for_of;
+            self.preallocated_temp_names = preallocated;
         }
     }
 
@@ -142,7 +144,7 @@ impl<'a> Printer<'a> {
     /// Generates names: _a, _b, _c, ..., _z, _0, _1, ...
     /// Skips counts 8 (_i) and 13 (_n) which TypeScript reserves for dedicated TempFlags.
     /// Also skips names that appear in `file_identifiers` or `generated_temp_names`.
-    pub(super) fn make_unique_name(&mut self) -> String {
+    fn generate_fresh_temp_name(&mut self) -> String {
         loop {
             let counter = self.ctx.destructuring_state.temp_var_counter;
             self.ctx.destructuring_state.temp_var_counter += 1;
@@ -165,6 +167,24 @@ impl<'a> Printer<'a> {
                 return name;
             }
             // Name collides, try next
+        }
+    }
+
+    pub(super) fn make_unique_name(&mut self) -> String {
+        if let Some(name) = self.preallocated_temp_names.pop_front() {
+            return name;
+        }
+        self.generate_fresh_temp_name()
+    }
+
+    pub(super) fn make_unique_name_fresh(&mut self) -> String {
+        self.generate_fresh_temp_name()
+    }
+
+    pub(super) fn preallocate_temp_names(&mut self, count: usize) {
+        for _ in 0..count {
+            let name = self.generate_fresh_temp_name();
+            self.preallocated_temp_names.push_back(name);
         }
     }
 

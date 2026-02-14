@@ -1618,10 +1618,14 @@ impl<'a> Printer<'a> {
         self.emit_expression(key_idx);
     }
 
-    pub(super) fn emit_for_of_statement_es5(&mut self, for_in_of: &ForInOfData) {
+    pub(super) fn emit_for_of_statement_es5(
+        &mut self,
+        for_of_idx: NodeIndex,
+        for_in_of: &ForInOfData,
+    ) {
         // Check if downlevelIteration is enabled
         if self.ctx.options.downlevel_iteration {
-            self.emit_for_of_statement_es5_iterator(for_in_of);
+            self.emit_for_of_statement_es5_iterator(for_of_idx, for_in_of);
         } else {
             self.emit_for_of_statement_es5_array_indexing(for_in_of);
         }
@@ -1650,7 +1654,11 @@ impl<'a> Printer<'a> {
     ///     finally { if (e_1) throw e_1.error; }
     /// }
     /// ```
-    fn emit_for_of_statement_es5_iterator(&mut self, for_in_of: &ForInOfData) {
+    fn emit_for_of_statement_es5_iterator(
+        &mut self,
+        for_of_idx: NodeIndex,
+        for_in_of: &ForInOfData,
+    ) {
         let counter = self.ctx.destructuring_state.for_of_counter;
 
         // TypeScript's variable naming pattern:
@@ -1658,7 +1666,17 @@ impl<'a> Printer<'a> {
         // For loop: _b (iterator), _c (result)
         // Catch: e_N_1 (error value, not pre-declared)
         let error_container_name = format!("e_{}", counter + 1);
-        let return_temp_name = self.get_temp_var_name(); // _a
+        let return_temp_name = self
+            .reserved_iterator_return_temps
+            .remove(&for_of_idx)
+            .unwrap_or_else(|| self.get_temp_var_name()); // _a, _b, ...
+        let is_nested_iterator_for_of = self.iterator_for_of_depth > 0;
+        self.iterator_for_of_depth += 1;
+
+        // Reserve return temps for nested iterator for-of loops in this body before
+        // allocating this loop's iterator/result temps.
+        self.preallocate_nested_iterator_return_temps(for_in_of.statement);
+
         let loop_iterator_name = self.get_temp_var_name(); // _b
         let loop_result_name = self.get_temp_var_name(); // _c
         let catch_error_name = format!("e_{}_1", counter + 1);
@@ -1676,12 +1694,28 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        // Leading comments for downlevel for-of are deferred by statement emitters
+        // and emitted here so they stay attached to the transformed loop body.
+        if let Some(for_of_node) = self.arena.get(for_of_idx) {
+            let actual_start = self.skip_whitespace_forward(for_of_node.pos, for_of_node.end);
+            self.emit_comments_before_pos(actual_start);
+        }
+
         // for loop with iterator protocol, using NEW temp vars
         self.write("for (var ");
         self.write(&loop_iterator_name);
-        self.write(" = __values(");
-        self.emit_expression(for_in_of.expression);
-        self.write("), ");
+        self.write(" = ");
+        if is_nested_iterator_for_of {
+            self.write("(");
+            self.write(&error_container_name);
+            self.write(" = void 0, __values(");
+            self.emit_expression(for_in_of.expression);
+            self.write(")), ");
+        } else {
+            self.write("__values(");
+            self.emit_expression(for_in_of.expression);
+            self.write("), ");
+        }
         self.write(&loop_result_name);
         self.write(" = ");
         self.write(&loop_iterator_name);
@@ -1768,6 +1802,95 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("}");
+        self.iterator_for_of_depth = self.iterator_for_of_depth.saturating_sub(1);
+    }
+
+    fn preallocate_nested_iterator_return_temps(&mut self, stmt_idx: NodeIndex) {
+        self.visit_for_of_return_temp_prealloc(stmt_idx);
+    }
+
+    fn visit_for_of_return_temp_prealloc(&mut self, idx: NodeIndex) {
+        if idx.is_none() {
+            return;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
+            if let Some(for_in_of) = self.arena.get_for_in_of(node)
+                && !for_in_of.await_modifier
+            {
+                if !self.reserved_iterator_return_temps.contains_key(&idx) {
+                    let temp = self.get_temp_var_name();
+                    self.reserved_iterator_return_temps.insert(idx, temp);
+                }
+                self.visit_for_of_return_temp_prealloc(for_in_of.statement);
+            }
+            return;
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                if let Some(block) = self.arena.get_block(node) {
+                    for &stmt in &block.statements.nodes {
+                        self.visit_for_of_return_temp_prealloc(stmt);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                if let Some(if_stmt) = self.arena.get_if_statement(node) {
+                    self.visit_for_of_return_temp_prealloc(if_stmt.then_statement);
+                    self.visit_for_of_return_temp_prealloc(if_stmt.else_statement);
+                }
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                if let Some(try_stmt) = self.arena.get_try(node) {
+                    self.visit_for_of_return_temp_prealloc(try_stmt.try_block);
+                    self.visit_for_of_return_temp_prealloc(try_stmt.catch_clause);
+                    self.visit_for_of_return_temp_prealloc(try_stmt.finally_block);
+                }
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => {
+                if let Some(catch_clause) = self.arena.get_catch_clause(node) {
+                    self.visit_for_of_return_temp_prealloc(catch_clause.block);
+                }
+            }
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                if let Some(loop_data) = self.arena.get_loop(node) {
+                    self.visit_for_of_return_temp_prealloc(loop_data.statement);
+                } else if let Some(for_in_of) = self.arena.get_for_in_of(node) {
+                    self.visit_for_of_return_temp_prealloc(for_in_of.statement);
+                }
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                if let Some(sw) = self.arena.get_switch(node) {
+                    self.visit_for_of_return_temp_prealloc(sw.case_block);
+                }
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                if let Some(clause) = self.arena.get_case_clause(node) {
+                    for &stmt in &clause.statements.nodes {
+                        self.visit_for_of_return_temp_prealloc(stmt);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.visit_for_of_return_temp_prealloc(labeled.statement);
+                }
+            }
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                if let Some(with_stmt) = self.arena.get_with_statement(node) {
+                    self.visit_for_of_return_temp_prealloc(with_stmt.then_statement);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Emit for-of using simple array indexing (default, --downlevelIteration disabled)
@@ -1825,6 +1948,14 @@ impl<'a> Printer<'a> {
             name
         };
 
+        // For assignment-pattern for-of with object/array literals, tsc allocates
+        // destructuring temps before choosing the array temp in the loop header.
+        // Reserve those temps now so later lowering reuses them in order.
+        let reserve_count = self.estimate_for_of_assignment_temp_reserve(for_in_of.initializer);
+        if reserve_count > 0 {
+            self.preallocate_temp_names(reserve_count);
+        }
+
         // Derive array name from expression:
         // - Simple identifier `arr` -> `arr_1`, `arr_2`, etc. (doesn't consume counter)
         // - Complex expression -> `_a`, `_b`, etc. (from global counter)
@@ -1849,22 +1980,22 @@ impl<'a> Printer<'a> {
                         self.ctx.block_scope_state.reserve_name(candidate.clone());
                         candidate
                     } else {
-                        let name = self.make_unique_name();
+                        let name = self.make_unique_name_fresh();
                         self.ctx.block_scope_state.reserve_name(name.clone());
                         name
                     }
                 } else {
-                    let name = self.make_unique_name();
+                    let name = self.make_unique_name_fresh();
                     self.ctx.block_scope_state.reserve_name(name.clone());
                     name
                 }
             } else {
-                let name = self.make_unique_name();
+                let name = self.make_unique_name_fresh();
                 self.ctx.block_scope_state.reserve_name(name.clone());
                 name
             }
         } else {
-            let name = self.make_unique_name();
+            let name = self.make_unique_name_fresh();
             self.ctx.block_scope_state.reserve_name(name.clone());
             name
         };
@@ -1900,6 +2031,49 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn estimate_for_of_assignment_temp_reserve(&self, initializer: NodeIndex) -> usize {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return 0;
+        };
+        match init_node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(lit) = self.arena.get_literal_expr(init_node) {
+                    if lit.elements.nodes.len() > 1 {
+                        // One extracted source temp + per-property default temps.
+                        let mut defaults = 0usize;
+                        for &elem_idx in &lit.elements.nodes {
+                            let Some(elem_node) = self.arena.get(elem_idx) else {
+                                continue;
+                            };
+                            if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                                && let Some(prop) = self.arena.get_property_assignment(elem_node)
+                                && let Some(value_node) = self.arena.get(prop.initializer)
+                                && value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                && let Some(bin) = self.arena.get_binary_expr(value_node)
+                                && bin.operator_token == SyntaxKind::EqualsToken as u16
+                            {
+                                defaults += 1;
+                            }
+                        }
+                        return 1 + defaults;
+                    }
+                }
+                0
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                if let Some(lit) = self.arena.get_literal_expr(init_node)
+                    && lit.elements.nodes.len() > 1
+                {
+                    // One extracted source temp. Additional nested/default temps are emitted
+                    // later and use normal allocation.
+                    return 1;
+                }
+                0
+            }
+            _ => 0,
+        }
     }
 
     /// Emit the for-of loop body (common logic for both array and iterator modes)

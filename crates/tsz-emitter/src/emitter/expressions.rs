@@ -450,7 +450,17 @@ impl<'a> Printer<'a> {
         let has_trailing_comma = self.has_trailing_comma_in_source(node, &obj.elements.nodes);
 
         // Preserve single-line formatting from source
-        if self.is_single_line(node) || obj.elements.nodes.len() == 1 {
+        let source_single_line = self.source_text.is_some_and(|text| {
+            let start = node.pos as usize;
+            let end = node.end as usize;
+            if start >= end || end > text.len() {
+                // Synthesized/invalid range: don't force compact object literal formatting.
+                return false;
+            }
+            !text[start..end].contains('\n')
+        });
+        let should_emit_single_line = obj.elements.nodes.len() == 1 || source_single_line;
+        if should_emit_single_line {
             self.write("{ ");
             for (i, &prop) in obj.elements.nodes.iter().enumerate() {
                 if i > 0 {
