@@ -90,3 +90,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [ ] Migration action 087: incremental boundary migration artifact recorded.
 - [ ] Migration action 088: incremental boundary migration artifact recorded.
 - [ ] Migration action 089: incremental boundary migration artifact recorded.
+- [ ] Migration action 090: incremental boundary migration artifact recorded.
