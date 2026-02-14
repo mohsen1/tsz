@@ -6,8 +6,6 @@
 //!
 //! Note: These tests simulate missing lib.d.ts by not loading lib files.
 
-#![allow(clippy::print_stderr)]
-
 use crate::checker::context::CheckerOptions;
 use crate::checker::state::CheckerState;
 use crate::test_fixtures::TestContext;
@@ -338,8 +336,8 @@ class C {
     // and experimentalDecorators is enabled
     let ts2318_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2318).collect();
 
-    eprintln!("All diagnostics: {:?}", diagnostics);
-    eprintln!("TS2318 errors: {:?}", ts2318_errors);
+    println!("All diagnostics: {:?}", diagnostics);
+    println!("TS2318 errors: {:?}", ts2318_errors);
 
     assert!(
         !ts2318_errors.is_empty(),
@@ -454,8 +452,8 @@ class C {
         .filter(|d| d.code == 2318 && d.message_text.contains("TypedPropertyDescriptor"))
         .collect();
 
-    eprintln!("All diagnostics for b.ts: {:?}", diagnostics);
-    eprintln!("TS2318 for TypedPropertyDescriptor: {:?}", ts2318_errors);
+    println!("All diagnostics for b.ts: {:?}", diagnostics);
+    println!("TS2318 for TypedPropertyDescriptor: {:?}", ts2318_errors);
 
     assert!(
         !ts2318_errors.is_empty(),
