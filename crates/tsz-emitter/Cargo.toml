@@ -13,7 +13,6 @@ tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }
 tsz-binder = { workspace = true }
 tsz-solver = { workspace = true }
-tsz-checker = { workspace = true }
 rustc-hash = { workspace = true }
 smallvec = { workspace = true }
 memchr = { workspace = true }
