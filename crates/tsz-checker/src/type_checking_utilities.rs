@@ -985,6 +985,17 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         return_context: Option<TypeId>,
     ) -> TypeId {
+        // Expression-bodied arrows returning `void expr` are always `void`.
+        // During inference this avoids unnecessary recursive type computation
+        // (which can create self-referential cycles and spuriously degrade to `any`).
+        if let Some(expr_node) = self.ctx.arena.get(expr_idx)
+            && expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.ctx.arena.get_unary_expr(expr_node)
+            && unary.operator == SyntaxKind::VoidKeyword as u16
+        {
+            return TypeId::VOID;
+        }
+
         let prev_context = self.ctx.contextual_type;
         if let Some(ctx_type) = return_context {
             self.ctx.contextual_type = Some(ctx_type);
