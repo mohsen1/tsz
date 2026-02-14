@@ -382,8 +382,23 @@ impl ParserState {
                         diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
                     );
                     self.next_token();
-                    // Continue to parse the next statement (e.g., "try" after "static")
-                    self.parse_statement()
+                    // Continue to parse the next statement (e.g., "try" after "static").
+                    // Strip cascading TS1005 errors: in tsc, this code path aborts the
+                    // statement list back to a parent context (e.g., class members), so
+                    // no cascading errors occur. We can't abort, so we suppress TS1005
+                    // errors produced during the recursive parse.
+                    let diag_count = self.parse_diagnostics.len();
+                    let result = self.parse_statement();
+                    // Remove cascading TS1005 ("'...' expected") errors
+                    let mut i = diag_count;
+                    while i < self.parse_diagnostics.len() {
+                        if self.parse_diagnostics[i].code == diagnostic_codes::EXPECTED {
+                            self.parse_diagnostics.remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    result
                 } else {
                     self.parse_expression_statement()
                 }
