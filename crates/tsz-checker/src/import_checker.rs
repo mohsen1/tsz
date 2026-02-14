@@ -951,14 +951,21 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS2323: Check for multiple default exports
-        // TypeScript emits TS2323 "Cannot redeclare exported variable 'default'" for duplicate default exports
+        // TS2323/TS2528: Check for multiple default exports
+        // TypeScript reports both duplicate exported variable and multiple default exports.
         if export_default_indices.len() > 1 {
             for &export_idx in &export_default_indices {
                 self.error_at_node(
                     export_idx,
                     "Cannot redeclare exported variable 'default'.",
                     diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                );
+            }
+            if let Some(&extra_default_idx) = export_default_indices.get(1) {
+                self.error_at_node(
+                    extra_default_idx,
+                    "A module cannot have multiple default exports.",
+                    diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
                 );
             }
         }
