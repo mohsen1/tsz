@@ -110,6 +110,9 @@ impl<'a> CheckerState<'a> {
                 self.resolve_no_unused_locals_from_source(&sf.text);
             self.ctx.compiler_options.no_unused_parameters =
                 self.resolve_no_unused_parameters_from_source(&sf.text);
+            if self.has_ts_nocheck_pragma(&sf.text) {
+                return;
+            }
 
             // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
             self.ctx.application_symbols_resolved.clear();
@@ -184,6 +187,13 @@ impl<'a> CheckerState<'a> {
 
             perf_log("post_checks", post_start);
         }
+    }
+
+    fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
+        source
+            .lines()
+            .take(20)
+            .any(|line| line.contains("@ts-nocheck"))
     }
 
     // =========================================================================
