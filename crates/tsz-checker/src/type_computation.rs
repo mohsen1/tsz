@@ -2621,7 +2621,8 @@ impl<'a> CheckerState<'a> {
                     if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         if accessor.type_annotation.is_none() {
                             use crate::types::diagnostics::diagnostic_codes;
-                            let self_refs = self.collect_self_references(accessor.body, &name);
+                            let self_refs =
+                                self.collect_property_name_references(accessor.body, &name);
                             if !self_refs.is_empty() {
                                 self.error_at_node_msg(
                                     accessor.name,
