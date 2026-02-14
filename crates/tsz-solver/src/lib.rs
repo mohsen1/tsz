@@ -155,5 +155,8 @@ mod isomorphism_tests;
 mod isomorphism_validation;
 // solver_refactoring_tests: kept in root crate (depends on checker types)
 #[cfg(test)]
+#[path = "tests/type_queries_property_names_tests.rs"]
+mod type_queries_property_names_tests;
+#[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;
