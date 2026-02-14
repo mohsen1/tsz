@@ -1,8 +1,0 @@
-real_world/synthetic_100_classes_full_pipeline
-                        time:   [1.2999 ms 1.3072 ms 1.3143 ms]
-                        thrpt:  [47.317 MiB/s 47.573 MiB/s 47.839 MiB/s]
-                 change:
-                        time:   [-84.779% -82.224% -78.350%] (p = 0.00 < 0.05)
-                        thrpt:  [+361.90% +462.55% +556.98%]
-                        Performance has improved.
-

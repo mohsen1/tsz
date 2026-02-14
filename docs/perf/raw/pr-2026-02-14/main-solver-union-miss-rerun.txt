@@ -1,8 +1,0 @@
-subtype_object_union_miss
-                        time:   [14.472 µs 17.089 µs 20.101 µs]
-                        change: [-89.033% -84.474% -77.050%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 6 outliers among 100 measurements (6.00%)
-  3 (3.00%) high mild
-  3 (3.00%) high severe
-

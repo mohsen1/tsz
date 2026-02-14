@@ -1,8 +1,0 @@
-subtype_object_union_match
-                        time:   [107.61 µs 133.31 µs 160.84 µs]
-                        change: [-53.729% -38.610% -17.145%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 6 outliers among 100 measurements (6.00%)
-  5 (5.00%) high mild
-  1 (1.00%) high severe
-

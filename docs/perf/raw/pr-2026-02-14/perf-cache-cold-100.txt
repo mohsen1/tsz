@@ -1,7 +1,0 @@
-cache_reuse/cold_check/100decls_1322lines
-                        time:   [5.0458 ms 6.3163 ms 7.5698 ms]
-                        change: [+149.61% +191.17% +235.34%] (p = 0.00 < 0.05)
-                        Performance has regressed.
-Found 1 outliers among 20 measurements (5.00%)
-  1 (5.00%) high mild
-

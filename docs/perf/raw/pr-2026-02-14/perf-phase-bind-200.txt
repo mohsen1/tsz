@@ -1,8 +1,0 @@
-phase_timing/2_parse_bind/200decls_2642lines
-                        time:   [1.7473 ms 1.8194 ms 1.9263 ms]
-                        change: [-45.770% -36.342% -23.778%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 2 outliers among 30 measurements (6.67%)
-  1 (3.33%) high mild
-  1 (3.33%) high severe
-
