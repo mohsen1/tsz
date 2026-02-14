@@ -149,6 +149,9 @@ mod generic_inference_manual;
 #[path = "tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
+#[path = "tests/module_resolution_guard_tests.rs"]
+mod module_resolution_guard_tests;
+#[cfg(test)]
 #[path = "tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]

@@ -3466,6 +3466,107 @@ fn compile_missing_tsconfig_uses_defaults() {
     assert!(base.join("src/index.js").is_file());
 }
 
+#[test]
+fn compile_ambient_external_module_without_internal_import_declaration_fixture() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "amd",
+            "ignoreDeprecations": "6.0"
+          },
+          "files": [
+            "ambientExternalModuleWithoutInternalImportDeclaration_0.ts",
+            "ambientExternalModuleWithoutInternalImportDeclaration_1.ts"
+          ]
+        }"#,
+    );
+    write_file(
+        &base.join("ambientExternalModuleWithoutInternalImportDeclaration_0.ts"),
+        r#"declare module 'M' {
+    namespace C {
+        export var f: number;
+    }
+    class C {
+        foo(): void;
+    }
+    export = C;
+}"#,
+    );
+    write_file(
+        &base.join("ambientExternalModuleWithoutInternalImportDeclaration_1.ts"),
+        r#"/// <reference path='ambientExternalModuleWithoutInternalImportDeclaration_0.ts'/>
+import A = require('M');
+var c = new A();"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got {:?}",
+        result
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn compile_alias_on_merged_module_interface_fixture_reports_ts2708() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs"
+          },
+          "files": [
+            "aliasOnMergedModuleInterface_0.ts",
+            "aliasOnMergedModuleInterface_1.ts"
+          ]
+        }"#,
+    );
+    write_file(
+        &base.join("aliasOnMergedModuleInterface_0.ts"),
+        r#"declare module "foo" {
+    namespace B {
+        export interface A {}
+    }
+    interface B {
+        bar(name: string): B.A;
+    }
+    export = B;
+}"#,
+    );
+    write_file(
+        &base.join("aliasOnMergedModuleInterface_1.ts"),
+        r#"/// <reference path='aliasOnMergedModuleInterface_0.ts' />
+import foo = require("foo");
+declare var z: foo;
+z.bar("hello");
+var x: foo.A = foo.bar("hello");"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2708),
+        "Expected TS2708, got {:?}",
+        result
+            .diagnostics
+            .iter()
+            .map(|d| d.code)
+            .collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // E2E: Generic Utility Library Compilation
 // =============================================================================
