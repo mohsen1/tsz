@@ -503,3 +503,22 @@ If a change computes `WHERE` to report or which AST node triggered it, it belong
 4. Performance:
    1. P50/P95 check throughput,
    2. type interner growth and cache hit ratio.
+
+## 18. Rollback Playbook (Phase-Safe)
+
+1. Trigger Conditions:
+   1. parity drop above agreed threshold,
+   2. new diagnostic-code mismatch spike,
+   3. sustained P95 regression beyond budget.
+2. Rollback Levels:
+   1. L1: disable new query route via feature flag while keeping code.
+   2. L2: revert latest phase PR batch while preserving test fixtures.
+   3. L3: revert policy/profile changes and restore previous default profile.
+3. Required Artifacts Before Rollback:
+   1. failing case list with reproduction commands,
+   2. before/after parity summary,
+   3. perf delta snapshot.
+4. Post-Rollback Actions:
+   1. open a focused follow-up issue with owner,
+   2. add regression fixture before reattempt,
+   3. document root cause in decision log.
