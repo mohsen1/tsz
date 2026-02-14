@@ -729,12 +729,7 @@ impl<'a> CheckerState<'a> {
 
             // Check against number index signature first (for numeric properties)
             if let Some(ref number_idx) = index_info.number_index {
-                if is_numeric_property
-                    && !self
-                        .ctx
-                        .types
-                        .is_assignable_to(prop_type, number_idx.value_type)
-                {
+                if is_numeric_property && !self.is_assignable_to(prop_type, number_idx.value_type) {
                     let prop_type_str = self.format_type(prop_type);
                     let index_type_str = self.format_type(number_idx.value_type);
 
@@ -749,11 +744,7 @@ impl<'a> CheckerState<'a> {
             // Check against string index signature
             // Note: ALL properties (including numeric ones) must satisfy string index
             if let Some(ref string_idx) = index_info.string_index {
-                if !self
-                    .ctx
-                    .types
-                    .is_assignable_to(prop_type, string_idx.value_type)
-                {
+                if !self.is_assignable_to(prop_type, string_idx.value_type) {
                     let prop_type_str = self.format_type(prop_type);
                     let index_type_str = self.format_type(string_idx.value_type);
 
