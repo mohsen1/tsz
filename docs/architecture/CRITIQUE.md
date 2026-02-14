@@ -513,6 +513,10 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Wired checker `TypeKey` leakage enforcement into top-level architecture CI guardrails by extending `scripts/check-checker-boundaries.sh` with an explicit failure check for direct `TypeKey` import/intern patterns in non-test checker code.
   * Strengthened checker architecture contract coverage by making the direct-`TypeKey` usage test recurse through checker source subdirectories, preventing blind spots outside top-level `src/*.rs`.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Tightened top-level checker boundary guardrails so direct `TypeKey` import/intern checks now cover all non-test checker code (including `query_boundaries`), removing the previous path exception.
+  * Added an explicit raw-interner checker guard in `scripts/check-checker-boundaries.sh` that fails on `.intern(...)` usage in non-test checker code, enforcing solver-constructor-only type construction.
+  * Expanded checker architecture contract tests to fail on direct raw interner usage (`.intern(...)`) in checker source files.
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
   * Keep tightening guard patterns as solver constructor surface expands (for example, forbid additional raw interner access patterns beyond `TypeKey`).
