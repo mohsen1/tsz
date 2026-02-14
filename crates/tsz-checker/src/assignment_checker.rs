@@ -110,6 +110,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(name)` if the identifier refers to a const, `None` otherwise.
     fn get_const_variable_name(&self, ident_idx: NodeIndex) -> Option<String> {
+        let ident_idx = self.unwrap_assignment_target_for_symbol(ident_idx);
         let node = self.ctx.arena.get(ident_idx)?;
         if node.kind != SyntaxKind::Identifier as u16 {
             return None;
@@ -117,12 +118,11 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = ident.escaped_text.clone();
 
-        let sym_id = self.resolve_identifier_symbol_no_mark(ident_idx)?;
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, ident_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-
-        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0 {
-            return None;
-        }
 
         let value_decl = symbol.value_declaration;
         if value_decl.is_none() {
@@ -146,6 +146,46 @@ impl<'a> CheckerState<'a> {
             Some(name)
         } else {
             None
+        }
+    }
+
+    /// Strip wrappers that preserve assignment target identity for symbol checks.
+    ///
+    /// Examples:
+    /// - `(x)` -> `x`
+    /// - `x!` -> `x`
+    /// - `(x as T)` -> `x`
+    /// - `(x satisfies T)` -> `x`
+    fn unwrap_assignment_target_for_symbol(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    idx = paren.expression;
+                    continue;
+                }
+                return idx;
+            }
+            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+                if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                    idx = unary.expression;
+                    continue;
+                }
+                return idx;
+            }
+            if node.kind == syntax_kind_ext::TYPE_ASSERTION
+                || node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            {
+                if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
+                    idx = assertion.expression;
+                    continue;
+                }
+                return idx;
+            }
+            return idx;
         }
     }
 

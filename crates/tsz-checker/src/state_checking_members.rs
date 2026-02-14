@@ -3470,6 +3470,25 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file() {
             return;
         }
+        // TypeScript does not report TS7010/TS7011 when all value-return paths use
+        // an explicit `as any`/`<any>` assertion.
+        if let Some(node) = self.ctx.arena.get(fallback_node) {
+            let body = if let Some(func) = self.ctx.arena.get_function(node) {
+                Some(func.body)
+            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                Some(method.body)
+            } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                Some(accessor.body)
+            } else {
+                None
+            };
+            if let Some(body_idx) = body
+                && !body_idx.is_none()
+                && self.has_only_explicit_any_assertion_returns(body_idx)
+            {
+                return;
+            }
+        }
         if !self.should_report_implicit_any_return(return_type) {
             return;
         }
