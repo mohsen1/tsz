@@ -2871,31 +2871,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Get the type of the object being accessed
+        // Get the type of the object being accessed and normalize it through
+        // solver-backed evaluation before property/read-only checks.
         let obj_type = self.get_type_of_node(access.expression);
-
-        // TypedArray `length` is readonly in lib declarations. Preserve TS2540 even when
-        // the structural property path is obscured by generic/default type arguments.
-        if prop_name == "length"
-            && let Some(type_name) = self.get_declared_type_name_from_expression(access.expression)
-            && matches!(
-                type_name.as_str(),
-                "Int8Array"
-                    | "Uint8Array"
-                    | "Uint8ClampedArray"
-                    | "Int16Array"
-                    | "Uint16Array"
-                    | "Int32Array"
-                    | "Uint32Array"
-                    | "Float32Array"
-                    | "Float64Array"
-                    | "BigInt64Array"
-                    | "BigUint64Array"
-            )
-        {
-            self.error_readonly_property_at(&prop_name, target_idx);
-            return true;
-        }
+        let readonly_check_type = self.evaluate_type_for_assignability(obj_type);
 
         // Check if the property is a const export from a namespace/module (TS2540).
         // For `M.x = 1` where `export const x = 0` in namespace M.
@@ -2910,7 +2889,8 @@ impl<'a> CheckerState<'a> {
         // reported elsewhere. This matches tsc behavior which checks existence before
         // readonly status.
         use tsz_solver::operations_property::PropertyAccessResult;
-        let property_result = self.resolve_property_access_with_env(obj_type, &prop_name);
+        let property_result =
+            self.resolve_property_access_with_env(readonly_check_type, &prop_name);
         let property_exists = matches!(property_result, PropertyAccessResult::Success { .. });
 
         if !property_exists {
@@ -2927,7 +2907,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if the property is readonly in the object type (solver types)
-        if self.is_property_readonly(obj_type, &prop_name) {
+        if self.is_property_readonly(readonly_check_type, &prop_name) {
             // Special case: readonly properties can be assigned in constructors
             // if the property is declared in the current class (not inherited)
             if self.is_readonly_assignment_allowed_in_constructor(&prop_name, access.expression) {
