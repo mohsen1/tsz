@@ -952,23 +952,81 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2323/TS2528: Check for multiple default exports
-        // TypeScript reports both duplicate exported variable and multiple default exports.
+        // TypeScript prefers TS2528 for duplicate defaults when a default export
+        // targets a type-only symbol (e.g. `export default Foo` where `Foo` is
+        // interface/type alias). Otherwise it reports TS2323 in this checker path.
         if export_default_indices.len() > 1 {
+            let prefer_multiple_default_exports = export_default_indices
+                .iter()
+                .copied()
+                .any(|export_idx| self.default_export_targets_type_only_symbol(export_idx));
+
             for &export_idx in &export_default_indices {
-                self.error_at_node(
-                    export_idx,
-                    "Cannot redeclare exported variable 'default'.",
-                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-                );
-            }
-            if let Some(&extra_default_idx) = export_default_indices.get(1) {
-                self.error_at_node(
-                    extra_default_idx,
-                    "A module cannot have multiple default exports.",
-                    diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                );
+                if prefer_multiple_default_exports {
+                    self.error_at_node(
+                        export_idx,
+                        "A module cannot have multiple default exports.",
+                        diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                    );
+                } else {
+                    self.error_at_node(
+                        export_idx,
+                        "Cannot redeclare exported variable 'default'.",
+                        diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                    );
+                }
             }
         }
+    }
+
+    fn default_export_targets_type_only_symbol(&self, export_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(export_idx) else {
+            return false;
+        };
+        let Some(export_data) = self.ctx.arena.get_export_decl(node) else {
+            return false;
+        };
+        if !export_data.is_default_export || export_data.export_clause.is_none() {
+            return false;
+        }
+
+        let Some(target_node) = self.ctx.arena.get(export_data.export_clause) else {
+            return false;
+        };
+        if target_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            || target_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+        {
+            return true;
+        }
+
+        if let Some(sym_id) = self.resolve_qualified_symbol(export_data.export_clause)
+            && self.symbol_is_type_only(sym_id, None)
+        {
+            return true;
+        }
+
+        // Fallback for default-exported identifiers that bind to local type-only
+        // declarations not resolved through the current symbol path yet.
+        let Some(target_ident) = self.ctx.arena.get_identifier(target_node) else {
+            return false;
+        };
+        let target_name = self.ctx.arena.resolve_identifier_text(target_ident);
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            let is_type_only_decl = stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION;
+            if is_type_only_decl && self.declaration_name_matches_string(stmt_idx, &target_name) {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Check if a node is an identifier or qualified name (e.g., `X` or `X.Y.Z`).
