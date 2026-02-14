@@ -4,8 +4,8 @@
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
-use crate::solver::TypeInterner;
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
+use tsz_solver::TypeInterner;
 
 #[test]
 fn test_declare_inside_declare_namespace_emits_error() {

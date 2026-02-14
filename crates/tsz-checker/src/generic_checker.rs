@@ -41,8 +41,8 @@ impl<'a> CheckerState<'a> {
         {
             self.error_at_node(
                 call_idx,
-                crate::types::diagnostics::diagnostic_messages::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
-                crate::types::diagnostics::diagnostic_codes::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
+                crate::diagnostics::diagnostic_messages::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
+                crate::diagnostics::diagnostic_codes::SUPER_MAY_NOT_USE_TYPE_ARGUMENTS,
             );
             return;
         }
@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
             if got > 0 {
                 self.error_at_node_msg(
                     call_idx,
-                    crate::types::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                    crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
                     &["0", &got.to_string()],
                 );
             }
@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
             // TS2558: Expected N type arguments, but got M.
             self.error_at_node_msg(
                 call_idx,
-                crate::types::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
                 &[&expected.to_string(), &got.to_string()],
             );
             return;
@@ -197,7 +197,7 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or_else(|| "<unknown>".to_string());
                     self.error_at_node_msg(
                         arg_idx,
-                        crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                        crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                         &[name.as_str()],
                     );
                 }

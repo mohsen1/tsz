@@ -660,7 +660,7 @@ pub struct BoundFile {
     pub is_external_module: bool,
 }
 
-use crate::solver::TypeInterner;
+use tsz_solver::TypeInterner;
 
 /// Merged program state after parallel binding
 pub struct MergedProgram {
@@ -1593,7 +1593,7 @@ use crate::checker::diagnostics::Diagnostic;
 use crate::checker::state::CheckerState;
 use crate::lib_loader::LibFile;
 use crate::parser::syntax_kind_ext;
-use crate::solver::TypeId;
+use tsz_solver::TypeId;
 
 /// Result of type checking a single function body
 #[derive(Debug)]
@@ -1752,7 +1752,7 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     let function_count = all_functions.len();
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
-    let query_cache = crate::solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
 
     // Check functions in parallel
     // Note: We need to be careful here - CheckerState holds mutable references
@@ -1832,7 +1832,7 @@ pub fn check_files_parallel(
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     // This is thread-safe (uses RwLock internally) and shared across all file checks.
-    let query_cache = crate::solver::QueryCache::new(&program.type_interner);
+    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
 
     let file_results: Vec<FileCheckResult> = maybe_parallel_iter!(program.files)
         .enumerate()

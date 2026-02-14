@@ -11,10 +11,10 @@
 //! This module extends CheckerState with assignment-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
-use crate::state::CheckerState;
-use crate::types::diagnostics::{
+use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
 };
+use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::flags::node_flags;
@@ -240,9 +240,7 @@ impl<'a> CheckerState<'a> {
         // `arguments` is an IArguments object (handled by type_computation_complex.rs).
         // Only at module scope would `arguments` resolve to a function-like global.
         if name == "eval" {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let message = format_message(
                 diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
                 &[name],
@@ -284,7 +282,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if this symbol is a class, enum, or function (TS2629, TS2628, TS2630)
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let (msg_template, code) = if symbol.flags & symbol_flags::CLASS != 0 {
             (
                 diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS,
@@ -767,7 +765,7 @@ impl<'a> CheckerState<'a> {
         {
             self.error_at_node_msg(
                 expr_idx,
-                crate::types::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
+                crate::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
                 &[],
             );
             emitted_operator_error = true;

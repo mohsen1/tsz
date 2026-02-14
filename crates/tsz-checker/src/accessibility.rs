@@ -11,8 +11,8 @@
 //!
 //! Methods use a `verify_` or `check_` prefix for clarity.
 
+use crate::diagnostics::{Diagnostic, DiagnosticCategory, diagnostic_codes};
 use crate::state::CheckerState;
-use crate::types::diagnostics::{Diagnostic, DiagnosticCategory, diagnostic_codes};
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 

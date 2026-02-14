@@ -208,7 +208,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a single statement for TypeScript-only syntax in JS files.
     fn check_js_grammar_statement(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
         func_idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         let Some(func) = self.ctx.arena.get_function(node) else {
             return;
@@ -399,7 +399,7 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         let Some(class) = self.ctx.arena.get_class(node) else {
             return;
@@ -484,7 +484,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a class member for JS grammar errors.
     fn check_js_grammar_class_member(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -675,7 +675,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check function parameters for JS grammar errors (type annotations, modifiers).
     fn check_js_grammar_parameters(&mut self, param_nodes: &[NodeIndex]) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         for &param_idx in param_nodes {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -718,7 +718,7 @@ impl<'a> CheckerState<'a> {
 
             // TS8009: Optional parameter (question token)
             if param.question_token {
-                let message = crate::types::diagnostics::format_message(
+                let message = crate::diagnostics::format_message(
                     diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     &["?"],
                 );
@@ -737,7 +737,7 @@ impl<'a> CheckerState<'a> {
         modifiers: &Option<tsz_parser::parser::NodeList>,
         _fallback_idx: NodeIndex,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
@@ -770,7 +770,7 @@ impl<'a> CheckerState<'a> {
         _stmt_idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         // VariableStatement uses VariableData { modifiers, declarations }
         let Some(var) = self.ctx.arena.get_variable(node) else {
@@ -1031,7 +1031,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 decl_idx,
                 "Identifier expected. 'await' is a reserved word at the top-level of a module.",
-                crate::types::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
+                crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
             );
             break;
         }
@@ -1123,7 +1123,7 @@ impl<'a> CheckerState<'a> {
             statement_start + offset as u32,
             5,
             "Identifier expected. 'await' is a reserved word at the top-level of a module.",
-            crate::types::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
+            crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
         );
         true
     }
@@ -1144,7 +1144,7 @@ impl<'a> CheckerState<'a> {
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) {
         let ts1262_code =
-            crate::types::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE;
+            crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE;
         if self
             .ctx
             .diagnostics
@@ -1275,7 +1275,7 @@ impl<'a> CheckerState<'a> {
                 // TS2404: The left-hand side of a 'for...in' statement cannot use a type annotation
                 // TSC emits TS2404 and skips the assignability check for for-in loops.
                 if is_for_in {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         var_decl.type_annotation,
                         diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
@@ -1466,7 +1466,7 @@ impl<'a> CheckerState<'a> {
         if self.ctx.compiler_options.always_strict {
             if let Some(ref name) = var_name {
                 if name == "arguments" || name == "eval" {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         var_decl.name,
                         diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
@@ -1487,7 +1487,7 @@ impl<'a> CheckerState<'a> {
                 tracing::trace!("TS1210 check: name='{}', in_class=true", name);
                 if name == "arguments" || name == "eval" {
                     tracing::trace!("TS1210: Emitting error for '{}'", name);
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         var_decl.name,
                         diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
@@ -1501,7 +1501,7 @@ impl<'a> CheckerState<'a> {
 
         // TS1039/TS1254: Check initializers in ambient contexts
         if !var_decl.initializer.is_none() && self.is_ambient_declaration(decl_idx) {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let is_const = self.is_const_variable_declaration(decl_idx);
             if is_const && var_decl.type_annotation.is_none() {
                 // Ambient const without type annotation: only string/numeric literals allowed
@@ -1536,7 +1536,7 @@ impl<'a> CheckerState<'a> {
                     && type_id != TypeId::UNKNOWN
                     && !checker.type_contains_error(type_id)
                 {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     checker.error_at_node(
                         var_decl.type_annotation,
                         "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
@@ -1758,7 +1758,7 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if !is_destructuring_pattern && let Some(ref name) = var_name {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         var_decl.name,
                         diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
@@ -1925,8 +1925,11 @@ impl<'a> CheckerState<'a> {
 
             self.error_at_node(
                 element_data.name,
-                &format!("Tuple type '[]' of length '0' has no element at index '{}'.", index),
-                crate::types::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                &format!(
+                    "Tuple type '[]' of length '0' has no element at index '{}'.",
+                    index
+                ),
+                crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
             );
         }
     }
@@ -2181,7 +2184,7 @@ impl<'a> CheckerState<'a> {
                                 elems.len(),
                                 element_index
                             ),
-                            crate::types::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                            crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
                         );
                     }
                     TypeId::ANY
@@ -2244,14 +2247,14 @@ impl<'a> CheckerState<'a> {
                         let mut formatter = self.ctx.create_type_formatter();
                         let object_str = formatter.format(parent_type);
                         let index_str = formatter.format(key_type);
-                        let message = crate::types::diagnostics::format_message(
-                            crate::types::diagnostics::diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
                             &[&object_str, &index_str],
                         );
                         self.error_at_node(
                             element_data.property_name,
                             &message,
-                            crate::types::diagnostics::diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                            crate::diagnostics::diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
                         );
                     }
                 }
@@ -3301,8 +3304,8 @@ impl<'a> CheckerState<'a> {
                 {
                     self.error_at_node(
                         type_param_ref,
-                        crate::types::diagnostics::diagnostic_messages::BASE_CLASS_EXPRESSIONS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
-                        crate::types::diagnostics::diagnostic_codes::BASE_CLASS_EXPRESSIONS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                        crate::diagnostics::diagnostic_messages::BASE_CLASS_EXPRESSIONS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                        crate::diagnostics::diagnostic_codes::BASE_CLASS_EXPRESSIONS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
                     );
                 }
 
@@ -3344,7 +3347,7 @@ impl<'a> CheckerState<'a> {
                                     .unwrap_or_else(|| "<expression>".to_string());
                                 self.error_at_node_msg(
                                     arg_idx,
-                                    crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                                     &[name.as_str()],
                                 );
                             }
@@ -3445,7 +3448,7 @@ impl<'a> CheckerState<'a> {
 
                                 if !is_accessible {
                                     if let Some(name) = self.heritage_name_text(expr_idx) {
-                                        use crate::types::diagnostics::{
+                                        use crate::diagnostics::{
                                             diagnostic_codes, diagnostic_messages, format_message,
                                         };
                                         let message = format_message(
@@ -3488,7 +3491,7 @@ impl<'a> CheckerState<'a> {
                         if is_interface_only && is_class_declaration {
                             // Emit TS2689: Cannot extend an interface (only for classes)
                             if let Some(name) = self.heritage_name_text(expr_idx) {
-                                use crate::types::diagnostics::{
+                                use crate::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
                                 let message = format_message(
@@ -3523,7 +3526,7 @@ impl<'a> CheckerState<'a> {
                             // For classes extending non-interfaces: emit TS2507 if not a constructor type
                             // For interfaces: don't check constructor types (interfaces can extend any interface)
                             if let Some(name) = self.heritage_name_text(expr_idx) {
-                                use crate::types::diagnostics::{
+                                use crate::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
                                 let message = format_message(
@@ -3557,7 +3560,7 @@ impl<'a> CheckerState<'a> {
                                 .unwrap_or_else(|| "<expression>".to_string());
                             self.error_at_node_msg(
                                 arg_idx,
-                                crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
                                 &[name.as_str()],
                             );
                         }
@@ -3597,7 +3600,7 @@ impl<'a> CheckerState<'a> {
                                     | "object"
                             ) {
                                 if is_class_declaration {
-                                    use crate::types::diagnostics::{
+                                    use crate::diagnostics::{
                                         diagnostic_codes, diagnostic_messages, format_message,
                                     };
 
@@ -3623,7 +3626,7 @@ impl<'a> CheckerState<'a> {
                                         );
                                     }
                                 } else if is_extends_clause {
-                                    use crate::types::diagnostics::{
+                                    use crate::diagnostics::{
                                         diagnostic_codes, diagnostic_messages, format_message,
                                     };
                                     let message = format_message(
@@ -3696,7 +3699,7 @@ impl<'a> CheckerState<'a> {
 
                             if let Some(type_name) = literal_type_name {
                                 if is_extends_clause {
-                                    use crate::types::diagnostics::{
+                                    use crate::diagnostics::{
                                         diagnostic_codes, diagnostic_messages, format_message,
                                     };
                                     let message = format_message(
@@ -3757,7 +3760,7 @@ impl<'a> CheckerState<'a> {
                                 && is_class_declaration
                                 && class_type_param_names.contains(&name)
                             {
-                                use crate::types::diagnostics::diagnostic_codes;
+                                use crate::diagnostics::diagnostic_codes;
                                 self.error_at_node(
                                     expr_idx,
                                     "A class may only implement another class or interface.",
@@ -4033,7 +4036,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         // Get the name from the usage site
         let name = self.heritage_name_text(usage_idx).unwrap_or_default();
@@ -4056,7 +4059,7 @@ impl<'a> CheckerState<'a> {
     /// Check a class declaration.
     pub(crate) fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::class_inheritance::ClassInheritanceChecker;
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };
@@ -4175,7 +4178,7 @@ impl<'a> CheckerState<'a> {
 
                 if is_private_identifier {
                     use crate::context::ScriptTarget;
-                    use crate::types::diagnostics::diagnostic_messages;
+                    use crate::diagnostics::diagnostic_messages;
 
                     // TS18028: Check for private identifiers when targeting ES5 or lower
                     let is_es5_or_lower = matches!(
@@ -4373,7 +4376,7 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file() {
             if let Some(ref type_params) = class.type_parameters {
                 if !type_params.nodes.is_empty() {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         type_params.nodes[0],
                         diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -4442,7 +4445,7 @@ impl<'a> CheckerState<'a> {
         is_declared: bool,
         _is_abstract: bool,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         // Skip TS2564 for declared classes (ambient declarations)
         // Note: Abstract classes DO get TS2564 errors - they can have constructors
@@ -4548,7 +4551,7 @@ impl<'a> CheckerState<'a> {
             if assigned.contains(&key) || parameter_properties.contains(&key) {
                 continue;
             }
-            use crate::types::diagnostics::format_message;
+            use crate::diagnostics::format_message;
 
             // Use TS2524 if there's a constructor (definite assignment analysis)
             // Use TS2564 if no constructor (just missing initializer)
@@ -4980,7 +4983,7 @@ impl<'a> CheckerState<'a> {
                     .map(|l| l.len() as u32)
                     .unwrap_or(0);
 
-                use crate::types::diagnostics::{diagnostic_codes, format_message};
+                use crate::diagnostics::{diagnostic_codes, format_message};
                 let message = format_message("File '{0}' not found.", &[&reference_path]);
                 self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
             }
@@ -5029,7 +5032,7 @@ impl<'a> CheckerState<'a> {
                 .map(|l| l.len() as u32)
                 .unwrap_or(0);
 
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.emit_error_at(
                 pos,
                 length,

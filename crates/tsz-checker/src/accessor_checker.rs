@@ -8,8 +8,8 @@
 //! This module extends CheckerState with accessor-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
+use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
-use crate::types::diagnostics::diagnostic_codes;
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;

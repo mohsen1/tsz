@@ -273,7 +273,7 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         initializer_idx: NodeIndex,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let ctor_param_names = self.enclosing_class_constructor_param_names();
         if ctor_param_names.is_empty() {
@@ -349,7 +349,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check an interface declaration.
     pub(crate) fn check_interface_declaration(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
@@ -464,7 +464,7 @@ impl<'a> CheckerState<'a> {
     /// Check index signature parameter type (TS1268).
     /// An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.
     fn check_index_signature_parameter_type(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
@@ -568,7 +568,7 @@ impl<'a> CheckerState<'a> {
     /// NOTE: Method signatures (overloads) are NOT considered duplicates - interfaces allow
     /// multiple method signatures with the same name for function overloading.
     pub(crate) fn check_duplicate_interface_members(&mut self, members: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
         // Track property names and their indices (methods are allowed to have overloads)
@@ -633,7 +633,7 @@ impl<'a> CheckerState<'a> {
         members: &[NodeIndex],
         iface_type: TypeId,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
         // Get resolved index signatures from the Solver (includes inherited)
@@ -895,7 +895,7 @@ impl<'a> CheckerState<'a> {
     /// Report TS2300 "Duplicate identifier" error for a class member (property or method).
     /// Helper function to avoid code duplication in check_duplicate_class_members.
     fn report_duplicate_class_member_ts2300(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let member_node = self.ctx.arena.get(member_idx);
         let (name, error_node) = match member_node.map(|n| n.kind) {
@@ -1007,7 +1007,7 @@ impl<'a> CheckerState<'a> {
     ///   foo(x: string): void;    // overload signature  
     ///   foo(x: any) { }          // implementation - this is valid!
     pub(crate) fn check_duplicate_class_members(&mut self, members: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
         // Track member names with their info
@@ -1339,7 +1339,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         if let Some(async_mod_idx) = self.find_async_modifier(modifiers) {
             self.error_at_node(
@@ -1815,7 +1815,7 @@ impl<'a> CheckerState<'a> {
                         self.check_type_for_missing_names(mapped.type_node);
                     } else if self.ctx.no_implicit_any() {
                         // TS7039: Mapped object type implicitly has an 'any' template type
-                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.error_at_node(
                             type_idx,
                             diagnostic_messages::MAPPED_OBJECT_TYPE_IMPLICITLY_HAS_AN_ANY_TEMPLATE_TYPE,
@@ -1960,7 +1960,7 @@ impl<'a> CheckerState<'a> {
 
                 // TS7013/TS7020: Check for implicit any return type on construct/call signatures
                 if self.ctx.no_implicit_any() && sig.type_annotation.is_none() {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     if node.kind == syntax_kind_ext::CONSTRUCT_SIGNATURE {
                         self.error_at_node(
                             member_idx,
@@ -1998,7 +1998,7 @@ impl<'a> CheckerState<'a> {
                     && sig.type_annotation.is_none()
                     && let Some(name) = self.property_name_for_error(sig.name)
                 {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         sig.name,
                         diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
@@ -2019,7 +2019,7 @@ impl<'a> CheckerState<'a> {
                     && sig.type_annotation.is_none()
                     && let Some(member_name) = self.get_property_name(sig.name)
                 {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
                         sig.name,
                         diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
@@ -2035,7 +2035,7 @@ impl<'a> CheckerState<'a> {
         {
             // Accessors in type literals and interfaces cannot have implementations
             if !accessor.body.is_none() {
-                use crate::types::diagnostics::diagnostic_codes;
+                use crate::diagnostics::diagnostic_codes;
                 // Report error on the body
                 self.error_at_node(
                     accessor.body,
@@ -2049,7 +2049,7 @@ impl<'a> CheckerState<'a> {
     /// Check that all method/constructor overload signatures have implementations.
     /// Reports errors 2389, 2390, 2391, 1042.
     pub(crate) fn check_class_member_implementations(&mut self, members: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let mut i = 0;
         while i < members.len() {
@@ -2168,7 +2168,7 @@ impl<'a> CheckerState<'a> {
         param: &tsz_parser::parser::node::ParameterData,
         has_contextual_type: bool,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         if !self.ctx.no_implicit_any() || has_contextual_type {
             return;
@@ -2265,7 +2265,7 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         is_rest_parameter: bool,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
@@ -2488,7 +2488,7 @@ impl<'a> CheckerState<'a> {
         type_idx: NodeIndex,
         class_type_param_names: &[String],
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         if type_idx.is_none() || class_type_param_names.is_empty() {
             return;
@@ -2756,7 +2756,7 @@ impl<'a> CheckerState<'a> {
     /// Check a property declaration.
     #[tracing::instrument(level = "debug", skip(self), fields(file = %self.ctx.file_name))]
     pub(crate) fn check_property_declaration(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -2774,7 +2774,7 @@ impl<'a> CheckerState<'a> {
         tracing::debug!(is_js_file, file_name = %self.ctx.file_name, "Checking if JS file for TS8009/TS8010");
 
         if is_js_file {
-            use crate::types::diagnostics::{diagnostic_messages, format_message};
+            use crate::diagnostics::{diagnostic_messages, format_message};
 
             // TS8009: Modifiers like 'declare' can only be used in TypeScript files
             if self.ctx.has_modifier(
@@ -2912,7 +2912,7 @@ impl<'a> CheckerState<'a> {
             && !self.property_assigned_in_enclosing_class_constructor(prop.name)
             && let Some(member_name) = self.get_property_name(prop.name)
         {
-            use crate::types::diagnostics::diagnostic_codes;
+            use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 prop.name,
                 diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
@@ -2940,7 +2940,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a method declaration.
     pub(crate) fn check_method_declaration(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -3110,7 +3110,7 @@ impl<'a> CheckerState<'a> {
             // DISABLED: Causes too many false positives
             // TODO: Investigate lib loading for Promise detection
             // if is_async && !is_generator && !self.is_promise_global_available() {
-            //     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            //     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             //     self.error_at_node(
             //         method.name,
             //         diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
@@ -3180,7 +3180,7 @@ impl<'a> CheckerState<'a> {
                 } else if self.ctx.strict_null_checks() {
                     // TS2366: Only emit when strictNullChecks is enabled, because
                     // without it, undefined is implicitly assignable to any type.
-                    use crate::types::diagnostics::diagnostic_messages;
+                    use crate::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         method.type_annotation,
                         diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
@@ -3189,7 +3189,7 @@ impl<'a> CheckerState<'a> {
                 }
             } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                 // TS7030: noImplicitReturns - not all code paths return a value
-                use crate::types::diagnostics::diagnostic_messages;
+                use crate::diagnostics::diagnostic_messages;
                 let error_node = if !method.name.is_none() {
                     method.name
                 } else {
@@ -3231,7 +3231,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a constructor declaration.
     pub(crate) fn check_constructor_declaration(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -3438,7 +3438,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check an accessor declaration (getter/setter).
     pub(crate) fn check_accessor_declaration(&mut self, member_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -3590,7 +3590,7 @@ impl<'a> CheckerState<'a> {
                     && self.ctx.strict_null_checks()
                 {
                     // TS2366: Only emit with strictNullChecks
-                    use crate::types::diagnostics::diagnostic_messages;
+                    use crate::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         accessor.type_annotation,
                         diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
@@ -3598,7 +3598,7 @@ impl<'a> CheckerState<'a> {
                     );
                 } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
-                    use crate::types::diagnostics::diagnostic_messages;
+                    use crate::diagnostics::diagnostic_messages;
                     let error_node = if !accessor.name.is_none() {
                         accessor.name
                     } else {
@@ -3687,7 +3687,7 @@ impl<'a> CheckerState<'a> {
         has_contextual_return: bool,
         fallback_node: NodeIndex,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         if !self.ctx.no_implicit_any() || has_type_annotation || has_contextual_return {
             return;
@@ -3795,7 +3795,7 @@ impl<'a> CheckerState<'a> {
     /// - Method declarations (class methods)
     /// - Constructor declarations
     pub(crate) fn check_overload_compatibility(&mut self, impl_node_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         // 1. Get the implementation's symbol
         let Some(impl_sym_id) = self.ctx.binder.get_node_symbol(impl_node_idx) else {
@@ -4088,7 +4088,7 @@ impl<'a> CheckerState<'a> {
     /// Check for TS1038: 'declare' modifier in already ambient context
     /// Scans module body for declarations with 'declare' modifiers
     fn check_declare_modifiers_in_ambient_body(&mut self, body_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(body_node) = self.ctx.arena.get(body_idx) else {
@@ -4157,7 +4157,7 @@ impl<'a> CheckerState<'a> {
     /// TS1039: Check for variable initializers in ambient contexts.
     /// This is checked even when we skip full type checking of ambient module bodies.
     fn check_initializers_in_ambient_body(&mut self, body_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(body_node) = self.ctx.arena.get(body_idx) else {
@@ -4266,7 +4266,7 @@ impl<'a> CheckerState<'a> {
     /// Check a with statement and emit TS2410.
     /// The 'with' statement is not supported in TypeScript.
     pub(crate) fn check_with_statement(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         self.error_at_node(
             stmt_idx,
@@ -4327,7 +4327,7 @@ impl<'a> CheckerState<'a> {
     /// TS1107: Jump target cannot cross function boundary.
     /// TS1116: A 'break' statement can only jump to a label of an enclosing statement.
     pub(crate) fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         // Get the label if any
         let label_name = self
@@ -4390,7 +4390,7 @@ impl<'a> CheckerState<'a> {
     /// TS1107: Jump target cannot cross function boundary.
     /// TS1116: A 'continue' statement can only jump to a label of an enclosing iteration statement.
     pub(crate) fn check_continue_statement(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         // Get the label if any
         let label_name = self
@@ -4528,7 +4528,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check if function has 'declare' modifier but also has a body
         // Point error at the body (opening brace) to match tsc
         if !func.body.is_none() && self.has_declare_modifier(&func.modifiers) {
-            use crate::types::diagnostics::diagnostic_codes;
+            use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 func.body,
                 "An implementation cannot be declared in ambient contexts.",
@@ -4710,7 +4710,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
                 if should_emit_ts2705 {
                     use crate::context::ScriptTarget;
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
 
                     // For ES5/ES3 targets, emit TS1055 instead of TS2705
                     let is_es5_or_lower = matches!(
@@ -4795,7 +4795,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // TS2355: Skip for async functions - they implicitly return Promise<void>
             if has_type_annotation && requires_return && falls_through && !is_async {
                 if !has_return {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
                         func.type_annotation,
                         "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
@@ -4803,7 +4803,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     );
                 } else if self.ctx.strict_null_checks() {
                     // TS2366: Only emit with strictNullChecks
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         func.type_annotation,
                         diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
@@ -4812,7 +4812,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 }
             } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                 // TS7030: noImplicitReturns - not all code paths return a value
-                use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 let error_node = if !func.name.is_none() {
                     func.name
                 } else {
@@ -4839,7 +4839,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let is_ambient =
                 self.has_declare_modifier(&func.modifiers) || self.ctx.file_name.ends_with(".d.ts");
             if is_ambient && let Some(func_name) = self.get_function_name_from_node(func_idx) {
-                use crate::types::diagnostics::diagnostic_codes;
+                use crate::diagnostics::diagnostic_codes;
                 let name_node = if !func.name.is_none() {
                     Some(func.name)
                 } else {
@@ -4895,8 +4895,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             if export_decl.is_default_export && self.is_inside_namespace_declaration(export_idx) {
                 self.error_at_node(
                     export_idx,
-                    crate::types::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                    crate::types::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                    crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                    crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
                 );
             }
 
@@ -4910,8 +4910,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) {
                 self.error_at_node(
                     export_idx,
-                    crate::types::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
-                    crate::types::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
+                    crate::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
+                    crate::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
                 );
             }
 
@@ -4983,7 +4983,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     && ident.escaped_text == "undefined"
                 {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
                         type_alias.name,
                         "Type alias name cannot be 'undefined'.",
@@ -5211,7 +5211,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             if let Some(loc) = self.get_source_location(case_expr) {
                 let case_str = self.format_type(effective_case_type);
                 let switch_str = self.format_type(switch_type);
-                use crate::types::diagnostics::{
+                use crate::diagnostics::{
                     Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages,
                     format_message,
                 };
@@ -5353,7 +5353,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.error_at_node(
                 stmt_idx,
                 &msg,
-                crate::types::diagnostics::diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
+                crate::diagnostics::diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
             );
         }
     }

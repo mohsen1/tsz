@@ -1,7 +1,7 @@
 //! Tests for TS2370: A rest parameter must be of an array type
 
 use crate::CheckerState;
-use crate::types::diagnostics::diagnostic_codes;
+use crate::diagnostics::diagnostic_codes;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;

@@ -11,11 +11,11 @@
 //! This module extends CheckerState with additional impl blocks rather than moving
 //! existing code, to maintain backward compatibility during the refactoring.
 
-use crate::state::{CheckerState, MemberAccessLevel};
-use crate::types::diagnostics::{
+use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
+use crate::state::{CheckerState, MemberAccessLevel};
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -3655,9 +3655,9 @@ impl<'a> CheckerState<'a> {
     /// Did you mean to access it without '()'?"
     pub fn error_get_accessor_not_callable_at(&mut self, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
-            use crate::types::diagnostics::diagnostic_codes;
+            use crate::diagnostics::diagnostic_codes;
             self.ctx.diagnostics.push(
-                crate::types::diagnostics::Diagnostic::error(
+                crate::diagnostics::Diagnostic::error(
                     self.ctx.file_name.clone(),
                     loc.start,
                     loc.length(),

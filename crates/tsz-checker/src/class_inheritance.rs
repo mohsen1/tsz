@@ -3,7 +3,7 @@
 //! This module provides cycle detection for class inheritance using the InheritanceGraph.
 //! It detects circular inheritance BEFORE type resolution to prevent stack overflow.
 
-use crate::types::diagnostics::{
+use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
 };
 use rustc_hash::FxHashSet;

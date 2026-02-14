@@ -1841,7 +1841,7 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         decl_node: NodeIndex,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
         // Only emit if report_unresolved_imports is enabled
@@ -2000,7 +2000,7 @@ impl<'a> CheckerState<'a> {
 
         // Use TS2792 when module resolution is "classic"-like (non-Node module kinds),
         // otherwise TS2307.
-        use crate::types::diagnostics::{diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_messages, format_message};
         use tsz_common::common::ModuleKind;
 
         let module_kind_prefers_2792 = matches!(
@@ -2057,7 +2057,7 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         decl_node: NodeIndex,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let mut named_default_specifier_node: Option<NodeIndex> = None;
 
@@ -2158,7 +2158,7 @@ impl<'a> CheckerState<'a> {
                 (0, 0)
             };
 
-            use crate::types::diagnostics::{diagnostic_messages, format_message};
+            use crate::diagnostics::{diagnostic_messages, format_message};
             let message = format_message(
                 diagnostic_messages::CANNOT_FIND_MODULE_CONSIDER_USING_RESOLVEJSONMODULE_TO_IMPORT_MODULE_WITH_JSON_E,
                 &[module_specifier],
@@ -2194,7 +2194,7 @@ impl<'a> CheckerState<'a> {
             (0, 0)
         };
 
-        use crate::types::diagnostics::{diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_messages, format_message};
 
         let has_export_equals = self.module_has_export_equals(module_specifier)
             || self.module_has_export_assignment_declaration(module_specifier);
@@ -2412,7 +2412,7 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         decl_node: NodeIndex,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         // Only emit if report_unresolved_imports is enabled
         if !self.ctx.report_unresolved_imports {
@@ -2430,7 +2430,7 @@ impl<'a> CheckerState<'a> {
             (0, 0)
         };
 
-        use crate::types::diagnostics::{diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_messages, format_message};
         let message = format_message(
             diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
             &[module_specifier, member_name],

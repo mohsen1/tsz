@@ -1,8 +1,6 @@
 //! Core type definitions for the type checker.
 //!
 //! This module contains the main `Type` enum and all type variant structs.
-#![allow(clippy::enum_variant_names, dead_code)]
-
 use super::flags::{signature_flags, type_flags};
 use serde::Serialize;
 use tsz_binder::{SymbolId, SymbolTable};

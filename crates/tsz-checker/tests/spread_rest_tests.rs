@@ -1,7 +1,7 @@
 //! Tests for spread and rest operator type checking
 
+use crate::diagnostics::Diagnostic;
 use crate::state::CheckerState;
-use crate::types::Diagnostic;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;

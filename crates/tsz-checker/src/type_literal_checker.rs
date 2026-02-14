@@ -525,7 +525,7 @@ impl<'a> CheckerState<'a> {
                     || is_template_literal_type(self.ctx.types, key_type);
 
                 if !is_valid_index_type {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         param_idx,
                         diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,

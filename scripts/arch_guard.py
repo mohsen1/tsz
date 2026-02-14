@@ -10,6 +10,18 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 CHECKS = [
     (
+        "Root boundary: no tsz_solver module re-export alias",
+        ROOT / "src",
+        re.compile(r"\bpub\s+use\s+tsz_solver\s+as\s+solver\s*;"),
+        {},
+    ),
+    (
+        "Root boundary: no direct TypeKey internal usage in production code",
+        ROOT / "src",
+        re.compile(r"\btsz_solver::TypeKey\b|\btsz_solver::types::TypeKey\b|\bTypeKey::"),
+        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
+    ),
+    (
         "Checker boundary: direct lookup() outside query boundaries/tests",
         ROOT / "crates" / "tsz-checker",
         re.compile(r"\.lookup\s*\("),

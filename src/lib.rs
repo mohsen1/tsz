@@ -207,8 +207,7 @@ pub use tsz_emitter::declaration_emitter;
 // JavaScript transforms - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::transforms;
 
-// Query-based Structural Solver (Phase 7.5) - re-exported from tsz-solver workspace crate
-pub use tsz_solver as solver;
+// Query-based Structural Solver (Phase 7.5)
 
 // LSP (Language Server Protocol) support - re-exported from tsz-lsp workspace crate
 pub use tsz_lsp as lsp;
@@ -281,10 +280,10 @@ use crate::lsp::{
     SemanticTokensProvider, SignatureHelpProvider,
 };
 use crate::parser::ParserState;
-use crate::solver::TypeInterner;
 use crate::transform_context::TransformContext;
 use serde::Deserialize;
 use std::sync::Arc;
+use tsz_solver::TypeInterner;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1030,7 +1029,7 @@ impl Parser {
     #[wasm_bindgen(js_name = debugTypeLowering)]
     pub fn debug_type_lowering(&self, interface_name: &str) -> String {
         use parser::syntax_kind_ext;
-        use solver::{TypeData, TypeLowering};
+        use tsz_solver::{TypeData, TypeLowering};
 
         let arena = self.parser.get_arena();
         let mut result = Vec::new();

@@ -41,7 +41,7 @@ impl<'a> CheckerState<'a> {
     /// Emits TS7027 for any statements that come after a return or throw,
     /// or after expressions of type 'never'.
     pub(crate) fn check_unreachable_code_in_block(&mut self, statements: &[NodeIndex]) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         // TS7027 is only emitted as an error when allowUnreachableCode is explicitly false.
         // When undefined (None), tsc emits it as a suggestion (not captured in conformance).

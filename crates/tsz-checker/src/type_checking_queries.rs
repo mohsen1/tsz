@@ -945,7 +945,7 @@ impl<'a> CheckerState<'a> {
         cause: TypeId,
         is_definitely_nullish: bool,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         // Check if the expression is a literal null/undefined keyword (not a variable)
         // TS18050 is only for `null.foo` and `undefined.bar`, not `x.foo` where x: null
@@ -1082,7 +1082,7 @@ impl<'a> CheckerState<'a> {
     /// Used for left side of `||` and `??` operators.
     pub(crate) fn check_always_truthy(&mut self, node_idx: NodeIndex, _type_id: TypeId) {
         if self.get_syntactic_truthy_semantics(node_idx) == SyntacticTruthiness::AlwaysTruthy {
-            use crate::types::diagnostics::diagnostic_codes;
+            use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 node_idx,
                 "This kind of expression is always truthy.",
@@ -1094,7 +1094,7 @@ impl<'a> CheckerState<'a> {
     /// TS2872/TS2873: Check if condition is syntactically always truthy or falsy.
     /// Used for if-conditions and `!` operands.
     pub(crate) fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         match self.get_syntactic_truthy_semantics(node_idx) {
             SyntacticTruthiness::AlwaysTruthy => {
                 self.error_at_node(
@@ -1360,19 +1360,15 @@ impl<'a> CheckerState<'a> {
             if let Some(name_node) = self.ctx.arena.get(*decl_idx) {
                 let start = name_node.pos;
                 let length = name_node.end.saturating_sub(name_node.pos);
-                self.ctx
-                    .push_diagnostic(crate::types::diagnostics::Diagnostic {
-                        file: file_name.clone(),
-                        start,
-                        length,
-                        message_text: format!(
-                            "'{}' is declared but its value is never read.",
-                            name
-                        ),
-                        category: crate::types::diagnostics::DiagnosticCategory::Error,
-                        code: 6133,
-                        related_information: Vec::new(),
-                    });
+                self.ctx.push_diagnostic(crate::diagnostics::Diagnostic {
+                    file: file_name.clone(),
+                    start,
+                    length,
+                    message_text: format!("'{}' is declared but its value is never read.", name),
+                    category: crate::diagnostics::DiagnosticCategory::Error,
+                    code: 6133,
+                    related_information: Vec::new(),
+                });
             }
         }
     }
@@ -1772,7 +1768,7 @@ impl<'a> CheckerState<'a> {
     /// Check that all top-level function overload signatures have implementations.
     /// Reports errors 2389, 2391.
     pub(crate) fn check_function_implementations(&mut self, statements: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let mut i = 0;
         while i < statements.len() {
@@ -1826,8 +1822,8 @@ impl<'a> CheckerState<'a> {
                         {
                             self.error_at_node(
                                 error_node,
-                                crate::types::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                                crate::types::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                                crate::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                                crate::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
                             );
                         }
                     }
@@ -1872,8 +1868,8 @@ impl<'a> CheckerState<'a> {
                             if is_declared != impl_is_declared {
                                 self.error_at_node(
                                     error_node,
-                                    crate::types::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                                    crate::types::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                                    crate::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                                    crate::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
                                 );
                             }
                         }
@@ -2154,7 +2150,7 @@ impl<'a> CheckerState<'a> {
     /// Check that accessor pairs (get/set) have compatible types.
     /// The getter return type must be assignable to the setter parameter type.
     pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
         // Collect getter return types and setter parameter types

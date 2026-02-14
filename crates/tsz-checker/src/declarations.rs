@@ -4,7 +4,7 @@
 //! This module separates declaration checking logic from the monolithic CheckerState.
 
 use super::context::CheckerContext;
-use crate::types::diagnostics::diagnostic_messages;
+use crate::diagnostics::diagnostic_messages;
 use rustc_hash::FxHashSet;
 use std::path::{Component, Path, PathBuf};
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
@@ -314,7 +314,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         }
 
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         if in_class {
             self.ctx.error(
                 self.ctx.arena.get(func_idx).map_or(0, |n| n.pos),
@@ -1082,7 +1082,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check an enum declaration.
     pub fn check_enum_declaration(&mut self, enum_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(enum_idx) else {
@@ -1179,7 +1179,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check a module/namespace declaration.
     pub fn check_module_declaration(&mut self, module_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
@@ -2259,7 +2259,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         );
 
         if is_non_declaration {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
                 self.ctx.error(
                     pos,
@@ -2272,7 +2272,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // Additional specific checks for certain statements
         if node.kind == syntax_kind_ext::CONTINUE_STATEMENT {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
                 self.ctx.error(
                     pos,
@@ -2284,7 +2284,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         if node.kind == syntax_kind_ext::RETURN_STATEMENT {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
                 self.ctx.error(
                     pos,
@@ -2297,7 +2297,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         if node.kind == syntax_kind_ext::WITH_STATEMENT {
-            use crate::types::diagnostics::diagnostic_codes;
+            use crate::diagnostics::diagnostic_codes;
             if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
                 self.ctx.error(
                     pos,
@@ -2325,7 +2325,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         &mut self,
         stmt_idx: NodeIndex,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
             return;
@@ -2401,7 +2401,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Check parameter properties (only valid in constructors).
     pub fn check_parameter_properties(&mut self, parameters: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         for &param_idx in parameters {
             let Some(node) = self.ctx.arena.get(param_idx) else {

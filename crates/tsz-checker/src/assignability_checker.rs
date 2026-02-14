@@ -646,7 +646,7 @@ impl<'a> CheckerState<'a> {
     /// This is the main entry point for subtype checking, used for type compatibility
     /// throughout the type system. Subtyping is stricter than assignability.
     pub fn is_subtype_of(&mut self, source: TypeId, target: TypeId) -> bool {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_binder::symbol_flags;
 
         // Fast path: identity check
@@ -725,7 +725,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         env: &tsz_solver::TypeEnvironment,
     ) -> bool {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_binder::symbol_flags;
 
         // CRITICAL: Before checking subtypes, ensure all Ref types are resolved

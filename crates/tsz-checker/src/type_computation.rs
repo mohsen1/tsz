@@ -11,9 +11,9 @@
 //! This module extends CheckerState with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
+use crate::diagnostics::{Diagnostic, DiagnosticCategory};
 use crate::query_boundaries::type_computation::{is_type_parameter_type, union_members};
 use crate::state::{CheckerState, EnumKind};
-use crate::types::{Diagnostic, DiagnosticCategory};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -472,9 +472,7 @@ impl<'a> CheckerState<'a> {
                     if !is_valid {
                         // Emit TS2356 for invalid increment/decrement operand type
                         if let Some(loc) = self.get_source_location(unary.operand) {
-                            use crate::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             self.ctx.diagnostics.push(Diagnostic {
                                 code: diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
                                 category: DiagnosticCategory::Error,
@@ -508,8 +506,8 @@ impl<'a> CheckerState<'a> {
                 if is_identifier_operand && self.is_strict_mode_for_node(idx) {
                     self.error_at_node(
                         idx,
-                        crate::types::diagnostics::diagnostic_messages::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
-                        crate::types::diagnostics::diagnostic_codes::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
+                        crate::diagnostics::diagnostic_messages::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
+                        crate::diagnostics::diagnostic_codes::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
                     );
                 }
 
@@ -530,8 +528,8 @@ impl<'a> CheckerState<'a> {
                 if !is_property_reference {
                     self.error_at_node(
                         idx,
-                        crate::types::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
-                        crate::types::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
+                        crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
+                        crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
                     );
                 }
                 // TS2790: In strictNullChecks, delete is only allowed for optional properties.
@@ -565,8 +563,8 @@ impl<'a> CheckerState<'a> {
                             if !is_optional && !optional_via_undefined {
                                 self.error_at_node(
                                     idx,
-                                    crate::types::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
-                                    crate::types::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
+                                    crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
+                                    crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
                                 );
                             }
                         }
@@ -1188,7 +1186,7 @@ impl<'a> CheckerState<'a> {
                     && self.is_side_effect_free(left_idx)
                     && !self.is_indirect_call(node_idx, left_idx, right_idx)
                 {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         left_idx,
                         diagnostic_messages::LEFT_SIDE_OF_COMMA_OPERATOR_IS_UNUSED_AND_HAS_NO_SIDE_EFFECTS,
@@ -1292,7 +1290,7 @@ impl<'a> CheckerState<'a> {
                             if let Some(op_name) = op_name {
                                 self.error_at_node_msg(
                                     left_idx,
-                                    crate::types::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
+                                    crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
                                     &[op_name],
                                 );
                             }
@@ -1308,7 +1306,7 @@ impl<'a> CheckerState<'a> {
                 {
                     self.error_at_node_msg(
                         node_idx,
-                        crate::types::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
+                        crate::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
                         &[],
                     );
                 }
@@ -1338,9 +1336,7 @@ impl<'a> CheckerState<'a> {
                 && !is_type_parameter_type(self.ctx.types, right_narrow)
                 && self.types_have_no_overlap(left_narrow, right_narrow)
             {
-                use crate::types::diagnostics::{
-                    diagnostic_codes, diagnostic_messages, format_message,
-                };
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let left_str = self.format_type(left_narrow);
                 let right_str = self.format_type(right_narrow);
                 let message = format_message(
@@ -1684,7 +1680,7 @@ impl<'a> CheckerState<'a> {
 
                 // If we didn't find the symbol, it's being accessed outside the class that declares it
                 if symbols.is_empty() {
-                    use crate::types::diagnostics::{
+                    use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
 
@@ -1765,9 +1761,7 @@ impl<'a> CheckerState<'a> {
 
         // TS2538: Type cannot be used as an index type
         if self.type_is_invalid_index_type(index_type) {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let index_type_str = self.format_type(index_type);
             let message = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
@@ -1907,7 +1901,7 @@ impl<'a> CheckerState<'a> {
                         && self.is_method_member_in_class_hierarchy(base_idx, &property_name, true)
                             == Some(true)
                     {
-                        use crate::types::diagnostics::{
+                        use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
 
@@ -1945,7 +1939,7 @@ impl<'a> CheckerState<'a> {
                         && self.is_method_member_in_class_hierarchy(class_idx, &property_name, true)
                             == Some(true)
                     {
-                        use crate::types::diagnostics::{
+                        use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
 
@@ -2034,7 +2028,7 @@ impl<'a> CheckerState<'a> {
                         tuple_elements.len(),
                         index
                     ),
-                    crate::types::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                    crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
                 );
             }
         }
@@ -2229,7 +2223,7 @@ impl<'a> CheckerState<'a> {
     /// - Contextual type inference
     /// - Implicit any reporting (TS7008)
     pub(crate) fn get_type_of_object_literal(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use rustc_hash::FxHashMap;
         use tsz_common::interner::Atom;
         use tsz_solver::PropertyInfo;
@@ -2564,7 +2558,7 @@ impl<'a> CheckerState<'a> {
             else if let Some(accessor) = self.ctx.arena.get_accessor(elem_node) {
                 // Check for missing body - error 1005 at end of accessor
                 if accessor.body.is_none() {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     // Report at accessor.end - 1 (pointing to the closing paren)
                     let end_pos = elem_node.end.saturating_sub(1);
                     self.error_at_position(end_pos, 1, "'{' expected.", diagnostic_codes::EXPECTED);
@@ -2662,7 +2656,7 @@ impl<'a> CheckerState<'a> {
 
                     if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         if accessor.type_annotation.is_none() {
-                            use crate::types::diagnostics::diagnostic_codes;
+                            use crate::diagnostics::diagnostic_codes;
                             let self_refs =
                                 self.collect_property_name_references(accessor.body, &name);
                             if !self_refs.is_empty() {
@@ -2691,7 +2685,7 @@ impl<'a> CheckerState<'a> {
                         let falls_through = self.function_body_falls_through(accessor.body);
 
                         if !has_return && falls_through {
-                            use crate::types::diagnostics::diagnostic_codes;
+                            use crate::diagnostics::diagnostic_codes;
                             self.error_at_node(
                                 accessor.name,
                                 "A 'get' accessor must return a value.",
@@ -2842,9 +2836,7 @@ impl<'a> CheckerState<'a> {
             && !self.ctx.binder.is_external_module()
             && self.await_expression_uses_call_like_syntax(idx)
         {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             if let Some((start, _)) = self.get_node_span(idx) {
                 let message = format_message(
                     diagnostic_messages::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,

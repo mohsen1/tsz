@@ -185,7 +185,7 @@ impl<'a> CheckerState<'a> {
     /// - Reports error for each name that appears more than once
     /// - Error TS2308: "Duplicate identifier '{name}'"
     pub(crate) fn check_enum_duplicate_members(&mut self, enum_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let Some(enum_node) = self.ctx.arena.get(enum_idx) else {
             return;
@@ -393,7 +393,7 @@ impl<'a> CheckerState<'a> {
             if !seen.insert(name.clone()) {
                 self.error_at_node_msg(
                     param.name,
-                    crate::types::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
                     &[name],
                 );
             }
@@ -507,7 +507,7 @@ impl<'a> CheckerState<'a> {
     /// Check for duplicate property names in type literals (TS2300).
     /// e.g. `{ a: string; a: number; }` has duplicate property `a`.
     pub(crate) fn check_type_literal_duplicate_properties(&mut self, members: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
 
         let mut seen: rustc_hash::FxHashMap<String, NodeIndex> = rustc_hash::FxHashMap::default();
@@ -703,7 +703,7 @@ impl<'a> CheckerState<'a> {
 
         // TS1108: A 'return' statement can only be used within a function body.
         if self.current_return_type().is_none() {
-            use crate::types::diagnostics::diagnostic_codes;
+            use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 stmt_idx,
                 "A 'return' statement can only be used within a function body.",
@@ -718,7 +718,7 @@ impl<'a> CheckerState<'a> {
             if let Some(enclosing_fn_idx) = self.find_enclosing_function(stmt_idx) {
                 if let Some(enclosing_fn_node) = self.ctx.arena.get(enclosing_fn_idx) {
                     if enclosing_fn_node.kind == syntax_kind_ext::SET_ACCESSOR {
-                        use crate::types::diagnostics::diagnostic_codes;
+                        use crate::diagnostics::diagnostic_codes;
                         self.error_at_node(
                             stmt_idx,
                             "Setters cannot return a value.",
@@ -883,7 +883,7 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::AWAIT_EXPRESSION => {
                     // Validate await expression context
                     if !self.ctx.in_async_context() {
-                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
                         // Check if we're at top level of a module
                         let at_top_level = self.ctx.function_depth == 0;
@@ -971,7 +971,7 @@ impl<'a> CheckerState<'a> {
     /// - Emits TS1432 if for-await is at top level but module/target options don't support it
     pub(crate) fn check_for_await_statement(&mut self, stmt_idx: NodeIndex) {
         if !self.ctx.in_async_context() {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
             // Check if we're at top level of a module
             let at_top_level = self.ctx.function_depth == 0;
@@ -1061,7 +1061,7 @@ impl<'a> CheckerState<'a> {
     /// - `using` requires type to have `[Symbol.dispose]()` method
     /// - `await using` requires type to have `[Symbol.asyncDispose]()` or `[Symbol.dispose]()` method
     fn check_using_declaration_disposable(&mut self, decl_idx: NodeIndex, is_await_using: bool) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return;
@@ -1190,7 +1190,7 @@ impl<'a> CheckerState<'a> {
         current_prop_idx: NodeIndex,
         initializer_idx: NodeIndex,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         // Get class info to access member order
         let Some(class_info) = self.ctx.enclosing_class.clone() else {
@@ -3030,7 +3030,7 @@ impl<'a> CheckerState<'a> {
     /// Reports when variables, functions, classes, or other declarations
     /// have conflicting names within the same scope.
     pub(crate) fn check_duplicate_identifiers(&mut self) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         // When lib contexts are loaded, skip symbols that come from lib files.
         // Lib types (Array, String, etc.) have multiple declarations from merged
@@ -3717,7 +3717,7 @@ impl<'a> CheckerState<'a> {
     ///   omit an initializer for its first enum element.
     /// - TS2300: Duplicate enum member names across different enum declarations.
     fn check_merged_enum_declaration_diagnostics(&mut self, declarations: &[(NodeIndex, u32)]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
         let enum_declarations: Vec<NodeIndex> = declarations
@@ -3805,7 +3805,7 @@ impl<'a> CheckerState<'a> {
     /// Reports variables, functions, classes, and other declarations that are never referenced.
     /// Also reports import declarations where ALL imports are unused (TS6192).
     pub(crate) fn check_unused_declarations(&mut self) {
-        use crate::types::diagnostics::Diagnostic;
+        use crate::diagnostics::Diagnostic;
         use std::collections::{HashMap, HashSet};
         use tsz_binder::ContainerKind;
         use tsz_binder::symbol_flags;
@@ -4194,7 +4194,7 @@ impl<'a> CheckerState<'a> {
                             start,
                             length,
                             message_text: msg,
-                            category: crate::types::diagnostics::DiagnosticCategory::Error,
+                            category: crate::diagnostics::DiagnosticCategory::Error,
                             code,
                             related_information: Vec::new(),
                         });
@@ -4227,7 +4227,7 @@ impl<'a> CheckerState<'a> {
                         start,
                         length,
                         message_text: msg,
-                        category: crate::types::diagnostics::DiagnosticCategory::Error,
+                        category: crate::diagnostics::DiagnosticCategory::Error,
                         code: 6133,
                         related_information: Vec::new(),
                     });
@@ -4251,7 +4251,7 @@ impl<'a> CheckerState<'a> {
                             start,
                             length,
                             message_text: msg,
-                            category: crate::types::diagnostics::DiagnosticCategory::Error,
+                            category: crate::diagnostics::DiagnosticCategory::Error,
                             code: 6192,
                             related_information: Vec::new(),
                         });
@@ -4274,7 +4274,7 @@ impl<'a> CheckerState<'a> {
                             start,
                             length,
                             message_text: msg,
-                            category: crate::types::diagnostics::DiagnosticCategory::Error,
+                            category: crate::diagnostics::DiagnosticCategory::Error,
                             code: 6199,
                             related_information: Vec::new(),
                         });
@@ -4297,7 +4297,7 @@ impl<'a> CheckerState<'a> {
                             start,
                             length,
                             message_text: msg,
-                            category: crate::types::diagnostics::DiagnosticCategory::Error,
+                            category: crate::diagnostics::DiagnosticCategory::Error,
                             code: 6198,
                             related_information: Vec::new(),
                         });

@@ -868,7 +868,7 @@ impl<'a> CheckerState<'a> {
     /// - TS2337: super() calls must be in constructors
     /// - TS2336: super property access must be in valid contexts
     pub(crate) fn check_super_expression(&mut self, idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         // Detect if this is a super() call early (needed for error selection)
         let parent_info = self

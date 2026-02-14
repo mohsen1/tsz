@@ -299,7 +299,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use tsz_solver::CallResult;
 
         let Some(new_expr) = self.ctx.arena.get_call_expr_at(idx) else {
@@ -535,7 +535,7 @@ impl<'a> CheckerState<'a> {
         new_idx: NodeIndex,
         expr_idx: NodeIndex,
     ) -> Option<TypeId> {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
 
@@ -1182,8 +1182,8 @@ impl<'a> CheckerState<'a> {
             {
                 self.error_at_node(
                     idx,
-                    crate::types::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
-                    crate::types::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                    crate::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                    crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                 );
             }
             // Still need to check arguments for definite assignment (TS2454) and other errors
@@ -1778,7 +1778,7 @@ impl<'a> CheckerState<'a> {
             // or class static initialization blocks. Must check BEFORE regular
             // function body check because arrow functions are transparent.
             if self.is_arguments_in_class_initializer_or_static_block(idx) {
-                use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     idx,
                     diagnostic_messages::ARGUMENTS_CANNOT_BE_REFERENCED_IN_PROPERTY_INITIALIZERS_OR_CLASS_STATIC_INITIALI,
@@ -1793,7 +1793,7 @@ impl<'a> CheckerState<'a> {
                 ScriptTarget::ES3 | ScriptTarget::ES5
             );
             if is_es5_or_lower && self.is_arguments_in_arrow_function(idx) {
-                use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     idx,
                     diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ARROW_FUNCTION_IN_ES5_CONSIDER_U,
@@ -1803,7 +1803,7 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if is_es5_or_lower && self.is_arguments_in_async_non_arrow_function(idx) {
-                use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     idx,
                     diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
@@ -2529,7 +2529,7 @@ impl<'a> CheckerState<'a> {
         }
         // TS2524: 'await' in default parameter
         if name == "await" && self.is_in_default_parameter(idx) {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 idx,
                 diagnostic_messages::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
@@ -2539,7 +2539,7 @@ impl<'a> CheckerState<'a> {
         }
         // TS2523: 'yield' in default parameter
         if name == "yield" && self.is_in_default_parameter(idx) {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 idx,
                 diagnostic_messages::YIELD_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
@@ -2585,9 +2585,7 @@ impl<'a> CheckerState<'a> {
             || self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx)
             || self.is_class_or_enum_used_before_declaration(sym_id, idx);
         if is_tdz {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             // Emit the correct diagnostic based on symbol kind:
             // TS2449 for classes, TS2450 for enums, TS2448 for variables
             let (msg_template, code) = if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {

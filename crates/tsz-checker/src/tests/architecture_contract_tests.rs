@@ -798,8 +798,8 @@ fn test_checker_legacy_type_arena_surface_is_feature_gated() {
         "legacy checker type module should be internal-only during migration; use diagnostics facade instead."
     );
     assert!(
-        lib_src.contains("mod types;"),
-        "legacy checker type module must remain available internally for transition."
+        lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]\nmod types;"),
+        "legacy checker type module must remain gated behind `legacy-type-arena`."
     );
     assert!(
         lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]")

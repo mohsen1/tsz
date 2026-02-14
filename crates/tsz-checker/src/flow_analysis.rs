@@ -26,12 +26,12 @@
 //! - Return/throw exits
 
 use crate::FlowAnalyzer;
+use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype_with_env, object_shape_for_type, tuple_elements_for_type,
     union_members_for_type,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
-use crate::types::diagnostics::Diagnostic;
 use rustc_hash::FxHashSet;
 use std::rc::Rc;
 use tsz_binder::SymbolId;
@@ -1091,15 +1091,15 @@ impl<'a> CheckerState<'a> {
                     // For now, we'll check if the property is being read before assignment
                     if tracked.contains(&key) && !assigned.contains(&key) {
                         // Emit TS2565 error
-                        use crate::types::diagnostics::format_message;
+                        use crate::diagnostics::format_message;
                         let property_name = self.get_property_name_from_key(&key);
                         self.error_at_node(
                             expr_idx,
                             &format_message(
-                                crate::types::diagnostics::diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                                crate::diagnostics::diagnostic_messages::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
                                 &[&property_name],
                             ),
-                            crate::types::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                            crate::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
                         );
                     }
                 }

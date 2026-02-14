@@ -13,8 +13,8 @@
 //! This module extends CheckerState with utilities for function type
 //! resolution, providing cleaner separation of function typing logic.
 
+use crate::diagnostics::format_message;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
-use crate::types::diagnostics::format_message;
 use rustc_hash::FxHashMap;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -531,7 +531,7 @@ impl<'a> CheckerState<'a> {
                 let missing_promise_for_target = !self.ctx.has_promise_constructor_in_scope();
                 if is_es5_or_lower && should_check_promise_constructor && missing_promise_for_target
                 {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     let diagnostic_node = if async_node_idx.is_none() {
                         idx
                     } else {
@@ -595,7 +595,7 @@ impl<'a> CheckerState<'a> {
 
                     if should_emit_ts2705 {
                         use crate::context::ScriptTarget;
-                        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
                         // For ES5/ES3 targets, emit TS1055 instead of TS2705
                         // TS1055: "Type 'X' is not a valid async function return type in ES5 because
@@ -657,7 +657,7 @@ impl<'a> CheckerState<'a> {
                 // Async functions without a return statement automatically resolve to Promise<void>
                 // so they should not emit "function must return a value" errors
                 if has_type_annotation && requires_return && falls_through && !is_async {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     if !has_return {
                         self.error_at_node(
                             type_annotation,
@@ -674,7 +674,7 @@ impl<'a> CheckerState<'a> {
                     }
                 } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     let error_node = if let Some(nn) = name_node { nn } else { body };
                     self.error_at_node(
                         error_node,
@@ -1427,7 +1427,7 @@ impl<'a> CheckerState<'a> {
                             .compiler_options
                             .no_property_access_from_index_signature
                     {
-                        use crate::types::diagnostics::diagnostic_codes;
+                        use crate::diagnostics::diagnostic_codes;
                         self.error_at_node(
                             access.name_or_argument,
                             &format!(
@@ -1498,7 +1498,7 @@ impl<'a> CheckerState<'a> {
                         && self.is_method_member_in_class_hierarchy(base_idx, property_name, true)
                             == Some(true)
                     {
-                        use crate::types::diagnostics::{
+                        use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
 
@@ -1525,7 +1525,7 @@ impl<'a> CheckerState<'a> {
                         && self.is_method_member_in_class_hierarchy(class_idx, property_name, true)
                             == Some(true)
                     {
-                        use crate::types::diagnostics::{
+                        use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
 
@@ -1569,7 +1569,7 @@ impl<'a> CheckerState<'a> {
                     // Report error based on the cause (TS2531/TS2532/TS2533 or TS18050)
                     // TS18050 is for definitely-nullish values in strict mode
                     // TS2531/2532/2533 are for possibly-nullish values in strict mode
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
 
                     // Suppress cascade errors when cause is ERROR/ANY/UNKNOWN
                     if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {

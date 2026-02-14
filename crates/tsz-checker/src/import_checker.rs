@@ -31,7 +31,7 @@ impl<'a> CheckerState<'a> {
     /// Uses TS2792 when module resolution is "classic"-like (non-Node module kinds),
     /// otherwise TS2307.
     fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
             return (error.message.clone(), error.code);
@@ -212,7 +212,7 @@ impl<'a> CheckerState<'a> {
         import: &tsz_parser::parser::node::ImportDeclData,
         module_name: &str,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         if self.is_ambient_module_match(module_name)
             || self.any_ambient_module_declared(module_name)
@@ -835,7 +835,7 @@ impl<'a> CheckerState<'a> {
     /// - `export = X` is not used when there are also other exported elements (TS2309)
     /// - There are not multiple `export = X` statements (TS2300)
     pub(crate) fn check_export_assignment(&mut self, statements: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let mut export_assignment_indices: Vec<NodeIndex> = Vec::new();
         let mut export_default_indices: Vec<NodeIndex> = Vec::new();
@@ -1102,7 +1102,7 @@ impl<'a> CheckerState<'a> {
     /// TS2300: Emitted when multiple `import X = ...` declarations have the same name
     /// within the same scope (namespace, module, or file).
     pub(crate) fn check_import_alias_duplicates(&mut self, statements: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use std::collections::HashMap;
 
         // Map from import alias name to list of declaration indices
@@ -1167,7 +1167,7 @@ impl<'a> CheckerState<'a> {
     /// - TS2307 when the module cannot be found
     /// - TS2440 when import conflicts with a local declaration
     pub(crate) fn check_import_equals_declaration(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_binder::symbol_flags;
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
@@ -1495,9 +1495,9 @@ impl<'a> CheckerState<'a> {
 
         if force_module_not_found {
             let (message, code) = self.module_not_found_diagnostic(module_name);
-            self.ctx.push_diagnostic(crate::types::Diagnostic {
+            self.ctx.push_diagnostic(crate::diagnostics::Diagnostic {
                 code,
-                category: crate::types::DiagnosticCategory::Error,
+                category: crate::diagnostics::DiagnosticCategory::Error,
                 message_text: message,
                 file: self.ctx.file_name.clone(),
                 start: spec_start,
@@ -1537,7 +1537,7 @@ impl<'a> CheckerState<'a> {
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
             if error_code
-                == crate::types::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
             {
                 let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
                 error_code = fallback_code;
@@ -1576,7 +1576,7 @@ impl<'a> CheckerState<'a> {
     /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
     /// Emits TS2708 "Cannot use namespace as a value" if exporting a type-only member.
     fn check_namespace_import(&mut self, stmt_idx: NodeIndex, module_ref: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
         use tsz_binder::symbol_flags;
 
         let Some(ref_node) = self.ctx.arena.get(module_ref) else {
@@ -1834,7 +1834,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check an import declaration for unresolved modules and missing exports.
     pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -1872,9 +1872,7 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(false);
         let mut emitted_dts_import_error = false;
         if module_name.ends_with(".d.ts") && !is_type_only_import {
-            use crate::types::diagnostics::{
-                diagnostic_codes, diagnostic_messages, format_message,
-            };
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let suggested = module_name.trim_end_matches(".d.ts");
             let message = format_message(
                 diagnostic_messages::A_DECLARATION_FILE_CANNOT_BE_IMPORTED_WITHOUT_IMPORT_TYPE_DID_YOU_MEAN_TO_IMPORT,
@@ -1944,7 +1942,7 @@ impl<'a> CheckerState<'a> {
             let mut error_code = error.code;
             let mut error_message = error.message.clone();
             if error_code
-                == crate::types::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
             {
                 let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
                 error_code = fallback_code;
@@ -1959,7 +1957,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_position(spec_start, spec_length, &error_message, error_code);
             }
             if error_code
-                != crate::types::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
+                != crate::diagnostics::diagnostic_codes::MODULE_WAS_RESOLVED_TO_BUT_JSX_IS_NOT_SET
             {
                 self.ctx.import_resolution_stack.pop();
                 return;
@@ -2010,7 +2008,7 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if current_is_commonjs && target_is_esm && !is_type_only_import {
-                        use crate::types::diagnostics::{
+                        use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
                         let message = format_message(
@@ -2027,7 +2025,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_declaration_file_flag && !is_type_only_import && !emitted_dts_import_error {
-                    use crate::types::diagnostics::{
+                    use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
                     let suggested = if module_name.ends_with(".d.ts") {
@@ -2062,7 +2060,7 @@ impl<'a> CheckerState<'a> {
                                 || file_name.ends_with(".mjs")
                                 || file_name.ends_with(".cjs");
                             if !is_js_like {
-                                use crate::types::diagnostics::{
+                                use crate::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
                                 let message = format_message(
@@ -2140,7 +2138,7 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         visited: &mut FxHashSet<String>,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         if visited.contains(module_name) {
             let cycle_path: Vec<&str> = visited
