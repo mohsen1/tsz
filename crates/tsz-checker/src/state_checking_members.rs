@@ -2347,6 +2347,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.check_class_member_name(member_idx);
+        self.check_class_member_decorator_expressions(member_idx);
 
         // TS2302: Static members cannot reference class type parameters
         self.check_static_member_for_class_type_param_refs(member_idx);
@@ -2389,6 +2390,54 @@ impl<'a> CheckerState<'a> {
 
         if pushed_this {
             self.ctx.this_type_stack.pop();
+        }
+    }
+
+    fn check_class_member_decorator_expressions(&mut self, member_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+
+        let modifiers = match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .ctx
+                .arena
+                .get_property_decl(node)
+                .and_then(|p| p.modifiers.as_ref()),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .and_then(|m| m.modifiers.as_ref()),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .and_then(|a| a.modifiers.as_ref()),
+            k if k == syntax_kind_ext::CONSTRUCTOR => self
+                .ctx
+                .arena
+                .get_constructor(node)
+                .and_then(|c| c.modifiers.as_ref()),
+            _ => None,
+        };
+
+        let Some(modifiers) = modifiers else {
+            return;
+        };
+
+        for &modifier_idx in &modifiers.nodes {
+            let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
+                continue;
+            };
+            if modifier_node.kind != syntax_kind_ext::DECORATOR {
+                continue;
+            }
+
+            let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) else {
+                continue;
+            };
+            self.get_type_of_node(decorator.expression);
         }
     }
 
