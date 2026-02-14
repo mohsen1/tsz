@@ -3662,7 +3662,7 @@ impl<'a> CheckerState<'a> {
         type_node: NodeIndex,
         bindings: Vec<(tsz_common::interner::Atom, TypeId)>,
     ) -> TypeId {
-        use tsz_solver::TypeLowering;
+        use tsz_lowering::TypeLowering;
 
         let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
         let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
@@ -3814,7 +3814,7 @@ impl<'a> CheckerState<'a> {
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
             self.ctx.binder.get_node_symbol(node_idx).map(|id| id.0)
         };
-        let lowering = tsz_solver::TypeLowering::with_resolvers(
+        let lowering = tsz_lowering::TypeLowering::with_resolvers(
             self.ctx.arena,
             self.ctx.types,
             &type_resolver,

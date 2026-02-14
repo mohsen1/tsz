@@ -17,6 +17,7 @@ tsz-scanner = { path = "crates/tsz-scanner" }
 tsz-parser = { path = "crates/tsz-parser" }
 tsz-binder = { path = "crates/tsz-binder" }
 tsz-solver = { path = "crates/tsz-solver" }
+tsz-lowering = { path = "crates/tsz-lowering" }
 tsz-checker = { path = "crates/tsz-checker" }
 tsz-emitter = { path = "crates/tsz-emitter" }
 tsz-lsp = { path = "crates/tsz-lsp" }
@@ -174,6 +175,7 @@ tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }
 tsz-binder = { workspace = true }
 tsz-solver = { workspace = true }
+tsz-lowering = { workspace = true }
 tsz-checker = { workspace = true }
 tsz-emitter = { workspace = true }
 tsz-lsp = { workspace = true }

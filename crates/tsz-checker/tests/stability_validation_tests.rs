@@ -62,7 +62,12 @@ fn test_recursive_type_depth_limit() {
     use tsz_solver::MAX_INSTANTIATION_DEPTH;
 
     // Verify the limit is set to a reasonable value
-    assert_in_range("Instantiation depth", MAX_INSTANTIATION_DEPTH, 20, 100);
+    assert_in_range(
+        "Instantiation depth",
+        MAX_INSTANTIATION_DEPTH as usize,
+        20,
+        100,
+    );
 
     // The limit prevents infinite recursion in type instantiation
     // When exceeded, TypeId::ERROR is returned instead of crashing
@@ -73,7 +78,7 @@ fn test_call_depth_limit() {
     // Validates that function call resolution has depth limits
     use crate::state::MAX_CALL_DEPTH;
 
-    assert_in_range("Call depth", MAX_CALL_DEPTH, 10, 50);
+    assert_in_range("Call depth", MAX_CALL_DEPTH as usize, 10, 50);
 }
 
 #[test]
@@ -83,7 +88,7 @@ fn test_tree_walk_iteration_limit() {
 
     assert_in_range(
         "Tree walk iterations",
-        MAX_TREE_WALK_ITERATIONS,
+        MAX_TREE_WALK_ITERATIONS as usize,
         1_000,
         50_000,
     );
@@ -92,11 +97,11 @@ fn test_tree_walk_iteration_limit() {
 #[test]
 fn test_type_lowering_operation_limit() {
     // Validates that type lowering has operation limits
-    use tsz_solver::MAX_LOWERING_OPERATIONS;
+    use tsz_lowering::MAX_LOWERING_OPERATIONS;
 
     assert_in_range(
         "Lowering operations",
-        MAX_LOWERING_OPERATIONS,
+        MAX_LOWERING_OPERATIONS as usize,
         10_000,
         1_000_000,
     );
@@ -109,7 +114,7 @@ fn test_constraint_recursion_depth_limit() {
 
     assert_in_range(
         "Constraint recursion depth",
-        MAX_CONSTRAINT_RECURSION_DEPTH,
+        MAX_CONSTRAINT_RECURSION_DEPTH as usize,
         50,
         200,
     );

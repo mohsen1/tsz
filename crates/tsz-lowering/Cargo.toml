@@ -1,6 +1,6 @@
 [package]
-name = "tsz-checker"
-description = "TypeScript type checker for the tsz compiler"
+name = "tsz-lowering"
+description = "AST-to-type lowering bridge for tsz"
 version.workspace = true
 edition.workspace = true
 autotests = false
@@ -8,23 +8,14 @@ repository.workspace = true
 license.workspace = true
 authors.workspace = true
 
-[features]
-default = []
-
 [dependencies]
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }
-tsz-binder = { workspace = true }
 tsz-solver = { workspace = true }
-tsz-lowering = { workspace = true }
+tsz-binder = { workspace = true }
+indexmap = { workspace = true }
 rustc-hash = { workspace = true }
-tracing = { workspace = true }
-smallvec = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-globset = { workspace = true }
-stacker = "0.1.23"
 
 [lints]
 workspace = true

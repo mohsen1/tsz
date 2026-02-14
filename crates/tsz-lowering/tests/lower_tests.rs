@@ -1,9 +1,11 @@
-use super::*;
-use crate::TypeInterner;
+#![allow(clippy::print_stderr)]
+
+use crate::TypeLowering;
 use tsz_parser::parser::NodeArena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::*;
 
 #[test]
 fn test_intrinsic_type_ids() {
@@ -471,7 +473,7 @@ fn test_lower_readonly_array_type_reference() {
 
 #[test]
 fn test_lower_array_type_reference_respects_resolver() {
-    use crate::def::DefId;
+    use tsz_solver::def::DefId;
 
     // Use a custom type name (not built-in) to test resolver behavior
     let (arena, type_idx) = parse_type_alias_type_node("type T = MyArray<string>;");
@@ -517,7 +519,7 @@ fn test_lower_array_type_reference_respects_resolver() {
 
 #[test]
 fn test_lower_readonly_array_type_reference_respects_resolver() {
-    use crate::def::DefId;
+    use tsz_solver::def::DefId;
 
     // Use a custom type name (not built-in) to test resolver behavior
     let (arena, type_idx) = parse_type_alias_type_node("type T = MyReadonlyArray<string>;");
@@ -1506,7 +1508,7 @@ fn test_lower_function_rest_parameter() {
 
 #[test]
 fn test_lower_generic_type_reference_uses_type_parameter_args() {
-    use crate::def::DefId;
+    use tsz_solver::def::DefId;
 
     let (arena, func_type_idx) = parse_type_alias("type F = <T>(x: T) => Box<T>;");
     let interner = TypeInterner::new();
@@ -1569,7 +1571,7 @@ fn test_lower_generic_type_reference_uses_type_parameter_args() {
 
 #[test]
 fn test_lower_type_reference_with_arguments() {
-    use crate::def::DefId;
+    use tsz_solver::def::DefId;
 
     let (arena, type_ref_idx) = parse_type_reference("type T = Box<string>;", "Box");
     let interner = TypeInterner::new();
@@ -1614,7 +1616,7 @@ fn test_lower_type_reference_with_arguments() {
 
 #[test]
 fn test_lower_type_query_uses_value_resolver() {
-    use crate::def::DefId;
+    use tsz_solver::def::DefId;
 
     let (arena, type_idx) = parse_type_alias_type_node("type T = Foo | typeof Foo;");
     let interner = TypeInterner::new();
