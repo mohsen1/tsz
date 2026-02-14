@@ -7,8 +7,6 @@
 //! Also supports keyword highlighting for matching control flow keywords:
 //! if/else, try/catch/finally, switch/case/default, while/do.
 
-#![allow(clippy::print_stderr)]
-
 use crate::references::FindReferences;
 use crate::utils::find_node_at_offset;
 use tsz_binder::BinderState;
