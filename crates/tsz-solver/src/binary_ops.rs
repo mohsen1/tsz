@@ -648,15 +648,34 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// Check if a type is a valid operand for string concatenation.
     /// Valid operands are: string, number, boolean, bigint, null, undefined, void, any.
     fn is_valid_string_concat_operand(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::ANY {
+        if type_id == TypeId::ANY || type_id == TypeId::ERROR || type_id == TypeId::NEVER {
             return true;
         }
+        if type_id == TypeId::UNKNOWN {
+            return false;
+        }
+        if let Some(TypeKey::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| self.is_valid_string_concat_operand(member));
+        }
+        if self.is_symbol_like(type_id) {
+            return false;
+        }
         // Primitives are valid
-        self.is_number_like(type_id)
+        if self.is_number_like(type_id)
             || self.is_boolean_like(type_id)
             || self.is_bigint_like(type_id)
             || type_id == TypeId::NULL
             || type_id == TypeId::UNDEFINED
             || type_id == TypeId::VOID
+        {
+            return true;
+        }
+
+        // Non-nullish non-symbol object/function-like types are string-concat-compatible.
+        true
     }
 }
