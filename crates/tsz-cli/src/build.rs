@@ -76,7 +76,7 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
             // Check for errors
             let has_errors = result
                 .diagnostics
-               .iter()
+                .iter()
                 .any(|d| d.category == DiagnosticCategory::Error);
 
             if has_errors {
