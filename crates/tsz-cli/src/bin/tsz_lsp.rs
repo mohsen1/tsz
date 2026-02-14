@@ -14,7 +14,6 @@
 //! - textDocument/definition
 //! - textDocument/references
 
-#![allow(clippy::print_stderr)]
 //! - textDocument/documentSymbol
 //! - textDocument/formatting
 //! - textDocument/rename
@@ -31,6 +30,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Read, Write};
+use tracing::{debug, info, trace};
 
 use tsz::binder::BinderState;
 use tsz::lsp::position::LineMap;
@@ -859,8 +859,8 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    eprintln!("tsz-lsp: Starting Language Server Protocol server");
-    eprintln!("tsz-lsp: Mode: {}", args.mode);
+    info!("tsz-lsp: Starting Language Server Protocol server");
+    info!("tsz-lsp: Mode: {}", args.mode);
 
     let mut server = LspServer::new();
     let stdin = std::io::stdin();
@@ -881,7 +881,7 @@ fn main() -> Result<()> {
                 .context("Failed to read header line")?;
 
             if bytes_read == 0 {
-                eprintln!("tsz-lsp: EOF reached");
+                debug!("tsz-lsp: EOF reached");
                 return Ok(());
             }
 
@@ -908,7 +908,7 @@ fn main() -> Result<()> {
         let content_str = String::from_utf8(content).context("Invalid UTF-8")?;
 
         if args.verbose {
-            eprintln!("tsz-lsp: Received: {}", content_str);
+            trace!("tsz-lsp: Received: {}", content_str);
         }
 
         // Parse JSON-RPC message
@@ -921,7 +921,7 @@ fn main() -> Result<()> {
             let response_bytes = response_str.as_bytes();
 
             if args.verbose {
-                eprintln!("tsz-lsp: Sending: {}", response_str);
+                trace!("tsz-lsp: Sending: {}", response_str);
             }
 
             write!(
