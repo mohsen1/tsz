@@ -8,14 +8,14 @@ use wasm_bindgen::prelude::*;
 
 use tsz::binder::BinderState;
 use tsz::checker::context::CheckerOptions;
-use tsz::checker::types::DiagnosticCategory;
+use tsz_checker::diagnostics::DiagnosticCategory;
 use tsz::lib_loader::LibFile;
 use tsz::parallel::{
     MergedProgram, check_files_parallel, merge_bind_results, parse_and_bind_parallel,
     parse_and_bind_parallel_with_libs,
 };
 use tsz::parser::ParserState;
-use tsz::solver::TypeInterner;
+use tsz_solver::TypeInterner;
 
 use super::source_file::TsSourceFile;
 use super::type_checker::TsTypeChecker;

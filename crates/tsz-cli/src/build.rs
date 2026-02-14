@@ -76,7 +76,7 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
             let has_errors = result
                 .diagnostics
                 .iter()
-                .any(|d| d.category == tsz::checker::types::diagnostics::DiagnosticCategory::Error);
+                .any(|d| d.category == tsz_checker::diagnostics::DiagnosticCategory::Error);
 
             if has_errors {
                 all_success = false;

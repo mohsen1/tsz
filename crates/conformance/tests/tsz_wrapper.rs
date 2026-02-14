@@ -1,4 +1,6 @@
 use super::*;
+use tsz::diagnostics::Diagnostic;
+use tsz::span::Span;
 
 fn compile_test(
     content: &str,

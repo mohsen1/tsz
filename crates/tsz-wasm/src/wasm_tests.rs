@@ -1,8 +1,8 @@
-use tsz::solver::TypeInterner;
+use tsz_solver::TypeInterner;
 
 #[test]
 fn test_type_interner_basic() {
-    use tsz::solver::TypeId;
+    use tsz_solver::TypeId;
 
     // Test the underlying TypeInterner directly (works on all targets)
     let interner = TypeInterner::new();

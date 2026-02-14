@@ -11,7 +11,7 @@
 
 use std::env;
 use std::process;
-use tsz::solver::unsoundness_audit::{ImplementationPhase, ImplementationStatus, UnsoundnessAudit};
+use tsz_solver::unsoundness_audit::{ImplementationPhase, ImplementationStatus, UnsoundnessAudit};
 
 fn print_usage() {
     println!("Usage: audit_unsoundness [OPTIONS]");
