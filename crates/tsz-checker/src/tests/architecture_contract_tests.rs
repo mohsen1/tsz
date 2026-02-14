@@ -420,6 +420,20 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns_and_raw_interning()
 }
 
 #[test]
+fn test_checker_legacy_type_arena_surface_is_feature_gated() {
+    let lib_src =
+        fs::read_to_string("src/lib.rs").expect("failed to read src/lib.rs for architecture guard");
+    assert!(
+        lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]\npub mod arena;"),
+        "legacy checker TypeArena module must be feature-gated behind `legacy-type-arena`"
+    );
+    assert!(
+        lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]\npub use arena::TypeArena;"),
+        "legacy checker TypeArena re-export must be feature-gated behind `legacy-type-arena`"
+    );
+}
+
+#[test]
 fn test_diagnostics_property_traversal_uses_solver_classification_results() {
     let interner = TypeInterner::new();
 
