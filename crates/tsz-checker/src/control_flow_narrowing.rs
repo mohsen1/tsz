@@ -475,7 +475,11 @@ impl<'a> FlowAnalyzer<'a> {
 
         if let Some(predicate_type) = predicate.type_id {
             if is_true_branch {
-                return narrowing.narrow_to_type(type_id, predicate_type);
+                let narrowed = narrowing.narrow_to_type(type_id, predicate_type);
+                if predicate.asserts && narrowed == TypeId::NEVER && type_id != TypeId::NEVER {
+                    return tsz_solver::remove_nullish(self.interner, type_id);
+                }
+                return narrowed;
             }
             return narrowing.narrow_excluding_type(type_id, predicate_type);
         }
