@@ -20,7 +20,7 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ContextualTypeContext, TypeId, TypeKey, TypeParamInfo};
+use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
 
 // =============================================================================
 // Function Type Resolution
@@ -222,7 +222,10 @@ impl<'a> CheckerState<'a> {
         //   @template T
         //   @returns {T}
         // This enables return assignability checks for expression-bodied arrows.
-        if self.is_js_file() && type_params.is_empty() && let Some(ref jsdoc) = func_jsdoc {
+        if self.is_js_file()
+            && type_params.is_empty()
+            && let Some(ref jsdoc) = func_jsdoc
+        {
             let template_names = Self::jsdoc_template_type_params(jsdoc);
             if !template_names.is_empty() {
                 let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
@@ -234,7 +237,7 @@ impl<'a> CheckerState<'a> {
                         default: None,
                         is_const: false,
                     };
-                    let ty = self.ctx.types.intern(TypeKey::TypeParameter(info.clone()));
+                    let ty = self.ctx.types.type_param(info.clone());
                     jsdoc_type_param_types.insert(name, ty);
                     jsdoc_type_params.push(info);
                 }
@@ -462,8 +465,11 @@ impl<'a> CheckerState<'a> {
 
             let mut has_contextual_return = false;
             if !has_type_annotation {
-                let return_context = jsdoc_return_context
-                    .or_else(|| ctx_helper.as_ref().and_then(|helper| helper.get_return_type()));
+                let return_context = jsdoc_return_context.or_else(|| {
+                    ctx_helper
+                        .as_ref()
+                        .and_then(|helper| helper.get_return_type())
+                });
                 // TS7010/TS7011: Only count as contextual return if it's not UNKNOWN
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
