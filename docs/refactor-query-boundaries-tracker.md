@@ -49,6 +49,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 ## Completed Boundary Modules
 
 - `query_boundaries/type_checking.rs`
+- `query_boundaries/type_checking_utilities.rs`
 - `query_boundaries/type_computation.rs`
 - `query_boundaries/type_computation_complex.rs`
 - `query_boundaries/type_query.rs`
