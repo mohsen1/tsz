@@ -306,6 +306,30 @@ fn test_es_namespace_import_resolved() {
 }
 
 #[test]
+fn test_import_equals_require_uses_export_equals_constructable_target() {
+    let source = r#"
+        import A = require("M");
+        var c = new A();
+    "#;
+    let module_source = r#"
+        namespace C {
+            export var f: number;
+        }
+        class C {
+            foo(): void;
+        }
+        export = C;
+    "#;
+
+    let diags = check_with_module_sources(source, "main.ts", vec![("M", module_source)]);
+    assert!(
+        no_error_code(&diags, 2351),
+        "import=require should resolve to constructable export= target, got: {:?}",
+        diags
+    );
+}
+
+#[test]
 fn test_es_side_effect_import_resolved() {
     let source = r#"import "./polyfill";"#;
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./polyfill"]);

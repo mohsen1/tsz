@@ -262,6 +262,39 @@ impl<'a> CheckerState<'a> {
 
         self.expr_contains_symbol_value(first_arg)
     }
+
+    /// For `new importAlias(...)` where `importAlias` is `import X = require("m")`,
+    /// prefer the module's `export =` target type when available.
+    ///
+    /// This keeps general alias typing unchanged (important for type-position behavior)
+    /// while ensuring constructor resolution sees the direct constructable type.
+    fn new_expression_export_equals_constructor_type(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
+            return None;
+        }
+
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first()?
+        };
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return None;
+        }
+
+        let import_decl = self.ctx.arena.get_import_decl(decl_node)?;
+        let module_specifier = self.get_require_module_specifier(import_decl.module_specifier)?;
+        let exports = self.resolve_effective_module_exports(&module_specifier)?;
+        let export_equals_sym = exports.get("export=")?;
+        Some(self.get_type_of_symbol(export_equals_sym))
+    }
+
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::types::diagnostics::diagnostic_codes;
 
@@ -277,7 +310,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type of the constructor expression
-        let constructor_type = self.get_type_of_node(new_expr.expression);
+        let mut constructor_type = self.get_type_of_node(new_expr.expression);
+        if let Some(export_equals_ctor) =
+            self.new_expression_export_equals_constructor_type(new_expr.expression)
+        {
+            constructor_type = export_equals_ctor;
+        }
 
         // Self-referencing class in static initializer: `new C()` inside C's static init
         // produces a Lazy placeholder. Return the cached instance type if available.
@@ -297,7 +335,7 @@ impl<'a> CheckerState<'a> {
         // If the `new` expression provides explicit type arguments (`new Foo<T>()`),
         // instantiate the constructor signatures with those args so we don't fall back to
         // inference (and so we match tsc behavior).
-        let constructor_type = self.apply_type_arguments_to_constructor_type(
+        constructor_type = self.apply_type_arguments_to_constructor_type(
             constructor_type,
             new_expr.type_arguments.as_ref(),
         );
@@ -329,24 +367,24 @@ impl<'a> CheckerState<'a> {
         }
 
         // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
-        let constructor_type = self.evaluate_application_type(constructor_type);
+        constructor_type = self.evaluate_application_type(constructor_type);
 
         // Resolve Ref types to ensure we get the actual constructor type, not just a symbolic reference
         // This is critical for classes where we need the Callable with construct signatures
-        let constructor_type = self.resolve_ref_type(constructor_type);
+        constructor_type = self.resolve_ref_type(constructor_type);
 
         // Resolve type parameter constraints: if the constructor type is a type parameter
         // (e.g., T extends Constructable), resolve the constraint's lazy types so the solver
         // can find construct signatures through the constraint chain.
-        let constructor_type = self.resolve_type_param_for_construct(constructor_type);
+        constructor_type = self.resolve_type_param_for_construct(constructor_type);
 
         // Some constructor interfaces are lowered with a synthetic `"new"` property
         // instead of explicit construct signatures.
         let synthetic_new_constructor = self.constructor_type_from_new_property(constructor_type);
-        let constructor_type = synthetic_new_constructor.unwrap_or(constructor_type);
+        constructor_type = synthetic_new_constructor.unwrap_or(constructor_type);
         // Explicit type arguments on `new` (e.g. `new Promise<number>(...)`) need to
         // apply to synthetic `"new"` member call signatures as well.
-        let constructor_type = if synthetic_new_constructor.is_some() {
+        constructor_type = if synthetic_new_constructor.is_some() {
             self.apply_type_arguments_to_callable_type(
                 constructor_type,
                 new_expr.type_arguments.as_ref(),
