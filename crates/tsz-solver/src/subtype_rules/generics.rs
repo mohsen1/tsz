@@ -449,7 +449,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let source = self.interner.application(s_app.base, s_app.args.clone());
                 self.check_subtype(source, t_struct)
             }
-            (None, None) => SubtypeResult::False,
+            (None, None) => {
+                // Compatibility fallback: when both applications share the same base and
+                // cannot be structurally expanded (e.g. lib/interface generic applications),
+                // apply a covariant argument check before failing hard.
+                //
+                // This mirrors common TS behavior for readonly/out-position generic uses and
+                // avoids broad false-positive assignability failures from an expansion miss.
+                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                    for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
+                        if !self.check_subtype(*s_arg, *t_arg).is_true() {
+                            return SubtypeResult::False;
+                        }
+                    }
+                    return SubtypeResult::True;
+                }
+                SubtypeResult::False
+            }
         }
     }
 
