@@ -148,7 +148,6 @@ Available skills and triggers:
 - `bench-gatekeeper`: benchmark vs baseline.
 - `rust-test-runner`: run Rust tests via Docker wrapper.
 - `sync-and-merge-assistant`: safe sync/merge workflow.
-- `ts-parity-verifier`: TypeScript parity checks and failure summaries.
 - `worker-assignment-orchestrator`: assign high-impact tasks.
 - `skill-creator`: create/update skills.
 - `skill-installer`: install curated/repo skills.
