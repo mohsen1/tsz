@@ -3173,9 +3173,38 @@ impl<'a> CheckerState<'a> {
             // Check if this is an ES2015+ type that requires specific lib support
             let is_es2015_type = lib_loader::is_es2015_plus_type(name);
 
+            let primitive_keyword_name = matches!(
+                name,
+                "number"
+                    | "string"
+                    | "boolean"
+                    | "symbol"
+                    | "void"
+                    | "undefined"
+                    | "null"
+                    | "any"
+                    | "unknown"
+                    | "never"
+                    | "object"
+                    | "bigint"
+            );
+
             // In syntax-error files, TS2693 often cascades from parser recovery and
             // diverges from tsc's primary-diagnostic set. Keep TS2585 behavior intact.
-            if self.has_parse_errors() && !is_es2015_type {
+            //
+            // Exception: malformed value expressions like `new number[]` recover through
+            // ARRAY_TYPE around a primitive keyword where tsc still reports TS2693.
+            let primitive_array_recovery = self.ctx.arena.get_extended(idx).is_some_and(|ext| {
+                self.ctx
+                    .arena
+                    .get(ext.parent)
+                    .is_some_and(|p| p.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_TYPE)
+            });
+            if self.has_parse_errors()
+                && !is_es2015_type
+                && !primitive_array_recovery
+                && !primitive_keyword_name
+            {
                 return;
             }
 

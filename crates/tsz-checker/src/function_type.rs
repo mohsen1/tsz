@@ -254,7 +254,20 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Infer from contextual type, default to ANY for implicit any parameters
                     // TypeScript uses `any` (with TS7006) when no contextual type is available.
-                    contextual_type.unwrap_or(TypeId::ANY)
+                    let is_js_file = self.ctx.file_name.ends_with(".js")
+                        || self.ctx.file_name.ends_with(".jsx")
+                        || self.ctx.file_name.ends_with(".mjs")
+                        || self.ctx.file_name.ends_with(".cjs");
+                    if is_js_file {
+                        // In checkJs mode, contextual `unknown` from weak callback types
+                        // (e.g. `(...args: unknown[]) => T`) should not force parameters
+                        // to become `unknown`; TypeScript treats these as effectively `any`.
+                        contextual_type
+                            .filter(|t| *t != TypeId::UNKNOWN)
+                            .unwrap_or(TypeId::ANY)
+                    } else {
+                        contextual_type.unwrap_or(TypeId::ANY)
+                    }
                 };
 
                 if is_this_param {
