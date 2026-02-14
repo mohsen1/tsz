@@ -652,4 +652,5 @@ impl Drop for DepthCounter {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+#[path = "tests/recursion_tests.rs"]
 mod tests;

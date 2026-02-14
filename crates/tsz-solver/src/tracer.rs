@@ -753,4 +753,5 @@ impl<'a> TracerSubtypeChecker<'a> {
 // =============================================================================
 
 #[cfg(test)]
+#[path = "tests/tracer_tests.rs"]
 mod tests;
