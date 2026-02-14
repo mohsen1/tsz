@@ -120,11 +120,8 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
-        self.ensure_refs_resolved(source);
-        self.ensure_refs_resolved(target);
-
-        self.ensure_application_symbols_resolved(source);
-        self.ensure_application_symbols_resolved(target);
+        self.ensure_relation_input_ready(source);
+        self.ensure_relation_input_ready(target);
 
         // Pre-check: Function interface accepts any callable type.
         // Must check before evaluate_type_for_assignability resolves Lazy(DefId)
@@ -232,11 +229,8 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
-        self.ensure_refs_resolved(source);
-        self.ensure_refs_resolved(target);
-
-        self.ensure_application_symbols_resolved(source);
-        self.ensure_application_symbols_resolved(target);
+        self.ensure_relation_input_ready(source);
+        self.ensure_relation_input_ready(target);
 
         // Save original types for cache key before evaluation
         let original_source = source;
@@ -662,10 +656,8 @@ impl<'a> CheckerState<'a> {
 
         // Keep subtype preconditions aligned with assignability to avoid
         // caching relation answers before lazy/application refs are prepared.
-        self.ensure_refs_resolved(source);
-        self.ensure_refs_resolved(target);
-        self.ensure_application_symbols_resolved(source);
-        self.ensure_application_symbols_resolved(target);
+        self.ensure_relation_input_ready(source);
+        self.ensure_relation_input_ready(target);
 
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
@@ -735,10 +727,8 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         // CRITICAL: Before checking subtypes, ensure all Ref types are resolved
-        self.ensure_refs_resolved(source);
-        self.ensure_refs_resolved(target);
-        self.ensure_application_symbols_resolved(source);
-        self.ensure_application_symbols_resolved(target);
+        self.ensure_relation_input_ready(source);
+        self.ensure_relation_input_ready(target);
 
         // Helper to check if a symbol is a class (for nominal subtyping)
         let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {
@@ -790,10 +780,8 @@ impl<'a> CheckerState<'a> {
         current_type: TypeId,
     ) -> bool {
         // Ensure Ref/Lazy types are resolved before checking compatibility
-        self.ensure_refs_resolved(prev_type);
-        self.ensure_refs_resolved(current_type);
-        self.ensure_application_symbols_resolved(prev_type);
-        self.ensure_application_symbols_resolved(current_type);
+        self.ensure_relation_input_ready(prev_type);
+        self.ensure_relation_input_ready(current_type);
 
         let flags = self.ctx.pack_relation_flags();
         // Delegate to the Solver's Lawyer layer for redeclaration identity checking

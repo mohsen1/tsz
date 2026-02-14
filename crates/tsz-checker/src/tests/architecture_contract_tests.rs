@@ -441,10 +441,8 @@ fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
     let subtype_src = &source[subtype_start..subtype_end];
 
     let ensure_apps_pos = subtype_src
-        .find("self.ensure_application_symbols_resolved(source);")
-        .expect(
-            "is_subtype_of should resolve application symbols for source before relation checks",
-        );
+        .find("self.ensure_relation_input_ready(source);")
+        .expect("is_subtype_of should establish centralized relation preconditions before checks");
     let lookup_pos = subtype_src
         .find("lookup_subtype_cache(")
         .expect("is_subtype_of should consult solver subtype cache");
@@ -455,9 +453,9 @@ fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
 
     let with_env_src = &source[subtype_end..];
     assert!(
-        with_env_src.contains("self.ensure_application_symbols_resolved(source);")
-            && with_env_src.contains("self.ensure_application_symbols_resolved(target);"),
-        "is_subtype_of_with_env should establish application-symbol preconditions for both sides"
+        with_env_src.contains("self.ensure_relation_input_ready(source);")
+            && with_env_src.contains("self.ensure_relation_input_ready(target);"),
+        "is_subtype_of_with_env should establish centralized relation preconditions for both sides"
     );
 }
 
