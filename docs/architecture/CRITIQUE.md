@@ -751,6 +751,9 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
 * **Completed in this iteration (Milestone 3 sub-item, follow-up):**
   * Migrated return/binding relation precondition setup in `crates/tsz-checker/src/type_checking.rs` from direct `ensure_application_symbols_resolved(...)` calls to centralized `ensure_relation_input_ready(...)`.
   * Added architecture contract coverage to prevent `type_checking` from reintroducing direct application-symbol precondition orchestration.
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Migrated `state_checking::resolve_property_access_with_env` precondition setup from direct `ensure_application_symbols_resolved(...)` calls to centralized `ensure_relation_input_ready(...)`.
+  * Added architecture contract coverage to prevent `state_checking` from reintroducing direct application-symbol precondition orchestration.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
 

@@ -2704,8 +2704,8 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         prop_name: &str,
     ) -> tsz_solver::operations_property::PropertyAccessResult {
-        // Ensure symbols are resolved in the environment
-        self.ensure_application_symbols_resolved(object_type);
+        // Ensure preconditions are ready in the environment
+        self.ensure_relation_input_ready(object_type);
 
         // Route through QueryDatabase so repeated property lookups hit QueryCache.
         // This is especially important for hot paths like repeated `string[].push`
