@@ -449,10 +449,9 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(ctor) = constructor_data {
             // Extract parameters
             params = self.extract_parameters(&ctor.parameters);
-            body_source_range = self
-                .arena
-                .get(ctor.body)
-                .map(|body_node| (body_node.pos, body_node.end));
+            // ES5 class-lowered constructors should follow TypeScript's normalized
+            // multi-line function body formatting, not original source single-line shape.
+            body_source_range = None;
 
             if self.has_extends {
                 // Derived class with explicit constructor
