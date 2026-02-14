@@ -795,6 +795,12 @@ Make all assignment/call/return/property-write checks call these.
   * Added centralized bivariant mismatch decision helper `should_report_assignability_mismatch_bivariant(...)` in `assignability_checker`.
   * Migrated class-member compatibility checks (`TS2416`/`TS2417` decision path) in `class_checker` to use centralized mismatch helper entrypoints for both regular and bivariant relation modes.
   * Extended architecture contract coverage to lock class-member compatibility onto centralized mismatch helpers.
+* **Completed in this iteration (Milestone 4 sub-item, follow-up):**
+  * Migrated additional checker mismatch call sites to the central assignability gateway:
+    * parameter initializers in `parameter_checker` now route via `check_assignable_or_report(...)`
+    * `for...of` expression initializer compatibility and non-destructuring variable-initializer checks in `state_checking` now route via gateway helpers
+    * `'in'` expression RHS object-compatibility checks in `type_computation` now route via `check_assignable_or_report(...)`
+  * Extended architecture contract coverage to lock these modules onto centralized assignability gateway entrypoints.
 
 ---
 

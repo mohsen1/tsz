@@ -129,3 +129,7 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 117: migrated class-member compatibility mismatch gating in `crates/tsz-checker/src/class_checker.rs` to use centralized mismatch helper entrypoints.
 - [x] Migration action 118: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for class-member compatibility gateway routing.
 - [x] Migration action 119: updated child checker context construction (`with_parent`) to keep application/mapped evaluation caches context-local instead of sharing parent algorithm-evaluation cache state.
+- [x] Migration action 120: migrated parameter initializer assignability checks in `crates/tsz-checker/src/parameter_checker.rs` to `check_assignable_or_report(...)`.
+- [x] Migration action 121: migrated `for...of` expression initializer and non-destructuring variable-initializer compatibility checks in `crates/tsz-checker/src/state_checking.rs` to centralized assignability gateway helpers while preserving destructuring generic-error behavior.
+- [x] Migration action 122: migrated `'in'` expression RHS object-compatibility mismatch reporting in `crates/tsz-checker/src/type_computation.rs` to `check_assignable_or_report(...)`.
+- [x] Migration action 123: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for `parameter_checker`, `state_checking`, and `type_computation` gateway routing.

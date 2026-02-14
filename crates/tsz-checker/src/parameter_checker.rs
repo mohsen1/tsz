@@ -470,9 +470,8 @@ impl<'a> CheckerState<'a> {
             // Check if the initializer type is assignable to the declared type
             if declared_type != TypeId::ANY
                 && !self.type_contains_error(declared_type)
-                && self.should_report_assignability_mismatch(init_type, declared_type, param_idx)
             {
-                self.error_type_not_assignable_with_reason_at(init_type, declared_type, param_idx);
+                let _ = self.check_assignable_or_report(init_type, declared_type, param_idx);
             }
         }
     }

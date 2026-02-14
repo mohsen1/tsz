@@ -473,6 +473,28 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "binding/default-value assignability should route through check_assignable_or_report"
     );
 
+    let parameter_checker_src = fs::read_to_string("src/parameter_checker.rs")
+        .expect("failed to read src/parameter_checker.rs for architecture guard");
+    assert!(
+        parameter_checker_src.contains("check_assignable_or_report("),
+        "parameter initializer assignability should route through check_assignable_or_report"
+    );
+
+    let state_checking_src = fs::read_to_string("src/state_checking.rs")
+        .expect("failed to read src/state_checking.rs for architecture guard");
+    assert!(
+        state_checking_src.contains("check_assignable_or_report(")
+            || state_checking_src.contains("check_assignable_or_report_at("),
+        "state_checking assignment-style checks should route through centralized assignability gateways"
+    );
+
+    let type_computation_src = fs::read_to_string("src/type_computation.rs")
+        .expect("failed to read src/type_computation.rs for architecture guard");
+    assert!(
+        type_computation_src.contains("check_assignable_or_report("),
+        "type_computation mismatch checks should route through check_assignable_or_report"
+    );
+
     let class_checker_src = fs::read_to_string("src/class_checker.rs")
         .expect("failed to read src/class_checker.rs for architecture guard");
     assert!(
