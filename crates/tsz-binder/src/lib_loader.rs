@@ -255,7 +255,6 @@ const ES2015_PLUS_TYPES: &[&str] = &[
     "Symbol",
     "SymbolConstructor",
     "Iterator",
-    "Iterable",
     "IterableIterator",
     "IteratorResult",
     "IteratorYieldResult",
