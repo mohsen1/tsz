@@ -1924,6 +1924,11 @@ impl<'a> CheckerState<'a> {
             if element_data.dot_dot_dot_token {
                 break;
             }
+            // TS doesn't report tuple out-of-bounds for empty array destructuring
+            // when the element has a default value.
+            if !element_data.initializer.is_none() {
+                continue;
+            }
 
             self.error_at_node(
                 element_data.name,
