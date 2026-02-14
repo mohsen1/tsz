@@ -56,6 +56,7 @@ impl<'a> CheckerState<'a> {
         F: FnMut(usize, usize) -> Option<TypeId>,
     {
         use tsz_solver::FunctionShape;
+        let factory = self.ctx.types.factory();
 
         // Pre-create a single placeholder for skipped sensitive arguments.
         // The solver's is_contextually_sensitive recognizes Function types and skips them
@@ -70,7 +71,7 @@ impl<'a> CheckerState<'a> {
                 is_constructor: false,
                 is_method: false,
             };
-            self.ctx.types.function(shape)
+            factory.function(shape)
         });
 
         // First pass: count expanded arguments (spreads of tuple/array literals expand to multiple args)
@@ -313,7 +314,7 @@ impl<'a> CheckerState<'a> {
                     is_constructor: false,
                     is_method: sig.is_method,
                 };
-                self.ctx.types.function(func_shape)
+                factory.function(func_shape)
             })
             .collect();
 
@@ -321,7 +322,7 @@ impl<'a> CheckerState<'a> {
         let union_contextual = if signature_types.len() == 1 {
             signature_types[0]
         } else {
-            self.ctx.types.union(signature_types.clone())
+            factory.union(signature_types)
         };
 
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
