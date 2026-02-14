@@ -1154,9 +1154,18 @@ impl<'a> CheckerState<'a> {
             current = ext.parent;
         }
 
-        // Note: we do NOT suppress TS2304 at file level for syntax errors.
-        // The node-level check above handles nodes directly affected by parse errors.
-        // tsc still emits TS2304 for truly undefined names even in files with parse errors.
+        // Also suppress TS2304 for identifiers that appear shortly after a parse error.
+        // These identifiers are likely artifacts of error recovery.
+        if !self.ctx.syntax_parse_error_positions.is_empty() {
+            if let Some(node) = self.ctx.arena.get(idx) {
+                let ident_pos = node.pos;
+                for &err_pos in &self.ctx.syntax_parse_error_positions {
+                    if err_pos <= ident_pos && (ident_pos - err_pos) <= 8 {
+                        return;
+                    }
+                }
+            }
+        }
 
         // Check if this is an ES2015+ type that requires a specific lib
         // If so, emit TS2583 with a suggestion to change the lib
