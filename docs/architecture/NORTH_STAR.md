@@ -1,7 +1,7 @@
 # TSZ North Star Architecture
 
-**Version**: 1.0
-**Status**: Target Architecture (Post-Refactoring)
+**Version**: 1.1
+**Status**: Corrected Target Architecture (Enforced)
 **Last Updated**: January 2026
 
 ---
@@ -18,6 +18,26 @@ TSZ achieves its goals through four fundamental architectural principles:
 2. **Thin Wrappers**: Components are orchestration layers, not logic containers
 3. **Visitor Patterns**: Systematic traversal over ad-hoc pattern matching
 4. **Arena Allocation**: Memory-efficient, cache-friendly data structures
+
+### Correction Commitments (Binding)
+
+The following architecture corrections are mandatory and supersede any conflicting legacy patterns:
+
+1. **Single semantic type universe**: Solver `TypeId` is canonical. Checker-local semantic type systems must be removed or quarantined behind a non-default legacy surface.
+2. **Sealed type representation**: Checker must not import or construct raw `TypeKey`; it uses solver-owned constructors/query boundaries only.
+3. **Single assignability gateway**: `TS2322`/`TS2345`/`TS2416`-class compatibility checks route through one checker boundary: relation first, reason second, diagnostic rendering last.
+4. **Solver-owned traversal/preconditions**: Type graph traversal and `Lazy(DefId)` precondition discovery live in solver visitors, not checker recursion.
+5. **Cache ownership split**: Checker caches AST/symbol/flow/diagnostic artifacts; solver owns algorithmic type caches and relation memoization.
+6. **CI-enforced boundaries**: Forbidden imports and cross-layer leaks fail CI immediately.
+
+### Execution Tracker (A-F)
+
+- [ ] A) Enforce boundary checks (forbidden imports, dependency direction, `TypeKey` leakage scans).
+- [ ] B) Remove or quarantine checker-local semantic type primitives.
+- [ ] C) Hide raw `TypeKey` behind solver factory/builders.
+- [ ] D) Route assignability diagnostics through one compatibility gateway.
+- [ ] E) Move `Lazy(DefId)` traversal/preconditions into solver visitors.
+- [ ] F) Consolidate algorithmic caches in solver with query-level invalidation behavior.
 
 ### Key Metrics
 
@@ -300,7 +320,7 @@ LSP is a consumer/orchestrator around project state and checker results; it does
 #### Forbidden Cross-Layer Shortcuts
 
 1. Checker implementing ad-hoc type algorithms that duplicate Solver logic.
-2. Checker pattern-matching directly on low-level type internals when Solver query helpers exist.
+2. Checker pattern-matching directly on low-level type internals or constructing raw solver internals (`TypeKey`, direct interning).
 3. Binder importing Solver logic for semantic type decisions.
 4. Emitter importing Checker internals for on-the-fly semantic checks.
 5. Any layer bypassing canonical query APIs and reaching into another layer's private representation.
@@ -334,8 +354,8 @@ TSZ's current architecture is **DefId-first** for semantic type references.
 #### Rules
 
 1. New semantic type references must use `Lazy(DefId)`, not ad-hoc symbol-backed ref keys.
-2. Checker code should prefer solver query helpers (`get_lazy_def_id`, classifiers) over direct low-level matching.
-3. Relation/evaluation code paths must guarantee needed `DefId` mappings are available in `TypeEnvironment`.
+2. Checker code must call solver traversal helpers (`collect_lazy_def_ids`, related visitors) instead of implementing type-shape recursion.
+3. Relation/evaluation code paths must guarantee needed `DefId` mappings are available in `TypeEnvironment` before compatibility checks.
 
 | TypeScript Quirk | Judge Behavior | Lawyer Override |
 |------------------|----------------|-----------------|
@@ -344,7 +364,7 @@ TSZ's current architecture is **DefId-first** for semantic type references.
 | Object literals | Width subtyping | Excess property check |
 | Void returns | Normal checking | Allow any return |
 
-### 3.4 Memory Architecture
+### 3.6 Memory Architecture
 
 #### Arena Allocation Model
 
