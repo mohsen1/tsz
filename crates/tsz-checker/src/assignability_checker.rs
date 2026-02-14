@@ -628,11 +628,13 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
-        let env = self.ctx.type_env.borrow();
-        let overrides = CheckerOverrideProvider::new(self, Some(&*env));
+        // Keep failure analysis on the same relation boundary as `is_assignable_to`
+        // (CheckerContext resolver + checker overrides) so mismatch suppression and
+        // diagnostic rendering observe identical compatibility semantics.
+        let overrides = CheckerOverrideProvider::new(self, None);
         let gate = check_assignable_gate_with_overrides(
             self.ctx.types,
-            &*env,
+            &self.ctx,
             source,
             target,
             self.ctx.pack_relation_flags(),
