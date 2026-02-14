@@ -692,7 +692,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 && let Some(last_node) = self.arena.get(*last_stmt)
             {
                 let standalone_comments =
-                    self.extract_comments_in_range(last_node.end, body_node.end);
+                    self.extract_comments_in_range(last_node.end, body_close_pos);
                 for c in standalone_comments {
                     result.push(c);
                 }
