@@ -141,7 +141,86 @@ impl<'a> ClassES5Emitter<'a> {
         if let Some(ref transforms) = self.transforms {
             printer.set_transforms(transforms.clone());
         }
-        printer.emit(&ir).to_string()
+        let mut output = printer.emit(&ir).to_string();
+        if let Some(recovery_emit) = self.emit_var_function_recovery(class_idx) {
+            output.push('\n');
+            output.push_str(&recovery_emit);
+        }
+        output
+    }
+
+    /// TypeScript parser recovery parity for malformed class members like:
+    /// `var constructor() { }`
+    /// which tsc emits as:
+    /// `var constructor;`
+    /// `(function () { });`
+    fn emit_var_function_recovery(&self, class_idx: NodeIndex) -> Option<String> {
+        let text = self.source_text?;
+        let class_node = self.arena.get(class_idx)?;
+        let start = std::cmp::min(class_node.pos as usize, text.len());
+        let end = std::cmp::min(class_node.end as usize, text.len());
+        if start >= end {
+            return None;
+        }
+
+        let slice = &text[start..end];
+        let mut i = 0usize;
+        let bytes = slice.as_bytes();
+
+        while i < bytes.len() {
+            // Find "var"
+            if bytes[i].is_ascii_whitespace() {
+                i += 1;
+                continue;
+            }
+            if i + 3 > bytes.len() || &slice[i..i + 3] != "var" {
+                i += 1;
+                continue;
+            }
+            i += 3;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let ident_start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if ident_start == i {
+                continue;
+            }
+            let ident = &slice[ident_start..i];
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b'(' {
+                continue;
+            }
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b')' {
+                continue;
+            }
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b'{' {
+                continue;
+            }
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b'}' {
+                continue;
+            }
+
+            return Some(format!("var {ident};\n(function () {{ }});"));
+        }
+
+        None
     }
 }
 

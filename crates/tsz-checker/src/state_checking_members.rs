@@ -669,6 +669,25 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Skip checks when signature value types are unresolved/cascading errors.
+        // This mirrors TS's behavior of avoiding secondary errors after earlier
+        // resolution failures, especially for imported module/type alias edges.
+        if let Some(number_idx) = &index_info.number_index
+            && self.type_contains_error(number_idx.value_type)
+        {
+            index_info.number_index = None;
+        }
+        if let Some(string_idx) = &index_info.string_index
+            && self.type_contains_error(string_idx.value_type)
+        {
+            index_info.string_index = None;
+        }
+
+        // If both signatures were invalidated, there is nothing to enforce.
+        if index_info.string_index.is_none() && index_info.number_index.is_none() {
+            return;
+        }
+
         // Check each property/method against applicable index signatures
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -724,6 +743,12 @@ impl<'a> CheckerState<'a> {
                 // For methods without type annotations, use the member node type
                 self.get_type_of_node(member_idx)
             };
+
+            // Skip members with unresolved/cascading error types; checker will
+            // report those separately and avoid TS2411 cascades.
+            if self.type_contains_error(prop_type) {
+                continue;
+            }
 
             let is_numeric_property = prop_name.parse::<f64>().is_ok();
 
