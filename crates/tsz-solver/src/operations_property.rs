@@ -2504,7 +2504,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Check if this is Array<T>
                 if app.base == array_base && app.args.len() == 1 {
                     // Simplify Array<T> to T[]
-                    return self.interner().intern(TypeKey::Array(app.args[0]));
+                    return self.interner().array(app.args[0]);
                 }
                 // Not an array application, return as-is
                 type_id
