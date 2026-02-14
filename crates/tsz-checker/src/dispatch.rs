@@ -77,7 +77,41 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         let yielded_type = if yield_expr.expression.is_none() {
             TypeId::UNDEFINED
         } else {
-            self.checker.get_type_of_node(yield_expr.expression)
+            let expression_type = self.checker.get_type_of_node(yield_expr.expression);
+            if yield_expr.asterisk_token {
+                let is_async_generator = self
+                    .checker
+                    .find_enclosing_function(idx)
+                    .and_then(|fn_idx| self.checker.ctx.arena.get(fn_idx))
+                    .is_some_and(|fn_node| {
+                        if let Some(func) = self.checker.ctx.arena.get_function(fn_node) {
+                            func.is_async && func.asterisk_token
+                        } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node)
+                        {
+                            self.checker.has_async_modifier(&method.modifiers)
+                                && method.asterisk_token
+                        } else {
+                            false
+                        }
+                    });
+
+                if is_async_generator {
+                    tsz_solver::operations::get_async_iterable_element_type(
+                        self.checker.ctx.types,
+                        expression_type,
+                    )
+                } else {
+                    tsz_solver::operations::get_iterator_info(
+                        self.checker.ctx.types,
+                        expression_type,
+                        false,
+                    )
+                    .map(|info| info.yield_type)
+                    .unwrap_or(TypeId::ANY)
+                }
+            } else {
+                expression_type
+            }
         };
 
         if let Some(expected_yield_type) = self.get_expected_yield_type(idx) {
