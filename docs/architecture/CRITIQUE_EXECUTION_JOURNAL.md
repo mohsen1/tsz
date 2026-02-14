@@ -165,3 +165,6 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 153: added centralized relation precondition helpers (`ensure_relation_input_ready`, `ensure_relation_inputs_ready`) in `crates/tsz-checker/src/assignability_checker.rs`.
 - [x] Migration action 154: migrated call-resolution precondition setup in `crates/tsz-checker/src/call_checker.rs` and `crates/tsz-checker/src/type_computation_complex.rs` to centralized relation precondition helpers.
 - [x] Migration action 155: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for centralized relation precondition helper usage in call-resolution modules.
+- [x] Migration action 156: wired architecture report artifact emission into `scripts/check-checker-boundaries.sh` via `scripts/arch_guard.py --json-report`.
+- [x] Migration action 157: added explicit boundary ownership contract doc at `docs/architecture/BOUNDARIES.md`.
+- [x] Migration action 158: added architecture contribution checklist at `docs/architecture/CONTRIBUTION_CHECKLIST.md`.
