@@ -1964,9 +1964,9 @@ impl<'a> CheckerState<'a> {
 
         // Walk up the parent chain to check:
         // 1. Skip definite assignment checks in ambient declarations (declare const/let)
-        // 2. Skip for module/global-level variables (TypeScript only checks function-local variables)
+        // 2. Anchor checks to a function-like or source-file container
         let mut current = decl_id;
-        let mut found_function_scope = false;
+        let mut found_container_scope = false;
         for _ in 0..50 {
             let Some(info) = self.ctx.arena.node_info(current) else {
                 break;
@@ -1989,7 +1989,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Check if we're inside a function scope
+                // Check if we're inside a function-like or source-file container scope
                 if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                     || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                     || node.kind == syntax_kind_ext::ARROW_FUNCTION
@@ -1997,14 +1997,10 @@ impl<'a> CheckerState<'a> {
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
                     || node.kind == syntax_kind_ext::GET_ACCESSOR
                     || node.kind == syntax_kind_ext::SET_ACCESSOR
+                    || node.kind == syntax_kind_ext::SOURCE_FILE
                 {
-                    found_function_scope = true;
+                    found_container_scope = true;
                     break;
-                }
-
-                // If we reached the source file, this is a module-level variable
-                if node.kind == syntax_kind_ext::SOURCE_FILE {
-                    return false;
                 }
             }
 
@@ -2014,13 +2010,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Only check definite assignment for function-local variables
-        if !found_function_scope {
-            return false;
-        }
-
-        // Variable without initializer inside function scope - should be checked
-        true
+        // Only check definite assignment when we can anchor to a container scope.
+        found_container_scope
     }
 
     /// Check if a node is a for-in/for-of initializer (assignment target).
