@@ -1714,6 +1714,24 @@ impl<'a> CheckerState<'a> {
                 }
                 // Recursively check the return type
                 self.check_type_for_parameter_properties(sig.type_annotation);
+
+                // TS7013/TS7020: Check for implicit any return type on construct/call signatures
+                if self.ctx.no_implicit_any() && sig.type_annotation.is_none() {
+                    use crate::types::diagnostics::diagnostic_codes;
+                    if node.kind == syntax_kind_ext::CONSTRUCT_SIGNATURE {
+                        self.error_at_node(
+                            member_idx,
+                            "Construct signature, which lacks return-type annotation, implicitly has an 'any' return type.",
+                            diagnostic_codes::CONSTRUCT_SIGNATURE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_ANY_RET,
+                        );
+                    } else {
+                        self.error_at_node(
+                            member_idx,
+                            "Call signature, which lacks return-type annotation, implicitly has an 'any' return type.",
+                            diagnostic_codes::CALL_SIGNATURE_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_ANY_RETURN_T,
+                        );
+                    }
+                }
             }
         }
         // Check method signatures in type literals
