@@ -1055,7 +1055,18 @@ impl ParserState {
                     let name = if self.is_token(SyntaxKind::PrivateIdentifier) {
                         self.parse_private_identifier()
                     } else if self.is_identifier_or_keyword() {
-                        self.parse_identifier_name()
+                        // When there's a line break after the dot and the current token
+                        // starts a declaration (e.g. `foo.\nvar y = 1;`), don't consume
+                        // the token as a property name. Instead, emit TS1003 and create
+                        // a missing identifier. This matches tsc's parseRightSideOfDot.
+                        if self.scanner.has_preceding_line_break()
+                            && self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+                        {
+                            self.error_identifier_expected();
+                            NodeIndex::NONE
+                        } else {
+                            self.parse_identifier_name()
+                        }
                     } else {
                         self.error_identifier_expected();
                         NodeIndex::NONE
