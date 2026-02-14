@@ -1505,9 +1505,12 @@ impl ParserState {
                 // Don't consume clause boundaries or expression terminators here.
                 // Let callers decide how to recover so constructs like `switch` can resynchronize
                 // without losing `case`/`default` tokens.
+                // ColonToken is a structural delimiter (case clauses, labels, type annotations)
+                // and must not be consumed as an error token.
                 if self.is_at_expression_end()
                     || self.is_token(SyntaxKind::CaseKeyword)
                     || self.is_token(SyntaxKind::DefaultKeyword)
+                    || self.is_token(SyntaxKind::ColonToken)
                 {
                     return NodeIndex::NONE;
                 }

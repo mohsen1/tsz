@@ -2600,6 +2600,10 @@ impl ParserState {
                 let clause_start = self.token_pos();
                 self.next_token();
                 let clause_expr = self.parse_expression();
+                // Emit TS1109 if the case expression is missing (e.g., `case:`)
+                if clause_expr.is_none() {
+                    self.error_expression_expected();
+                }
                 self.parse_expected(SyntaxKind::ColonToken);
 
                 let mut statements = Vec::new();
