@@ -81,6 +81,14 @@ pub struct Args {
     /// Print fingerprint deltas for failed tests (when available).
     #[arg(long)]
     pub print_fingerprints: bool,
+
+    /// Write structured parity diff artifacts for failed tests.
+    #[arg(long)]
+    pub write_diff_artifacts: bool,
+
+    /// Directory for parity diff artifacts.
+    #[arg(long, default_value = "./artifacts/conformance/diffs")]
+    pub diff_artifacts_dir: String,
 }
 
 impl Args {
