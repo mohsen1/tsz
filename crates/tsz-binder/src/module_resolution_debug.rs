@@ -5,11 +5,10 @@
 //!
 //! Enable debug logging by setting `debug_enabled: true` in `ModuleResolutionDebugger`.
 
-#![allow(clippy::print_stderr)]
-
 use crate::{SymbolId, symbol_flags};
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::debug;
 
 /// Global flag to enable/disable module resolution debugging.
 /// Use `set_debug_enabled(true)` to turn on logging.
@@ -129,7 +128,7 @@ impl ModuleResolutionDebugger {
         }
 
         if is_debug_enabled() {
-            eprintln!(
+            debug!(
                 "[MODULE_DEBUG] {} symbol '{}' (id={}) with flags [{}] in {} (decls={})",
                 if is_merge { "MERGED" } else { "DECLARED" },
                 event.name,
@@ -165,7 +164,7 @@ impl ModuleResolutionDebugger {
             contributing_file: self.current_file.clone(),
         };
 
-        eprintln!(
+        debug!(
             "[MODULE_DEBUG] MERGE '{}' (id={}): [{}] + [{}] = [{}] (from {})",
             event.name,
             symbol_id.0,
@@ -194,7 +193,7 @@ impl ModuleResolutionDebugger {
             found_in_file: found_in_file.clone(),
         };
 
-        eprintln!(
+        debug!(
             "[MODULE_DEBUG] LOOKUP '{}': scopes=[{}] -> {} (file: {})",
             event.name,
             scope_path.join(" -> "),
