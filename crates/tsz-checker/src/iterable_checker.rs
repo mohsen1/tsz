@@ -593,6 +593,29 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy types (type aliases) before checking iterability
         let resolved_type = self.resolve_lazy_type(pattern_type);
 
+        // In array destructuring, TypeScript still reports TS2488 for `never`.
+        if resolved_type == TypeId::NEVER {
+            let error_idx = if init_expr.is_some() {
+                init_expr
+            } else {
+                pattern_idx
+            };
+            if let Some((start, end)) = self.get_node_span(error_idx) {
+                let type_str = self.format_type(pattern_type);
+                let message = format_message(
+                    diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
+                    &[&type_str],
+                );
+                self.error(
+                    start,
+                    end.saturating_sub(start),
+                    message,
+                    diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
+                );
+            }
+            return false;
+        }
+
         // In ES5 mode (without downlevelIteration), array destructuring requires actual arrays.
         // Emit TS2461 if the type is not an array type.
         if self.ctx.compiler_options.target.is_es5() && !is_assignment_array_target {

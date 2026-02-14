@@ -3048,6 +3048,12 @@ impl<'a> CheckerState<'a> {
             // Check if this is an ES2015+ type that requires specific lib support
             let is_es2015_type = lib_loader::is_es2015_plus_type(name);
 
+            // In syntax-error files, TS2693 often cascades from parser recovery and
+            // diverges from tsc's primary-diagnostic set. Keep TS2585 behavior intact.
+            if self.has_parse_errors() && !is_es2015_type {
+                return;
+            }
+
             let (code, message) = if is_es2015_type {
                 // TS2585: Type only refers to a type, suggest changing target library
                 (
