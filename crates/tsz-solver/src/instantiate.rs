@@ -299,8 +299,7 @@ impl<'a> TypeInstantiator<'a> {
             // The DefId (nominal identity) stays the same
             TypeKey::Enum(def_id, member_type) => {
                 let instantiated_member = self.instantiate(*member_type);
-                self.interner
-                    .intern(TypeKey::Enum(*def_id, instantiated_member))
+                self.interner.enum_type(*def_id, instantiated_member)
             }
 
             // Application: instantiate base and args
@@ -764,10 +763,7 @@ impl<'a> TypeInstantiator<'a> {
             // be evaluated (like a string literal or union), trigger evaluation.
             TypeKey::StringIntrinsic { kind, type_arg } => {
                 let inst_arg = self.instantiate(*type_arg);
-                let string_intrinsic = self.interner.intern(TypeKey::StringIntrinsic {
-                    kind: *kind,
-                    type_arg: inst_arg,
-                });
+                let string_intrinsic = self.interner.string_intrinsic(*kind, inst_arg);
 
                 // Check if we can evaluate the result
                 if let Some(key) = self.interner.lookup(inst_arg) {
@@ -793,7 +789,7 @@ impl<'a> TypeInstantiator<'a> {
                 {
                     return substituted;
                 }
-                self.interner.intern(TypeKey::Infer(info.clone()))
+                self.interner.infer(info.clone())
             }
         }
     }
