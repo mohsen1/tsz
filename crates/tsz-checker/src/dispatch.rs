@@ -487,13 +487,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             self.checker
                                 .ensure_application_symbols_resolved(asserted_type);
                             if !self.checker.type_contains_error(asserted_type)
-                                && self.checker.should_report_assignability_mismatch(
-                                    expr_type,
-                                    asserted_type,
-                                    assertion.expression,
-                                )
                             {
-                                self.checker.error_type_not_assignable_with_reason_at(
+                                let _ = self.checker.check_assignable_or_report(
                                     expr_type,
                                     asserted_type,
                                     assertion.expression,
