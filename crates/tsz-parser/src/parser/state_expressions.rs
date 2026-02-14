@@ -941,6 +941,24 @@ impl ParserState {
                 let start_pos = self.token_pos();
                 self.consume_keyword(); // TS1260 check for await keyword with escapes
 
+                // In parameter-default context, `await =>` should report missing operand
+                // but keep `=>` for outer recovery (e.g. malformed parameter lists).
+                if self.in_parameter_default_context()
+                    && self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                {
+                    self.error_expression_expected();
+                    let end_pos = self.token_end();
+                    return self.arena.add_unary_expr_ex(
+                        syntax_kind_ext::AWAIT_EXPRESSION,
+                        start_pos,
+                        end_pos,
+                        UnaryExprDataEx {
+                            expression: NodeIndex::NONE,
+                            asterisk_token: false,
+                        },
+                    );
+                }
+
                 // Unlike return/throw, `await` does NOT participate in ASI
                 // for its operand. `await\n1` parses as `await 1`, not `await; 1;`.
                 // Only emit TS1109 when the next token truly can't start an expression
@@ -1047,6 +1065,7 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::CloseBracketToken)
                     && !self.is_token(SyntaxKind::ColonToken)
                     && !self.is_token(SyntaxKind::CommaToken)
+                    && !self.is_token(SyntaxKind::EqualsGreaterThanToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
                     self.parse_assignment_expression()

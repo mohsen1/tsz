@@ -968,6 +968,11 @@ impl<'a> Printer<'a> {
         // For ES2015/ES2016 targets, use function* + yield pattern
         // For ES5, use function + __generator state machine pattern
         let use_native_generators = !self.ctx.target_es5;
+        let move_params_to_generator = use_native_generators
+            && params
+                .iter()
+                .copied()
+                .any(|p| self.param_initializer_has_top_level_await(p));
 
         // function name(params) {
         self.write("function");
@@ -977,8 +982,11 @@ impl<'a> Printer<'a> {
         }
         self.write("(");
         if use_native_generators {
-            // ES2015: emit parameters normally (no ES5 destructuring transforms)
-            self.emit_function_parameters_js(params);
+            // ES2015: when a parameter initializer starts with `await`, match tsc
+            // by moving parameters to the inner generator and forwarding `arguments`.
+            if !move_params_to_generator {
+                self.emit_function_parameters_js(params);
+            }
         } else {
             // ES5: apply destructuring/default transforms
             let param_transforms = self.emit_function_parameters_es5(params);
@@ -1038,7 +1046,16 @@ impl<'a> Printer<'a> {
         // return __awaiter(this, void 0, void 0, function* () {
         self.write("return __awaiter(");
         self.write(this_expr);
-        self.write(", void 0, void 0, function* () {");
+        if move_params_to_generator {
+            self.write(", arguments, void 0, function* (");
+            let saved = self.ctx.emit_await_as_yield;
+            self.ctx.emit_await_as_yield = true;
+            self.emit_function_parameters_js(params);
+            self.ctx.emit_await_as_yield = saved;
+            self.write(") {");
+        } else {
+            self.write(", void 0, void 0, function* () {");
+        }
         self.write_line();
         self.increase_indent();
 
@@ -1060,6 +1077,22 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn param_initializer_has_top_level_await(&self, param_idx: NodeIndex) -> bool {
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        if param.initializer.is_none() {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(param.initializer) else {
+            return false;
+        };
+        init_node.kind == syntax_kind_ext::AWAIT_EXPRESSION
     }
 
     pub(super) fn emit_function_parameters_es5(
