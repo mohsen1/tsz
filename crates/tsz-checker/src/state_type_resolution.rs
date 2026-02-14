@@ -1599,17 +1599,7 @@ impl<'a> CheckerState<'a> {
             return Some(combined);
         }
 
-        // Last resort: preserve existing behavior for unusual binder states.
-        if let Some((_, exports_table)) = target_binder.module_exports.iter().next() {
-            let mut combined = exports_table.clone();
-            self.merge_export_equals_members(target_binder, exports_table, &mut combined);
-            // Also collect exports from re-export chains
-            let mut visited = rustc_hash::FxHashSet::default();
-            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
-            record_symbols(&combined);
-            return Some(combined);
-        }
-
+        // No target-driven export surface found for this module specifier.
         None
     }
 
