@@ -1,4 +1,5 @@
 use super::module_commonjs::*;
+use tsz_parser::parser::ParserState;
 
 #[test]
 fn test_sanitize_module_name() {
@@ -441,5 +442,25 @@ fn test_collect_export_names_ignores_const_enum() {
     assert!(
         export_names.is_empty(),
         "Expected no runtime exports for const enums"
+    );
+}
+
+#[test]
+fn side_effect_import_emits_bare_require() {
+    let source = "import \"./side\";";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root node must exist");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("source file must exist");
+    let mut transform = CommonJsTransformContext::new(&parser.arena);
+    let nodes = transform.transform_source_file(&source_file.statements.nodes);
+    assert!(
+        nodes
+            .iter()
+            .any(|n| matches!(n, IRNode::Raw(s) if s == "require(\"./side\");")),
+        "side-effect import should emit bare require call"
     );
 }

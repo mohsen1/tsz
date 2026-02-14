@@ -531,9 +531,9 @@ impl<'a> CheckerState<'a> {
         let class_name = &ident.escaped_text;
 
         let sym_id = self
-            .ctx
-            .binder
-            .get_node_symbol(expr_idx)
+            .resolve_identifier_symbol(expr_idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
             .or_else(|| self.ctx.binder.file_locals.get(class_name))
             .or_else(|| self.ctx.binder.get_symbols().find_by_name(class_name))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;

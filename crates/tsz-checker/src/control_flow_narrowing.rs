@@ -2251,12 +2251,31 @@ impl<'a> FlowAnalyzer<'a> {
                 .and_then(|signature| signature.predicate.type_id);
         }
 
-        if type_id.is_none()
-            && let Some(sym_id) = self.binder.get_global_type("ArrayBufferView")
-        {
-            if let Some(def_id) = self.interner.symbol_to_def_id(SymbolRef(sym_id.0)) {
-                type_id = Some(self.interner.intern(TypeKey::Lazy(def_id)));
+        if let Some(sym_id) = self.binder.get_global_type("ArrayBufferView") {
+            let symbol_ref = SymbolRef(sym_id.0);
+            let mut view_type = if let Some(def_id) = self.interner.symbol_to_def_id(symbol_ref) {
+                self.interner.intern(TypeKey::Lazy(def_id))
+            } else {
+                self.interner.reference(symbol_ref)
+            };
+
+            // ArrayBuffer.isView narrows to ArrayBufferView with the default
+            // type argument (`ArrayBufferLike`) in TypeScript's lib.
+            if let Some(array_buffer_like_sym) = self.binder.get_global_type("ArrayBufferLike") {
+                let array_buffer_like_ref = SymbolRef(array_buffer_like_sym.0);
+                let array_buffer_like =
+                    if let Some(def_id) = self.interner.symbol_to_def_id(array_buffer_like_ref) {
+                        self.interner.intern(TypeKey::Lazy(def_id))
+                    } else {
+                        self.interner.reference(array_buffer_like_ref)
+                    };
+
+                view_type = self
+                    .interner
+                    .application(view_type, vec![array_buffer_like]);
             }
+
+            type_id = Some(view_type);
         }
 
         let type_id = type_id?;

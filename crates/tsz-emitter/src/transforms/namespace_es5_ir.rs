@@ -52,6 +52,7 @@
 //! ```
 
 use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
+use crate::transforms::enum_es5_ir::transform_enum_to_ir;
 use crate::transforms::ir::*;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -983,7 +984,8 @@ impl<'a> NamespaceES5Transformer<'a> {
         let enum_name = get_identifier_text(self.arena, enum_data.name)?;
         let is_exported = has_export_modifier(self.arena, &enum_data.modifiers);
 
-        let mut result = vec![IRNode::ASTRef(enum_idx)];
+        let enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
+        let mut result = vec![enum_ir];
 
         if is_exported {
             result.push(IRNode::NamespaceExport {
@@ -1003,7 +1005,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         let enum_name = get_identifier_text(self.arena, enum_data.name)?;
         Some(IRNode::Sequence(vec![
-            IRNode::ASTRef(enum_idx),
+            transform_enum_to_ir(self.arena, enum_idx)?,
             IRNode::NamespaceExport {
                 namespace: ns_name.to_string(),
                 name: enum_name.clone(),
@@ -1503,7 +1505,8 @@ impl<'a> NamespaceTransformContext<'a> {
         let enum_name = get_identifier_text(self.arena, enum_data.name)?;
         let is_exported = has_export_modifier(self.arena, &enum_data.modifiers);
 
-        let mut result = vec![IRNode::ASTRef(enum_idx)];
+        let enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
+        let mut result = vec![enum_ir];
 
         if is_exported {
             result.push(IRNode::NamespaceExport {
@@ -1527,7 +1530,7 @@ impl<'a> NamespaceTransformContext<'a> {
 
         let enum_name = get_identifier_text(self.arena, enum_data.name)?;
         Some(IRNode::Sequence(vec![
-            IRNode::ASTRef(enum_idx),
+            transform_enum_to_ir(self.arena, enum_idx)?,
             IRNode::NamespaceExport {
                 namespace: ns_name.to_string(),
                 name: enum_name.clone(),

@@ -1,4 +1,5 @@
 use super::*;
+use tsz_parser::parser::ParserState;
 
 #[test]
 fn test_safe_slice_basic() {
@@ -88,4 +89,14 @@ fn test_streaming_writer() {
         String::from_utf8(output).expect("output should be valid UTF-8"),
         "hello world"
     );
+}
+
+#[test]
+fn test_es6_generator_param_named_yield_keeps_identifier_text() {
+    let source = "function* foo(a = yield, yield) {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert_eq!(output, "function* foo(a = yield, yield) { }\n");
 }
