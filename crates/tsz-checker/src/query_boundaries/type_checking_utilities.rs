@@ -1,8 +1,8 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use tsz_solver::type_queries::{
-    ArrayLikeKind, ElementIndexableKind, IndexKeyKind, LiteralKeyKind, TypeContainsKind,
-    TypeParameterConstraintKind, TypeQueryKind, UnionMembersKind,
+    ArrayLikeKind, ElementIndexableKind, IndexKeyKind, LiteralKeyKind, TypeParameterConstraintKind,
+    TypeQueryKind, UnionMembersKind,
 };
 
 pub(crate) fn widened_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -49,13 +49,6 @@ pub(crate) fn classify_element_indexable(
 
 pub(crate) fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryKind {
     tsz_solver::type_queries::classify_type_query(db, type_id)
-}
-
-pub(crate) fn classify_for_contains_traversal(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> TypeContainsKind {
-    tsz_solver::type_queries::classify_for_contains_traversal(db, type_id)
 }
 
 pub(crate) fn is_invalid_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

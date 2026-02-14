@@ -1315,13 +1315,11 @@ impl<'a> CheckerState<'a> {
             None => return declared_type, // No flow info - use declared type
         };
 
-        // Fast path: types containing `any` cannot be meaningfully narrowed.
-        // Skipping flow traversal here avoids pathological O(N^2) behavior on large
-        // assignment-heavy files (e.g. largeControlFlowGraph.ts with `const data = []`).
-        if declared_type == TypeId::ANY
-            || declared_type == TypeId::ERROR
-            || (!declared_type.is_intrinsic() && self.type_contains_any(declared_type))
-        {
+        // Fast path: `any` and `error` types cannot be meaningfully narrowed.
+        // NOTE: We only skip for direct `any`/`error`, NOT for compound types that
+        // contain `any` (e.g. unions of classes with `any`-returning methods).
+        // TypeScript narrows such compound types normally via instanceof/typeof.
+        if declared_type == TypeId::ANY || declared_type == TypeId::ERROR {
             return declared_type;
         }
 
