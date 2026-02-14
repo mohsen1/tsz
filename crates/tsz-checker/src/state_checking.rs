@@ -2133,6 +2133,72 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the property name or index
+        if !element_data.property_name.is_none() {
+            // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
+            // check index signatures when the key is not a simple identifier key.
+            // This aligns with TS2537 behavior for destructuring from `{}`.
+            let computed_expr = self
+                .ctx
+                .arena
+                .get(element_data.property_name)
+                .and_then(|prop_node| self.ctx.arena.get_computed_property(prop_node))
+                .map(|computed| computed.expression);
+            let computed_is_identifier = computed_expr
+                .and_then(|expr_idx| {
+                    self.ctx
+                        .arena
+                        .get(expr_idx)
+                        .and_then(|expr_node| self.ctx.arena.get_identifier(expr_node))
+                })
+                .is_some();
+
+            if !computed_is_identifier {
+                let key_type = computed_expr
+                    .map(|expr_idx| self.get_type_of_node(expr_idx))
+                    .unwrap_or(TypeId::ANY);
+                let key_is_string = key_type == TypeId::STRING;
+                let key_is_number = key_type == TypeId::NUMBER;
+
+                if key_is_string || key_is_number {
+                    let has_matching_index = |ty: TypeId| {
+                        query::object_shape(self.ctx.types, ty).is_some_and(|shape| {
+                            if key_is_string {
+                                shape.string_index.is_some()
+                            } else {
+                                shape.number_index.is_some() || shape.string_index.is_some()
+                            }
+                        })
+                    };
+
+                    let has_index_signature =
+                        if let Some(members) = query::union_members(self.ctx.types, parent_type) {
+                            members.into_iter().all(has_matching_index)
+                        } else {
+                            has_matching_index(parent_type)
+                        };
+
+                    if !has_index_signature
+                        && parent_type != TypeId::ANY
+                        && parent_type != TypeId::ERROR
+                        && parent_type != TypeId::UNKNOWN
+                    {
+                        let mut formatter = self.ctx.create_type_formatter();
+                        let object_str = formatter.format(parent_type);
+                        let index_str = formatter.format(key_type);
+                        let message = crate::types::diagnostics::format_message(
+                            crate::types::diagnostics::diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                            &[&object_str, &index_str],
+                        );
+                        self.error_at_node(
+                            element_data.property_name,
+                            &message,
+                            crate::types::diagnostics::diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                        );
+                    }
+                }
+            }
+        }
+
         let property_name = if !element_data.property_name.is_none() {
             // { x: a } - property_name is "x"
             if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {

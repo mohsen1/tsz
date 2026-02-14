@@ -295,6 +295,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve identifier without marking (for checking only).
+    #[allow(dead_code)]
     pub(crate) fn resolve_identifier_symbol_no_mark(&self, idx: NodeIndex) -> Option<SymbolId> {
         self.resolve_identifier_symbol_inner(idx)
     }
