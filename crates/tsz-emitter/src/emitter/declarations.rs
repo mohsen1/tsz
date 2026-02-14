@@ -904,7 +904,16 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        self.emit(method.name);
+        // Parser recovery for `*() {}` can produce an identifier name token `"("`.
+        // Treat that as an omitted name to match tsc emit.
+        let has_recovery_missing_name = self.arena.get(method.name).is_some_and(|name_node| {
+            self.arena
+                .get_identifier(name_node)
+                .is_some_and(|id| id.escaped_text == "(")
+        });
+        if !method.name.is_none() && !has_recovery_missing_name {
+            self.emit(method.name);
+        }
         self.write("(");
         self.emit_function_parameters_js(&method.parameters.nodes);
         self.write(")");
