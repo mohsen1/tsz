@@ -9,6 +9,7 @@
 //! This module extends CheckerState with generic-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
+use crate::query_boundaries::generic_checker as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -33,9 +34,6 @@ impl<'a> CheckerState<'a> {
     ) {
         use tsz_scanner::SyntaxKind;
         use tsz_solver::AssignabilityChecker;
-        use tsz_solver::type_queries::{
-            TypeArgumentExtractionKind, classify_for_type_argument_extraction,
-        };
 
         if let Some(call_expr) = self.ctx.arena.get_call_expr_at(call_idx)
             && let Some(callee_node) = self.ctx.arena.get(call_expr.expression)
@@ -51,22 +49,23 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type parameters from the callee type
-        let type_params = match classify_for_type_argument_extraction(self.ctx.types, callee_type) {
-            TypeArgumentExtractionKind::Function(shape_id) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                shape.type_params.clone()
-            }
-            TypeArgumentExtractionKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                // For callable types, use the first signature's type params
-                shape
-                    .call_signatures
-                    .first()
-                    .map(|sig| sig.type_params.clone())
-                    .unwrap_or_default()
-            }
-            TypeArgumentExtractionKind::Other => return,
-        };
+        let type_params =
+            match query::classify_for_type_argument_extraction(self.ctx.types, callee_type) {
+                query::TypeArgumentExtractionKind::Function(shape_id) => {
+                    let shape = self.ctx.types.function_shape(shape_id);
+                    shape.type_params.clone()
+                }
+                query::TypeArgumentExtractionKind::Callable(shape_id) => {
+                    let shape = self.ctx.types.callable_shape(shape_id);
+                    // For callable types, use the first signature's type params
+                    shape
+                        .call_signatures
+                        .first()
+                        .map(|sig| sig.type_params.clone())
+                        .unwrap_or_default()
+                }
+                query::TypeArgumentExtractionKind::Other => return,
+            };
 
         if type_params.is_empty() {
             // TS2558: Expected 0 type arguments, but got N.
@@ -92,7 +91,7 @@ impl<'a> CheckerState<'a> {
             if let Some(constraint) = param.constraint {
                 // Skip constraint checking when the type argument contains unresolved type parameters
                 // (they'll be checked later when fully instantiated)
-                if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_arg) {
+                if query::contains_type_parameters(self.ctx.types, type_arg) {
                     continue;
                 }
 
@@ -193,7 +192,7 @@ impl<'a> CheckerState<'a> {
                 // Skip validation when type arguments contain unresolved type parameters
                 // or infer types. TypeScript defers constraint checking when args aren't
                 // fully concrete (e.g., indexed access `T[K]`, conditional types, etc.)
-                if tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_arg) {
+                if query::contains_type_parameters(self.ctx.types, type_arg) {
                     continue;
                 }
 
@@ -221,10 +220,7 @@ impl<'a> CheckerState<'a> {
                 // This can happen when the constraint references other type params
                 // that weren't fully substituted (e.g., `K extends keyof T` where T
                 // is itself a type parameter from a different context).
-                if tsz_solver::type_queries::contains_type_parameters_db(
-                    self.ctx.types,
-                    instantiated_constraint,
-                ) {
+                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
                     continue;
                 }
 
@@ -259,10 +255,9 @@ impl<'a> CheckerState<'a> {
         _call_idx: NodeIndex,
     ) {
         use tsz_solver::AssignabilityChecker;
-        use tsz_solver::type_queries::get_callable_shape;
 
         // Get the type parameters from the constructor type
-        let Some(shape) = get_callable_shape(self.ctx.types, constructor_type) else {
+        let Some(shape) = query::callable_shape_for_type(self.ctx.types, constructor_type) else {
             return;
         };
         // For callable types, use the first construct signature's type params

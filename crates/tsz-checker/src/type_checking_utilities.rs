@@ -4,6 +4,7 @@
 //! type resolution methods for CheckerState.
 //! Split from type_checking.rs for maintainability.
 
+use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MemberAccessLevel};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -173,9 +174,7 @@ impl<'a> CheckerState<'a> {
     /// let z = true;     // Type: boolean (not true)
     /// ```
     pub(crate) fn widen_literal_type(&self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries;
-
-        type_queries::get_widened_literal_type(self.ctx.types, type_id).unwrap_or(type_id)
+        query::widened_literal_type(self.ctx.types, type_id).unwrap_or(type_id)
     }
 
     /// Map an expanded argument index back to the original argument node index.
@@ -205,8 +204,6 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         expanded_index: usize,
     ) -> Option<NodeIndex> {
-        use tsz_solver::type_queries;
-
         let mut current_expanded_index = 0;
 
         for &arg_idx in args.iter() {
@@ -225,9 +222,7 @@ impl<'a> CheckerState<'a> {
                     let spread_type = self.resolve_type_for_property_access_simple(spread_type);
 
                     // If it's a tuple type, it expands to multiple elements
-                    if let Some(elems_id) =
-                        type_queries::get_tuple_list_id(self.ctx.types, spread_type)
-                    {
+                    if let Some(elems_id) = query::tuple_list_id(self.ctx.types, spread_type) {
                         let elems = self.ctx.types.tuple_list(elems_id);
                         let end_index = current_expanded_index + elems.len();
                         if expanded_index >= current_expanded_index && expanded_index < end_index {
@@ -262,9 +257,7 @@ impl<'a> CheckerState<'a> {
     /// // Box<string> resolves to Box for property access inspection
     /// ```
     fn resolve_type_for_property_access_simple(&self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries;
-
-        type_queries::get_application_base(self.ctx.types, type_id).unwrap_or(type_id)
+        query::application_base(self.ctx.types, type_id).unwrap_or(type_id)
     }
 
     pub(crate) fn lookup_symbol_with_name(
@@ -504,24 +497,22 @@ impl<'a> CheckerState<'a> {
         &self,
         index_type: TypeId,
     ) -> Option<(Vec<tsz_common::interner::Atom>, Vec<f64>)> {
-        use tsz_solver::type_queries::{LiteralKeyKind, classify_literal_key};
-
-        match classify_literal_key(self.ctx.types, index_type) {
-            LiteralKeyKind::StringLiteral(atom) => Some((vec![atom], Vec::new())),
-            LiteralKeyKind::NumberLiteral(num) => Some((Vec::new(), vec![num])),
-            LiteralKeyKind::Union(members) => {
+        match query::literal_key_kind(self.ctx.types, index_type) {
+            query::LiteralKeyKind::StringLiteral(atom) => Some((vec![atom], Vec::new())),
+            query::LiteralKeyKind::NumberLiteral(num) => Some((Vec::new(), vec![num])),
+            query::LiteralKeyKind::Union(members) => {
                 let mut string_keys = Vec::with_capacity(members.len());
                 let mut number_keys = Vec::new();
                 for &member in members.iter() {
-                    match classify_literal_key(self.ctx.types, member) {
-                        LiteralKeyKind::StringLiteral(atom) => string_keys.push(atom),
-                        LiteralKeyKind::NumberLiteral(num) => number_keys.push(num),
+                    match query::literal_key_kind(self.ctx.types, member) {
+                        query::LiteralKeyKind::StringLiteral(atom) => string_keys.push(atom),
+                        query::LiteralKeyKind::NumberLiteral(num) => number_keys.push(num),
                         _ => return None,
                     }
                 }
                 Some((string_keys, number_keys))
             }
-            LiteralKeyKind::Other => None,
+            query::LiteralKeyKind::Other => None,
         }
     }
 
@@ -669,24 +660,22 @@ impl<'a> CheckerState<'a> {
     /// type E = { [key: string]: number };  // Index signature, not array-like
     /// ```
     pub(crate) fn is_array_like_type(&self, object_type: TypeId) -> bool {
-        use tsz_solver::type_queries::{ArrayLikeKind, classify_array_like};
-
         // Check for array/tuple types directly
         if self.is_mutable_array_type(object_type) {
             return true;
         }
 
-        match classify_array_like(self.ctx.types, object_type) {
-            ArrayLikeKind::Array(_) => true,
-            ArrayLikeKind::Tuple => true,
-            ArrayLikeKind::Readonly(inner) => self.is_array_like_type(inner),
-            ArrayLikeKind::Union(members) => members
+        match query::classify_array_like(self.ctx.types, object_type) {
+            query::ArrayLikeKind::Array(_) => true,
+            query::ArrayLikeKind::Tuple => true,
+            query::ArrayLikeKind::Readonly(inner) => self.is_array_like_type(inner),
+            query::ArrayLikeKind::Union(members) => members
                 .iter()
                 .all(|&member| self.is_array_like_type(member)),
-            ArrayLikeKind::Intersection(members) => members
+            query::ArrayLikeKind::Intersection(members) => members
                 .iter()
                 .any(|&member| self.is_array_like_type(member)),
-            ArrayLikeKind::Other => false,
+            query::ArrayLikeKind::Other => false,
         }
     }
 
@@ -721,8 +710,6 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         literal_index: Option<usize>,
     ) -> bool {
-        use tsz_solver::type_queries;
-
         if object_type == TypeId::ANY
             || object_type == TypeId::UNKNOWN
             || object_type == TypeId::ERROR
@@ -746,7 +733,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let unwrapped_type = type_queries::unwrap_readonly_for_lookup(self.ctx.types, object_type);
+        let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, object_type);
 
         !self.is_element_indexable(unwrapped_type, wants_string, wants_number)
     }
@@ -771,12 +758,10 @@ impl<'a> CheckerState<'a> {
     /// type E = "a" | 1;      // (true, true) - mixed literals
     /// ```
     pub(crate) fn get_index_key_kind(&self, index_type: TypeId) -> Option<(bool, bool)> {
-        use tsz_solver::type_queries::{IndexKeyKind, classify_index_key};
-
-        match classify_index_key(self.ctx.types, index_type) {
-            IndexKeyKind::String | IndexKeyKind::StringLiteral => Some((true, false)),
-            IndexKeyKind::Number | IndexKeyKind::NumberLiteral => Some((false, true)),
-            IndexKeyKind::Union(members) => {
+        match query::classify_index_key(self.ctx.types, index_type) {
+            query::IndexKeyKind::String | query::IndexKeyKind::StringLiteral => Some((true, false)),
+            query::IndexKeyKind::Number | query::IndexKeyKind::NumberLiteral => Some((false, true)),
+            query::IndexKeyKind::Union(members) => {
                 let mut wants_string = false;
                 let mut wants_number = false;
                 for member in members {
@@ -786,7 +771,7 @@ impl<'a> CheckerState<'a> {
                 }
                 Some((wants_string, wants_number))
             }
-            IndexKeyKind::Other => None,
+            query::IndexKeyKind::Other => None,
         }
     }
 
@@ -824,22 +809,20 @@ impl<'a> CheckerState<'a> {
         wants_string: bool,
         wants_number: bool,
     ) -> bool {
-        use tsz_solver::type_queries::{ElementIndexableKind, classify_element_indexable};
-
-        match classify_element_indexable(self.ctx.types, object_type) {
-            ElementIndexableKind::Array | ElementIndexableKind::Tuple => wants_number,
-            ElementIndexableKind::ObjectWithIndex {
+        match query::classify_element_indexable(self.ctx.types, object_type) {
+            query::ElementIndexableKind::Array | query::ElementIndexableKind::Tuple => wants_number,
+            query::ElementIndexableKind::ObjectWithIndex {
                 has_string,
                 has_number,
             } => (wants_string && has_string) || (wants_number && (has_number || has_string)),
-            ElementIndexableKind::Union(members) => members
+            query::ElementIndexableKind::Union(members) => members
                 .iter()
                 .all(|&member| self.is_element_indexable(member, wants_string, wants_number)),
-            ElementIndexableKind::Intersection(members) => members
+            query::ElementIndexableKind::Intersection(members) => members
                 .iter()
                 .any(|&member| self.is_element_indexable(member, wants_string, wants_number)),
-            ElementIndexableKind::StringLike => wants_number,
-            ElementIndexableKind::Other => false,
+            query::ElementIndexableKind::StringLike => wants_number,
+            query::ElementIndexableKind::Other => false,
         }
     }
 
@@ -1340,10 +1323,9 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_type_query_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_binder::SymbolId;
         use tsz_solver::SymbolRef;
-        use tsz_solver::type_queries::{TypeQueryKind, classify_type_query};
 
-        match classify_type_query(self.ctx.types, type_id) {
-            TypeQueryKind::TypeQuery(SymbolRef(sym_id)) => {
+        match query::classify_type_query(self.ctx.types, type_id) {
+            query::TypeQueryKind::TypeQuery(SymbolRef(sym_id)) => {
                 // Check for cycle in typeof resolution (scoped borrow)
                 let is_cycle = { self.ctx.typeof_resolution_stack.borrow().contains(&sym_id) };
                 if is_cycle {
@@ -1366,7 +1348,7 @@ impl<'a> CheckerState<'a> {
 
                 result
             }
-            TypeQueryKind::ApplicationWithTypeQuery {
+            query::TypeQueryKind::ApplicationWithTypeQuery {
                 base_sym_ref: SymbolRef(sym_id),
                 args,
             } => {
@@ -1391,7 +1373,7 @@ impl<'a> CheckerState<'a> {
 
                 self.ctx.types.application(base, args)
             }
-            TypeQueryKind::Application { .. } | TypeQueryKind::Other => type_id,
+            query::TypeQueryKind::Application { .. } | query::TypeQueryKind::Other => type_id,
         }
     }
 
@@ -1753,9 +1735,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if type_id is a union and contains target_type.
     pub(crate) fn union_contains(&self, type_id: TypeId, target_type: TypeId) -> bool {
-        use tsz_solver::type_queries;
-
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, type_id) {
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
             members.contains(&target_type)
         } else {
             false
@@ -2188,7 +2168,6 @@ impl<'a> CheckerState<'a> {
     /// Inner recursive implementation of type_contains_any.
     fn type_contains_any_inner(&self, type_id: TypeId, visited: &mut Vec<TypeId>) -> bool {
         use tsz_solver::TemplateSpan;
-        use tsz_solver::type_queries::{TypeContainsKind, classify_for_contains_traversal};
 
         if type_id == TypeId::ANY {
             return true;
@@ -2198,18 +2177,18 @@ impl<'a> CheckerState<'a> {
         }
         visited.push(type_id);
 
-        match classify_for_contains_traversal(self.ctx.types, type_id) {
-            TypeContainsKind::Array(elem) => self.type_contains_any_inner(elem, visited),
-            TypeContainsKind::Tuple(list_id) => self
+        match query::classify_for_contains_traversal(self.ctx.types, type_id) {
+            query::TypeContainsKind::Array(elem) => self.type_contains_any_inner(elem, visited),
+            query::TypeContainsKind::Tuple(list_id) => self
                 .ctx
                 .types
                 .tuple_list(list_id)
                 .iter()
                 .any(|elem| self.type_contains_any_inner(elem.type_id, visited)),
-            TypeContainsKind::Members(members) => members
+            query::TypeContainsKind::Members(members) => members
                 .iter()
                 .any(|&member| self.type_contains_any_inner(member, visited)),
-            TypeContainsKind::Object(shape_id) => {
+            query::TypeContainsKind::Object(shape_id) => {
                 let shape = self.ctx.types.object_shape(shape_id);
                 if shape
                     .properties
@@ -2230,11 +2209,11 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
-            TypeContainsKind::Function(shape_id) => {
+            query::TypeContainsKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
                 self.type_contains_any_inner(shape.return_type, visited)
             }
-            TypeContainsKind::Callable(shape_id) => {
+            query::TypeContainsKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 if shape
                     .call_signatures
@@ -2255,7 +2234,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .any(|prop| self.type_contains_any_inner(prop.type_id, visited))
             }
-            TypeContainsKind::Application(app_id) => {
+            query::TypeContainsKind::Application(app_id) => {
                 let app = self.ctx.types.type_application(app_id);
                 if self.type_contains_any_inner(app.base, visited) {
                     return true;
@@ -2264,14 +2243,14 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .any(|&arg| self.type_contains_any_inner(arg, visited))
             }
-            TypeContainsKind::Conditional(cond_id) => {
+            query::TypeContainsKind::Conditional(cond_id) => {
                 let cond = self.ctx.types.conditional_type(cond_id);
                 self.type_contains_any_inner(cond.check_type, visited)
                     || self.type_contains_any_inner(cond.extends_type, visited)
                     || self.type_contains_any_inner(cond.true_type, visited)
                     || self.type_contains_any_inner(cond.false_type, visited)
             }
-            TypeContainsKind::Mapped(mapped_id) => {
+            query::TypeContainsKind::Mapped(mapped_id) => {
                 let mapped = self.ctx.types.mapped_type(mapped_id);
                 if self.type_contains_any_inner(mapped.constraint, visited) {
                     return true;
@@ -2283,11 +2262,11 @@ impl<'a> CheckerState<'a> {
                 }
                 self.type_contains_any_inner(mapped.template, visited)
             }
-            TypeContainsKind::IndexAccess { base, index } => {
+            query::TypeContainsKind::IndexAccess { base, index } => {
                 self.type_contains_any_inner(base, visited)
                     || self.type_contains_any_inner(index, visited)
             }
-            TypeContainsKind::TemplateLiteral(template_id) => self
+            query::TypeContainsKind::TemplateLiteral(template_id) => self
                 .ctx
                 .types
                 .template_list(template_id)
@@ -2298,8 +2277,8 @@ impl<'a> CheckerState<'a> {
                     }
                     _ => false,
                 }),
-            TypeContainsKind::Inner(inner) => self.type_contains_any_inner(inner, visited),
-            TypeContainsKind::TypeParam {
+            query::TypeContainsKind::Inner(inner) => self.type_contains_any_inner(inner, visited),
+            query::TypeContainsKind::TypeParam {
                 constraint,
                 default,
             } => {
@@ -2315,23 +2294,18 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
-            TypeContainsKind::Terminal => false,
+            query::TypeContainsKind::Terminal => false,
         }
     }
 
     /// Check if a type cannot be used as an index type (TS2538).
     pub(crate) fn type_is_invalid_index_type(&self, type_id: TypeId) -> bool {
-        tsz_solver::type_queries::is_invalid_index_type(self.ctx.types, type_id)
+        query::is_invalid_index_type(self.ctx.types, type_id)
     }
 
     /// Check if two types have no overlap (for TS2367 validation).
     /// Returns true if the types can never be equal in a comparison.
     pub(crate) fn types_have_no_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
-        use tsz_solver::type_queries::{
-            TypeParameterConstraintKind, UnionMembersKind, classify_for_type_parameter_constraint,
-            classify_for_union_members,
-        };
-
         tracing::trace!(left = ?left, right = ?right, "types_have_no_overlap called");
 
         // any, unknown, error types can overlap with anything
@@ -2355,25 +2329,27 @@ impl<'a> CheckerState<'a> {
         }
 
         // For type parameters, check the constraint instead of the parameter itself
-        let effective_left = match classify_for_type_parameter_constraint(self.ctx.types, left) {
-            TypeParameterConstraintKind::TypeParameter {
-                constraint: Some(constraint),
-            } => {
-                tracing::trace!(?constraint, "left is type param with constraint");
-                constraint
-            }
-            _ => left,
-        };
+        let effective_left =
+            match query::classify_for_type_parameter_constraint(self.ctx.types, left) {
+                query::TypeParameterConstraintKind::TypeParameter {
+                    constraint: Some(constraint),
+                } => {
+                    tracing::trace!(?constraint, "left is type param with constraint");
+                    constraint
+                }
+                _ => left,
+            };
 
-        let effective_right = match classify_for_type_parameter_constraint(self.ctx.types, right) {
-            TypeParameterConstraintKind::TypeParameter {
-                constraint: Some(constraint),
-            } => {
-                tracing::trace!(?constraint, "right is type param with constraint");
-                constraint
-            }
-            _ => right,
-        };
+        let effective_right =
+            match query::classify_for_type_parameter_constraint(self.ctx.types, right) {
+                query::TypeParameterConstraintKind::TypeParameter {
+                    constraint: Some(constraint),
+                } => {
+                    tracing::trace!(?constraint, "right is type param with constraint");
+                    constraint
+                }
+                _ => right,
+            };
 
         tracing::trace!(
             ?effective_left,
@@ -2382,8 +2358,8 @@ impl<'a> CheckerState<'a> {
         );
 
         // Check union types: if any member of one union overlaps with the other, they overlap
-        if let UnionMembersKind::Union(left_members) =
-            classify_for_union_members(self.ctx.types, effective_left)
+        if let query::UnionMembersKind::Union(left_members) =
+            query::classify_for_union_members(self.ctx.types, effective_left)
         {
             tracing::trace!("effective_left is union");
             for &left_member in left_members.iter() {
@@ -2397,8 +2373,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if let UnionMembersKind::Union(right_members) =
-            classify_for_union_members(self.ctx.types, effective_right)
+        if let query::UnionMembersKind::Union(right_members) =
+            query::classify_for_union_members(self.ctx.types, effective_right)
         {
             tracing::trace!("effective_right is union");
             for &right_member in right_members.iter() {
