@@ -36,6 +36,11 @@ fn parser_no_errors_for_nested_regex_in_conditional() {
 }
 
 #[test]
+fn parser_no_errors_for_regex_and_division_context_switches() {
+    parse_ok("const n = 10 / 2; const re = /foo/gim; const next = 3 / 4;", "test.ts");
+}
+
+#[test]
 fn parser_no_errors_for_binary_division_expression() {
     parse_ok("const n = 10 / 2 / 5;", "test.ts");
 }
@@ -71,6 +76,15 @@ fn parser_emits_error_for_unterminated_template_expression() {
     assert!(
         !diags.is_empty(),
         "expected syntax diagnostics for unterminated template, got: {diags:?}"
+    );
+}
+
+#[test]
+fn parser_emits_error_for_unclosed_regex_literal() {
+    let diags = parse_with_file_name("const re = /foo[abc", "test.ts");
+    assert!(
+        !diags.is_empty(),
+        "expected parse diagnostics for unterminated regex, got: {diags:?}"
     );
 }
 
@@ -145,8 +159,31 @@ fn parser_no_errors_with_shift_assignment_variants() {
 }
 
 #[test]
+fn parser_no_errors_with_generic_arrow_shift_expression() {
+    parse_ok("const f = <T>(x: T) => x >> 0;", "test.ts");
+}
+
+#[test]
 fn parser_no_errors_with_generic_comparison_chain() {
     parse_ok("const t = a > b ? a : b;", "test.ts");
+}
+
+#[test]
+fn parser_emits_error_for_incomplete_shift_expression() {
+    let diags = parse_with_file_name("const n = 1 >> ;", "test.ts");
+    assert!(
+        !diags.is_empty(),
+        "expected syntax error for incomplete shift expression, got: {diags:?}"
+    );
+}
+
+#[test]
+fn parser_emits_error_for_unclosed_template_tail() {
+    let diags = parse_with_file_name("const label = `left ${1 + 2`;", "test.ts");
+    assert!(
+        !diags.is_empty(),
+        "expected template recovery diagnostics, got: {diags:?}"
+    );
 }
 
 // =========================================================================
