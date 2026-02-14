@@ -63,12 +63,16 @@ pub struct BinderOptions {
     /// ECMAScript target version.
     /// This affects language-specific behaviors like block-scoped function hoisting.
     pub target: ScriptTarget,
+    /// When true, parse in strict mode and emit "use strict" for each source file.
+    /// This mirrors the `--alwaysStrict` compiler option.
+    pub always_strict: bool,
 }
 
 impl Default for BinderOptions {
     fn default() -> Self {
         BinderOptions {
             target: ScriptTarget::default(),
+            always_strict: false,
         }
     }
 }
@@ -184,6 +188,9 @@ pub struct BinderState {
     pub declared_modules: FxHashSet<String>,
     /// Whether the current source file is an external module (has top-level import/export).
     pub is_external_module: bool,
+    /// Whether the current scope is in strict mode (via "use strict" directive or --alwaysStrict).
+    /// In strict mode, function declarations inside blocks are block-scoped, not hoisted.
+    pub(crate) is_strict_scope: bool,
     /// Flow nodes for control flow analysis
     pub flow_nodes: FlowNodeArena,
     /// Current flow node
@@ -353,6 +360,7 @@ impl BinderState {
             file_locals: SymbolTable::new(),
             declared_modules: FxHashSet::default(),
             is_external_module: false,
+            is_strict_scope: false,
             flow_nodes,
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
@@ -401,6 +409,7 @@ impl BinderState {
         self.file_locals.clear();
         self.declared_modules.clear();
         self.is_external_module = false;
+        self.is_strict_scope = false;
         self.flow_nodes.clear();
         self.unreachable_flow = self.flow_nodes.alloc(flow_flags::UNREACHABLE);
         self.current_flow = FlowNodeId::NONE;
@@ -515,6 +524,7 @@ impl BinderState {
             file_locals,
             declared_modules: FxHashSet::default(),
             is_external_module: false,
+            is_strict_scope: false,
             flow_nodes,
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
@@ -627,6 +637,7 @@ impl BinderState {
             file_locals,
             declared_modules: FxHashSet::default(),
             is_external_module: false,
+            is_strict_scope: false,
             flow_nodes,
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
@@ -1249,6 +1260,35 @@ impl BinderState {
         false
     }
 
+    /// Check if a list of statements starts with a "use strict" prologue directive.
+    /// Prologue directives are string literal expression statements at the top of a scope.
+    fn has_use_strict_prologue(arena: &NodeArena, stmts: &[NodeIndex]) -> bool {
+        for &stmt_idx in stmts {
+            let Some(stmt) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                break; // Prologues must be at the top
+            }
+            let Some(expr_stmt) = arena.get_expression_statement(stmt) else {
+                break;
+            };
+            let Some(expr) = arena.get(expr_stmt.expression) else {
+                break;
+            };
+            if expr.kind == SyntaxKind::StringLiteral as u16 {
+                if let Some(lit) = arena.get_literal(expr) {
+                    if lit.text == "use strict" {
+                        return true;
+                    }
+                }
+            } else {
+                break; // Non-string expression, stop looking for prologues
+            }
+        }
+        false
+    }
+
     // =========================================================================
     // Lib Symbol Merging (SymbolId collision fix)
     // =========================================================================
@@ -1607,6 +1647,10 @@ impl BinderState {
         if let Some(node) = arena.get(root)
             && let Some(sf) = arena.get_source_file(node)
         {
+            // Detect strict mode: "use strict" prologue or --alwaysStrict option
+            self.is_strict_scope = self.options.always_strict
+                || Self::has_use_strict_prologue(arena, &sf.statements.nodes);
+
             // First pass: collect hoisted declarations
             self.collect_hoisted_declarations(arena, &sf.statements);
 
@@ -2009,6 +2053,14 @@ impl BinderState {
 
         self.is_external_module = self.source_file_is_external_module(arena, root);
 
+        // Detect strict mode for incremental rebinding
+        if let Some(node) = arena.get(root)
+            && let Some(sf) = arena.get_source_file(node)
+        {
+            self.is_strict_scope = self.options.always_strict
+                || Self::has_use_strict_prologue(arena, &sf.statements.nodes);
+        }
+
         self.prune_incremental_maps(arena, reparse_start);
 
         let mut prefix_names = FxHashSet::default();
@@ -2138,10 +2190,13 @@ impl BinderState {
                         }
                     }
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                        // In ES6+ modules (external modules), function declarations inside
-                        // blocks are block-scoped, not hoisted to module scope.
-                        // Only hoist if we're NOT in a block OR NOT in an external module.
-                        if !in_block || !self.is_external_module {
+                        // Function declarations inside blocks are block-scoped when:
+                        // - The file is an external module (ES6 modules), or
+                        // - The scope is in strict mode ("use strict" or --alwaysStrict)
+                        // In non-strict, non-module scripts, they hoist (Annex B behavior).
+                        let block_scoped =
+                            in_block && (self.is_external_module || self.is_strict_scope);
+                        if !block_scoped {
                             self.hoisted_functions.push(stmt_idx);
                         }
                     }
