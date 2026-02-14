@@ -20,7 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use tsz_checker::types::diagnostics::{
+use tsz_checker::diagnostics::{
     Diagnostic as CheckerDiagnostic, DiagnosticCategory, diagnostic_codes,
 };
 use tsz_common::position::{LineMap, Location, Position, Range};

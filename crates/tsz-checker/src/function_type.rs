@@ -229,6 +229,7 @@ impl<'a> CheckerState<'a> {
             let template_names = Self::jsdoc_template_type_params(jsdoc);
             if !template_names.is_empty() {
                 let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
+                let factory = self.ctx.types.factory();
                 for name in template_names {
                     let atom = self.ctx.types.intern_string(&name);
                     let info = TypeParamInfo {
@@ -237,7 +238,7 @@ impl<'a> CheckerState<'a> {
                         default: None,
                         is_const: false,
                     };
-                    let ty = self.ctx.types.type_param(info.clone());
+                    let ty = factory.type_param(info);
                     jsdoc_type_param_types.insert(name, ty);
                     jsdoc_type_params.push(info);
                 }
@@ -375,7 +376,10 @@ impl<'a> CheckerState<'a> {
                     && type_id != TypeId::ERROR
                     && type_id != TypeId::UNDEFINED
                 {
-                    self.ctx.types.union2(type_id, TypeId::UNDEFINED)
+                    self.ctx
+                        .types
+                        .factory()
+                        .union(vec![type_id, TypeId::UNDEFINED])
                 } else {
                     type_id
                 };
@@ -823,7 +827,7 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_type_param_updates);
 
-        return_with_cleanup!(self.ctx.types.function(shape))
+        return_with_cleanup!(self.ctx.types.factory().function(shape))
     }
 
     fn contextual_type_params_from_expected(&self, expected: TypeId) -> Option<Vec<TypeParamInfo>> {
@@ -1109,7 +1113,7 @@ impl<'a> CheckerState<'a> {
                     default: None,
                     is_const: false,
                 };
-                let type_id = self.ctx.types.type_param(info);
+                let type_id = self.ctx.types.factory().type_param(info);
 
                 // Only add if not already in scope (inner scope should shadow outer)
                 if !self.ctx.type_parameter_scope.contains_key(&name) {
@@ -1148,6 +1152,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return TypeId::ERROR; // Missing access expression data - propagate error
         };
+        let factory = self.ctx.types.factory();
 
         // Get the property name first (needed for abstract property check regardless of object type)
         let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
@@ -1558,7 +1563,7 @@ impl<'a> CheckerState<'a> {
                     if access.question_dot_token {
                         // Suppress error, return (property_type | undefined)
                         let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
-                        return self.ctx.types.union(vec![base_type, TypeId::UNDEFINED]);
+                        return factory.union(vec![base_type, TypeId::UNDEFINED]);
                     }
 
                     // Report error based on the cause (TS2531/TS2532/TS2533 or TS18050)
@@ -1718,11 +1723,11 @@ impl<'a> CheckerState<'a> {
                     elem.type_id
                 };
                 if elem.optional {
-                    ty = self.ctx.types.union2(ty, TypeId::UNDEFINED);
+                    ty = self.ctx.types.factory().union(vec![ty, TypeId::UNDEFINED]);
                 }
                 members.push(ty);
             }
-            Some(self.ctx.types.union(members))
+            Some(self.ctx.types.factory().union(members))
         } else if let Some(app) = get_type_application(self.ctx.types, base_type) {
             app.args.first().copied()
         } else {
@@ -1878,7 +1883,7 @@ impl<'a> CheckerState<'a> {
                 for _ in 1..params.len() {
                     args.push(TypeId::ANY);
                 }
-                let app_type = self.ctx.types.application(aug_type, args);
+                let app_type = self.ctx.types.factory().application(aug_type, args);
                 if let PropertyAccessResult::Success { type_id, .. } =
                     self.resolve_property_access_with_env(app_type, property_name)
                 {
@@ -1892,7 +1897,7 @@ impl<'a> CheckerState<'a> {
         } else if found_types.len() == 1 {
             Some(found_types[0])
         } else {
-            Some(self.ctx.types.union(found_types))
+            Some(self.ctx.types.factory().union(found_types))
         }
     }
 
@@ -1972,6 +1977,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let factory = self.ctx.types.factory();
         use tsz_solver::type_queries::{get_callable_shape, get_function_shape};
 
         let (params, return_type) =
@@ -1993,7 +1999,7 @@ impl<'a> CheckerState<'a> {
                 rest: param.rest,
             })
             .collect();
-        let args_tuple = self.ctx.types.tuple(tuple_elements);
+        let args_tuple = factory.tuple(tuple_elements);
 
         let method_shape = tsz_solver::FunctionShape {
             params: vec![
@@ -2018,6 +2024,6 @@ impl<'a> CheckerState<'a> {
             is_method: false,
         };
 
-        Some(self.ctx.types.function(method_shape))
+        Some(factory.function(method_shape))
     }
 }

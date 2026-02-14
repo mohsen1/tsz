@@ -1683,9 +1683,7 @@ impl Project {
         let mut seen = FxHashSet::default();
 
         for diag in diagnostics {
-            if diag.code
-                != Some(tsz_checker::types::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
-            {
+            if diag.code != Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME) {
                 continue;
             }
 

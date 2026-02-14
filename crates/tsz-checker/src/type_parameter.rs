@@ -140,7 +140,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// This is a convenience method for applying type arguments to a generic type.
     pub fn apply_type_args(&self, generic_type: TypeId, type_args: Vec<TypeId>) -> TypeId {
-        self.ctx.types.application(generic_type, type_args)
+        self.ctx
+            .types
+            .factory()
+            .application(generic_type, type_args)
     }
 
     // =========================================================================

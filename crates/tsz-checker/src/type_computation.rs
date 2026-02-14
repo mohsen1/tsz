@@ -37,6 +37,7 @@ impl<'a> CheckerState<'a> {
     /// member is an unevaluated Application type that the solver's `NumberLikeVisitor`
     /// can't handle.
     pub(crate) fn evaluate_type_for_binary_ops(&mut self, type_id: TypeId) -> TypeId {
+        let factory = self.ctx.types.factory();
         // First try top-level evaluation
         let evaluated = self.evaluate_type_with_resolution(type_id);
 
@@ -54,7 +55,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
             if changed {
-                return self.ctx.types.union(new_members);
+                return factory.union(new_members);
             }
         }
 
@@ -73,6 +74,7 @@ impl<'a> CheckerState<'a> {
             EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
         };
         if let EvaluationNeeded::Union(members) = classify_for_evaluation(self.ctx.types, type_id) {
+            let factory = self.ctx.types.factory();
             // Distribute evaluation over union members so lazy/application/etc.
             // inside a union get resolved through the checker's type environment.
             let mut changed = false;
@@ -87,7 +89,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
             return if changed {
-                self.ctx.types.union(evaluated)
+                factory.union(evaluated)
             } else {
                 type_id
             };
@@ -171,6 +173,7 @@ impl<'a> CheckerState<'a> {
     /// - Spread elements (`[...arr]`)
     /// - Common type inference for mixed elements
     pub(crate) fn get_type_of_array_literal(&mut self, idx: NodeIndex) -> TypeId {
+        let factory = self.ctx.types.factory();
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
@@ -189,7 +192,7 @@ impl<'a> CheckerState<'a> {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 return self.resolve_lazy_type(resolved);
             }
-            return self.ctx.types.array(TypeId::ANY);
+            return factory.array(TypeId::ANY);
         }
 
         // Resolve lazy type aliases once and reuse for both tuple_context and ctx_helper
@@ -236,9 +239,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.ctx.contextual_type = helper.get_array_element_type();
                 }
-                // Clear application eval cache when contextual types change to ensure
-                // generic function type inference uses updated contextual information
-                self.ctx.application_eval_cache.clear();
             }
 
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
@@ -342,7 +342,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if tuple_context.is_some() {
-            return self.ctx.types.tuple(tuple_elements);
+            return factory.tuple(tuple_elements);
         }
 
         // When in a const assertion context, array literals become tuples (not arrays)
@@ -358,7 +358,7 @@ impl<'a> CheckerState<'a> {
                     rest: false,
                 })
                 .collect();
-            return self.ctx.types.tuple(const_tuple_elements);
+            return factory.tuple(const_tuple_elements);
         }
 
         // Use contextual element type when available for better inference
@@ -384,7 +384,7 @@ impl<'a> CheckerState<'a> {
                         *elem_node,
                     );
                 }
-                return self.ctx.types.array(context_element_type);
+                return factory.array(context_element_type);
             }
         }
 
@@ -395,7 +395,7 @@ impl<'a> CheckerState<'a> {
             Some(&self.ctx), // Pass TypeResolver for class hierarchy BCT
         );
 
-        self.ctx.types.array(element_type)
+        factory.array(element_type)
     }
 
     /// Get type of prefix unary expression.
@@ -887,7 +887,10 @@ impl<'a> CheckerState<'a> {
 
         // Handle nullish coercion
         if access.question_dot_token {
-            self.ctx.types.union(vec![result_type, TypeId::UNDEFINED])
+            self.ctx
+                .types
+                .factory()
+                .union(vec![result_type, TypeId::UNDEFINED])
         } else {
             result_type
         }
@@ -944,6 +947,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_interface_member_simple(&mut self, member_idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
         use tsz_solver::FunctionShape;
+        let factory = self.ctx.types.factory();
 
         let Some(member_node) = self.ctx.arena.get(member_idx) else {
             return TypeId::ANY;
@@ -969,7 +973,7 @@ impl<'a> CheckerState<'a> {
                 is_method: true,
             };
             self.pop_type_parameters(type_param_updates);
-            return self.ctx.types.function(shape);
+            return factory.function(shape);
         }
 
         if member_node.kind == PROPERTY_SIGNATURE {
@@ -993,6 +997,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_interface_member(&mut self, member_idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
         use tsz_solver::{FunctionShape, PropertyInfo};
+        let factory = self.ctx.types.factory();
 
         let Some(member_node) = self.ctx.arena.get(member_idx) else {
             return TypeId::ERROR;
@@ -1025,7 +1030,7 @@ impl<'a> CheckerState<'a> {
                     is_method: true,
                 };
                 self.pop_type_parameters(type_param_updates);
-                let method_type = self.ctx.types.function(shape);
+                let method_type = factory.function(shape);
 
                 let prop = PropertyInfo {
                     name: name_atom,
@@ -1037,7 +1042,7 @@ impl<'a> CheckerState<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                 };
-                return self.ctx.types.object(vec![prop]);
+                return factory.object(vec![prop]);
             }
 
             let type_id = if !sig.type_annotation.is_none() {
@@ -1055,7 +1060,7 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
             };
-            return self.ctx.types.object(vec![prop]);
+            return factory.object(vec![prop]);
         }
 
         TypeId::ANY
@@ -1068,6 +1073,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_binary_expression(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_scanner::SyntaxKind;
         use tsz_solver::{BinaryOpEvaluator, BinaryOpResult};
+        let factory = self.ctx.types.factory();
 
         let evaluator = BinaryOpEvaluator::new(self.ctx.types);
         let mut stack = vec![(idx, false)];
@@ -1234,7 +1240,7 @@ impl<'a> CheckerState<'a> {
                 let result = if left_type == TypeId::BOOLEAN {
                     right_type
                 } else {
-                    self.ctx.types.union2(left_type, right_type)
+                    factory.union(vec![left_type, right_type])
                 };
                 type_stack.push(result);
                 continue;
@@ -1251,7 +1257,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
                 self.check_truthy_or_falsy(left_idx);
-                type_stack.push(self.ctx.types.union2(left_type, right_type));
+                type_stack.push(factory.union(vec![left_type, right_type]));
                 continue;
             }
 
@@ -1271,7 +1277,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     let result = match non_nullish {
                         None => right_type,
-                        Some(non_nullish) => self.ctx.types.union2(non_nullish, right_type),
+                        Some(non_nullish) => factory.union(vec![non_nullish, right_type]),
                     };
                     type_stack.push(result);
                 }
@@ -1822,7 +1828,7 @@ impl<'a> CheckerState<'a> {
                     result_type = Some(if types.len() == 1 {
                         types[0]
                     } else {
-                        self.ctx.types.union(types)
+                        self.ctx.types.factory().union(types)
                     });
                 }
             }
@@ -2011,7 +2017,11 @@ impl<'a> CheckerState<'a> {
 
         if let Some(cause) = nullish_cause {
             if access.question_dot_token {
-                result_type = self.ctx.types.union(vec![result_type, TypeId::UNDEFINED]);
+                result_type = self
+                    .ctx
+                    .types
+                    .factory()
+                    .union(vec![result_type, TypeId::UNDEFINED]);
             } else if !report_no_index {
                 self.report_possibly_nullish_object(access.expression, cause);
             }
@@ -2030,17 +2040,6 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         literal_index: Option<usize>,
     ) -> TypeId {
-        use crate::state::EnumKind;
-        use tsz_solver::element_access::{ElementAccessEvaluator, ElementAccessResult};
-
-        let cache_key = (object_type, index_type, literal_index);
-        if let Some(&cached) = self.ctx.element_access_type_cache.get(&cache_key) {
-            return cached;
-        }
-        if !self.ctx.element_access_type_set.insert(cache_key) {
-            return TypeId::ANY;
-        }
-
         // Normalize index type for enum values
         let solver_index_type = if let Some(index) = literal_index {
             self.ctx.types.literal_number(index as f64)
@@ -2054,42 +2053,9 @@ impl<'a> CheckerState<'a> {
             index_type
         };
 
-        // Use ElementAccessEvaluator for structured results
-        let mut evaluator = ElementAccessEvaluator::new(self.ctx.types);
-        evaluator.set_no_unchecked_indexed_access(self.ctx.no_unchecked_indexed_access());
-
-        let result =
-            match evaluator.resolve_element_access(object_type, solver_index_type, literal_index) {
-                ElementAccessResult::Success(ty) => {
-                    // UNDEFINED from evaluator means "not found" - fallback to ANY
-                    if ty == TypeId::UNDEFINED {
-                        TypeId::ANY
-                    } else {
-                        ty
-                    }
-                }
-                ElementAccessResult::IndexOutOfBounds {
-                    type_id: _,
-                    index: _,
-                    length: _,
-                } => {
-                    // TS2493 - Tuple index out of bounds (reported by caller via get_type_of_element_access)
-                    // Return ERROR here; diagnostic is handled at call site with node context
-                    TypeId::ERROR
-                }
-                ElementAccessResult::NotIndexable { .. } => {
-                    // Object is not indexable - return ERROR
-                    TypeId::ERROR
-                }
-                ElementAccessResult::NoIndexSignature { .. } => {
-                    // TS7053 - No index signature (reported by caller)
-                    TypeId::ANY
-                }
-            };
-
-        self.ctx.element_access_type_set.remove(&cache_key);
-        self.ctx.element_access_type_cache.insert(cache_key, result);
-        result
+        self.ctx
+            .types
+            .resolve_element_access_type(object_type, solver_index_type, literal_index)
     }
 
     /// Get the type of the `super` keyword.
@@ -2616,7 +2582,7 @@ impl<'a> CheckerState<'a> {
                         }
                         self.ctx
                             .this_type_stack
-                            .push(self.ctx.types.object(this_props));
+                            .push(self.ctx.types.factory().object(this_props));
                         pushed_synthetic_this = true;
                     }
 
@@ -2775,7 +2741,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
-        let object_type = self.ctx.types.object_fresh(properties);
+        let object_type = self.ctx.types.factory().object_fresh(properties);
 
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
         // This fixes the "Zombie Freshness" bug by distinguishing fresh vs
@@ -2797,45 +2763,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Vec<tsz_solver::PropertyInfo> {
-        use rustc_hash::FxHashMap;
-        use tsz_common::interner::Atom;
-        use tsz_solver::type_queries::{SpreadPropertyKind, classify_for_spread_properties};
-
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.resolve_lazy_type(resolved);
-        if let Some(cached) = self.ctx.object_spread_property_cache.get(&resolved) {
-            return cached.clone();
-        }
-        if !self.ctx.object_spread_property_set.insert(resolved) {
-            return Vec::new();
-        }
-
-        let properties = match classify_for_spread_properties(self.ctx.types, resolved) {
-            SpreadPropertyKind::Object(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.properties.to_vec()
-            }
-            SpreadPropertyKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                shape.properties.to_vec()
-            }
-            SpreadPropertyKind::Intersection(members) => {
-                let mut merged: FxHashMap<Atom, tsz_solver::PropertyInfo> = FxHashMap::default();
-                for member in members {
-                    for prop in self.collect_object_spread_properties(member) {
-                        merged.insert(prop.name, prop);
-                    }
-                }
-                merged.into_values().collect()
-            }
-            SpreadPropertyKind::NoProperties => Vec::new(),
-        };
-
-        self.ctx.object_spread_property_set.remove(&resolved);
-        self.ctx
-            .object_spread_property_cache
-            .insert(resolved, properties.clone());
-        properties
+        self.ctx.types.collect_object_spread_properties(resolved)
     }
 
     // =========================================================================
@@ -2905,7 +2835,11 @@ impl<'a> CheckerState<'a> {
                 // Create PromiseLike<T> type
                 let promise_like_t = self.get_promise_like_type(contextual);
                 // Create union: T | PromiseLike<T>
-                let union_context = self.ctx.types.union2(contextual, promise_like_t);
+                let union_context = self
+                    .ctx
+                    .types
+                    .factory()
+                    .union(vec![contextual, promise_like_t]);
                 // Set the union as the contextual type for the operand
                 self.ctx.contextual_type = Some(union_context);
             }

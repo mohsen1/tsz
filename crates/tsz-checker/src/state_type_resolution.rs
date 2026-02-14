@@ -215,7 +215,11 @@ impl<'a> CheckerState<'a> {
                                             .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                                             .collect();
                                         // Create a TypeApplication to instantiate the generic type
-                                        return self.ctx.types.application(type_id, type_args);
+                                        return self
+                                            .ctx
+                                            .types
+                                            .factory()
+                                            .application(type_id, type_args);
                                     }
                                 }
                                 return type_id;
@@ -237,7 +241,11 @@ impl<'a> CheckerState<'a> {
                                         .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                                         .collect();
                                     // Create a TypeApplication to instantiate the generic type
-                                    return self.ctx.types.application(type_id, type_args);
+                                    return self
+                                        .ctx
+                                        .types
+                                        .factory()
+                                        .application(type_id, type_args);
                                 }
                             }
                             return type_id;
@@ -509,7 +517,11 @@ impl<'a> CheckerState<'a> {
                 .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                 .collect();
             if !type_args.is_empty() {
-                return self.ctx.types.application(TypeId::PROMISE_BASE, type_args);
+                return self
+                    .ctx
+                    .types
+                    .factory()
+                    .application(TypeId::PROMISE_BASE, type_args);
             }
         }
 

@@ -515,7 +515,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let module_type = self.ctx.types.object(props);
+            let factory = self.ctx.types.factory();
+            let module_type = factory.object(props);
             return self.create_promise_of(module_type);
         }
 
@@ -539,18 +540,18 @@ impl<'a> CheckerState<'a> {
         // `var p: Promise<T>` goes through create_lazy_type_ref → Application(Lazy(DefId), [T]).
         // We must do the same here so that `import()` returns a structurally compatible type.
         let lib_binders = self.get_lib_binders();
+        let factory = self.ctx.types.factory();
+
         if let Some(sym_id) = self
             .ctx
             .binder
             .get_global_type_with_libs("Promise", &lib_binders)
         {
             let promise_base = self.ctx.create_lazy_type_ref(sym_id);
-            return self.ctx.types.application(promise_base, vec![inner_type]);
+            return factory.application(promise_base, vec![inner_type]);
         }
 
         // Fallback: use synthetic PROMISE_BASE (works without lib files)
-        self.ctx
-            .types
-            .application(TypeId::PROMISE_BASE, vec![inner_type])
+        factory.application(TypeId::PROMISE_BASE, vec![inner_type])
     }
 }

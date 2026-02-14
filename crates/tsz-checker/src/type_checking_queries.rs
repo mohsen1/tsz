@@ -2403,6 +2403,7 @@ impl<'a> CheckerState<'a> {
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
         let mut lib_type_id: Option<TypeId> = None;
+        let factory = self.ctx.types.factory();
 
         // Clone lib_contexts to allow access within the resolver closure
         let lib_contexts = self.ctx.lib_contexts.clone();
@@ -2576,7 +2577,7 @@ impl<'a> CheckerState<'a> {
                                         // Application types only expand when the base is Lazy, not when
                                         // it's the actual MappedType/Object/etc. This allows evaluate_application
                                         // to trigger and substitute type parameters correctly.
-                                        let lazy_type = self.ctx.types.lazy(def_id);
+                                        let lazy_type = self.ctx.types.factory().lazy(def_id);
                                         lib_types.push(lazy_type);
 
                                         // Type aliases don't merge across files, take the first one
@@ -2618,7 +2619,7 @@ impl<'a> CheckerState<'a> {
         } else if lib_types.len() > 1 {
             let mut merged = lib_types[0];
             for &ty in &lib_types[1..] {
-                merged = self.ctx.types.intersection2(merged, ty);
+                merged = factory.intersection(vec![merged, ty]);
             }
             lib_type_id = Some(merged);
         }
@@ -2745,7 +2746,7 @@ impl<'a> CheckerState<'a> {
                 );
                 let aug_type = lowering.lower_interface_declarations(decls);
                 lib_type_id = if let Some(lib_type) = lib_type_id {
-                    Some(self.ctx.types.intersection2(lib_type, aug_type))
+                    Some(factory.intersection(vec![lib_type, aug_type]))
                 } else {
                     Some(aug_type)
                 };
@@ -2781,6 +2782,7 @@ impl<'a> CheckerState<'a> {
             TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type,
         };
 
+        let factory = self.ctx.types.factory();
         let lib_contexts = self.ctx.lib_contexts.clone();
         let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
             let arenas = self.ctx.all_arenas.as_ref()?;
@@ -2965,7 +2967,7 @@ impl<'a> CheckerState<'a> {
         } else if lib_types.len() > 1 {
             let mut merged = lib_types[0];
             for &ty in &lib_types[1..] {
-                merged = self.ctx.types.intersection2(merged, ty);
+                merged = factory.intersection(vec![merged, ty]);
             }
             Some(merged)
         } else {
@@ -3077,7 +3079,7 @@ impl<'a> CheckerState<'a> {
                 );
                 let aug_type = lowering.lower_interface_declarations(decls);
                 lib_type_id = if let Some(lib_type) = lib_type_id {
-                    Some(self.ctx.types.intersection2(lib_type, aug_type))
+                    Some(factory.intersection(vec![lib_type, aug_type]))
                 } else {
                     Some(aug_type)
                 };

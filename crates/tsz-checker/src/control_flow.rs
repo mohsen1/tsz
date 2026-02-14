@@ -325,7 +325,7 @@ impl<'a> FlowAnalyzer<'a> {
                 let back_edge_type = self.get_flow_type(reference, initial_type, back_edge);
 
                 // Union current type with back-edge type
-                current_type = self.interner.union2(current_type, back_edge_type);
+                current_type = self.interner.union(vec![current_type, back_edge_type]);
             }
 
             // Check if we've reached a fixed point (type stopped changing)
@@ -337,7 +337,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Fixed point not reached within iteration limit
         // Conservative widening: return union of entry type and initial declared type
         // This matches TypeScript's behavior for complex loops
-        let widened = self.interner.union2(entry_type, initial_type);
+        let widened = self.interner.union(vec![entry_type, initial_type]);
 
         // Update cache with final widened result
         if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache) {

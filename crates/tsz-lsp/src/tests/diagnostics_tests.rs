@@ -1,5 +1,5 @@
 use super::*;
-use tsz_checker::types::diagnostics::{
+use tsz_checker::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
 };
 use tsz_common::position::LineMap;

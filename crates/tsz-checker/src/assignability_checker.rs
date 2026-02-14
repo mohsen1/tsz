@@ -15,7 +15,9 @@
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, ExcessPropertiesKind, analyze_assignability_failure_with_context,
     are_types_overlapping_with_env, classify_for_assignability_eval,
-    classify_for_excess_properties, is_callable_type, object_shape_for_type,
+    classify_for_excess_properties, is_assignable_bivariant_with_resolver,
+    is_assignable_with_overrides, is_assignable_with_resolver, is_callable_type,
+    is_redeclaration_identical_with_resolver, is_subtype_with_resolver, object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -168,7 +170,7 @@ impl<'a> CheckerState<'a> {
             let cache_key =
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
-            if let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key) {
+            if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
                 return cached;
             }
         }
@@ -176,34 +178,22 @@ impl<'a> CheckerState<'a> {
         // Use CheckerContext as the resolver instead of TypeEnvironment
         // This enables access to symbol information for enum type detection
         let overrides = CheckerOverrideProvider::new(self, None);
-        let policy = tsz_solver::RelationPolicy::from_flags(flags)
-            .with_strict_subtype_checking(self.ctx.sound_mode())
-            .with_strict_any_propagation(self.ctx.sound_mode());
-        let context = tsz_solver::RelationContext {
-            query_db: Some(self.ctx.types),
-            inheritance_graph: Some(&self.ctx.inheritance_graph),
-            class_check: None,
-        };
-        let result = tsz_solver::query_relation_with_overrides(
+        let result = is_assignable_with_overrides(
             self.ctx.types,
             &self.ctx,
             source,
             target,
-            tsz_solver::RelationKind::Assignable,
-            policy,
-            context,
+            flags,
+            &self.ctx.inheritance_graph,
+            self.ctx.sound_mode(),
             &overrides,
-        )
-        .is_related();
+        );
 
         if is_cacheable {
             let cache_key =
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
-            self.ctx
-                .relation_cache
-                .borrow_mut()
-                .insert(cache_key, result);
+            self.ctx.types.insert_assignability_cache(cache_key, result);
         }
 
         trace!(
@@ -225,26 +215,17 @@ impl<'a> CheckerState<'a> {
         env: &tsz_solver::TypeEnvironment,
     ) -> bool {
         let flags = self.ctx.pack_relation_flags();
-        let policy = tsz_solver::RelationPolicy::from_flags(flags)
-            .with_strict_subtype_checking(self.ctx.sound_mode())
-            .with_strict_any_propagation(self.ctx.sound_mode());
-        let context = tsz_solver::RelationContext {
-            query_db: Some(self.ctx.types),
-            inheritance_graph: Some(&self.ctx.inheritance_graph),
-            class_check: None,
-        };
         let overrides = CheckerOverrideProvider::new(self, Some(env));
-        tsz_solver::query_relation_with_overrides(
+        is_assignable_with_overrides(
             self.ctx.types,
             env,
             source,
             target,
-            tsz_solver::RelationKind::Assignable,
-            policy,
-            context,
+            flags,
+            &self.ctx.inheritance_graph,
+            self.ctx.sound_mode(),
             &overrides,
         )
-        .is_related()
     }
 
     /// Check if `source` type is assignable to `target` type with bivariant function parameter checking.
@@ -287,31 +268,22 @@ impl<'a> CheckerState<'a> {
             let cache_key =
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
-            if let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key) {
+            if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
                 return cached;
             }
         }
 
         let env = self.ctx.type_env.borrow();
-        let policy = tsz_solver::RelationPolicy::from_flags(flags)
-            .with_strict_subtype_checking(self.ctx.sound_mode())
-            .with_strict_any_propagation(self.ctx.sound_mode());
-        let context = tsz_solver::RelationContext {
-            query_db: Some(self.ctx.types),
-            inheritance_graph: Some(&self.ctx.inheritance_graph),
-            class_check: None,
-        };
         // Preserve existing behavior: bivariant path does not use checker overrides.
-        let result = tsz_solver::query_relation_with_resolver(
+        let result = is_assignable_bivariant_with_resolver(
             self.ctx.types,
             &*env,
             source,
             target,
-            tsz_solver::RelationKind::AssignableBivariantCallbacks,
-            policy,
-            context,
-        )
-        .is_related();
+            flags,
+            &self.ctx.inheritance_graph,
+            self.ctx.sound_mode(),
+        );
 
         // Cache the result for non-inference types
         // Use ORIGINAL types for cache key (not evaluated types)
@@ -319,10 +291,7 @@ impl<'a> CheckerState<'a> {
             let cache_key =
                 RelationCacheKey::assignability(original_source, original_target, flags, 0);
 
-            self.ctx
-                .relation_cache
-                .borrow_mut()
-                .insert(cache_key, result);
+            self.ctx.types.insert_assignability_cache(cache_key, result);
         }
 
         trace!(
@@ -632,7 +601,7 @@ impl<'a> CheckerState<'a> {
             // since the checker doesn't track depth like SubtypeChecker does
             let cache_key = RelationCacheKey::subtype(source, target, flags, 0);
 
-            if let Some(&cached) = self.ctx.relation_cache.borrow().get(&cache_key) {
+            if let Some(cached) = self.ctx.types.lookup_subtype_cache(cache_key) {
                 return cached;
             }
         }
@@ -644,36 +613,27 @@ impl<'a> CheckerState<'a> {
         self.ensure_refs_resolved(source);
         self.ensure_refs_resolved(target);
 
-        let relation_result = {
-            let env = self.ctx.type_env.borrow();
-            let binder = self.ctx.binder;
+        let env = self.ctx.type_env.borrow();
+        let binder = self.ctx.binder;
 
-            // Helper to check if a symbol is a class (for nominal subtyping)
-            let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {
-                let sym_id = tsz_binder::SymbolId(sym_ref.0);
-                if let Some(sym) = binder.get_symbol(sym_id) {
-                    (sym.flags & symbol_flags::CLASS) != 0
-                } else {
-                    false
-                }
-            };
-
-            let context = tsz_solver::RelationContext {
-                query_db: Some(self.ctx.types),
-                inheritance_graph: Some(&self.ctx.inheritance_graph),
-                class_check: Some(&is_class_fn),
-            };
-            let policy = tsz_solver::RelationPolicy::from_flags(flags);
-            tsz_solver::query_relation_with_resolver(
-                self.ctx.types,
-                &*env,
-                source,
-                target,
-                tsz_solver::RelationKind::Subtype,
-                policy,
-                context,
-            )
+        // Helper to check if a symbol is a class (for nominal subtyping)
+        let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {
+            let sym_id = tsz_binder::SymbolId(sym_ref.0);
+            if let Some(sym) = binder.get_symbol(sym_id) {
+                (sym.flags & symbol_flags::CLASS) != 0
+            } else {
+                false
+            }
         };
+        let relation_result = is_subtype_with_resolver(
+            self.ctx.types,
+            &*env,
+            source,
+            target,
+            flags,
+            &self.ctx.inheritance_graph,
+            Some(&is_class_fn),
+        );
 
         if relation_result.depth_exceeded {
             self.error_at_current_node(
@@ -688,10 +648,7 @@ impl<'a> CheckerState<'a> {
         if is_cacheable {
             let cache_key = RelationCacheKey::subtype(source, target, flags, 0);
 
-            self.ctx
-                .relation_cache
-                .borrow_mut()
-                .insert(cache_key, result);
+            self.ctx.types.insert_subtype_cache(cache_key, result);
         }
 
         result
@@ -721,20 +678,14 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let context = tsz_solver::RelationContext {
-            query_db: Some(self.ctx.types),
-            inheritance_graph: Some(&self.ctx.inheritance_graph),
-            class_check: Some(&is_class_fn),
-        };
-        let policy = tsz_solver::RelationPolicy::from_flags(self.ctx.pack_relation_flags());
-        let result = tsz_solver::query_relation_with_resolver(
+        let result = is_subtype_with_resolver(
             self.ctx.types,
             env,
             source,
             target,
-            tsz_solver::RelationKind::Subtype,
-            policy,
-            context,
+            self.ctx.pack_relation_flags(),
+            &self.ctx.inheritance_graph,
+            Some(&is_class_fn),
         );
 
         if result.depth_exceeded {
@@ -773,55 +724,34 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(current_type);
 
         let flags = self.ctx.pack_relation_flags();
-        let policy = tsz_solver::RelationPolicy::from_flags(flags)
-            .with_strict_subtype_checking(self.ctx.sound_mode())
-            .with_strict_any_propagation(self.ctx.sound_mode());
-        let context = tsz_solver::RelationContext {
-            query_db: Some(self.ctx.types),
-            inheritance_graph: Some(&self.ctx.inheritance_graph),
-            class_check: None,
-        };
-
         // Delegate to the Solver's Lawyer layer for redeclaration identity checking
         let env = self.ctx.type_env.borrow();
-        tsz_solver::query_relation_with_resolver(
+        is_redeclaration_identical_with_resolver(
             self.ctx.types,
             &*env,
             prev_type,
             current_type,
-            tsz_solver::RelationKind::RedeclarationIdentical,
-            policy,
-            context,
+            flags,
+            &self.ctx.inheritance_graph,
+            self.ctx.sound_mode(),
         )
-        .is_related()
     }
 
     /// Check if source type is assignable to ANY member of a target union.
     pub fn is_assignable_to_union(&self, source: TypeId, targets: &[TypeId]) -> bool {
         let flags = self.ctx.pack_relation_flags();
-        let policy = tsz_solver::RelationPolicy::from_flags(flags)
-            .with_strict_subtype_checking(self.ctx.sound_mode())
-            .with_strict_any_propagation(self.ctx.sound_mode());
-        let context = tsz_solver::RelationContext {
-            query_db: Some(self.ctx.types),
-            inheritance_graph: Some(&self.ctx.inheritance_graph),
-            class_check: None,
-        };
-
         let env = self.ctx.type_env.borrow();
 
         for &target in targets {
-            if tsz_solver::query_relation_with_resolver(
+            if is_assignable_with_resolver(
                 self.ctx.types,
                 &*env,
                 source,
                 target,
-                tsz_solver::RelationKind::Assignable,
-                policy,
-                context,
-            )
-            .is_related()
-            {
+                flags,
+                &self.ctx.inheritance_graph,
+                self.ctx.sound_mode(),
+            ) {
                 return true;
             }
         }

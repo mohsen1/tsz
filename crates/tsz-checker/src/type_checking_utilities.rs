@@ -84,7 +84,7 @@ impl<'a> CheckerState<'a> {
                     && t != TypeId::UNKNOWN
                     && t != TypeId::ERROR
                 {
-                    t = factory.union2(t, TypeId::UNDEFINED);
+                    t = factory.union(vec![t, TypeId::UNDEFINED]);
                 }
                 Some(t)
             } else {

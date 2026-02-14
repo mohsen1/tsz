@@ -371,6 +371,7 @@ impl<'a> CheckerState<'a> {
             CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
             PropertyInfo,
         };
+        let factory = self.ctx.types.factory();
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -462,7 +463,7 @@ impl<'a> CheckerState<'a> {
                                 is_constructor: false,
                                 is_method: true,
                             };
-                            let method_type = self.ctx.types.function(shape);
+                            let method_type = factory.function(shape);
                             self.pop_type_parameters(type_param_updates);
                             properties.push(PropertyInfo {
                                 name: name_atom,

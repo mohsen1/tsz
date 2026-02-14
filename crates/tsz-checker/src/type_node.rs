@@ -1341,7 +1341,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     && type_id != TypeId::UNDEFINED
                 {
                     let factory = self.ctx.types.factory();
-                    factory.union2(type_id, TypeId::UNDEFINED)
+                    factory.union(vec![type_id, TypeId::UNDEFINED])
                 } else {
                     type_id
                 };
