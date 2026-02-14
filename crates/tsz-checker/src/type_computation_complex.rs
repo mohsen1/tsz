@@ -1520,7 +1520,7 @@ impl<'a> CheckerState<'a> {
                     callee_type_for_call,
                     &arg_types,
                     force_bivariant_callbacks,
-                    None,
+                    self.ctx.contextual_type,
                 )
             }
         };

@@ -105,7 +105,7 @@ impl<'a> CheckerState<'a> {
                 return return_with_cleanup!(TypeId::ERROR); // Missing function/method/accessor data - propagate error
             };
 
-        let (_function_is_async, function_is_generator) =
+        let (function_is_async, function_is_generator) =
             if let Some(func) = self.ctx.arena.get_function(node) {
                 (func.is_async, func.asterisk_token)
             } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
@@ -474,6 +474,15 @@ impl<'a> CheckerState<'a> {
                         .as_ref()
                         .and_then(|helper| helper.get_return_type())
                 });
+                // Async function bodies return the awaited inner type; the function
+                // type itself is Promise<inner>. Contextual return typing must
+                // therefore use the inner type, not Promise<inner>.
+                let return_context = if is_async && !is_generator {
+                    return_context
+                        .and_then(|ctx_ty| self.unwrap_promise_type(ctx_ty).or(Some(ctx_ty)))
+                } else {
+                    return_context
+                };
                 // TS7010/TS7011: Only count as contextual return if it's not UNKNOWN
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
@@ -806,13 +815,22 @@ impl<'a> CheckerState<'a> {
         // Promise<T>, Array<T>, etc. as Application types. This preserves type identity
         // for await unwrapping and generic type parameter extraction.
         // For inferred return types (no annotation), use the inferred type as-is.
-        let final_return_type = if !has_type_annotation && function_is_generator {
+        let mut final_return_type = if !has_type_annotation && function_is_generator {
             // Unannotated generators should remain permissive until full
             // Generator<Y, R, N>/AsyncGenerator<Y, R, N> inference is implemented.
             TypeId::ANY
         } else {
             annotated_return_type.unwrap_or(return_type)
         };
+        // Unannotated async functions infer Promise<T>, where T is inferred from
+        // return statements in the function body.
+        if !has_type_annotation && function_is_async && !function_is_generator {
+            final_return_type = self
+                .ctx
+                .types
+                .factory()
+                .application(TypeId::PROMISE_BASE, vec![final_return_type]);
+        }
 
         let shape = FunctionShape {
             type_params,

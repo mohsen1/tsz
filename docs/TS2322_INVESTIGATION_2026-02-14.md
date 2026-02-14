@@ -1,5 +1,26 @@
 # TS2322 Investigation (2026-02-14)
 
+## Critical correction (2026-02-14, post-architecture update)
+
+The original investigation run can be skewed if `tsz-conformance` uses `tsz` from `PATH`
+instead of the workspace build artifact.
+
+- Verified example: `compiler/arrayFind.ts`
+  - With default `tsz` from `PATH`: reported extra `TS2322`
+  - With workspace binary (`./.target/dist-fast/tsz`): passes with no diagnostics
+
+Fundamental fix applied in code:
+
+- `crates/conformance/src/runner.rs` now resolves default `tsz` to
+  `./.target/dist-fast/tsz` when present.
+- This makes parity runs deterministic to the checked-out workspace implementation
+  and prevents stale-binary false positives/negatives in TS2322 analysis.
+
+Operational rule going forward:
+
+- If `--tsz-binary` is omitted, conformance prefers workspace fast build.
+- If an explicit `--tsz-binary` is provided, that path is used as-is.
+
 ## Scope
 
 Investigate TS2322 parity mismatches using the conformance harness and identify high-impact failure patterns plus likely ownership boundaries.
@@ -117,4 +138,3 @@ This indicates mismatch behavior is sensitive to mode/config-specific checker pa
    - TS2322 vs TS2345 routing
    - TS2322 vs TS2740/TS2739 prioritization
    - JS/JSDoc contextual typing assignability diagnostics
-
