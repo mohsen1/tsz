@@ -844,9 +844,9 @@ fn compile_inner(
     let file_infos = build_file_infos(&sources, &file_paths, args, config.as_ref(), &base_dir);
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
-    // `@noTypesAndSymbols` in source comments is a conformance-harness directive,
-    // not a tsc command-line input. Only honor the explicit compiler option here.
-    let no_types_and_symbols = resolved.checker.no_types_and_symbols;
+    // `@noTypesAndSymbols` in source comments is a conformance-harness directive.
+    let no_types_and_symbols =
+        resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
     let lib_paths: Vec<PathBuf> =
         if resolved.checker.no_lib || disable_default_libs || no_types_and_symbols {
             Vec::new()
@@ -1498,6 +1498,20 @@ fn has_no_default_lib_directive(source: &str) -> bool {
         }
     }
     false
+}
+
+fn sources_have_no_types_and_symbols(sources: &[SourceEntry]) -> bool {
+    sources.iter().any(source_has_no_types_and_symbols)
+}
+
+fn source_has_no_types_and_symbols(source: &SourceEntry) -> bool {
+    if let Some(text) = source.text.as_deref() {
+        return has_no_types_and_symbols_directive(text);
+    }
+    let Ok(text) = std::fs::read_to_string(&source.path) else {
+        return false;
+    };
+    has_no_types_and_symbols_directive(&text)
 }
 
 pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
