@@ -830,7 +830,8 @@ impl<'a> CheckerState<'a> {
         }
 
         if operator == SyntaxKind::QuestionQuestionEqualsToken as u16 {
-            return self.ctx.types.union2(left_type, right_type);
+            let factory = self.ctx.types.factory();
+            return factory.union2(left_type, right_type);
         }
 
         if matches!(
