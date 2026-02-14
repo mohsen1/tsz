@@ -441,7 +441,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         use tsz_solver::TypeEvaluator;
 
-        self.ensure_application_symbols_resolved(type_id);
+        self.ensure_relation_input_ready(type_id);
 
         // Use type_env (not type_environment) because type_env is updated during
         // type checking with user-defined DefId→TypeId mappings, while
@@ -483,7 +483,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
         use rustc_hash::FxHashSet;
 
-        self.ensure_application_symbols_resolved(type_id);
+        self.ensure_relation_input_ready(type_id);
 
         let mut visited = FxHashSet::default();
         self.resolve_type_for_property_access_inner(type_id, &mut visited)
