@@ -341,7 +341,8 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
 
   try {
     loadCache();
-    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module, testCase.alwaysStrict, config.dtsOnly, testCase.sourceMap, testCase.downlevelIteration, testCase.noEmitHelpers);
+    const emitDeclarations = !config.jsOnly && testCase.expectedDts !== null;
+    const cacheKey = getCacheKey(testCase.source, testCase.target, testCase.module, testCase.alwaysStrict, emitDeclarations, testCase.sourceMap, testCase.downlevelIteration, testCase.noEmitHelpers);
     let tszJs: string;
     let tszDts: string | null = null;
 
@@ -353,7 +354,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       tszDts = cached.dtsOutput;
     } else {
       const transpileResult = await transpiler.transpile(testCase.source, testCase.target, testCase.module, {
-        declaration: config.dtsOnly,
+        declaration: emitDeclarations,
         alwaysStrict: testCase.alwaysStrict,
         sourceMap: testCase.sourceMap,
         downlevelIteration: testCase.downlevelIteration,
@@ -364,7 +365,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       cache.set(cacheKey, { hash: sourceHash, jsOutput: tszJs, dtsOutput: tszDts });
     }
 
-    if (!config.dtsOnly && testCase.expectedJs) {
+    if (!config.dtsOnly && testCase.expectedJs !== null) {
       // Normalize sourceMappingURL filenames since we use temp file names
       const normalizeSourceMapUrl = (s: string) =>
         s.replace(/\/\/# sourceMappingURL=\S+/g, '//# sourceMappingURL=output.js.map');
@@ -377,7 +378,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       }
     }
 
-    if (!config.jsOnly && testCase.expectedDts) {
+    if (!config.jsOnly && testCase.expectedDts !== null) {
       if (tszDts !== null) {
         const expected = testCase.expectedDts.replace(/\r\n/g, '\n').trim();
         const actual = tszDts.replace(/\r\n/g, '\n').trim();
@@ -395,7 +396,14 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e);
     result.timeout = errorMsg === 'TIMEOUT';
-    result.jsError = result.timeout ? 'TIMEOUT' : errorMsg;
+    if (!config.dtsOnly) {
+      result.jsMatch = false;
+      result.jsError = result.timeout ? 'TIMEOUT' : errorMsg;
+    }
+    if (!config.jsOnly) {
+      result.dtsMatch = false;
+      result.dtsError = result.timeout ? 'TIMEOUT' : errorMsg;
+    }
     result.elapsed = Date.now() - start;
   }
 
@@ -504,7 +512,7 @@ async function main() {
   if (config.filter) console.log(pc.dim(`  Filter: ${config.filter}`));
   console.log(pc.dim(`  Mode: ${config.jsOnly ? 'JS only' : config.dtsOnly ? 'DTS only' : 'JS + DTS'}`));
   console.log(pc.dim(`  Workers: ${config.concurrency} parallel`));
-  console.log(pc.dim(`  Engine: Native CLI (${config.dtsOnly ? 'with type checking' : 'emit-only, --noCheck --noLib'})`));
+  console.log(pc.dim(`  Engine: Native CLI (${config.jsOnly ? 'emit-only, --noCheck --noLib' : 'with type checking'})`));
   console.log(sep);
   console.log('');
 
