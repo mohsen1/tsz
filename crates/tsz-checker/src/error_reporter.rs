@@ -18,6 +18,7 @@ use crate::types::diagnostics::{
 };
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -29,6 +30,86 @@ use tsz_solver::TypeId;
 // for all error reporting in the type checker.
 
 impl<'a> CheckerState<'a> {
+    fn unresolved_unused_renaming_property_in_type_query(
+        &self,
+        name: &str,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        let mut saw_type_query = false;
+        let mut current = idx;
+        let mut guard = 0;
+
+        while !current.is_none() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::TYPE_QUERY {
+                saw_type_query = true;
+            }
+
+            if matches!(
+                node.kind,
+                syntax_kind_ext::FUNCTION_TYPE
+                    | syntax_kind_ext::CONSTRUCTOR_TYPE
+                    | syntax_kind_ext::CALL_SIGNATURE
+                    | syntax_kind_ext::CONSTRUCT_SIGNATURE
+                    | syntax_kind_ext::METHOD_SIGNATURE
+                    | syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+            ) {
+                if !saw_type_query {
+                    return None;
+                }
+                return self.find_renamed_binding_property_for_name(current, name);
+            }
+
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        None
+    }
+
+    fn find_renamed_binding_property_for_name(
+        &self,
+        root: NodeIndex,
+        name: &str,
+    ) -> Option<String> {
+        let mut stack = vec![root];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && let Some(binding) = self.ctx.arena.get_binding_element(node)
+                && !binding.property_name.is_none()
+                && binding.name.is_some()
+                && self.ctx.arena.get_identifier_text(binding.name) == Some(name)
+            {
+                let prop_name = self
+                    .ctx
+                    .arena
+                    .get_identifier_text(binding.property_name)
+                    .map(str::to_string)?;
+                return Some(prop_name);
+            }
+
+            stack.extend(self.ctx.arena.get_children(node_idx));
+        }
+        None
+    }
+
     fn has_more_specific_diagnostic_at_span(&self, start: u32, length: u32) -> bool {
         self.ctx.diagnostics.iter().any(|diag| {
             diag.start == start
@@ -2266,6 +2347,21 @@ impl<'a> CheckerState<'a> {
                 }
                 current = ext.parent;
             }
+        }
+
+        if let Some(original_name) =
+            self.unresolved_unused_renaming_property_in_type_query(name, idx)
+        {
+            let message = format!(
+                "'{}' is an unused renaming of '{}'. Did you intend to use it as a type annotation?",
+                name, original_name
+            );
+            self.error_at_node(
+                idx,
+                &message,
+                diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION,
+            );
+            return;
         }
 
         // Check if this is an ES2015+ type that requires a specific lib

@@ -8,6 +8,7 @@
 
 use super::context::CheckerContext;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
 use tsz_solver::types::Visibility;
@@ -651,6 +652,26 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // Collect undefined type names first (to avoid borrow checker issues)
         let mut undefined_types: Vec<(NodeIndex, String)> = Vec::new();
+        let mut renamed_binding_aliases: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        for &param_idx in &func_data.parameters.nodes {
+            let mut stack = vec![param_idx];
+            while let Some(node_idx) = stack.pop() {
+                let Some(binding_node) = self.ctx.arena.get(node_idx) else {
+                    continue;
+                };
+                if binding_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                    && let Some(binding) = self.ctx.arena.get_binding_element(binding_node)
+                    && !binding.property_name.is_none()
+                    && binding.name.is_some()
+                    && let Some(alias_name) = self.ctx.arena.get_identifier_text(binding.name)
+                {
+                    renamed_binding_aliases.insert(alias_name.to_string());
+                }
+                stack.extend(self.ctx.arena.get_children(node_idx));
+            }
+        }
 
         // Check return type annotation
         if !func_data.type_annotation.is_none() {
@@ -710,6 +731,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // Now emit all the TS2304 errors
         for (error_idx, name) in undefined_types {
+            if renamed_binding_aliases.contains(&name) {
+                continue;
+            }
             if let Some(node) = self.ctx.arena.get(error_idx) {
                 let message = format!("Cannot find name '{}'.", name);
                 self.ctx.error(node.pos, node.end - node.pos, message, 2304);
