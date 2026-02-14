@@ -2704,11 +2704,20 @@ impl<'a> CheckerState<'a> {
             }
         }
         let expr_type = self.get_type_of_node(expr_idx);
+        let expr_key = self.ctx.types.lookup(expr_type);
+        tracing::debug!(?expr_type, ?expr_key, "base_constructor_type: expr_type");
 
         // Evaluate application types to get the actual intersection type
         let evaluated_type = self.evaluate_application_type(expr_type);
+        let eval_key = self.ctx.types.lookup(evaluated_type);
+        tracing::debug!(
+            ?evaluated_type,
+            ?eval_key,
+            "base_constructor_type: evaluated_type"
+        );
 
         let ctor_types = self.constructor_types_from_type(evaluated_type);
+        tracing::debug!(?ctor_types, "base_constructor_type: ctor_types");
         if ctor_types.is_empty() {
             return None;
         }

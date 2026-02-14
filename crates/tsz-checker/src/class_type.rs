@@ -530,11 +530,20 @@ impl<'a> CheckerState<'a> {
                         if let Some(base_instance_type) =
                             self.base_instance_type_from_expression(expr_idx, type_arguments)
                         {
+                            tracing::debug!(
+                                ?base_instance_type,
+                                "heritage: resolved base instance type from expression"
+                            );
                             self.merge_base_instance_properties(
                                 base_instance_type,
                                 &mut properties,
                                 &mut string_index,
                                 &mut number_index,
+                            );
+                        } else {
+                            tracing::debug!(
+                                ?expr_idx,
+                                "heritage: base_instance_type_from_expression returned None"
                             );
                         }
                         break;
