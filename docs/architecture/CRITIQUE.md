@@ -504,6 +504,9 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
   * Extended focused regression tests:
     * checker architecture guard assertions for `state_type_analysis` and `state_type_environment` to prevent direct `TypeKey::Enum`/`TypeKey::Literal` interning regressions.
     * solver interner coverage for `enum_type` constructor behavior.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Migrated `type_computation_complex::resolve_type_param_for_construct` away from direct `intern(tsz_solver::TypeKey::TypeParameter(...))` to solver constructor API (`types.type_param(...)`).
+  * Extended checker architecture guard coverage so `type_computation_complex` is explicitly checked for `TypeKey::TypeParameter` regression on this path.
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
   * Add CI guard that fails on checker `TypeKey` imports/usages.
