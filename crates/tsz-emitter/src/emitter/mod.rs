@@ -926,7 +926,7 @@ impl<'a> Printer<'a> {
                 dependencies,
             } => {
                 if let Some(source) = self.arena.get_source_file(node) {
-                    self.emit_module_wrapper(&format, dependencies.as_ref(), node, source, idx);
+                    self.emit_module_wrapper(format, dependencies.as_ref(), node, source, idx);
                     return;
                 }
 
@@ -1344,7 +1344,7 @@ impl<'a> Printer<'a> {
                 dependencies,
             } => {
                 if let Some(source) = self.arena.get_source_file(node) {
-                    self.emit_module_wrapper(format, dependencies.as_ref(), node, source, idx);
+                    self.emit_module_wrapper(*format, dependencies.as_ref(), node, source, idx);
                     return;
                 }
 
@@ -1432,7 +1432,7 @@ impl<'a> Printer<'a> {
                 && self.file_is_module(&source.statements)
             {
                 let dependencies = self.collect_module_dependencies(&source.statements.nodes);
-                self.emit_module_wrapper(&format, &dependencies, node, source, idx);
+                self.emit_module_wrapper(format, &dependencies, node, source, idx);
                 return;
             }
         }

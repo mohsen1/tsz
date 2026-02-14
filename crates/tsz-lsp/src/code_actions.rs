@@ -1863,7 +1863,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn indent_at_offset(&self, offset: u32) -> String {
         let pos = self.line_map.offset_to_position(offset, self.source);
-        self.get_indentation_at_position(&Position::new(pos.line, 0))
+        self.get_indentation_at_position(Position::new(pos.line, 0))
     }
 
     fn indent_unit_from(&self, base_indent: &str) -> &str {
@@ -1929,7 +1929,7 @@ impl<'a> CodeActionProvider<'a> {
         let insert_pos = Position::new(stmt_pos.line, 0);
 
         // Calculate indentation by looking at the statement's line
-        let indent = self.get_indentation_at_position(&stmt_pos);
+        let indent = self.get_indentation_at_position(stmt_pos);
 
         let declaration = format!("{}const {} = {};\n", indent, var_name, initializer_text);
 
@@ -2684,7 +2684,7 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     /// Get the indentation (leading whitespace) at a given position.
-    fn get_indentation_at_position(&self, pos: &Position) -> String {
+    fn get_indentation_at_position(&self, pos: Position) -> String {
         let line_start = self.line_map.line_start(pos.line as usize).unwrap_or(0);
         let slice = self.source.get(line_start as usize..).unwrap_or("");
         slice

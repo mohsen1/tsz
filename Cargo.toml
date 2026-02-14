@@ -151,7 +151,6 @@ while_let_on_iterator = "allow"
 semicolon_if_nothing_returned = "allow"
 clone_on_ref_ptr = "allow"
 needless_pass_by_value = "allow"
-trivially_copy_pass_by_ref = "allow"
 
 [package]
 name = "tsz"
