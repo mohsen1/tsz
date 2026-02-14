@@ -129,13 +129,14 @@ impl BinderState {
                     binder.bind_parameter(arena, param_idx);
                 }
 
-                // Hoisting: Collect var declarations from the function body
-                // This ensures var declarations are accessible throughout the function scope
+                // Hoisting: Collect var and function declarations from the function body
+                // This ensures declarations are accessible throughout the function scope
                 // before their actual declaration point (JavaScript hoisting behavior)
                 //
-                // Note: We do NOT hoist function declarations from blocks in ES6+.
-                // In ES6 strict mode, function declarations inside blocks are block-scoped.
+                // Note: Function declarations in blocks are block-scoped in strict mode
+                // and external modules. In non-strict scripts, they hoist (Annex B).
                 binder.collect_hoisted_from_node(arena, func.body);
+                binder.process_hoisted_functions(arena);
                 binder.process_hoisted_vars(arena);
 
                 // Bind body
@@ -229,9 +230,11 @@ impl BinderState {
                         binder.bind_parameter(arena, param_idx);
                     }
 
-                    // Hoisting: Collect var declarations from the function body
-                    // Note: We do NOT hoist function declarations from blocks in ES6+.
+                    // Hoisting: Collect var and function declarations from the function body
+                    // Note: Function declarations in blocks are block-scoped in strict mode
+                    // and external modules. In non-strict scripts, they hoist (Annex B).
                     binder.collect_hoisted_from_node(arena, func.body);
+                    binder.process_hoisted_functions(arena);
                     binder.process_hoisted_vars(arena);
 
                     // Bind body (could be a block or an expression)
@@ -274,9 +277,11 @@ impl BinderState {
                         binder.bind_parameter(arena, param_idx);
                     }
 
-                    // Hoisting: Collect var declarations from the function body
-                    // Note: We do NOT hoist function declarations from blocks in ES6+.
+                    // Hoisting: Collect var and function declarations from the function body
+                    // Note: Function declarations in blocks are block-scoped in strict mode
+                    // and external modules. In non-strict scripts, they hoist (Annex B).
                     binder.collect_hoisted_from_node(arena, func.body);
+                    binder.process_hoisted_functions(arena);
                     binder.process_hoisted_vars(arena);
 
                     // Bind body
