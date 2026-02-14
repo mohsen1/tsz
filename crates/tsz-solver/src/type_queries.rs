@@ -2252,6 +2252,51 @@ pub fn classify_property_traversal(
     }
 }
 
+/// Collect property names reachable from a type for diagnostics/suggestions.
+///
+/// Traversal shape decisions stay in solver so checker can remain orchestration-only.
+pub fn collect_property_name_atoms_for_diagnostics(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    max_depth: usize,
+) -> Vec<Atom> {
+    fn collect_inner(
+        db: &dyn TypeDatabase,
+        type_id: TypeId,
+        out: &mut Vec<Atom>,
+        depth: usize,
+        max_depth: usize,
+    ) {
+        if depth > max_depth {
+            return;
+        }
+        match classify_property_traversal(db, type_id) {
+            PropertyTraversalKind::Object(shape) => {
+                for prop in shape.properties.iter() {
+                    out.push(prop.name);
+                }
+            }
+            PropertyTraversalKind::Callable(shape) => {
+                for prop in shape.properties.iter() {
+                    out.push(prop.name);
+                }
+            }
+            PropertyTraversalKind::Members(members) => {
+                for member in members {
+                    collect_inner(db, member, out, depth + 1, max_depth);
+                }
+            }
+            PropertyTraversalKind::Other => {}
+        }
+    }
+
+    let mut atoms = Vec::new();
+    collect_inner(db, type_id, &mut atoms, 0, max_depth);
+    atoms.sort_unstable();
+    atoms.dedup();
+    atoms
+}
+
 // =============================================================================
 // Interface Merge Type Classification
 // =============================================================================

@@ -2927,47 +2927,14 @@ impl<'a> CheckerState<'a> {
     /// Collect all property names from a type, handling objects, callables, unions,
     /// and intersections.
     fn collect_type_property_names(&self, type_id: TypeId) -> Vec<String> {
-        let mut names = Vec::new();
-        self.collect_type_property_names_inner(type_id, &mut names, 0);
-
-        // Deduplicate
-        names.sort();
-        names.dedup();
-        names
-    }
-
-    fn collect_type_property_names_inner(
-        &self,
-        type_id: TypeId,
-        names: &mut Vec<String>,
-        depth: usize,
-    ) {
-        use crate::query_boundaries::diagnostics::{
-            PropertyTraversal, classify_property_traversal,
-        };
-
-        if depth > 5 {
-            return;
-        }
-
-        match classify_property_traversal(self.ctx.types, type_id) {
-            PropertyTraversal::Object(shape) => {
-                for prop in shape.properties.iter() {
-                    names.push(self.ctx.types.resolve_atom_ref(prop.name).to_string());
-                }
-            }
-            PropertyTraversal::Callable(shape) => {
-                for prop in shape.properties.iter() {
-                    names.push(self.ctx.types.resolve_atom_ref(prop.name).to_string());
-                }
-            }
-            PropertyTraversal::Members(members) => {
-                for &member in members.iter() {
-                    self.collect_type_property_names_inner(member, names, depth + 1);
-                }
-            }
-            _ => {}
-        }
+        crate::query_boundaries::diagnostics::collect_property_name_atoms_for_diagnostics(
+            self.ctx.types,
+            type_id,
+            5,
+        )
+        .into_iter()
+        .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
+        .collect()
     }
 
     // =========================================================================

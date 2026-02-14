@@ -627,6 +627,14 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
   * Added focused regression tests:
     * solver visitor coverage for `collect_referenced_types(...)` transitive + unique behavior
     * checker architecture contract assertion that `state_type_environment` uses `collect_referenced_types(...)` for traversal preconditions
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Moved checker diagnostic property-name traversal recursion out of `error_reporter` into solver query API:
+    * added `type_queries::collect_property_name_atoms_for_diagnostics(...)` in solver
+    * added checker query-boundary wrapper `query_boundaries::diagnostics::collect_property_name_atoms_for_diagnostics(...)`
+    * `error_reporter::collect_type_property_names` now handles rendering only
+  * Added focused regression tests:
+    * checker architecture contract assertions that `error_reporter` uses the boundary helper and no longer defines recursive traversal helper
+    * checker diagnostics boundary behavior test for depth-limited, transitive property-name collection
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
 

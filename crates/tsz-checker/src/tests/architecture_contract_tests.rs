@@ -4,8 +4,8 @@ use std::path::Path;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::{
-    CallSignature, CallableShape, CompatChecker, FunctionShape, ParamInfo, PropertyInfo,
-    RelationCacheKey, TypeId, TypeInterner, Visibility,
+    CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, TypeId, TypeInterner,
+    Visibility,
 };
 
 fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
@@ -362,6 +362,21 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !diagnostics_boundary_src.contains("classify_for_traversal("),
         "query_boundaries/diagnostics should use solver classify_property_traversal API"
     );
+    assert!(
+        diagnostics_boundary_src.contains("collect_property_name_atoms_for_diagnostics("),
+        "query_boundaries/diagnostics should expose solver property-name collector API"
+    );
+
+    let error_reporter_src = fs::read_to_string("src/error_reporter.rs")
+        .expect("failed to read src/error_reporter.rs for architecture guard");
+    assert!(
+        error_reporter_src.contains("collect_property_name_atoms_for_diagnostics("),
+        "error_reporter should use query-boundary solver property-name collection helper"
+    );
+    assert!(
+        !error_reporter_src.contains("fn collect_type_property_names_inner("),
+        "error_reporter should not own recursive property traversal helpers"
+    );
 }
 
 #[test]
@@ -450,49 +465,34 @@ fn test_checker_legacy_type_arena_surface_is_feature_gated() {
 }
 
 #[test]
-fn test_diagnostics_property_traversal_uses_solver_classification_results() {
+fn test_diagnostics_property_name_collection_uses_solver_traversal_rules() {
     let interner = TypeInterner::new();
 
-    let object = interner.object(vec![PropertyInfo::new(
-        interner.intern_string("x"),
+    let a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
         TypeId::STRING,
     )]);
-    let callable = interner.callable(CallableShape {
-        symbol: None,
-        call_signatures: vec![CallSignature {
-            type_params: Vec::new(),
-            params: Vec::new(),
-            this_type: None,
-            return_type: TypeId::NUMBER,
-            type_predicate: None,
-            is_method: false,
-        }],
-        construct_signatures: Vec::new(),
-        properties: Vec::new(),
-        string_index: None,
-        number_index: None,
-    });
-    let members = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+    let nested = interner.union(vec![a, b]);
+    let root = interner.union(vec![nested]);
 
-    assert!(matches!(
-        crate::query_boundaries::diagnostics::classify_property_traversal(&interner, object),
-        crate::query_boundaries::diagnostics::PropertyTraversal::Object(_)
-    ));
-    assert!(matches!(
-        crate::query_boundaries::diagnostics::classify_property_traversal(&interner, callable),
-        crate::query_boundaries::diagnostics::PropertyTraversal::Callable(_)
-    ));
-    assert!(matches!(
-        crate::query_boundaries::diagnostics::classify_property_traversal(&interner, members),
-        crate::query_boundaries::diagnostics::PropertyTraversal::Members(_)
-    ));
-    assert!(matches!(
-        crate::query_boundaries::diagnostics::classify_property_traversal(
-            &interner,
-            TypeId::BOOLEAN
-        ),
-        crate::query_boundaries::diagnostics::PropertyTraversal::Other
-    ));
+    let depth_0 = crate::query_boundaries::diagnostics::collect_property_name_atoms_for_diagnostics(
+        &interner, root, 0,
+    );
+    assert!(depth_0.is_empty());
+
+    let depth_1 = crate::query_boundaries::diagnostics::collect_property_name_atoms_for_diagnostics(
+        &interner, root, 1,
+    );
+    let mut names: Vec<String> = depth_1
+        .into_iter()
+        .map(|atom| interner.resolve_atom_ref(atom).to_string())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
 }
 
 #[test]
