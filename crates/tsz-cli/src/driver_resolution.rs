@@ -2034,7 +2034,7 @@ pub(crate) fn emit_outputs(
 
                 // Create emitter with type information and binder
                 let mut emitter = if let Some(ref cache) = type_cache {
-                    use tsz::type_cache_view::TypeCacheView;
+                    use tsz_emitter::type_cache_view::TypeCacheView;
                     let cache_view = TypeCacheView {
                         node_types: cache.node_types.clone(),
                         def_to_symbol: cache.def_to_symbol.clone(),
@@ -2079,7 +2079,7 @@ pub(crate) fn emit_outputs(
                 if let Some(ref cache) = type_cache {
                     use rustc_hash::FxHashMap;
                     use tsz::declaration_emitter::usage_analyzer::UsageAnalyzer;
-                    use tsz::type_cache_view::TypeCacheView;
+                    use tsz_emitter::type_cache_view::TypeCacheView;
 
                     // Empty import_name_map for this usage (not needed for auto-import calculation)
                     let import_name_map = FxHashMap::default();

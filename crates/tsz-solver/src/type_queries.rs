@@ -27,7 +27,7 @@
 //! }
 //! ```
 
-use crate::{TypeDatabase, TypeId, TypeData};
+use crate::{TypeData, TypeDatabase, TypeId};
 use tsz_common::Atom;
 
 // Re-export extended type queries so callers can use `type_queries::*`
@@ -579,9 +579,10 @@ where
 
     fn check_key(&mut self, key: &TypeData) -> bool {
         match key {
-            TypeData::Intrinsic(_) | TypeData::Literal(_) | TypeData::Error | TypeData::ThisType => {
-                false
-            }
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::Error
+            | TypeData::ThisType => false,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.db.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))
@@ -1139,7 +1140,9 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
             let members = db.type_list(members_id);
             ConstructorTypeKind::Members(members.to_vec())
         }
-        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => ConstructorTypeKind::Inner(inner),
+        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            ConstructorTypeKind::Inner(inner)
+        }
         TypeData::TypeParameter(info) | TypeData::Infer(info) => {
             ConstructorTypeKind::Constraint(info.constraint)
         }
@@ -1425,10 +1428,12 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
         return ConstraintTypeKind::NoConstraint;
     };
     match key {
-        TypeData::TypeParameter(info) | TypeData::Infer(info) => ConstraintTypeKind::TypeParameter {
-            constraint: info.constraint,
-            default: info.default,
-        },
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+            ConstraintTypeKind::TypeParameter {
+                constraint: info.constraint,
+                default: info.default,
+            }
+        }
         TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
             ConstraintTypeKind::Union(members.to_vec())
@@ -1761,7 +1766,9 @@ pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> F
             let members = db.type_list(members_id);
             ForOfElementKind::Union(members.to_vec())
         }
-        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => ForOfElementKind::Readonly(inner),
+        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            ForOfElementKind::Readonly(inner)
+        }
         // String literals iterate to produce `string`
         TypeData::Literal(crate::LiteralValue::String(_)) => ForOfElementKind::String,
         _ => ForOfElementKind::Other,
@@ -1962,7 +1969,9 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         TypeData::Infer(info) => EvaluationNeeded::TypeParameter {
             constraint: info.constraint,
         },
-        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => EvaluationNeeded::Readonly(inner),
+        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            EvaluationNeeded::Readonly(inner)
+        }
         // Already resolved types (Lazy needs special handling when DefId lookup is implemented)
         TypeData::BoundParameter(_)
         | TypeData::Intrinsic(_)

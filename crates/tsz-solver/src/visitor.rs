@@ -44,7 +44,7 @@ use crate::types::{
     ObjectShapeId, OrderedFloat, StringIntrinsicKind, TemplateLiteralId, TupleElement, TupleListId,
     TypeApplicationId, TypeListId, TypeParamInfo,
 };
-use crate::{LiteralValue, SymbolRef, TypeDatabase, TypeId, TypeData};
+use crate::{LiteralValue, SymbolRef, TypeData, TypeDatabase, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
@@ -899,9 +899,7 @@ pub fn is_type_kind(types: &dyn TypeDatabase, type_id: TypeId, kind: TypeKind) -
 /// let types = collect_referenced_types(&type_interner, type_id);
 /// ```
 pub fn collect_referenced_types(types: &dyn TypeDatabase, type_id: TypeId) -> FxHashSet<TypeId> {
-    let mut visitor = TypeCollectorVisitor::new();
-    visitor.visit_type(types, type_id);
-    visitor.types
+    collect_all_types(types, type_id)
 }
 
 /// Test a type against a predicate function.
@@ -2074,7 +2072,9 @@ impl<'a> EmptyObjectChecker<'a> {
                     && shape.string_index.is_none()
                     && shape.number_index.is_none()
             }
-            Some(TypeData::ReadonlyType(inner)) | Some(TypeData::NoInfer(inner)) => self.check(inner),
+            Some(TypeData::ReadonlyType(inner)) | Some(TypeData::NoInfer(inner)) => {
+                self.check(inner)
+            }
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
                 info.constraint.map(|c| self.check(c)).unwrap_or(false)
             }

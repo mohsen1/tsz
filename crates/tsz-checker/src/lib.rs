@@ -94,7 +94,7 @@ pub mod type_literal_checker;
 pub mod type_node;
 pub mod type_parameter;
 pub mod type_query;
-mod types;
+pub mod types;
 pub mod union_type;
 pub mod diagnostics {
     pub use crate::types::diagnostics::{

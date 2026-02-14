@@ -6,7 +6,6 @@
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MemberAccessLevel};
-use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
