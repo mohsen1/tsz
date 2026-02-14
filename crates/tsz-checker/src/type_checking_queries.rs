@@ -2883,9 +2883,10 @@ impl<'a> CheckerState<'a> {
                             if first_params.is_none() && !params.is_empty() {
                                 first_params = Some(params.clone());
                                 // Compute TypeIds for these canonical params
+                                let factory = self.ctx.types.factory();
                                 canonical_param_type_ids = params
                                     .iter()
-                                    .map(|p| self.ctx.types.type_param(p.clone()))
+                                    .map(|p| factory.type_param(p.clone()))
                                     .collect();
 
                                 // Cache type parameters for Application expansion.

@@ -8,6 +8,7 @@ use crate::element_access::{ElementAccessEvaluator, ElementAccessResult};
 use crate::ObjectLiteralBuilder;
 use crate::intern::TypeInterner;
 use crate::narrowing;
+use crate::type_factory::TypeFactory;
 use crate::operations_property::PropertyAccessResult;
 use crate::subtype::TypeResolver;
 use crate::types::{
@@ -373,6 +374,12 @@ impl TypeResolver for TypeInterner {
 pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Expose the underlying TypeDatabase view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;
+
+    /// Expose the checked construction surface for type constructors.
+    #[inline]
+    fn factory(&self) -> TypeFactory<'_> {
+        TypeFactory::new(self.as_type_database())
+    }
 
     /// Register the canonical `Array<T>` base type used by property access resolution.
     ///
