@@ -190,14 +190,13 @@ impl BinderState {
             for &param_idx in &params.nodes {
                 if let Some(node) = arena.get(param_idx)
                     && let Some(type_param) = arena.get_type_parameter(node)
+                    && let Some(name) = self.get_identifier_name(arena, type_param.name)
                 {
-                    if let Some(name) = self.get_identifier_name(arena, type_param.name) {
-                        tracing::debug!(
-                            type_param_name = %name,
-                            "Binding type parameter"
-                        );
-                        self.declare_symbol(name, symbol_flags::TYPE_PARAMETER, param_idx, false);
-                    }
+                    tracing::debug!(
+                        type_param_name = %name,
+                        "Binding type parameter"
+                    );
+                    self.declare_symbol(name, symbol_flags::TYPE_PARAMETER, param_idx, false);
                 }
             }
         }
@@ -542,13 +541,13 @@ impl BinderState {
 
             // Rule #44: Track module augmentation interfaces
             // These will be merged with the target module's interface at type resolution time
-            if self.in_module_augmentation {
-                if let Some(ref module_spec) = self.current_augmented_module {
-                    self.module_augmentations
-                        .entry(module_spec.clone())
-                        .or_default()
-                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
-                }
+            if self.in_module_augmentation
+                && let Some(ref module_spec) = self.current_augmented_module
+            {
+                self.module_augmentations
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
             }
 
             self.declare_symbol(name, symbol_flags::INTERFACE, idx, is_exported);
@@ -577,13 +576,13 @@ impl BinderState {
             }
 
             // Rule #44: Track module augmentation type aliases
-            if self.in_module_augmentation {
-                if let Some(ref module_spec) = self.current_augmented_module {
-                    self.module_augmentations
-                        .entry(module_spec.clone())
-                        .or_default()
-                        .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
-                }
+            if self.in_module_augmentation
+                && let Some(ref module_spec) = self.current_augmented_module
+            {
+                self.module_augmentations
+                    .entry(module_spec.clone())
+                    .or_default()
+                    .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
             }
 
             self.declare_symbol(name, symbol_flags::TYPE_ALIAS, idx, is_exported);
@@ -1315,19 +1314,19 @@ impl BinderState {
             let Some(parent_node) = arena.get(parent_idx) else {
                 return false;
             };
-            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                if let Some(parent_module) = arena.get_module(parent_node) {
-                    // Check if this ancestor has `declare` modifier
-                    if self.has_declare_modifier(arena, &parent_module.modifiers) {
-                        return true;
-                    }
-                    // Check if this ancestor has a string-literal name
-                    if let Some(name_node) = arena.get(parent_module.name)
-                        && (name_node.kind == SyntaxKind::StringLiteral as u16
-                            || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
-                    {
-                        return true;
-                    }
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(parent_module) = arena.get_module(parent_node)
+            {
+                // Check if this ancestor has `declare` modifier
+                if self.has_declare_modifier(arena, &parent_module.modifiers) {
+                    return true;
+                }
+                // Check if this ancestor has a string-literal name
+                if let Some(name_node) = arena.get(parent_module.name)
+                    && (name_node.kind == SyntaxKind::StringLiteral as u16
+                        || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                {
+                    return true;
                 }
             }
             // Keep walking up
