@@ -277,4 +277,11 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !state_type_analysis_src.contains("intern(tsz_solver::TypeKey::Lazy("),
         "state_type_analysis should use solver lazy constructor API, not direct TypeKey::Lazy interning"
     );
+
+    let function_type_src = fs::read_to_string("src/function_type.rs")
+        .expect("failed to read src/function_type.rs for architecture guard");
+    assert!(
+        !function_type_src.contains("intern(TypeKey::TypeParameter("),
+        "function_type should use solver type_param constructor API, not TypeKey::TypeParameter"
+    );
 }
