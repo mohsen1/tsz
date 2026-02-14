@@ -343,6 +343,20 @@ impl<'a> CheckerState<'a> {
         self.ensure_application_symbols_resolved(right_type);
         self.ensure_application_symbols_resolved(left_type);
 
+        if is_array_destructuring {
+            // TS2488: Array destructuring assignments require an iterable RHS.
+            // Keep parity with `[] = value` behavior by skipping empty patterns.
+            let should_check_iterability = self
+                .ctx
+                .arena
+                .get(left_idx)
+                .and_then(|node| self.ctx.arena.get_literal_expr(node))
+                .is_none_or(|array_lit| !array_lit.elements.nodes.is_empty());
+            if should_check_iterability {
+                self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
+            }
+        }
+
         let is_readonly = if !is_const {
             self.check_readonly_assignment(left_idx, expr_idx)
         } else {
