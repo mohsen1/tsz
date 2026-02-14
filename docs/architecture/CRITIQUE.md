@@ -971,6 +971,14 @@ If you want the fastest path to momentum, do these in order:
 5. **PR 5: Replace checker-side recursive type traversal with solver visitor `collect_lazy_def_ids`**
    Start by eliminating `ensure_refs_resolved` recursion into type shapes. 
 
+### Execution status for first five PRs
+
+- [ ] PR 1: Add CI architecture guard + report
+- [ ] PR 2: Add solver TypeFactory module (thin wrapper over intern for now)
+- [ ] PR 3: Migrate 1–2 checker modules off `TypeKey`
+- [ ] PR 4: Make `TypeKey` crate-private and fix fallout
+- [ ] PR 5: Replace recursive checker traversal with solver visitor collection
+
 After those five, the rest of the roadmap becomes dramatically easier because the codebase is no longer allowed to regress.
 
 ## Practical cadence for this roadmap
