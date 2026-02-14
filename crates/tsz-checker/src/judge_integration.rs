@@ -123,12 +123,6 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
-mod tests {
-    // Tests would go here but require full CheckerState setup
-    // which is complex. Integration is tested via conformance tests.
-}
+#[path = "tests/judge_integration.rs"]
+mod tests;

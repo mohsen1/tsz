@@ -655,7 +655,5 @@ impl Default for StatementChecker {
 }
 
 #[cfg(test)]
-mod tests {
-    // Tests require the full CheckerState implementation of StatementCheckCallbacks
-    // which is defined in state.rs
-}
+#[path = "tests/statements.rs"]
+mod tests;
