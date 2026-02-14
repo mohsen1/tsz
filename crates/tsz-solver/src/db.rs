@@ -5,6 +5,7 @@
 
 use crate::def::DefId;
 use crate::element_access::{ElementAccessEvaluator, ElementAccessResult};
+use crate::ObjectLiteralBuilder;
 use crate::intern::TypeInterner;
 use crate::narrowing;
 use crate::operations_property::PropertyAccessResult;
@@ -16,7 +17,7 @@ use crate::types::{
     TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey,
     TypeListId, TypeParamInfo, Variance,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -509,6 +510,25 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         evaluator.resolve_element_access(object_type, index_type, literal_index)
     }
 
+    /// Resolve element access type with cache-friendly error normalization.
+    fn resolve_element_access_type(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        match self.resolve_element_access(object_type, index_type, literal_index) {
+            crate::element_access::ElementAccessResult::Success(type_id) => type_id,
+            _ => TypeId::ERROR,
+        }
+    }
+
+    /// Collect properties that can be spread into object literals.
+    fn collect_object_spread_properties(&self, spread_type: TypeId) -> Vec<PropertyInfo> {
+        let builder = ObjectLiteralBuilder::new(self.as_type_database());
+        builder.collect_spread_properties(spread_type)
+    }
+
     /// Get index signatures for a type
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo;
 
@@ -593,6 +613,17 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Cache a subtype result for the given key.
     /// Default implementation is a no-op.
     fn insert_subtype_cache(&self, _key: RelationCacheKey, _result: bool) {}
+
+    /// Look up a cached assignability result for the given key.
+    /// Returns `None` if the result is not cached.
+    /// Default implementation returns `None` (no caching).
+    fn lookup_assignability_cache(&self, _key: RelationCacheKey) -> Option<bool> {
+        None
+    }
+
+    /// Cache an assignability result for the given key.
+    /// Default implementation is a no-op.
+    fn insert_assignability_cache(&self, _key: RelationCacheKey, _result: bool) {}
 
     fn new_inference_context(&self) -> crate::infer::InferenceContext<'_> {
         crate::infer::InferenceContext::new(self.as_type_database())
@@ -782,12 +813,15 @@ impl QueryDatabase for TypeInterner {
 }
 
 type EvalCacheKey = (TypeId, bool);
+type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool);
 
 /// Query database wrapper with basic caching.
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
     eval_cache: RwLock<FxHashMap<EvalCacheKey, TypeId>>,
+    element_access_cache: RwLock<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
+    object_spread_properties_cache: RwLock<FxHashMap<TypeId, Vec<PropertyInfo>>>,
     subtype_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
     /// CRITICAL: Separate cache for assignability to prevent cache poisoning.
     /// This ensures that loose assignability results (e.g., any is assignable to number)
@@ -808,6 +842,8 @@ impl<'a> QueryCache<'a> {
         QueryCache {
             interner,
             eval_cache: RwLock::new(FxHashMap::default()),
+            element_access_cache: RwLock::new(FxHashMap::default()),
+            object_spread_properties_cache: RwLock::new(FxHashMap::default()),
             subtype_cache: RwLock::new(FxHashMap::default()),
             assignability_cache: RwLock::new(FxHashMap::default()),
             property_cache: RwLock::new(FxHashMap::default()),
@@ -820,6 +856,14 @@ impl<'a> QueryCache<'a> {
     pub fn clear(&self) {
         // Handle poisoned locks gracefully - if poisoned, clear the cache anyway
         match self.eval_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.element_access_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.object_spread_properties_cache.write() {
             Ok(mut cache) => cache.clear(),
             Err(e) => e.into_inner().clear(),
         }
@@ -889,6 +933,90 @@ impl<'a> QueryCache<'a> {
             Err(e) => {
                 e.into_inner().insert(key, result);
             }
+        }
+    }
+
+    fn check_element_access_cache(
+        &self,
+        key: ElementAccessTypeCacheKey,
+    ) -> Option<TypeId> {
+        match self.element_access_cache.read() {
+            Ok(cache) => cache.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
+        }
+    }
+
+    fn insert_element_access_cache(&self, key: ElementAccessTypeCacheKey, result: TypeId) {
+        match self.element_access_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(key, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, result);
+            }
+        }
+    }
+
+    fn check_object_spread_properties_cache(
+        &self,
+        key: TypeId,
+    ) -> Option<Vec<PropertyInfo>> {
+        match self.object_spread_properties_cache.read() {
+            Ok(cache) => cache.get(&key).cloned(),
+            Err(e) => e.into_inner().get(&key).cloned(),
+        }
+    }
+
+    fn insert_object_spread_properties_cache(&self, key: TypeId, value: Vec<PropertyInfo>) {
+        match self.object_spread_properties_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(key, value);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, value);
+            }
+        }
+    }
+
+    fn collect_object_spread_properties_inner(
+        &self,
+        spread_type: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> Vec<PropertyInfo> {
+        let normalized = self.evaluate_type_with_options(spread_type, self.no_unchecked_indexed_access());
+
+        if !visited.insert(normalized) {
+            return Vec::new();
+        }
+
+        if normalized != spread_type {
+            return self.collect_object_spread_properties_inner(normalized, visited);
+        }
+
+        let Some(key) = self.interner.lookup(normalized) else {
+            return Vec::new();
+        };
+
+        match key {
+            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+                self.interner.object_shape(shape_id).properties.to_vec()
+            }
+            TypeKey::Callable(shape_id) => {
+                self.interner.callable_shape(shape_id).properties.to_vec()
+            }
+            TypeKey::Intersection(members_id) => {
+                let members = self.interner.type_list(members_id);
+                let mut merged: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+
+                for &member in members.iter() {
+                    for prop in self.collect_object_spread_properties_inner(member, visited) {
+                        merged.insert(prop.name, prop);
+                    }
+                }
+
+                merged.into_values().collect()
+            }
+            _ => Vec::new(),
         }
     }
 }
@@ -1353,6 +1481,24 @@ impl QueryDatabase for QueryCache<'_> {
         }
     }
 
+    fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
+        match self.assignability_cache.read() {
+            Ok(cache) => cache.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
+        }
+    }
+
+    fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {
+        match self.assignability_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(key, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, result);
+            }
+        }
+    }
+
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
         // Delegate to the interner - caching could be added later if needed
         self.interner.get_index_signatures(type_id)
@@ -1398,6 +1544,37 @@ impl QueryDatabase for QueryCache<'_> {
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         let result = evaluator.resolve_property_access(object_type, prop_name);
         self.insert_property_cache(key, result.clone());
+        result
+    }
+
+    fn resolve_element_access_type(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        let key = (object_type, index_type, literal_index.map(|idx| idx as u32), self.no_unchecked_indexed_access());
+        if let Some(result) = self.check_element_access_cache(key) {
+            return result;
+        }
+
+        let result = match self.resolve_element_access(object_type, index_type, literal_index) {
+            crate::element_access::ElementAccessResult::Success(type_id) => type_id,
+            _ => TypeId::ERROR,
+        };
+
+        self.insert_element_access_cache(key, result);
+        result
+    }
+
+    fn collect_object_spread_properties(&self, spread_type: TypeId) -> Vec<PropertyInfo> {
+        if let Some(cached) = self.check_object_spread_properties_cache(spread_type) {
+            return cached;
+        }
+
+        let mut visited: FxHashSet<TypeId> = FxHashSet::default();
+        let result = self.collect_object_spread_properties_inner(spread_type, &mut visited);
+        self.insert_object_spread_properties_cache(spread_type, result.clone());
         result
     }
 
@@ -1926,6 +2103,21 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
             .resolve_element_access(object_type, index_type, literal_index)
     }
 
+    fn resolve_element_access_type(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        self.query_cache
+            .resolve_element_access_type(object_type, index_type, literal_index)
+    }
+
+    fn collect_object_spread_properties(&self, spread_type: TypeId) -> Vec<PropertyInfo> {
+        self.query_cache
+            .collect_object_spread_properties(spread_type)
+    }
+
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
         self.query_cache.get_index_signatures(type_id)
     }
@@ -1962,6 +2154,14 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
 
     fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
         self.query_cache.insert_subtype_cache(key, result)
+    }
+
+    fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
+        self.query_cache.lookup_assignability_cache(key)
+    }
+
+    fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {
+        self.query_cache.insert_assignability_cache(key, result)
     }
 
     fn new_inference_context(&self) -> crate::infer::InferenceContext<'_> {
