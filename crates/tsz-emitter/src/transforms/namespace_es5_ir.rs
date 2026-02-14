@@ -654,15 +654,15 @@ impl<'a> NamespaceES5Transformer<'a> {
                     // Check for trailing comment on the same line as this statement.
                     // Skip namespace/class declarations since their sub-emitters handle
                     // internal comments.
-                    let export_clause_kind = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                    {
-                        self.arena
-                            .get_export_decl(stmt_node)
-                            .and_then(|d| self.arena.get(d.export_clause))
-                            .map(|n| n.kind)
-                    } else {
-                        None
-                    };
+                    let export_clause_kind =
+                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            self.arena
+                                .get_export_decl(stmt_node)
+                                .and_then(|d| self.arena.get(d.export_clause))
+                                .map(|n| n.kind)
+                        } else {
+                            None
+                        };
                     let skip = is_namespace_like(self.arena, stmt_node)
                         || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
                         || matches!(export_clause_kind, Some(k) if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::MODULE_DECLARATION);
