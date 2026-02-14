@@ -8,7 +8,8 @@
 use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_solver::TypeInterner;
-use tsz_solver::types::{TypeId, TypeKey};
+use tsz_solver::types::TypeId;
+use tsz_solver::visitor;
 
 use crate::type_cache_view::TypeCacheView;
 
@@ -105,81 +106,92 @@ impl<'a> TypePrinter<'a> {
             return self.print_intrinsic_type(type_id);
         }
 
-        // Look up the type structure from the interner
-        let type_key = match self.interner.lookup(type_id) {
-            Some(key) => key,
-            None => return "any".to_string(), // Fallback for missing types
-        };
-
-        // Match on the type structure
-        match type_key {
-            TypeKey::Intrinsic(_) => {
-                // Should have been caught by is_intrinsic() check above
-                "any".to_string()
-            }
-
-            TypeKey::Literal(literal) => self.print_literal(&literal),
-
-            TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
-                self.print_object_type(shape_id)
-            }
-
-            TypeKey::Union(type_list_id) => self.print_union(type_list_id),
-
-            TypeKey::Intersection(type_list_id) => self.print_intersection(type_list_id),
-
-            TypeKey::Array(elem_id) => format!("{}[]", self.print_type(elem_id)),
-
-            TypeKey::Tuple(tuple_id) => self.print_tuple(tuple_id),
-
-            TypeKey::Function(func_id) => self.print_function_type(func_id),
-
-            TypeKey::Callable(callable_id) => self.print_callable(callable_id),
-
-            TypeKey::TypeParameter(param_info) => self.print_type_parameter(&param_info),
-
-            TypeKey::Lazy(def_id) => self.print_lazy_type(def_id),
-
-            TypeKey::Enum(def_id, members_id) => self.print_enum(def_id, members_id),
-
-            TypeKey::Application(app_id) => self.print_type_application(app_id),
-
-            TypeKey::Conditional(cond_id) => self.print_conditional(cond_id),
-
-            TypeKey::TemplateLiteral(template_id) => self.print_template_literal(template_id),
-
-            TypeKey::Mapped(mapped_id) => self.print_mapped_type(mapped_id),
-
-            TypeKey::IndexAccess(container, index) => self.print_index_access(container, index),
-
-            TypeKey::TypeQuery(_) => "any".to_string(),
-
-            TypeKey::KeyOf(type_id) => format!("keyof {}", self.print_type(type_id)),
-
-            TypeKey::ReadonlyType(type_id) => format!("readonly {}", self.print_type(type_id)),
-
-            TypeKey::UniqueSymbol(_) => "unique symbol".to_string(),
-
-            TypeKey::Infer(param_info) => self.print_type_parameter(&param_info),
-
-            TypeKey::ThisType => "this".to_string(),
-
-            TypeKey::StringIntrinsic { kind, type_arg } => {
-                self.print_string_intrinsic(kind, type_arg)
-            }
-
-            TypeKey::ModuleNamespace(_) => "any".to_string(),
-
-            TypeKey::Recursive(index) => format!("T{}", index),
-
-            TypeKey::BoundParameter(index) => format!("P{}", index),
-
-            TypeKey::Error => "any".to_string(),
-            TypeKey::NoInfer(inner) => {
-                // NoInfer<T> evaluates to T, so format the inner type
-                self.print_type(inner)
-            }
+        if let Some(literal) = visitor::literal_value(self.interner, type_id) {
+            return self.print_literal(&literal);
         }
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+        {
+            return self.print_object_type(shape_id);
+        }
+        if let Some(type_list_id) = visitor::union_list_id(self.interner, type_id) {
+            return self.print_union(type_list_id);
+        }
+        if let Some(type_list_id) = visitor::intersection_list_id(self.interner, type_id) {
+            return self.print_intersection(type_list_id);
+        }
+        if let Some(elem_id) = visitor::array_element_type(self.interner, type_id) {
+            return format!("{}[]", self.print_type(elem_id));
+        }
+        if let Some(tuple_id) = visitor::tuple_list_id(self.interner, type_id) {
+            return self.print_tuple(tuple_id);
+        }
+        if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
+            return self.print_function_type(func_id);
+        }
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            return self.print_callable(callable_id);
+        }
+        if let Some(param_info) = visitor::type_param_info(self.interner, type_id) {
+            return self.print_type_parameter(&param_info);
+        }
+        if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id) {
+            return self.print_lazy_type(def_id);
+        }
+        if let Some((def_id, members_id)) = visitor::enum_components(self.interner, type_id) {
+            return self.print_enum(def_id, members_id);
+        }
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            return self.print_type_application(app_id);
+        }
+        if let Some(cond_id) = visitor::conditional_type_id(self.interner, type_id) {
+            return self.print_conditional(cond_id);
+        }
+        if let Some(template_id) = visitor::template_literal_id(self.interner, type_id) {
+            return self.print_template_literal(template_id);
+        }
+        if let Some(mapped_id) = visitor::mapped_type_id(self.interner, type_id) {
+            return self.print_mapped_type(mapped_id);
+        }
+        if let Some((container, index)) = visitor::index_access_parts(self.interner, type_id) {
+            return self.print_index_access(container, index);
+        }
+        if visitor::type_query_symbol(self.interner, type_id).is_some() {
+            return "any".to_string();
+        }
+        if let Some(type_id) = visitor::keyof_inner_type(self.interner, type_id) {
+            return format!("keyof {}", self.print_type(type_id));
+        }
+        if let Some(type_id) = visitor::readonly_inner_type(self.interner, type_id) {
+            return format!("readonly {}", self.print_type(type_id));
+        }
+        if visitor::unique_symbol_ref(self.interner, type_id).is_some() {
+            return "unique symbol".to_string();
+        }
+        if visitor::is_this_type(self.interner, type_id) {
+            return "this".to_string();
+        }
+        if let Some((kind, type_arg)) = visitor::string_intrinsic_components(self.interner, type_id) {
+            return self.print_string_intrinsic(kind, type_arg);
+        }
+        if visitor::module_namespace_symbol_ref(self.interner, type_id).is_some() {
+            return "any".to_string();
+        }
+        if let Some(index) = visitor::recursive_index(self.interner, type_id) {
+            return format!("T{}", index);
+        }
+        if let Some(index) = visitor::bound_parameter_index(self.interner, type_id) {
+            return format!("P{}", index);
+        }
+        if let Some(inner) = visitor::no_infer_inner_type(self.interner, type_id) {
+            // NoInfer<T> evaluates to T, so format the inner type
+            return self.print_type(inner);
+        }
+        if visitor::is_error_type(self.interner, type_id) {
+            return "any".to_string();
+        }
+
+        "any".to_string()
     }
 
     fn print_intrinsic_type(&self, type_id: TypeId) -> String {
