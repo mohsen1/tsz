@@ -18,6 +18,7 @@ use crate::types::diagnostics::{
 };
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 // =============================================================================
@@ -28,6 +29,59 @@ use tsz_solver::TypeId;
 // for all error reporting in the type checker.
 
 impl<'a> CheckerState<'a> {
+    fn has_more_specific_diagnostic_at_span(&self, start: u32, length: u32) -> bool {
+        self.ctx.diagnostics.iter().any(|diag| {
+            diag.start == start
+                && diag.length == length
+                && diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+        })
+    }
+
+    /// Prefer statement-level anchors for assignment diagnostics so TS2322 spans
+    /// line up with tsc in assignment/variable-declaration contexts.
+    fn assignment_diagnostic_anchor_idx(&self, idx: NodeIndex) -> NodeIndex {
+        let mut current = idx;
+        let mut saw_assignment_binary = false;
+        let mut var_decl: Option<NodeIndex> = None;
+
+        while !current.is_none() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && self.is_assignment_operator(binary.operator_token)
+            {
+                saw_assignment_binary = true;
+            }
+
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                var_decl = Some(parent);
+            }
+
+            if parent_node.kind == syntax_kind_ext::VARIABLE_STATEMENT && var_decl.is_some() {
+                return parent;
+            }
+
+            if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT && saw_assignment_binary {
+                return parent;
+            }
+
+            current = parent;
+        }
+
+        var_decl.unwrap_or(idx)
+    }
+
     // =========================================================================
     // Fundamental Error Emitters
     // =========================================================================
@@ -90,6 +144,8 @@ impl<'a> CheckerState<'a> {
 
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
+        let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
         if self.should_suppress_assignability_diagnostic(source, target) {
             if tracing::enabled!(Level::TRACE) {
@@ -113,14 +169,14 @@ impl<'a> CheckerState<'a> {
                 target,
                 source_level,
                 target_level,
-                idx,
+                anchor_idx,
             );
             return;
         }
 
         // Check for private brand mismatch
         if let Some(detail) = self.private_brand_mismatch_error(source, target) {
-            let Some(loc) = self.get_node_span(idx) else {
+            let Some(loc) = self.get_node_span(anchor_idx) else {
                 return;
             };
 
@@ -156,7 +212,7 @@ impl<'a> CheckerState<'a> {
                 source = %source_type,
                 target = %target_type,
                 reason = ?reason_ref,
-                node_idx = idx.0,
+                node_idx = anchor_idx.0,
                 file = %self.ctx.file_name,
                 "assignability failure diagnostics"
             );
@@ -164,12 +220,13 @@ impl<'a> CheckerState<'a> {
 
         match reason {
             Some(failure_reason) => {
-                let diag = self.render_failure_reason(&failure_reason, source, target, idx, 0);
+                let diag =
+                    self.render_failure_reason(&failure_reason, source, target, anchor_idx, 0);
                 self.ctx.diagnostics.push(diag);
             }
             None => {
                 // Fallback to generic message
-                self.error_type_not_assignable_generic_at(source, target, idx);
+                self.error_type_not_assignable_generic_at(source, target, anchor_idx);
             }
         }
     }
@@ -193,6 +250,12 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(loc) = self.get_source_location(idx) {
+            // Precedence gate: suppress fallback TS2322 when a more specific
+            // diagnostic is already present at the same span.
+            if self.has_more_specific_diagnostic_at_span(loc.start, loc.length()) {
+                return;
+            }
+
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,
