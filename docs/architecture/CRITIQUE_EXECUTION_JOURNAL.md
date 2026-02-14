@@ -213,3 +213,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 201: migrated `crates/tsz-solver/src/intern.rs` interner public signatures (`intern`, `lookup`) and intrinsic helpers from `TypeKey` to `TypeData` naming to keep public APIs compatible after TypeKey privatization.
 - [x] Migration action 202: marked remaining milestone status blocks in `docs/architecture/CRITIQUE.md` from “In progress” to “Completed” after checklist closure and boundary migrations.
 - [x] Migration action 203: normalized Milestone 0 status wording in `docs/architecture/CRITIQUE.md` from “Completed (except ongoing hardening)” to “Completed” to mark full proposal closure in the roadmap document.
+- [x] Migration action 204: migrated remaining solver API/internal signatures in `crates/tsz-solver/src/format.rs` and `crates/tsz-solver/src/type_queries.rs` from `TypeKey` naming to `TypeData` naming for post-privatization consistency.

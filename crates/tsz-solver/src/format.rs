@@ -1,5 +1,5 @@
 //! Type formatting for the solver.
-//! Centralizes logic for converting TypeIds and TypeKeys to human-readable strings.
+//! Centralizes logic for converting TypeIds and TypeDatas to human-readable strings.
 
 use crate::TypeDatabase;
 use crate::def::DefinitionStore;
@@ -185,11 +185,11 @@ impl<'a> TypeFormatter<'a> {
         result
     }
 
-    fn format_key(&mut self, key: &TypeKey) -> String {
+    fn format_key(&mut self, key: &TypeData) -> String {
         match key {
-            TypeKey::Intrinsic(kind) => self.format_intrinsic(*kind),
-            TypeKey::Literal(lit) => self.format_literal(lit),
-            TypeKey::Object(shape_id) => {
+            TypeData::Intrinsic(kind) => self.format_intrinsic(*kind),
+            TypeData::Literal(lit) => self.format_literal(lit),
+            TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
 
                 // First, check if this is a class instance type with a symbol
@@ -214,7 +214,7 @@ impl<'a> TypeFormatter<'a> {
                 }
                 self.format_object(shape.properties.as_slice())
             }
-            TypeKey::ObjectWithIndex(shape_id) => {
+            TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(*shape_id);
 
                 // First, check if this is a class instance type with a symbol
@@ -239,29 +239,29 @@ impl<'a> TypeFormatter<'a> {
                 }
                 self.format_object_with_index(shape.as_ref())
             }
-            TypeKey::Union(members) => {
+            TypeData::Union(members) => {
                 let members = self.interner.type_list(*members);
                 self.format_union(members.as_ref())
             }
-            TypeKey::Intersection(members) => {
+            TypeData::Intersection(members) => {
                 let members = self.interner.type_list(*members);
                 self.format_intersection(members.as_ref())
             }
-            TypeKey::Array(elem) => format!("{}[]", self.format(*elem)),
-            TypeKey::Tuple(elements) => {
+            TypeData::Array(elem) => format!("{}[]", self.format(*elem)),
+            TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(*elements);
                 self.format_tuple(elements.as_ref())
             }
-            TypeKey::Function(shape_id) => {
+            TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(*shape_id);
                 self.format_function(shape.as_ref())
             }
-            TypeKey::Callable(shape_id) => {
+            TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(*shape_id);
                 self.format_callable(shape.as_ref())
             }
-            TypeKey::TypeParameter(info) => self.atom(info.name).to_string(),
-            TypeKey::Lazy(def_id) => {
+            TypeData::TypeParameter(info) => self.atom(info.name).to_string(),
+            TypeData::Lazy(def_id) => {
                 // Phase 4.2.1: Try to get the type name from the definition store
                 if let Some(def_store) = self.def_store {
                     if let Some(def) = def_store.get(*def_id) {
@@ -274,13 +274,13 @@ impl<'a> TypeFormatter<'a> {
                     format!("Lazy({})", def_id.0)
                 }
             }
-            TypeKey::Recursive(idx) => {
+            TypeData::Recursive(idx) => {
                 format!("Recursive({})", idx)
             }
-            TypeKey::BoundParameter(idx) => {
+            TypeData::BoundParameter(idx) => {
                 format!("BoundParameter({})", idx)
             }
-            TypeKey::Application(app) => {
+            TypeData::Application(app) => {
                 let app = self.interner.type_application(*app);
                 let base_key = self.interner.lookup(app.base);
 
@@ -293,7 +293,7 @@ impl<'a> TypeFormatter<'a> {
 
                 // Phase 4.2.1: Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
-                let base_str = if let Some(TypeKey::Lazy(def_id)) = base_key {
+                let base_str = if let Some(TypeData::Lazy(def_id)) = base_key {
                     if let Some(def_store) = self.def_store {
                         if let Some(def) = def_store.get(def_id) {
                             let name = self.atom(def.name).to_string();
@@ -327,22 +327,22 @@ impl<'a> TypeFormatter<'a> {
                 trace!(result = %result, "Application formatted");
                 result
             }
-            TypeKey::Conditional(cond_id) => {
+            TypeData::Conditional(cond_id) => {
                 let cond = self.interner.conditional_type(*cond_id);
                 self.format_conditional(cond.as_ref())
             }
-            TypeKey::Mapped(mapped_id) => {
+            TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner.mapped_type(*mapped_id);
                 self.format_mapped(mapped.as_ref())
             }
-            TypeKey::IndexAccess(obj, idx) => {
+            TypeData::IndexAccess(obj, idx) => {
                 format!("{}[{}]", self.format(*obj), self.format(*idx))
             }
-            TypeKey::TemplateLiteral(spans) => {
+            TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(*spans);
                 self.format_template_literal(spans.as_ref())
             }
-            TypeKey::TypeQuery(sym) => {
+            TypeData::TypeQuery(sym) => {
                 let name = if let Some(arena) = self.symbol_arena {
                     if let Some(symbol) = arena.get(SymbolId(sym.0)) {
                         symbol.escaped_name.to_string()
@@ -354,10 +354,10 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("typeof {}", name)
             }
-            TypeKey::KeyOf(operand) => format!("keyof {}", self.format(*operand)),
-            TypeKey::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)),
-            TypeKey::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)),
-            TypeKey::UniqueSymbol(sym) => {
+            TypeData::KeyOf(operand) => format!("keyof {}", self.format(*operand)),
+            TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)),
+            TypeData::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)),
+            TypeData::UniqueSymbol(sym) => {
                 let name = if let Some(arena) = self.symbol_arena {
                     if let Some(symbol) = arena.get(SymbolId(sym.0)) {
                         symbol.escaped_name.to_string()
@@ -369,9 +369,9 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("unique symbol {}", name)
             }
-            TypeKey::Infer(info) => format!("infer {}", self.atom(info.name)),
-            TypeKey::ThisType => "this".to_string(),
-            TypeKey::StringIntrinsic { kind, type_arg } => {
+            TypeData::Infer(info) => format!("infer {}", self.atom(info.name)),
+            TypeData::ThisType => "this".to_string(),
+            TypeData::StringIntrinsic { kind, type_arg } => {
                 let kind_name = match kind {
                     StringIntrinsicKind::Uppercase => "Uppercase",
                     StringIntrinsicKind::Lowercase => "Lowercase",
@@ -380,7 +380,7 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("{}<{}>", kind_name, self.format(*type_arg))
             }
-            TypeKey::Enum(def_id, _member_type) => {
+            TypeData::Enum(def_id, _member_type) => {
                 // Try to get the enum name from the definition store
                 if let Some(def_store) = self.def_store {
                     if let Some(def) = def_store.get(*def_id) {
@@ -393,7 +393,7 @@ impl<'a> TypeFormatter<'a> {
                     format!("Enum({})", def_id.0)
                 }
             }
-            TypeKey::ModuleNamespace(sym) => {
+            TypeData::ModuleNamespace(sym) => {
                 let name = if let Some(arena) = self.symbol_arena {
                     if let Some(symbol) = arena.get(SymbolId(sym.0)) {
                         symbol.escaped_name.to_string()
@@ -405,7 +405,7 @@ impl<'a> TypeFormatter<'a> {
                 };
                 format!("typeof import(\"{}\")", name)
             }
-            TypeKey::Error => "error".to_string(),
+            TypeData::Error => "error".to_string(),
         }
     }
 
