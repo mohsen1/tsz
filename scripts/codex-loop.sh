@@ -115,8 +115,7 @@ if [[ "$MODE" == "spark" && -z "$MODEL_OVERRIDE" ]]; then
   MODEL="${CODEX_LOOP_SPARK_MODEL:-${MODEL}}"
 fi
 
-MODEL_LC="${MODEL,,}"
-if [[ "$MODEL_LC" == *spark* ]]; then
+if printf '%s\n' "$MODEL" | tr '[:upper:]' '[:lower:]' | grep -q 'spark'; then
   REASONING_EFFORT="xhigh"
 else
   REASONING_EFFORT="minimal"
