@@ -942,7 +942,6 @@ impl<'a> CheckerState<'a> {
         if let Some(&export_idx) = export_assignment_indices.first()
             && has_other_exports
             && export_assignment_indices.len() == 1
-            && !self.ctx.compiler_options.module.is_es_module()
         {
             self.error_at_node(
                 export_idx,
