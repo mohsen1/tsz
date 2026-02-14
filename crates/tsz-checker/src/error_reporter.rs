@@ -263,13 +263,18 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // Also emit TS2322 for wrapper types (Boolean, Number, String) instead of TS2741.
+                // Also emit TS2322 for wrapper-like built-ins (Boolean, Number, String, Object)
+                // instead of TS2741.
                 // These built-in types inherit properties from Object, and object literals don't
                 // explicitly list inherited properties, so TS2741 would be incorrect.
                 // Example: `b: Boolean = {}` → TS2322 "Type '{}' is not assignable to type 'Boolean'"
                 //          NOT TS2741 "Property 'valueOf' is missing in type '{}'..."
                 let tgt_str = self.format_type(*target_type);
-                if tgt_str == "Boolean" || tgt_str == "Number" || tgt_str == "String" {
+                if tgt_str == "Boolean"
+                    || tgt_str == "Number"
+                    || tgt_str == "String"
+                    || tgt_str == "Object"
+                {
                     let src_str = self.format_type(*source_type);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -326,13 +331,15 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // Also emit TS2322 for wrapper types (Boolean, Number, String) instead of TS2739/TS2740.
+                // Also emit TS2322 for wrapper-like built-ins (Boolean, Number, String, Object)
+                // instead of TS2739/TS2740.
                 // These built-in types inherit properties from Object, and object literals don't
                 // explicitly list inherited properties, so TS2739 would be incorrect.
                 let tgt_str_check = self.format_type(*target_type);
                 if tgt_str_check == "Boolean"
                     || tgt_str_check == "Number"
                     || tgt_str_check == "String"
+                    || tgt_str_check == "Object"
                 {
                     let src_str = self.format_type(*source_type);
                     let message = format_message(
