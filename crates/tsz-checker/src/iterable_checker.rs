@@ -197,7 +197,10 @@ impl<'a> CheckerState<'a> {
                 let shape = self.ctx.types.object_shape(shape_id);
                 for prop in &shape.properties {
                     let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                    if prop_name.as_ref() == "[Symbol.asyncIterator]" && prop.is_method {
+                    if prop_name.as_ref() == "[Symbol.asyncIterator]"
+                        && prop.is_method
+                        && self.is_callable_with_no_required_args(prop.type_id)
+                    {
                         return true;
                     }
                 }
@@ -213,9 +216,39 @@ impl<'a> CheckerState<'a> {
                 use tsz_solver::operations_property::PropertyAccessResult;
                 let result =
                     self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
-                matches!(result, PropertyAccessResult::Success { .. })
+                match result {
+                    PropertyAccessResult::Success { type_id, .. } => {
+                        self.is_callable_with_no_required_args(type_id)
+                    }
+                    _ => false,
+                }
             }
         }
+    }
+
+    /// Returns true when a callable type can be invoked with zero arguments.
+    ///
+    /// The async iterable protocol requires `[Symbol.asyncIterator]()` to be callable
+    /// without arguments. A required parameter (e.g. `(x: number) => ...`) is invalid.
+    fn is_callable_with_no_required_args(&self, callable_type: TypeId) -> bool {
+        if callable_type == TypeId::ANY
+            || callable_type == TypeId::UNKNOWN
+            || callable_type == TypeId::ERROR
+        {
+            return true;
+        }
+
+        if let Some(sig) = function_shape_for_type(self.ctx.types, callable_type) {
+            return sig.params.iter().all(|p| p.optional || p.rest);
+        }
+
+        if let Some(call_signatures) = call_signatures_for_type(self.ctx.types, callable_type) {
+            return call_signatures
+                .iter()
+                .any(|sig| sig.params.iter().all(|p| p.optional || p.rest));
+        }
+
+        false
     }
 
     // =========================================================================
