@@ -805,6 +805,7 @@ Make all assignment/call/return/property-write checks call these.
     * non-`yield*` bare `yield` mismatch reporting in `dispatch` now routes via `check_assignable_or_report(...)`
     * call/new argument mismatch checks in `type_computation_complex` now route through `check_argument_assignable_or_report(...)`
     * destructuring generic mismatch checks in `state_checking` now route through `check_assignable_or_report_generic_at(...)`
+    * class-member mismatch decision points now route through `query_boundaries/class` helpers (`should_report_member_type_mismatch*`)
   * Extended architecture contract coverage to lock these modules onto centralized assignability gateway entrypoints.
 
 ---

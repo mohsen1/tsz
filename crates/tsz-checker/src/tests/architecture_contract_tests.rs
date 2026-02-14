@@ -523,9 +523,9 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     let class_checker_src = fs::read_to_string("src/class_checker.rs")
         .expect("failed to read src/class_checker.rs for architecture guard");
     assert!(
-        class_checker_src.contains("should_report_assignability_mismatch(")
-            && class_checker_src.contains("should_report_assignability_mismatch_bivariant("),
-        "class member compatibility should use centralized mismatch helper entrypoints"
+        class_checker_src.contains("should_report_member_type_mismatch(")
+            && class_checker_src.contains("should_report_member_type_mismatch_bivariant("),
+        "class member compatibility should use centralized class query-boundary mismatch helpers"
     );
 }
 
@@ -560,6 +560,54 @@ fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
                 .contains("protected_constructor_types: parent.protected_constructor_types.clone()")
             && !context_src.contains("private_constructor_types: parent.private_constructor_types.clone()"),
         "with_parent should keep constructor-access caches context-local"
+    );
+}
+
+#[test]
+fn test_direct_assignability_mismatch_decision_usage_is_quarantined() {
+    fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = fs::read_dir(dir).unwrap_or_else(|_| {
+            panic!("failed to read checker source directory {}", dir.display())
+        });
+        for entry in entries {
+            let entry = entry.expect("failed to read checker source directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_checker_rs_files_recursive(&path, files);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(Path::new("src"), &mut files);
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.display().to_string();
+        let allowed = rel.ends_with("src/assignability_checker.rs")
+            || rel.ends_with("src/query_boundaries/class.rs")
+            || rel.ends_with("src/query_boundaries/type_checking.rs")
+            || rel.contains("/tests/");
+        if allowed {
+            continue;
+        }
+        let src =
+            fs::read_to_string(&path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        if src.contains("should_report_assignability_mismatch(")
+            || src.contains("should_report_assignability_mismatch_bivariant(")
+        {
+            violations.push(rel);
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "direct should_report_assignability_mismatch usage should stay in assignability/query boundary modules; violations: {}",
+        violations.join(", ")
     );
 }
 
