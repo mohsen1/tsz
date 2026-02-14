@@ -12,7 +12,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::types::Visibility;
-use tsz_solver::visitor::lazy_def_id;
+use tsz_solver::visitor::{lazy_def_id, walk_referenced_types};
 
 impl<'a> CheckerState<'a> {
     /// Get type of object literal.
@@ -874,29 +874,16 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> bool {
-        if !visited.insert(type_id) {
-            return true;
-        }
+        let mut reachable = Vec::new();
+        walk_referenced_types(self.ctx.types, type_id, |current| reachable.push(current));
 
-        match query::classify_for_symbol_resolution_traversal(self.ctx.types, type_id) {
-            query::SymbolResolutionTraversalKind::Application { base, args, .. } => {
-                let mut fully_resolved = true;
-
-                // If the base is a Lazy or Enum type, resolve the symbol
-                if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) {
-                    let resolved = self.type_reference_symbol_type(sym_id);
-                    fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
-                }
-
-                // Recursively process base and args
-                fully_resolved &= self.ensure_application_symbols_resolved_inner(base, visited);
-                for arg in args {
-                    fully_resolved &= self.ensure_application_symbols_resolved_inner(arg, visited);
-                }
-                fully_resolved
+        let mut fully_resolved = true;
+        for current in reachable {
+            if !visited.insert(current) {
+                continue;
             }
-            query::SymbolResolutionTraversalKind::Lazy(def_id) => {
-                let mut fully_resolved = true;
+
+            if let Some(def_id) = query::lazy_def_id(self.ctx.types, current) {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                     // Use get_type_of_symbol (not type_reference_symbol_type) because
                     // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
@@ -905,172 +892,16 @@ impl<'a> CheckerState<'a> {
                     let resolved = self.get_type_of_symbol(sym_id);
                     fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
                 }
-                fully_resolved
+                continue;
             }
-            query::SymbolResolutionTraversalKind::TypeParameter {
-                constraint,
-                default,
-            } => {
-                let mut fully_resolved = true;
-                if let Some(constraint) = constraint {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(constraint, visited);
-                }
-                if let Some(default) = default {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(default, visited);
-                }
-                fully_resolved
+
+            if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(current) {
+                let resolved = self.type_reference_symbol_type(sym_id);
+                fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
             }
-            query::SymbolResolutionTraversalKind::Members(members) => {
-                let mut fully_resolved = true;
-                for member in members {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(member, visited);
-                }
-                fully_resolved
-            }
-            query::SymbolResolutionTraversalKind::Function(shape_id) => {
-                let mut fully_resolved = true;
-                let shape = self.ctx.types.function_shape(shape_id);
-                for type_param in shape.type_params.iter() {
-                    if let Some(constraint) = type_param.constraint {
-                        fully_resolved &=
-                            self.ensure_application_symbols_resolved_inner(constraint, visited);
-                    }
-                    if let Some(default) = type_param.default {
-                        fully_resolved &=
-                            self.ensure_application_symbols_resolved_inner(default, visited);
-                    }
-                }
-                for param in shape.params.iter() {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(param.type_id, visited);
-                }
-                if let Some(this_type) = shape.this_type {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(this_type, visited);
-                }
-                fully_resolved &=
-                    self.ensure_application_symbols_resolved_inner(shape.return_type, visited);
-                if let Some(predicate) = &shape.type_predicate
-                    && let Some(pred_type_id) = predicate.type_id
-                {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(pred_type_id, visited);
-                }
-                fully_resolved
-            }
-            query::SymbolResolutionTraversalKind::Callable(shape_id) => {
-                let mut fully_resolved = true;
-                let shape = self.ctx.types.callable_shape(shape_id);
-                for sig in shape
-                    .call_signatures
-                    .iter()
-                    .chain(shape.construct_signatures.iter())
-                {
-                    for type_param in sig.type_params.iter() {
-                        if let Some(constraint) = type_param.constraint {
-                            fully_resolved &=
-                                self.ensure_application_symbols_resolved_inner(constraint, visited);
-                        }
-                        if let Some(default) = type_param.default {
-                            fully_resolved &=
-                                self.ensure_application_symbols_resolved_inner(default, visited);
-                        }
-                    }
-                    for param in sig.params.iter() {
-                        fully_resolved &=
-                            self.ensure_application_symbols_resolved_inner(param.type_id, visited);
-                    }
-                    if let Some(this_type) = sig.this_type {
-                        fully_resolved &=
-                            self.ensure_application_symbols_resolved_inner(this_type, visited);
-                    }
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(sig.return_type, visited);
-                    if let Some(predicate) = &sig.type_predicate
-                        && let Some(pred_type_id) = predicate.type_id
-                    {
-                        fully_resolved &=
-                            self.ensure_application_symbols_resolved_inner(pred_type_id, visited);
-                    }
-                }
-                for prop in shape.properties.iter() {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
-                }
-                fully_resolved
-            }
-            query::SymbolResolutionTraversalKind::Object(shape_id) => {
-                let mut fully_resolved = true;
-                let shape = self.ctx.types.object_shape(shape_id);
-                for prop in shape.properties.iter() {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(prop.type_id, visited);
-                }
-                if let Some(ref idx) = shape.string_index {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(idx.value_type, visited);
-                }
-                if let Some(ref idx) = shape.number_index {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(idx.value_type, visited);
-                }
-                fully_resolved
-            }
-            query::SymbolResolutionTraversalKind::Array(elem) => {
-                self.ensure_application_symbols_resolved_inner(elem, visited)
-            }
-            query::SymbolResolutionTraversalKind::Tuple(elems_id) => {
-                let mut fully_resolved = true;
-                let elems = self.ctx.types.tuple_list(elems_id);
-                for elem in elems.iter() {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(elem.type_id, visited);
-                }
-                fully_resolved
-            }
-            query::SymbolResolutionTraversalKind::Conditional(cond_id) => {
-                let mut fully_resolved = true;
-                let cond = self.ctx.types.conditional_type(cond_id);
-                fully_resolved &=
-                    self.ensure_application_symbols_resolved_inner(cond.check_type, visited);
-                fully_resolved &=
-                    self.ensure_application_symbols_resolved_inner(cond.extends_type, visited);
-                fully_resolved &=
-                    self.ensure_application_symbols_resolved_inner(cond.true_type, visited);
-                fully_resolved &=
-                    self.ensure_application_symbols_resolved_inner(cond.false_type, visited);
-                fully_resolved
-            }
-            query::SymbolResolutionTraversalKind::Mapped(mapped_id) => {
-                let mut fully_resolved = true;
-                let mapped = self.ctx.types.mapped_type(mapped_id);
-                fully_resolved &=
-                    self.ensure_application_symbols_resolved_inner(mapped.constraint, visited);
-                fully_resolved &=
-                    self.ensure_application_symbols_resolved_inner(mapped.template, visited);
-                if let Some(name_type) = mapped.name_type {
-                    fully_resolved &=
-                        self.ensure_application_symbols_resolved_inner(name_type, visited);
-                }
-                fully_resolved
-            }
-            query::SymbolResolutionTraversalKind::Readonly(inner) => {
-                self.ensure_application_symbols_resolved_inner(inner, visited)
-            }
-            query::SymbolResolutionTraversalKind::IndexAccess { object, index } => {
-                let mut fully_resolved = true;
-                fully_resolved &= self.ensure_application_symbols_resolved_inner(object, visited);
-                fully_resolved &= self.ensure_application_symbols_resolved_inner(index, visited);
-                fully_resolved
-            }
-            query::SymbolResolutionTraversalKind::KeyOf(inner) => {
-                self.ensure_application_symbols_resolved_inner(inner, visited)
-            }
-            query::SymbolResolutionTraversalKind::Terminal => true,
         }
+
+        fully_resolved
     }
 
     /// Create a TypeEnvironment populated with resolved symbol types.

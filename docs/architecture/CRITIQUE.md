@@ -570,6 +570,11 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
   * Added focused regression tests:
     * solver visitor tests for lazy/type-query collector behavior (unique + transitive collection)
     * checker architecture contract assertions preventing `assignability_checker` from regressing to direct traversal classification/branching.
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Migrated checker `state_type_environment::ensure_application_symbols_resolved_inner` away from checker-owned recursive `SymbolResolutionTraversalKind` branching to solver visitor traversal (`visitor::walk_referenced_types(...)`) plus checker-only symbol/type-environment orchestration.
+  * Removed now-unused checker query-boundary traversal classifier plumbing for symbol resolution traversal in `query_boundaries/state_type_environment`.
+  * Added focused regression tests:
+    * checker architecture contract assertions preventing `state_type_environment` from regressing to `SymbolResolutionTraversalKind`/`classify_for_symbol_resolution_traversal(...)` branching.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
   * Add broader visitor coverage for any additional traversal-specific query needs discovered during migration.
