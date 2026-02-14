@@ -65,6 +65,13 @@ export function parseBaseline(content: string): BaselineContent {
     segments[i].end = segments[i + 1].start - segments[i + 1].name.length - 7; // 7 = "//// [".length (6) + "]".length (1)
   }
 
+  const isSourceLike = (name: string): boolean => {
+    return /\.(ts|tsx|mts|cts)$/.test(name) && !name.endsWith('.d.ts');
+  };
+  const isJsLikeOutput = (name: string): boolean => {
+    return /\.(js|jsx|mjs|cjs)$/.test(name);
+  };
+
   // Extract content for each file
   for (const seg of segments) {
     const name = seg.name.trim();
@@ -75,13 +82,13 @@ export function parseBaseline(content: string): BaselineContent {
     // Identify file types
     if (name.startsWith('tests/cases/')) {
       result.testPath = name;
-    } else if (name.endsWith('.ts') && !name.endsWith('.d.ts')) {
+    } else if (isSourceLike(name)) {
       // Source TypeScript file
       if (!result.source) {
         result.source = fileContent;
         result.sourceFileName = name;
       }
-    } else if (name.endsWith('.js')) {
+    } else if (isJsLikeOutput(name)) {
       // JavaScript output
       if (!result.js) {
         result.js = fileContent;
@@ -90,6 +97,40 @@ export function parseBaseline(content: string): BaselineContent {
       // Declaration output
       if (!result.dts) {
         result.dts = fileContent;
+      }
+    }
+  }
+
+  // Refine JS/DTS selection by preferring files that match the source basename.
+  if (result.sourceFileName) {
+    const sourceBase = result.sourceFileName.replace(/\.(ts|tsx|mts|cts)$/, '');
+    const sourceExt = result.sourceFileName.match(/\.(ts|tsx|mts|cts)$/)?.[1] ?? 'ts';
+    const preferredJsExt =
+      sourceExt === 'tsx' ? 'jsx' :
+      sourceExt === 'mts' ? 'mjs' :
+      sourceExt === 'cts' ? 'cjs' : 'js';
+    const preferredJsName = `${sourceBase}.${preferredJsExt}`;
+    const preferredDtsName = `${sourceBase}.d.ts`;
+
+    if (result.files.has(preferredJsName)) {
+      result.js = result.files.get(preferredJsName) ?? result.js;
+    } else if (!result.js) {
+      for (const [name, fileContent] of result.files) {
+        if (isJsLikeOutput(name)) {
+          result.js = fileContent;
+          break;
+        }
+      }
+    }
+
+    if (result.files.has(preferredDtsName)) {
+      result.dts = result.files.get(preferredDtsName) ?? result.dts;
+    } else if (!result.dts) {
+      for (const [name, fileContent] of result.files) {
+        if (name.endsWith('.d.ts')) {
+          result.dts = fileContent;
+          break;
+        }
       }
     }
   }
