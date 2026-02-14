@@ -484,6 +484,14 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         type_checking_src.contains("check_assignable_or_report("),
         "binding/default-value assignability should route through check_assignable_or_report"
     );
+    assert!(
+        type_checking_src.contains("ensure_relation_input_ready("),
+        "type_checking return/binding relation precondition setup should route through ensure_relation_input_ready"
+    );
+    assert!(
+        !type_checking_src.contains("ensure_application_symbols_resolved("),
+        "type_checking should not manually orchestrate application-symbol preconditions"
+    );
 
     let parameter_checker_src = fs::read_to_string("src/parameter_checker.rs")
         .expect("failed to read src/parameter_checker.rs for architecture guard");
