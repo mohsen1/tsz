@@ -1775,7 +1775,8 @@ impl<'a> CheckerState<'a> {
             for lib_binder in &lib_binders {
                 for (candidate, sym_id) in lib_binder.file_locals.iter() {
                     if lib_binder
-                        .get_symbol(*sym_id).is_none_or(|sym| sym.flags & tsz_binder::symbol_flags::VALUE == 0)
+                        .get_symbol(*sym_id)
+                        .is_none_or(|sym| sym.flags & tsz_binder::symbol_flags::VALUE == 0)
                     {
                         continue;
                     }

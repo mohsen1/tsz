@@ -1398,9 +1398,8 @@ impl<'a> CheckerState<'a> {
                     if self.is_super_expression(access.expression)
                         && let Some(ref class_info) = self.ctx.enclosing_class
                         && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
-                        && self
-                            .is_method_member_in_class_hierarchy(base_idx, property_name, true)
-                            .is_some()
+                        && self.is_method_member_in_class_hierarchy(base_idx, property_name, true)
+                            == Some(true)
                     {
                         use crate::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
@@ -1426,9 +1425,8 @@ impl<'a> CheckerState<'a> {
                         && let Some((class_idx, is_static_access)) =
                             self.resolve_class_for_access(access.expression, object_type_for_access)
                         && !is_static_access
-                        && self
-                            .is_method_member_in_class_hierarchy(class_idx, property_name, true)
-                            .is_some()
+                        && self.is_method_member_in_class_hierarchy(class_idx, property_name, true)
+                            == Some(true)
                     {
                         use crate::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
