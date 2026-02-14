@@ -1,0 +1,15 @@
+Execute one high-impact architecture roadmap slice from docs/architecture/CRITIQUE.md.
+
+Rules for this iteration:
+- Work solver-first and keep checker as thin orchestration.
+- Close one concrete roadmap item or a well-bounded sub-item.
+- Update docs/architecture/CRITIQUE.md in the same iteration to mark completed/in-progress work.
+- Add or update focused tests for the changed behavior.
+- Run relevant tests and report exact commands and outcomes.
+- Commit only coherent changes with a clear architecture-oriented commit message.
+
+Output summary must include:
+- Roadmap item(s) advanced
+- Doc status updates made
+- Tests executed and results
+- Risks or follow-up item

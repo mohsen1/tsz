@@ -12,5 +12,7 @@ conformance_total_failures: 3101
 prompt_file_conformance: scripts/codex-loop.prompt.conformance.txt
 prompt_file_emit: scripts/codex-loop.prompt.emit.txt
 prompt_file_lsp: scripts/codex-loop.prompt.lsp.txt
+prompt_file_arch: scripts/codex-loop.prompt.arch.txt
+architecture_doc: docs/architecture/CRITIQUE.md
 # legacy key retained for backward compatibility
 prompt_file: scripts/codex-loop.prompt.conformance.txt
