@@ -1078,28 +1078,13 @@ impl<'a> CheckerState<'a> {
                 // so push_type_parameters may return empty params. In that case,
                 // extract params directly from the lib arena.
                 let (mut params, updates) = self.push_type_parameters(&type_params_list);
-                if params.is_empty()
-                    && let Some((tpl, decl_arena)) = &type_params_with_arena
-                {
-                    for &tp_idx in &tpl.nodes {
-                        let Some(tp_node) = decl_arena.get(tp_idx) else {
-                            continue;
-                        };
-                        let Some(tp) = decl_arena.get_type_parameter(tp_node) else {
-                            continue;
-                        };
-                        let Some(tp_name_node) = decl_arena.get(tp.name) else {
-                            continue;
-                        };
-                        let Some(ident) = decl_arena.get_identifier(tp_name_node) else {
-                            continue;
-                        };
-                        params.push(tsz_solver::TypeParamInfo {
-                            name: self.ctx.types.intern_string(&ident.escaped_text),
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        });
+                if params.is_empty() {
+                    // For lib/multi-arena interfaces, local push_type_parameters may fail
+                    // to read type parameter nodes from self.ctx.arena. Reuse canonical
+                    // type-parameter extraction so defaults/constraints are preserved.
+                    let canonical_params = self.get_type_params_for_symbol(sym_id);
+                    if !canonical_params.is_empty() {
+                        params = canonical_params;
                     }
                 }
 
