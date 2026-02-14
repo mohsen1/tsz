@@ -84,6 +84,12 @@ CHECKS = [
         {"exclude_dirs": {"tests"}},
     ),
     (
+        "Non-solver crates must not depend on TypeKey internals",
+        ROOT / "crates",
+        re.compile(r"\buse\s+tsz_solver::.*TypeKey|\bTypeKey::"),
+        {"exclude_dirs": {"tsz-solver", "tests"}, "ignore_comment_lines": True},
+    ),
+    (
         "Solver TypeKey construction must stay in interner",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\.intern\(TypeKey::"),
