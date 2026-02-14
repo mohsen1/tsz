@@ -1365,6 +1365,16 @@ impl<'a> CheckerState<'a> {
                         // With optional chaining, missing property results in undefined
                         return TypeId::UNDEFINED;
                     }
+                    // In JS checkJs mode, CommonJS `module.exports` accesses are valid.
+                    if property_name == "exports"
+                        && (self.ctx.file_name.ends_with(".js")
+                            || self.ctx.file_name.ends_with(".jsx"))
+                        && let Some(obj_node) = self.ctx.arena.get(access.expression)
+                        && let Some(ident) = self.ctx.arena.get_identifier(obj_node)
+                        && ident.escaped_text == "module"
+                    {
+                        return TypeId::ANY;
+                    }
                     // Check for expando function pattern: func.prop = value
                     // TypeScript allows property assignments to function/class declarations
                     // without emitting TS2339. The assigned properties become part of the
