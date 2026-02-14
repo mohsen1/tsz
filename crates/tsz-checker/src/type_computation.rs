@@ -494,6 +494,23 @@ impl<'a> CheckerState<'a> {
                 // Evaluate operand for side effects / flow analysis
                 self.get_type_of_node(unary.operand);
 
+                // TS1102: delete cannot be called on an identifier in strict mode.
+                let is_identifier_operand = unary.operand.is_some()
+                    && self
+                        .ctx
+                        .arena
+                        .get(unary.operand)
+                        .is_some_and(|operand_node| {
+                            operand_node.kind == SyntaxKind::Identifier as u16
+                        });
+                if is_identifier_operand && self.is_strict_mode_for_node(idx) {
+                    self.error_at_node(
+                        idx,
+                        crate::types::diagnostics::diagnostic_messages::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
+                        crate::types::diagnostics::diagnostic_codes::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
+                    );
+                }
+
                 // TS2703: The operand of a 'delete' operator must be a property reference.
                 // Valid operands: property access (obj.prop), element access (obj["prop"]),
                 // or optional chain (obj?.prop). All other expressions are invalid.
@@ -525,6 +542,44 @@ impl<'a> CheckerState<'a> {
                 TypeId::UNDEFINED
             }
             _ => TypeId::ANY,
+        }
+    }
+
+    fn is_strict_mode_for_node(&self, idx: NodeIndex) -> bool {
+        if self.ctx.compiler_options.always_strict {
+            return true;
+        }
+
+        let mut current = idx;
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::SOURCE_FILE
+                && let Some(sf) = self.ctx.arena.get_source_file(node)
+            {
+                return sf.statements.nodes.iter().any(|stmt_idx| {
+                    self.ctx
+                        .arena
+                        .get(*stmt_idx)
+                        .filter(|stmt| stmt.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
+                        .and_then(|stmt| self.ctx.arena.get_expression_statement(stmt))
+                        .and_then(|expr_stmt| self.ctx.arena.get(expr_stmt.expression))
+                        .filter(|expr_node| expr_node.kind == SyntaxKind::StringLiteral as u16)
+                        .and_then(|expr_node| self.ctx.arena.get_literal(expr_node))
+                        .is_some_and(|lit| lit.text == "use strict")
+                });
+            }
+
+            let parent = self
+                .ctx
+                .arena
+                .get_extended(current)
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
+            if parent.is_none() {
+                return false;
+            }
+            current = parent;
         }
     }
 
