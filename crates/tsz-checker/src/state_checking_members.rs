@@ -2764,7 +2764,8 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_parameter_properties(param.type_annotation);
                 }
                 if !skip_implicit_any {
-                    self.maybe_report_implicit_any_parameter(param, false);
+                    let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx);
+                    self.maybe_report_implicit_any_parameter(param, has_jsdoc);
                 }
             }
         }
@@ -2966,7 +2967,8 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_parameter_properties(param.type_annotation);
                 }
                 if !skip_implicit_any_ctor {
-                    self.maybe_report_implicit_any_parameter(param, false);
+                    let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx);
+                    self.maybe_report_implicit_any_parameter(param, has_jsdoc);
                 }
             }
         }
@@ -3141,7 +3143,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
                 {
-                    self.maybe_report_implicit_any_parameter(param, false);
+                    let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx);
+                    self.maybe_report_implicit_any_parameter(param, has_jsdoc);
                 }
             }
         }

@@ -141,7 +141,9 @@ impl<'a> CheckerState<'a> {
             // Check for implicit any (error 7006)
             // When a setter has a paired getter, the parameter type is inferred from
             // the getter return type, so it's contextually typed (suppress TS7006).
-            self.maybe_report_implicit_any_parameter(param, has_paired_getter);
+            // Also check for inline JSDoc @param/@type annotations.
+            let has_jsdoc = has_paired_getter || self.param_has_inline_jsdoc_type(param_idx);
+            self.maybe_report_implicit_any_parameter(param, has_jsdoc);
         }
     }
 }
