@@ -95,14 +95,18 @@ jobs:
       - name: Checker boundary guardrail
         run: |
           mkdir -p target/architecture-reports
-          python3 scripts/arch_guard.py --json-report target/architecture-reports/arch-guard.json
+          scripts/check-checker-boundaries.sh
+          cp artifacts/architecture/arch_guard_report.json target/architecture-reports/arch-guard.json
+          cp artifacts/architecture/arch_guard_report.md target/architecture-reports/arch-guard.md
 
       - name: Upload architecture guard report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: architecture-guard-report
-          path: target/architecture-reports/arch-guard.json
+          path: |
+            target/architecture-reports/arch-guard.json
+            target/architecture-reports/arch-guard.md
 
   # ─── Build (needed for conformance + wasm tests) ──────────────────────────
   build:
