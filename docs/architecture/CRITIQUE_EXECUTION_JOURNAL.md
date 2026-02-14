@@ -168,3 +168,5 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 156: wired architecture report artifact emission into `scripts/check-checker-boundaries.sh` via `scripts/arch_guard.py --json-report`.
 - [x] Migration action 157: added explicit boundary ownership contract doc at `docs/architecture/BOUNDARIES.md`.
 - [x] Migration action 158: added architecture contribution checklist at `docs/architecture/CONTRIBUTION_CHECKLIST.md`.
+- [x] Migration action 159: migrated `ErrorHandler` TS2322-style emission paths in `crates/tsz-checker/src/error_handler.rs` to centralized gateway helper `check_assignable_or_report(...)`.
+- [x] Migration action 160: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to prevent direct `error_type_not_assignable*` routing in `error_handler`.

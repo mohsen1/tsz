@@ -541,6 +541,18 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "class member compatibility should use centralized class query-boundary mismatch helpers"
     );
 
+    let error_handler_src = fs::read_to_string("src/error_handler.rs")
+        .expect("failed to read src/error_handler.rs for architecture guard");
+    assert!(
+        error_handler_src.contains("check_assignable_or_report("),
+        "error_handler type-mismatch emission should route through centralized assignability gateway"
+    );
+    assert!(
+        !error_handler_src.contains("error_type_not_assignable_at(")
+            && !error_handler_src.contains("error_type_not_assignable_with_reason_at("),
+        "error_handler should not directly emit TS2322 diagnostics; use assignability gateway helpers"
+    );
+
     let call_checker_src =
         fs::read_to_string("src/call_checker.rs").expect("failed to read src/call_checker.rs");
     assert!(

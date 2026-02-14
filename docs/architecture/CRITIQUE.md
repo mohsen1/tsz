@@ -818,6 +818,7 @@ Make all assignment/call/return/property-write checks call these.
     * call/new callback constraint-violation TS2322 paths in `type_computation_complex` now route through `check_assignable_or_report_generic_at(...)`
     * destructuring generic mismatch checks in `state_checking` now route through `check_assignable_or_report_generic_at(...)`
     * class-member mismatch decision points now route through `query_boundaries/class` helpers (`should_report_member_type_mismatch*`)
+    * shared error-emission trait helpers in `error_handler` now route TS2322-style reporting through `check_assignable_or_report(...)` instead of direct reporter calls
   * Extended architecture contract coverage to lock these modules onto centralized assignability gateway entrypoints.
 
 ---
