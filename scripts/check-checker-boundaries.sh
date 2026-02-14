@@ -21,3 +21,19 @@ if [[ -n "$HITS" ]]; then
 fi
 
 echo "Checker boundary guardrail passed."
+
+# Guardrail: checker should not pattern-match TypeKey internals directly
+# outside query boundaries and tests.
+INSPECT_HITS="$(rg -n "^\s*(match|if let|if matches!|matches!\().*TypeKey::" crates/tsz-checker/src \
+  --glob '!**/query_boundaries/**' \
+  --glob '!**/tests/**' || true)"
+
+if [[ -n "$INSPECT_HITS" ]]; then
+  echo "Checker boundary guardrail violation: direct TypeKey inspection found:"
+  echo "$INSPECT_HITS"
+  echo ""
+  echo "Move this logic into solver type_queries + checker query_boundaries wrappers."
+  exit 1
+fi
+
+echo "Checker TypeKey inspection guardrail passed."
