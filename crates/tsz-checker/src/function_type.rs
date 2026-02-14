@@ -431,7 +431,10 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .is_some_and(|j| Self::jsdoc_has_type_annotations(j));
             let is_promise_executor = self.is_promise_executor_function(idx);
+            let is_accessor_node = node.kind == syntax_kind_ext::GET_ACCESSOR
+                || node.kind == syntax_kind_ext::SET_ACCESSOR;
             if !is_function_declaration
+                && !is_accessor_node
                 && !is_async
                 && !has_contextual_return
                 && !has_jsdoc_return
