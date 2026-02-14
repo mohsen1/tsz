@@ -2,8 +2,7 @@ use tsz_solver::MappedTypeId;
 use tsz_solver::{TypeDatabase, TypeId};
 
 pub(crate) use tsz_solver::type_queries::{
-    MappedConstraintKind, PropertyAccessResolutionKind, SymbolResolutionTraversalKind,
-    TypeResolutionKind,
+    MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
 
 pub(crate) fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -61,13 +60,6 @@ pub(crate) fn classify_for_property_access_resolution(
     type_id: TypeId,
 ) -> PropertyAccessResolutionKind {
     tsz_solver::type_queries::classify_for_property_access_resolution(db, type_id)
-}
-
-pub(crate) fn classify_for_symbol_resolution_traversal(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> SymbolResolutionTraversalKind {
-    tsz_solver::type_queries::classify_for_symbol_resolution_traversal(db, type_id)
 }
 
 pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
