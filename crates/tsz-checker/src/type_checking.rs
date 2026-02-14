@@ -1606,7 +1606,6 @@ impl<'a> CheckerState<'a> {
                 | "ReadonlySet"
                 // Promise types
                 | "Promise"
-                | "PromiseLike"
                 | "PromiseConstructor"
                 | "PromiseConstructorLike"
                 | "Awaited"
