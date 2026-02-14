@@ -15,6 +15,7 @@ fn make_server() -> Server {
             file: None,
             trace_to_console: false,
         },
+        enable_telemetry: false,
     }
 }
 
