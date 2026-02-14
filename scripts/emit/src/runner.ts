@@ -52,8 +52,20 @@ interface TestCase {
   module: number;
   alwaysStrict: boolean;
   sourceMap: boolean;
+  inlineSourceMap: boolean;
   downlevelIteration: boolean;
   noEmitHelpers: boolean;
+  noEmitOnError: boolean;
+  importHelpers: boolean;
+  esModuleInterop: boolean;
+  useDefineForClassFields?: boolean;
+  experimentalDecorators: boolean;
+  emitDecoratorMetadata: boolean;
+  jsx?: string;
+  jsxFactory?: string;
+  jsxFragmentFactory?: string;
+  jsxImportSource?: string;
+  moduleDetection?: string;
 }
 
 interface TestResult {
@@ -113,8 +125,20 @@ function getCacheKey(
   alwaysStrict: boolean,
   declaration: boolean,
   sourceMap: boolean = false,
+  inlineSourceMap: boolean = false,
   downlevelIteration: boolean = false,
   noEmitHelpers: boolean = false,
+  noEmitOnError: boolean = false,
+  importHelpers: boolean = false,
+  esModuleInterop: boolean = false,
+  useDefineForClassFields: string = '',
+  experimentalDecorators: boolean = false,
+  emitDecoratorMetadata: boolean = false,
+  jsx: string = '',
+  jsxFactory: string = '',
+  jsxFragmentFactory: string = '',
+  jsxImportSource: string = '',
+  moduleDetection: string = '',
 ): string {
   const tszBin = process.env.TSZ_BIN;
   let engineSalt = '';
@@ -126,7 +150,7 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${downlevelIteration}:${noEmitHelpers}:${engineSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -208,7 +232,16 @@ function inferDefaultModule(target: number): number {
   return target >= 2 ? 5 : 0;  // 2 = es2015, 5 = es2015 module kind
 }
 
-function extractVariantFromFilename(filename: string): { base: string; target?: string; module?: string; alwaysstrict?: string } {
+function extractVariantFromFilename(
+  filename: string,
+): {
+  base: string;
+  target?: string;
+  module?: string;
+  alwaysstrict?: string;
+  jsx?: string;
+  moduledetection?: string;
+} {
   const match = filename.match(/^(.+?)\(([^)]+)\)\.js$/);
   if (!match) {
     return { base: filename.replace('.js', '') };
@@ -216,13 +249,22 @@ function extractVariantFromFilename(filename: string): { base: string; target?: 
 
   const base = match[1];
   const variants = match[2].split(',').map(v => v.trim());
-  const result: { base: string; target?: string; module?: string; alwaysstrict?: string } = { base };
+  const result: {
+    base: string;
+    target?: string;
+    module?: string;
+    alwaysstrict?: string;
+    jsx?: string;
+    moduledetection?: string;
+  } = { base };
 
   for (const variant of variants) {
     const [key, value] = variant.split('=');
     if (key === 'target') result.target = value;
     if (key === 'module') result.module = value;
     if (key === 'alwaysstrict') result.alwaysstrict = value;
+    if (key === 'jsx') result.jsx = value;
+    if (key === 'moduledetection') result.moduledetection = value;
   }
 
   return result;
@@ -350,8 +392,24 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       ? variant.alwaysstrict === 'true'
       : (directives.strict === true || directives.alwaysstrict === true);
     const sourceMap = directives.sourcemap === true || directives.inlinesourcemap === true;
+    const inlineSourceMap = directives.inlinesourcemap === true;
     const downlevelIteration = directives.downleveliteration === true;
     const noEmitHelpers = directives.noemithelpers === true;
+    const noEmitOnError = directives.noemitonerror === true;
+    const importHelpers = directives.importhelpers === true;
+    const esModuleInterop = directives.esmoduleinterop === true;
+    const useDefineForClassFields = typeof directives.usedefineforclassfields === 'boolean'
+      ? directives.usedefineforclassfields
+      : undefined;
+    const experimentalDecorators = directives.experimentaldecorators === true;
+    const emitDecoratorMetadata = directives.emitdecoratormetadata === true;
+    const jsx = variant.jsx ?? (typeof directives.jsx === 'string' ? directives.jsx : undefined);
+    const moduleDetection =
+      variant.moduledetection ?? (typeof directives.moduledetection === 'string' ? directives.moduledetection : undefined);
+    const jsxFactory = typeof directives.jsxfactory === 'string' ? directives.jsxfactory : undefined;
+    const jsxFragmentFactory =
+      typeof directives.jsxfragmentfactory === 'string' ? directives.jsxfragmentfactory : undefined;
+    const jsxImportSource = typeof directives.jsximportsource === 'string' ? directives.jsximportsource : undefined;
 
     return {
       baselineFile,
@@ -367,8 +425,20 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       module,
       alwaysStrict,
       sourceMap,
+      inlineSourceMap,
       downlevelIteration,
       noEmitHelpers,
+      noEmitOnError,
+      importHelpers,
+      esModuleInterop,
+      useDefineForClassFields,
+      experimentalDecorators,
+      emitDecoratorMetadata,
+      jsx,
+      jsxFactory,
+      jsxFragmentFactory,
+      jsxImportSource,
+      moduleDetection,
     } as TestCase;
   })));
 
@@ -401,8 +471,20 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.alwaysStrict,
       emitDeclarations,
       testCase.sourceMap,
+      testCase.inlineSourceMap,
       testCase.downlevelIteration,
       testCase.noEmitHelpers,
+      testCase.noEmitOnError,
+      testCase.importHelpers,
+      testCase.esModuleInterop,
+      testCase.useDefineForClassFields === undefined ? '' : String(testCase.useDefineForClassFields),
+      testCase.experimentalDecorators,
+      testCase.emitDecoratorMetadata,
+      testCase.jsx ?? '',
+      testCase.jsxFactory ?? '',
+      testCase.jsxFragmentFactory ?? '',
+      testCase.jsxImportSource ?? '',
+      testCase.moduleDetection ?? '',
     );
     let tszJs: string;
     let tszDts: string | null = null;
@@ -419,8 +501,21 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         declaration: emitDeclarations,
         alwaysStrict: testCase.alwaysStrict,
         sourceMap: testCase.sourceMap,
+        inlineSourceMap: testCase.inlineSourceMap,
         downlevelIteration: testCase.downlevelIteration,
         noEmitHelpers: testCase.noEmitHelpers,
+        noEmitOnError: testCase.noEmitOnError,
+        importHelpers: testCase.importHelpers,
+        esModuleInterop: testCase.esModuleInterop,
+        useDefineForClassFields: testCase.useDefineForClassFields,
+        experimentalDecorators: testCase.experimentalDecorators,
+        emitDecoratorMetadata: testCase.emitDecoratorMetadata,
+        jsx: testCase.jsx,
+        jsxFactory: testCase.jsxFactory,
+        jsxFragmentFactory: testCase.jsxFragmentFactory,
+        jsxImportSource: testCase.jsxImportSource,
+        moduleDetection: testCase.moduleDetection,
+        outFile: testCase.expectedJsFileName === 'out.js' ? 'out.js' : undefined,
         sourceFiles: testCase.sourceFiles,
         expectedJsFileName: testCase.expectedJsFileName ?? undefined,
         expectedDtsFileName: testCase.expectedDtsFileName ?? undefined,
