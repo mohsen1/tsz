@@ -1532,11 +1532,12 @@ impl<'a> CheckerState<'a> {
     // Function Call Errors
     // =========================================================================
 
-    /// Try to elaborate an argument type mismatch for object literal arguments.
+    /// Try to elaborate an argument type mismatch for object/array literal arguments.
     ///
     /// When an object literal argument has a property whose value type doesn't match
     /// the expected property type, tsc reports TS2322 on the specific property name
-    /// rather than TS2345 on the whole argument. This method implements that elaboration.
+    /// rather than TS2345 on the whole argument. Similarly for array literals, tsc
+    /// reports TS2322 on each element that doesn't match the expected element type.
     ///
     /// Returns `true` if elaboration produced at least one property-level error (TS2322),
     /// meaning the caller should NOT emit TS2345 on the whole argument.
@@ -1547,10 +1548,33 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
-        // Check if the argument is an object literal expression
         let arg_node = match self.ctx.arena.get(arg_idx) {
-            Some(node) if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => node,
-            _ => return false,
+            Some(node) => node,
+            None => return false,
+        };
+
+        match arg_node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.try_elaborate_object_literal_properties(arg_idx, param_type)
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.try_elaborate_array_literal_elements(arg_idx, param_type)
+            }
+            _ => false,
+        }
+    }
+
+    /// Elaborate object literal property type mismatches with TS2322.
+    fn try_elaborate_object_literal_properties(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let arg_node = match self.ctx.arena.get(arg_idx) {
+            Some(node) => node,
+            None => return false,
         };
 
         let obj = match self.ctx.arena.get_literal_expr(arg_node) {
@@ -1618,6 +1642,63 @@ impl<'a> CheckerState<'a> {
                     target_prop_type,
                     prop_name_idx,
                 );
+                elaborated = true;
+            }
+        }
+
+        elaborated
+    }
+
+    /// Elaborate array literal element type mismatches with TS2322.
+    fn try_elaborate_array_literal_elements(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let arg_node = match self.ctx.arena.get(arg_idx) {
+            Some(node) if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => node,
+            _ => return false,
+        };
+
+        // Get the expected element type from the parameter array type
+        let target_element_type =
+            match tsz_solver::visitor::array_element_type(self.ctx.types, param_type) {
+                Some(elem_type) => elem_type,
+                None => return false,
+            };
+
+        let arr = match self.ctx.arena.get_literal_expr(arg_node) {
+            Some(arr) => arr.clone(),
+            None => return false,
+        };
+
+        let mut elaborated = false;
+
+        for &elem_idx in &arr.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            // Skip spread elements
+            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                continue;
+            }
+
+            let elem_type = self.get_type_of_node(elem_idx);
+
+            // Skip if types are unresolved
+            if elem_type == TypeId::ERROR
+                || elem_type == TypeId::ANY
+                || target_element_type == TypeId::ERROR
+                || target_element_type == TypeId::ANY
+            {
+                continue;
+            }
+
+            if !self.is_assignable_to(elem_type, target_element_type) {
+                self.error_type_not_assignable_at(elem_type, target_element_type, elem_idx);
                 elaborated = true;
             }
         }
