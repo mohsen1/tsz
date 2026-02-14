@@ -3494,51 +3494,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
-        // Array source vs object target: resolve Array<T> to its interface properties
-        // and explain missing members on the target type (TS2741/TS2739/TS2740).
-        if let Some(s_elem) = array_element_type(self.interner, resolved_source) {
-            let t_shape_id = object_shape_id(self.interner, resolved_target)
-                .or_else(|| object_with_index_shape_id(self.interner, resolved_target));
-            if let Some(t_sid) = t_shape_id {
-                if let Some(array_base) = self.resolver.get_array_base_type() {
-                    let params = self.resolver.get_array_base_type_params();
-                    let instantiated = if params.is_empty() {
-                        array_base
-                    } else {
-                        let subst = TypeSubstitution::from_args(self.interner, params, &[s_elem]);
-                        instantiate_type(self.interner, array_base, &subst)
-                    };
-                    let resolved_inst = self.resolve_ref_type(instantiated);
-                    let t_shape = self.interner.object_shape(t_sid);
-                    if let Some(s_obj_sid) = object_shape_id(self.interner, resolved_inst)
-                        .or_else(|| object_with_index_shape_id(self.interner, resolved_inst))
-                    {
-                        let s_shape = self.interner.object_shape(s_obj_sid);
-                        return self.explain_object_failure(
-                            source,
-                            target,
-                            &s_shape.properties,
-                            Some(s_obj_sid),
-                            &t_shape.properties,
-                        );
-                    }
-                    // Array interface may resolve to a callable shape with object members.
-                    if let Some(callable_sid) = callable_shape_id(self.interner, resolved_inst) {
-                        let callable = self.interner.callable_shape(callable_sid);
-                        if !callable.properties.is_empty() {
-                            return self.explain_object_failure(
-                                source,
-                                target,
-                                &callable.properties,
-                                None,
-                                &t_shape.properties,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
         // Object source vs array target: resolve Array<T> to its interface properties
         // and find missing members. TSC emits TS2740 here (missing properties from array).
         if let Some(t_elem) = array_element_type(self.interner, resolved_target) {
