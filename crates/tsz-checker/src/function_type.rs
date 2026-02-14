@@ -1316,10 +1316,8 @@ impl<'a> CheckerState<'a> {
             }
 
             if self.ctx.strict_bind_call_apply()
-                && let Some(strict_method_type) = self.strict_bind_call_apply_method_type(
-                    object_type_for_access,
-                    property_name,
-                )
+                && let Some(strict_method_type) =
+                    self.strict_bind_call_apply_method_type(object_type_for_access, property_name)
             {
                 return self.apply_flow_narrowing(idx, strict_method_type);
             }
