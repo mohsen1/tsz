@@ -59,11 +59,127 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 return None;
             };
 
+        // Prefer syntactic extraction from the explicit annotation first.
+        // This preserves `TYield` exactly as written (e.g. `IterableIterator<number>`
+        // => `number`) even if semantic base resolution currently widens it.
+        let declared_return_node = self.checker.ctx.arena.get(declared_return_type_node)?;
+        if declared_return_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            let declared_return_type = self
+                .checker
+                .get_type_from_type_node(declared_return_type_node);
+            return self
+                .checker
+                .get_generator_yield_type_argument(declared_return_type);
+        }
+        let type_ref = self.checker.ctx.arena.get_type_ref(declared_return_node)?;
+        let type_name_node = self.checker.ctx.arena.get(type_ref.type_name)?;
+        let type_name = self
+            .checker
+            .ctx
+            .arena
+            .get_identifier(type_name_node)
+            .map(|ident| ident.escaped_text.as_str())?;
+
+        if !matches!(
+            type_name,
+            "Generator"
+                | "AsyncGenerator"
+                | "Iterator"
+                | "AsyncIterator"
+                | "IterableIterator"
+                | "AsyncIterableIterator"
+        ) {
+            let declared_return_type = self
+                .checker
+                .get_type_from_type_node(declared_return_type_node);
+            return self
+                .checker
+                .get_generator_yield_type_argument(declared_return_type);
+        }
+
+        if let Some(first_arg) = type_ref
+            .type_arguments
+            .as_ref()
+            .and_then(|args| args.nodes.first().copied())
+        {
+            return Some(self.checker.get_type_from_type_node(first_arg));
+        }
+
         let declared_return_type = self
             .checker
             .get_type_from_type_node(declared_return_type_node);
         self.checker
             .get_generator_yield_type_argument(declared_return_type)
+    }
+
+    fn type_node_includes_undefined(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.checker.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::UndefinedKeyword as u16 {
+            return true;
+        }
+
+        if node.kind == syntax_kind_ext::UNION_TYPE
+            && let Some(composite) = self.checker.ctx.arena.get_composite_type(node)
+        {
+            return composite
+                .types
+                .nodes
+                .iter()
+                .copied()
+                .any(|member| self.type_node_includes_undefined(member));
+        }
+
+        false
+    }
+
+    fn explicit_generator_yield_allows_undefined(&mut self, idx: NodeIndex) -> Option<bool> {
+        let enclosing_fn_idx = self.checker.find_enclosing_function(idx)?;
+        let fn_node = self.checker.ctx.arena.get(enclosing_fn_idx)?;
+
+        let declared_return_type_node =
+            if let Some(func) = self.checker.ctx.arena.get_function(fn_node) {
+                if !func.asterisk_token || func.type_annotation.is_none() {
+                    return None;
+                }
+                func.type_annotation
+            } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node) {
+                if !method.asterisk_token || method.type_annotation.is_none() {
+                    return None;
+                }
+                method.type_annotation
+            } else {
+                return None;
+            };
+
+        let declared_return_node = self.checker.ctx.arena.get(declared_return_type_node)?;
+        if declared_return_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.checker.ctx.arena.get_type_ref(declared_return_node)?;
+        let type_name_node = self.checker.ctx.arena.get(type_ref.type_name)?;
+        let type_name = self
+            .checker
+            .ctx
+            .arena
+            .get_identifier(type_name_node)
+            .map(|ident| ident.escaped_text.as_str())?;
+        if !matches!(
+            type_name,
+            "Generator"
+                | "AsyncGenerator"
+                | "Iterator"
+                | "AsyncIterator"
+                | "IterableIterator"
+                | "AsyncIterableIterator"
+        ) {
+            return None;
+        }
+
+        let first_arg = type_ref.type_arguments.as_ref()?.nodes.first().copied()?;
+        Some(self.type_node_includes_undefined(first_arg))
     }
 
     fn get_type_of_yield_expression(&mut self, idx: NodeIndex) -> TypeId {
@@ -126,11 +242,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .ensure_relation_input_ready(expected_yield_type);
 
             let resolved_expected_yield_type = self.checker.resolve_lazy_type(expected_yield_type);
+            let syntactic_yield_allows_undefined = self
+                .explicit_generator_yield_allows_undefined(idx)
+                .unwrap_or(false);
 
             let bare_yield_requires_error = yield_expr.expression.is_none()
                 && expected_yield_type != TypeId::ANY
                 && expected_yield_type != TypeId::UNKNOWN
                 && expected_yield_type != TypeId::ERROR
+                && !syntactic_yield_allows_undefined
                 && !self.checker.type_includes_undefined(expected_yield_type)
                 && !self
                     .checker
@@ -143,11 +263,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
 
             if bare_yield_requires_error {
-                let _ = self.checker.check_assignable_or_report(
+                if self.checker.check_assignable_or_report(
                     yielded_type,
                     expected_yield_type,
                     error_node,
-                );
+                ) {
+                    self.checker.error_type_not_assignable_with_reason_at(
+                        yielded_type,
+                        expected_yield_type,
+                        error_node,
+                    );
+                }
             } else if !self.checker.type_contains_error(expected_yield_type)
                 && !self.checker.check_assignable_or_report(
                     yielded_type,

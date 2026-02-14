@@ -17,7 +17,7 @@ use crate::types::diagnostics::Diagnostic;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::def::{DefId, DefinitionStore};
-use tsz_solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId, judge::JudgeConfig};
+use tsz_solver::{QueryDatabase, RelationCacheKey, TypeEnvironment, TypeId, judge::JudgeConfig};
 
 // Re-export CheckerOptions and ScriptTarget from tsz-common
 use tsz_binder::BinderState;
@@ -233,6 +233,10 @@ pub struct CheckerContext<'a> {
 
     /// Cached type environment for resolving Ref types during assignability checks.
     pub type_environment: Rc<RefCell<TypeEnvironment>>,
+
+    /// Legacy relation cache mirror kept for root-crate test compatibility.
+    /// Source of truth remains the solver/interner relation cache.
+    pub relation_cache: RefCell<FxHashMap<RelationCacheKey, bool>>,
 
     /// Recursion guard for application evaluation.
     pub application_eval_set: FxHashSet<TypeId>,
@@ -596,6 +600,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            relation_cache: RefCell::new(FxHashMap::default()),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
@@ -713,6 +718,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            relation_cache: RefCell::new(FxHashMap::default()),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
@@ -821,6 +827,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            relation_cache: RefCell::new(FxHashMap::default()),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
@@ -931,6 +938,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            relation_cache: RefCell::new(FxHashMap::default()),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
@@ -1040,6 +1048,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            relation_cache: RefCell::new(FxHashMap::default()),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
@@ -1165,6 +1174,7 @@ impl<'a> CheckerContext<'a> {
             // incorrectly map to a class declaration with the same node index).
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
+            relation_cache: RefCell::new(FxHashMap::default()),
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             // FlowNodeId/SymbolId are binder-local; isolate flow cache per context.

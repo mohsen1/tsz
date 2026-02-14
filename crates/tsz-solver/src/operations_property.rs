@@ -311,7 +311,6 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
         use crate::index_signatures::{IndexKind, IndexSignatureResolver};
-        use crate::types::TypeKey;
 
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
@@ -463,8 +462,6 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     }
 
     fn visit_array(&mut self, element_type: TypeId) -> Self::Output {
-        use crate::types::TypeKey;
-
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
@@ -483,8 +480,6 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
     }
 
     fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
-        use crate::types::TypeKey;
-
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
@@ -572,7 +567,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_atom: Option<Atom>,
     ) -> Option<PropertyAccessResult> {
         use crate::index_signatures::{IndexKind, IndexSignatureResolver};
-        use crate::types::TypeKey;
 
         let prop_atom = match prop_atom {
             Some(atom) => atom,
@@ -733,7 +727,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_atom: Option<Atom>,
     ) -> Option<PropertyAccessResult> {
         use crate::index_signatures::{IndexKind, IndexSignatureResolver};
-        use crate::types::TypeKey;
 
         let members = self.interner().type_list(crate::types::TypeListId(list_id));
 
@@ -944,7 +937,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> Option<PropertyAccessResult> {
-        use crate::types::{LiteralValue, MappedModifier, TypeKey};
+        use crate::types::MappedModifier;
 
         let mapped = self.interner().mapped_type(mapped_id);
 
@@ -1038,8 +1031,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> Option<PropertyAccessResult> {
-        use crate::types::TypeKey;
-
         // Only handle non-numeric property names (array methods)
         // Numeric properties should go through normal template mapping
         if prop_name.parse::<usize>().is_ok() {

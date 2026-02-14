@@ -178,7 +178,6 @@ impl CompilationCache {
                 if has_star_export {
                     if let Some(cache) = self.type_caches.get_mut(&path) {
                         cache.node_types.clear();
-                        cache.relation_cache.clear();
                     }
                 } else {
                     self.type_caches.remove(&path);

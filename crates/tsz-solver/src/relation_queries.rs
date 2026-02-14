@@ -128,7 +128,11 @@ pub fn query_relation_with_resolver<'a, R: TypeResolver>(
 }
 
 /// Query a relation using a custom resolver and checker-provided overrides.
-pub fn query_relation_with_overrides<'a, R: TypeResolver, P: AssignabilityOverrideProvider + ?Sized>(
+pub fn query_relation_with_overrides<
+    'a,
+    R: TypeResolver,
+    P: AssignabilityOverrideProvider + ?Sized,
+>(
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     source: TypeId,

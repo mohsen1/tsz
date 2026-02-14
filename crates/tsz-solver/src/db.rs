@@ -14,9 +14,9 @@ use crate::type_factory::TypeFactory;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
-    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, SymbolRef, TemplateLiteralId,
-    StringIntrinsicKind, TemplateSpan, TupleElement, TupleListId, TypeApplication,
-    TypeApplicationId, TypeData, TypeId, TypeKey, TypeListId, TypeParamInfo, Variance,
+    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
+    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
+    TypeData, TypeId, TypeKey, TypeListId, TypeParamInfo, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;

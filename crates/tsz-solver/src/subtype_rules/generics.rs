@@ -583,9 +583,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Try to expand a Mapped type to its structural form.
     /// Returns None if the mapped type cannot be expanded (unresolvable constraint).
     pub(crate) fn try_expand_mapped(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{
-            LiteralValue, MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type,
-        };
+        use crate::{MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type};
 
         let mapped = self.interner.mapped_type(mapped_id);
 

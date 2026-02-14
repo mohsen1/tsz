@@ -596,8 +596,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 | TypeData::ReadonlyType(_)
                 | TypeData::StringIntrinsic { .. }
                 | TypeData::ThisType // Context-dependent polymorphic type
-                                    // Note: Lazy and Application are REMOVED (Task #37)
-                                    // They are now handled by the Canonicalizer (Task #32)
+                                     // Note: Lazy and Application are REMOVED (Task #37)
+                                     // They are now handled by the Canonicalizer (Task #32)
         )
     }
 
