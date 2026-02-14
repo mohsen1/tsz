@@ -386,8 +386,8 @@ impl<'a> CheckerState<'a> {
                     actual,
                 } => {
                     tracing::debug!("Overload {} failed: arg {} type mismatch", idx, index);
-                    tracing::debug!("  Expected: {:?}", self.ctx.types.lookup(*expected));
-                    tracing::debug!("  Actual: {:?}", self.ctx.types.lookup(*actual));
+                    tracing::debug!("  Expected TypeId: {:?}", expected);
+                    tracing::debug!("  Actual TypeId: {:?}", actual);
                 }
                 _ => {
                     tracing::debug!("Overload {} result: {:?}", idx, result);

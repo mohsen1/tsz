@@ -1143,30 +1143,24 @@ mod tests {
 
                     // Verify it's not just TypeId::ANY anymore
                     // The created type should have proper structure
-                    if let Some(type_key) = types.lookup(async_gen_type) {
-                        match type_key {
-                            tsz_solver::TypeKey::Object(shape_id) => {
-                                let shape = types.object_shape(shape_id);
-                                // Should have next, return, throw methods
-                                let has_next = shape
-                                    .properties
-                                    .iter()
-                                    .any(|p| types.resolve_atom_ref(p.name).as_ref() == "next");
-                                let has_return = shape
-                                    .properties
-                                    .iter()
-                                    .any(|p| types.resolve_atom_ref(p.name).as_ref() == "return");
-                                let has_throw = shape
-                                    .properties
-                                    .iter()
-                                    .any(|p| types.resolve_atom_ref(p.name).as_ref() == "throw");
-                                assert!(has_next, "AsyncGenerator should have 'next' method");
-                                assert!(has_return, "AsyncGenerator should have 'return' method");
-                                assert!(has_throw, "AsyncGenerator should have 'throw' method");
-                            }
-                            _ => panic!("Expected Object type key for AsyncGenerator"),
-                        }
-                    }
+                    let shape = tsz_solver::type_queries::get_object_shape(&types, async_gen_type)
+                        .expect("Expected Object type for AsyncGenerator");
+                    // Should have next, return, throw methods
+                    let has_next = shape
+                        .properties
+                        .iter()
+                        .any(|p| types.resolve_atom_ref(p.name).as_ref() == "next");
+                    let has_return = shape
+                        .properties
+                        .iter()
+                        .any(|p| types.resolve_atom_ref(p.name).as_ref() == "return");
+                    let has_throw = shape
+                        .properties
+                        .iter()
+                        .any(|p| types.resolve_atom_ref(p.name).as_ref() == "throw");
+                    assert!(has_next, "AsyncGenerator should have 'next' method");
+                    assert!(has_return, "AsyncGenerator should have 'return' method");
+                    assert!(has_throw, "AsyncGenerator should have 'throw' method");
                 }
             }
         }

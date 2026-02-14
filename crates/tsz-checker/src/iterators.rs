@@ -971,23 +971,14 @@ mod tests {
         assert_ne!(iterator_number, TypeId::ANY);
 
         // Verify it's an object type with a `next` method
-        if let Some(type_key) = types.lookup(iterator_number) {
-            match type_key {
-                tsz_solver::TypeKey::Object(shape_id) => {
-                    let shape = types.object_shape(shape_id);
-                    // Should have a `next` property
-                    assert!(
-                        shape
-                            .properties
-                            .iter()
-                            .any(|p| { types.resolve_atom(p.name) == "next" && p.is_method })
-                    );
-                }
-                _ => {
-                    // Could be an Application type if lib types were available
-                    // This is acceptable
-                }
-            }
+        if let Some(shape) = tsz_solver::type_queries::get_object_shape(&types, iterator_number) {
+            // Should have a `next` property
+            assert!(
+                shape
+                    .properties
+                    .iter()
+                    .any(|p| { types.resolve_atom(p.name) == "next" && p.is_method })
+            );
         }
     }
 
@@ -1012,16 +1003,7 @@ mod tests {
         assert_ne!(iterator_result, TypeId::ANY);
 
         // It should be a union type (IteratorYieldResult | IteratorReturnResult)
-        if let Some(type_key) = types.lookup(iterator_result) {
-            match type_key {
-                tsz_solver::TypeKey::Union(_) => {
-                    // Expected: union of yield and return result types
-                }
-                _ => {
-                    // Could be an Application type if lib types were available
-                }
-            }
-        }
+        let _ = tsz_solver::type_queries::get_union_members(&types, iterator_result);
     }
 
     #[test]
@@ -1084,8 +1066,7 @@ mod tests {
         let iterator_type = checker.create_iterator_type(TypeId::NUMBER);
 
         // Verify it has a next() method that returns IteratorResult<number, any>
-        if let Some(tsz_solver::TypeKey::Object(shape_id)) = types.lookup(iterator_type) {
-            let shape = types.object_shape(shape_id);
+        if let Some(shape) = tsz_solver::type_queries::get_object_shape(&types, iterator_type) {
 
             // Find the next property
             let next_prop = shape
@@ -1099,9 +1080,9 @@ mod tests {
             assert!(next_prop.is_method, "next should be a method");
 
             // Verify next is a function
-            if let Some(tsz_solver::TypeKey::Function(func_id)) = types.lookup(next_prop.type_id)
+            if let Some(func_shape) =
+                tsz_solver::type_queries::get_function_shape(&types, next_prop.type_id)
             {
-                let func_shape = types.function_shape(func_id);
                 // Return type should be IteratorResult<number, any>
                 assert_ne!(func_shape.return_type, TypeId::ANY);
             }
