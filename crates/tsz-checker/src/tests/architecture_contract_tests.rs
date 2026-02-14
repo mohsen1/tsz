@@ -536,8 +536,11 @@ fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
         !type_cache_src.contains("application_eval_cache")
             && !type_cache_src.contains("application_eval_set")
             && !type_cache_src.contains("mapped_eval_cache")
-            && !type_cache_src.contains("mapped_eval_set"),
-        "TypeCache should not persist checker algorithm-evaluation caches"
+            && !type_cache_src.contains("mapped_eval_set")
+            && !type_cache_src.contains("abstract_constructor_types")
+            && !type_cache_src.contains("protected_constructor_types")
+            && !type_cache_src.contains("private_constructor_types"),
+        "TypeCache should not persist checker algorithm caches (eval/constructor-access)"
     );
 }
 

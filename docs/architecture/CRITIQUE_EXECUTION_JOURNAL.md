@@ -137,3 +137,6 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 125: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for `state_checking_members` gateway routing.
 - [x] Migration action 126: migrated `satisfies` expression assignability mismatch checks in `crates/tsz-checker/src/dispatch.rs` to `check_assignable_or_report(...)`.
 - [x] Migration action 127: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for `dispatch` gateway routing.
+- [x] Migration action 128: removed constructor-access algorithm cache fields from persistent `TypeCache` in `crates/tsz-checker/src/context.rs`.
+- [x] Migration action 129: updated `with_cache`/`with_cache_and_options` cache-restore paths to initialize constructor-access caches as context-local state instead of loading persisted values.
+- [x] Migration action 130: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to ensure `TypeCache` excludes persisted eval and constructor-access algorithm cache fields.

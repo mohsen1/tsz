@@ -88,15 +88,6 @@ pub struct TypeCache {
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 
-    /// Cached abstract constructor types (TypeIds) for assignability checks.
-    pub abstract_constructor_types: FxHashSet<TypeId>,
-
-    /// Cached protected constructor types (TypeIds) for assignability checks.
-    pub protected_constructor_types: FxHashSet<TypeId>,
-
-    /// Cached private constructor types (TypeIds) for assignability checks.
-    pub private_constructor_types: FxHashSet<TypeId>,
-
     /// Maps DefIds to SymbolIds for declaration emit usage analysis.
     /// Populated by CheckerContext during type checking, consumed by UsageAnalyzer.
     pub def_to_symbol: FxHashMap<tsz_solver::DefId, SymbolId>,
@@ -159,10 +150,6 @@ impl TypeCache {
             self.symbol_dependencies.remove(sym_id);
         }
         self.node_types.clear();
-        self.abstract_constructor_types.clear();
-        self.protected_constructor_types.clear();
-        self.private_constructor_types.clear();
-
         affected.len()
     }
 
@@ -181,13 +168,6 @@ impl TypeCache {
                 .or_default()
                 .extend(deps);
         }
-
-        self.abstract_constructor_types
-            .extend(other.abstract_constructor_types);
-        self.protected_constructor_types
-            .extend(other.protected_constructor_types);
-        self.private_constructor_types
-            .extend(other.private_constructor_types);
 
         // Merge def_to_symbol mapping
         self.def_to_symbol.extend(other.def_to_symbol);
@@ -1029,9 +1009,9 @@ impl<'a> CheckerContext<'a> {
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),
-            abstract_constructor_types: cache.abstract_constructor_types,
-            protected_constructor_types: cache.protected_constructor_types,
-            private_constructor_types: cache.private_constructor_types,
+            abstract_constructor_types: FxHashSet::default(),
+            protected_constructor_types: FxHashSet::default(),
+            private_constructor_types: FxHashSet::default(),
             def_to_symbol: RefCell::new(cache.def_to_symbol),
             cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
             all_arenas: None,
@@ -1143,9 +1123,9 @@ impl<'a> CheckerContext<'a> {
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),
-            abstract_constructor_types: cache.abstract_constructor_types,
-            protected_constructor_types: cache.protected_constructor_types,
-            private_constructor_types: cache.private_constructor_types,
+            abstract_constructor_types: FxHashSet::default(),
+            protected_constructor_types: FxHashSet::default(),
+            private_constructor_types: FxHashSet::default(),
             def_to_symbol: RefCell::new(cache.def_to_symbol),
             cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
             all_arenas: None,
@@ -1909,9 +1889,6 @@ impl<'a> CheckerContext<'a> {
             symbol_instance_types: self.symbol_instance_types,
             node_types: self.node_types,
             symbol_dependencies: self.symbol_dependencies,
-            abstract_constructor_types: self.abstract_constructor_types,
-            protected_constructor_types: self.protected_constructor_types,
-            private_constructor_types: self.private_constructor_types,
             def_to_symbol: self.def_to_symbol.into_inner(),
             flow_analysis_cache: self.flow_analysis_cache.into_inner(),
             class_instance_type_to_decl: self.class_instance_type_to_decl,
