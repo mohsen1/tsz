@@ -1907,6 +1907,9 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        if self.is_element_access_on_this_or_super_with_any_base(idx) {
+            return;
+        }
 
         let mut formatter = self.ctx.create_type_formatter();
         let index_str = formatter.format(index_type);
@@ -1917,6 +1920,69 @@ impl<'a> CheckerState<'a> {
         );
 
         self.error_at_node(idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN);
+    }
+
+    /// TypeScript suppresses TS7053 for `this[...]`/`super[...]` when the class extends an `any` base.
+    fn is_element_access_on_this_or_super_with_any_base(&mut self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let Some(parent) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+        if parent.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(parent) else {
+            return false;
+        };
+        if access.name_or_argument != idx {
+            return false;
+        }
+        let Some(expr_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        let is_this_or_super = expr_node.kind == SyntaxKind::SuperKeyword as u16
+            || expr_node.kind == SyntaxKind::ThisKeyword as u16;
+        if !is_this_or_super {
+            return false;
+        }
+
+        let Some(class_info) = self.ctx.enclosing_class.clone() else {
+            return false;
+        };
+        let Some(class_decl) = self.ctx.arena.get_class_at(class_info.class_idx) else {
+            return false;
+        };
+        let Some(heritage_clauses) = &class_decl.heritage_clauses else {
+            return false;
+        };
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                continue;
+            };
+            if clause.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            let Some(&type_idx) = clause.types.nodes.first() else {
+                continue;
+            };
+            let expr_idx = if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args_at(type_idx)
+            {
+                expr_type_args.expression
+            } else {
+                type_idx
+            };
+            if self.get_type_of_node(expr_idx) == TypeId::ANY {
+                return true;
+            }
+        }
+
+        false
     }
 
     // =========================================================================
