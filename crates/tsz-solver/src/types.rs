@@ -706,7 +706,7 @@ pub enum TypeData {
 }
 
 /// Compatibility alias while external callsites migrate to `TypeData`.
-pub type TypeKey = TypeData;
+pub(crate) type TypeKey = TypeData;
 
 /// Generic type application (Base<Args>)
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
