@@ -235,8 +235,8 @@ impl<'a> CheckerState<'a> {
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
         // Note: Use ORIGINAL types for cache key, not evaluated types
-        let is_cacheable =
-            !self.contains_infer_types_cached(source) && !self.contains_infer_types_cached(target);
+        let is_cacheable = !tsz_solver::visitor::contains_infer_types(self.ctx.types, source)
+            && !tsz_solver::visitor::contains_infer_types(self.ctx.types, target);
 
         // For bivariant checks, we strip the strict_function_types flag
         // so the cache key is distinct from regular assignability checks.
@@ -656,8 +656,8 @@ impl<'a> CheckerState<'a> {
 
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
-        let is_cacheable =
-            !self.contains_infer_types_cached(source) && !self.contains_infer_types_cached(target);
+        let is_cacheable = !tsz_solver::visitor::contains_infer_types(self.ctx.types, source)
+            && !tsz_solver::visitor::contains_infer_types(self.ctx.types, target);
         let flags = self.ctx.pack_relation_flags();
 
         if is_cacheable {
