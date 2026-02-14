@@ -1446,9 +1446,9 @@ impl<'a> IRPrinter<'a> {
                 self.write(" = {})");
             } else if is_exported && attach_to_exports {
                 self.write(current_name);
-                self.write(" = exports.");
-                self.write(current_name);
                 self.write(" || (exports.");
+                self.write(current_name);
+                self.write(" = ");
                 self.write(current_name);
                 self.write(" = {})");
             } else {

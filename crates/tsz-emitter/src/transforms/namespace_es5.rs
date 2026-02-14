@@ -111,6 +111,23 @@ impl<'a> NamespaceES5Emitter<'a> {
         printer.emit(&ir).to_string()
     }
 
+    /// Emit an exported namespace declaration (CommonJS attach-to-exports form).
+    pub fn emit_exported_namespace(&mut self, ns_idx: NodeIndex) -> String {
+        let ir = self.transformer.transform_exported_namespace(ns_idx);
+        let ir = match ir {
+            Some(ir) => ir,
+            None => return String::new(),
+        };
+
+        let mut printer = if let Some(source_text) = self.source_text {
+            IRPrinter::with_arena_and_source(self.arena, source_text)
+        } else {
+            IRPrinter::with_arena(self.arena)
+        };
+        printer.set_indent_level(self.indent_level);
+        printer.emit(&ir).to_string()
+    }
+
     /// Set the indent level for output
     pub fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
