@@ -1259,7 +1259,11 @@ impl<'a> CheckerState<'a> {
             }
             current = ext.parent;
         }
-        let suppress_spelling_suggestion = is_accessibility_modifier_name || is_in_spread_element;
+        // Keep TS2304 (no TS2552 suggestion) for `arguments` lookups.
+        // TypeScript does not offer spelling suggestions for unresolved `arguments`.
+        let is_arguments_name = name == "arguments";
+        let suppress_spelling_suggestion =
+            is_accessibility_modifier_name || is_in_spread_element || is_arguments_name;
 
         // Try to find similar identifiers in scope for better error messages
         if !suppress_spelling_suggestion
