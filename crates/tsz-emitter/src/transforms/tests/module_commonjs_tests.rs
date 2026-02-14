@@ -54,6 +54,37 @@ fn test_emit_reexport_property_alias() {
 }
 
 #[test]
+fn test_get_import_bindings_default_import_uses_default_property() {
+    use tsz_parser::parser::ParserState;
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let source = "import foo from \"./module\";";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser
+        .arena
+        .get(root)
+        .expect("root node must exist in arena");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("failed to get source file");
+    let stmt_idx = *source_file
+        .statements
+        .nodes
+        .first()
+        .expect("source should have one statement");
+    let stmt_node = parser
+        .arena
+        .get(stmt_idx)
+        .expect("statement node should exist");
+    assert_eq!(stmt_node.kind, syntax_kind_ext::IMPORT_DECLARATION);
+
+    let bindings = get_import_bindings(&parser.arena, stmt_node, "module_1");
+    assert_eq!(bindings, vec!["var foo = module_1.default;".to_string()]);
+}
+
+#[test]
 fn test_collect_export_names_with_parsed_ast() {
     use tsz_parser::parser::ParserState;
 
