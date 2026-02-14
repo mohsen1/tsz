@@ -10,7 +10,9 @@
 //! This module extends CheckerState with class/interface-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
-use crate::query_boundaries::class::should_report_member_type_mismatch;
+use crate::query_boundaries::class::{
+    should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
+};
 use crate::state::CheckerState;
 use crate::types::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
@@ -522,13 +524,15 @@ impl<'a> CheckerState<'a> {
             // Check type compatibility through centralized mismatch policy.
             // Methods use bivariant relation checks; properties use regular assignability.
             let should_report_mismatch = if is_method {
-                self.should_report_assignability_mismatch_bivariant(
+                should_report_member_type_mismatch_bivariant(
+                    self,
                     resolved_member_type,
                     resolved_base_type,
                     member_name_idx,
                 )
             } else {
-                self.should_report_assignability_mismatch(
+                should_report_member_type_mismatch(
+                    self,
                     resolved_member_type,
                     resolved_base_type,
                     member_name_idx,

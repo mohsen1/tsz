@@ -147,3 +147,6 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 135: migrated non-`yield*` bare `yield` mismatch reporting in `crates/tsz-checker/src/dispatch.rs` to `check_assignable_or_report(...)`.
 - [x] Migration action 136: updated child checker context construction (`with_parent`) in `crates/tsz-checker/src/context.rs` to keep constructor-access caches context-local instead of inheriting parent algorithm cache state.
 - [x] Migration action 137: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for constructor-access cache locality in `with_parent`.
+- [x] Migration action 138: migrated class-member mismatch decision points in `crates/tsz-checker/src/class_checker.rs` to `query_boundaries/class` helper entrypoints.
+- [x] Migration action 139: added `should_report_member_type_mismatch_bivariant(...)` to `crates/tsz-checker/src/query_boundaries/class.rs` for method-compatibility mismatch routing.
+- [x] Migration action 140: added architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to quarantine direct `should_report_assignability_mismatch*` usage to assignability/query-boundary modules.
