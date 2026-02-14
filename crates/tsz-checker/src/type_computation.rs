@@ -2501,9 +2501,43 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(name) = self.get_property_name(accessor.name) {
+                    // For non-contextual object literals, TypeScript treats `this` inside
+                    // accessors as the object literal under construction. Provide a
+                    // lightweight synthetic receiver so property access checks (TS2339)
+                    // run during accessor body checking.
+                    let mut pushed_synthetic_this = false;
+                    if marker_this_type.is_none() {
+                        let mut this_props: Vec<PropertyInfo> =
+                            properties.values().cloned().collect();
+                        let name_atom = self.ctx.types.intern_string(&name);
+                        if !this_props.iter().any(|p| p.name == name_atom) {
+                            this_props.push(PropertyInfo {
+                                name: name_atom,
+                                type_id: TypeId::ANY,
+                                write_type: TypeId::ANY,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            });
+                        }
+                        self.ctx
+                            .this_type_stack
+                            .push(self.ctx.types.object(this_props));
+                        pushed_synthetic_this = true;
+                    }
+
                     // For getter, infer return type; for setter, use the parameter type
                     let accessor_type = if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        self.get_type_of_function(elem_idx)
+                        // Check getter body/parameters via function checking, but object
+                        // property read type is the getter's return type (not a function type).
+                        self.get_type_of_function(elem_idx);
+                        if accessor.type_annotation.is_none() {
+                            self.infer_getter_return_type(accessor.body)
+                        } else {
+                            self.get_type_from_type_node(accessor.type_annotation)
+                        }
                     } else {
                         // Setter: type-check the function body to track variable usage
                         // (especially for noUnusedParameters/noUnusedLocals checking),
@@ -2525,6 +2559,33 @@ impl<'a> CheckerState<'a> {
                             })
                             .unwrap_or(TypeId::ANY)
                     };
+
+                    if pushed_synthetic_this {
+                        self.ctx.this_type_stack.pop();
+                    }
+
+                    if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        if accessor.type_annotation.is_none() {
+                            use crate::types::diagnostics::diagnostic_codes;
+                            let self_refs = self.collect_self_references(accessor.body, &name);
+                            if !self_refs.is_empty() {
+                                self.error_at_node_msg(
+                                    accessor.name,
+                                    diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                                    &[&name],
+                                );
+                            }
+                        }
+
+                        self.maybe_report_implicit_any_return(
+                            Some(name.clone()),
+                            Some(accessor.name),
+                            accessor_type,
+                            !accessor.type_annotation.is_none(),
+                            false,
+                            elem_idx,
+                        );
+                    }
 
                     // TS2378: A 'get' accessor must return a value.
                     // Check if the getter has a body but no return statement with a value.
