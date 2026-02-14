@@ -55,11 +55,21 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Close prior automated README PRs
+        if: steps.check_readme.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for pr in $(gh pr list --state open --json number,headRefName,labels --jq '.[] | select((.labels | map(.name) | index("automated") != null) or .headRefName == "ci/update-readme-metrics") | .number'); do
+            gh pr close "$pr" --delete-branch --comment "Superseded by a newer automated README update run."
+          done
+
       - name: Create README update pull request
         if: steps.check_readme.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GH_PAT || github.token }}
+          token: ${{ github.token }}
           commit-message: "docs: automated README metrics update"
           title: "docs: automated README metrics update"
           body: |
