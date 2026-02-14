@@ -1647,6 +1647,21 @@ impl<'a> CheckerState<'a> {
         refs
     }
 
+    /// Collect property-access occurrences whose property name matches `name`.
+    ///
+    /// This is used for accessor recursion detection (TS7023). It intentionally
+    /// ignores bare identifiers so captured outer variables like `return x` in
+    /// `get x() { ... }` are not treated as self-recursive references.
+    pub(crate) fn collect_property_name_references(
+        &self,
+        init_idx: NodeIndex,
+        name: &str,
+    ) -> Vec<NodeIndex> {
+        let mut refs = Vec::new();
+        self.collect_property_name_references_recursive(init_idx, name, &mut refs);
+        refs
+    }
+
     /// Recursive helper for collect_self_references.
     fn collect_self_references_recursive(
         &self,
@@ -1685,6 +1700,45 @@ impl<'a> CheckerState<'a> {
         let children = self.ctx.arena.get_children(node_idx);
         for child_idx in children {
             self.collect_self_references_recursive(child_idx, name, refs);
+        }
+    }
+
+    /// Recursive helper for collect_property_name_references.
+    fn collect_property_name_references_recursive(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+        refs: &mut Vec<NodeIndex>,
+    ) {
+        if node_idx.is_none() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let Some(access) = self.ctx.arena.get_access_expr(node)
+                && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == name
+            {
+                refs.push(access.name_or_argument);
+            }
+        }
+
+        match node.kind {
+            syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION
+            | syntax_kind_ext::CLASS_EXPRESSION => {
+                return;
+            }
+            _ => {}
+        }
+
+        let children = self.ctx.arena.get_children(node_idx);
+        for child_idx in children {
+            self.collect_property_name_references_recursive(child_idx, name, refs);
         }
     }
 
