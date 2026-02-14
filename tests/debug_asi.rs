@@ -1,7 +1,6 @@
 //! Debug ASI parsing
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::print_stderr)]
     use crate::parser::ParserState;
 
     #[test]
@@ -11,9 +10,9 @@ mod tests {
         parser.parse_source_file();
 
         let diagnostics = parser.get_diagnostics();
-        eprintln!("Diagnostics count: {}", diagnostics.len());
+        println!("Diagnostics count: {}", diagnostics.len());
         for diag in diagnostics {
-            eprintln!(
+            println!(
                 "Code: {}, Message: '{}', Start: {}, Length: {}",
                 diag.code, diag.message, diag.start, diag.length
             );
