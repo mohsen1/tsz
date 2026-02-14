@@ -64,6 +64,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/object_type.rs`
 - `query_boundaries/promise_checker.rs`
 - `query_boundaries/flow_analysis.rs`
+- `query_boundaries/generic_checker.rs`
 - `query_boundaries/dispatch.rs`
 - `query_boundaries/state_type_resolution.rs`
 - `query_boundaries/state_type_environment.rs`

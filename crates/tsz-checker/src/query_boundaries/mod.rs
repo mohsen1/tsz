@@ -7,6 +7,7 @@ pub(crate) mod constructor_checker;
 pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
 pub(crate) mod flow_analysis;
+pub(crate) mod generic_checker;
 pub(crate) mod iterable_checker;
 pub(crate) mod iterators;
 pub(crate) mod namespace_checker;
