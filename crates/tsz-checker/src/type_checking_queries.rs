@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeArena, NodeIndex};
+use tsz_parser::parser::{NodeArena, NodeIndex, node_flags};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::types::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
@@ -1738,6 +1738,13 @@ impl<'a> CheckerState<'a> {
                 && let Some(func) = self.ctx.arena.get_function(node)
                 && func.body.is_none()
             {
+                let flags = u32::from(node.flags);
+                if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                    || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                {
+                    i += 1;
+                    continue;
+                }
                 let is_declared = self.has_declare_modifier(&func.modifiers);
                 // Use func.is_async as the parser stores async as a flag, not a modifier
                 let is_async = func.is_async;
@@ -1754,6 +1761,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_declared {
+                    i += 1;
+                    continue;
+                }
+                if is_async {
                     i += 1;
                     continue;
                 }

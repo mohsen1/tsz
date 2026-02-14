@@ -8,6 +8,7 @@ use crate::state::{CheckerState, MemberAccessInfo, MemberAccessLevel, MemberLook
 use crate::statements::StatementCheckCallbacks;
 use std::rc::Rc;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
@@ -1838,6 +1839,12 @@ impl<'a> CheckerState<'a> {
                 }
                 syntax_kind_ext::METHOD_DECLARATION => {
                     if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                        let flags = u32::from(node.flags);
+                        if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                            || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                        {
+                            continue;
+                        }
                         // Abstract methods don't need implementations (they're meant for derived classes)
                         let is_abstract = self.has_abstract_modifier(&method.modifiers);
                         if method.body.is_none() && !is_abstract {
