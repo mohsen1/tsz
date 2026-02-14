@@ -294,12 +294,6 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Resolve identifier without marking (for checking only).
-    #[allow(dead_code)]
-    pub(crate) fn resolve_identifier_symbol_no_mark(&self, idx: NodeIndex) -> Option<SymbolId> {
-        self.resolve_identifier_symbol_inner(idx)
-    }
-
     fn resolve_identifier_symbol_inner(&self, idx: NodeIndex) -> Option<SymbolId> {
         // Get identifier name for tracing
         let ident_name = self

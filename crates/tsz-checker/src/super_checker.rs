@@ -454,42 +454,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    #[allow(dead_code)]
-    fn is_super_property_in_super_call_arguments(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-        use tsz_scanner::SyntaxKind;
-
-        let mut current = idx;
-
-        while let Some(ext) = self.ctx.arena.get_extended(current) {
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                break;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                break;
-            };
-
-            if parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                && let Some(call) = self.ctx.arena.get_call_expr(parent_node)
-                && let Some(callee) = self.ctx.arena.get(call.expression)
-                && callee.kind == SyntaxKind::SuperKeyword as u16
-            {
-                return true;
-            }
-
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                break;
-            }
-
-            current = parent_idx;
-        }
-
-        false
-    }
-
     fn is_super_call_root_level_statement_in_constructor(&self, idx: NodeIndex) -> bool {
         let Some(ext) = self.ctx.arena.get_extended(idx) else {
             return false;
