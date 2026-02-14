@@ -21,6 +21,15 @@ To keep this actionable, treat each major heading below as a checkpoint you can 
 - [ ] E) Move `Lazy(DefId)`-resolution and type-shape preconditions into solver visitors.
 - [ ] F) Add query-level cache/invalidations and connect checker to the query outputs.
 
+### Step → AGENTS clause mapping
+
+- A ↔ clauses 4, 6, 15, 16, 21
+- B ↔ clauses 1, 3, 6, 7, 16, 19
+- C ↔ clauses 2, 4, 6, 14, 16
+- D ↔ clauses 4, 5, 15, 18, 22, 23
+- E ↔ clauses 3, 4, 5, 10, 23
+- F ↔ clauses 7, 11, 13, 18
+
 ## Evidence required per tracker step
 
 - A: automated boundary scan and a failing/fixed sample proving forbidden imports are blocked.
