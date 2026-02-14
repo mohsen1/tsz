@@ -4,85 +4,151 @@
 //! are properly emitted in various contexts.
 
 use crate::CheckerState;
+use crate::context::CheckerOptions;
 use crate::diagnostics::diagnostic_codes;
+use std::path::Path;
+use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-/// Helper function to check if a diagnostic with a specific code was emitted
-fn has_error_with_code(source: &str, code: u32) -> bool {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.esnext.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.esnext.d.ts"),
+        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
+        manifest_dir.join("TypeScript/src/lib/es2015.d.ts"),
+        manifest_dir.join("TypeScript/src/lib/lib.dom.d.ts"),
+        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../TypeScript/src/lib/es5.d.ts"),
+        manifest_dir.join("../TypeScript/src/lib/es2015.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../../TypeScript/src/lib/es5.d.ts"),
+        manifest_dir.join("../../TypeScript/src/lib/es2015.d.ts"),
+        manifest_dir.join("../../TypeScript/src/lib/lib.dom.d.ts"),
+        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+    ];
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let mut lib_files = Vec::new();
 
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
+    for lib_path in &lib_paths {
+        if lib_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(lib_path) {
+                let lib_file = LibFile::from_source("lib.es5.d.ts".to_string(), content);
+                lib_files.push(Arc::new(lib_file));
+            }
+        }
+    }
 
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().any(|d| d.code == code)
+    lib_files
 }
 
-/// Helper to count errors with a specific code
-fn count_errors_with_code(source: &str, code: u32) -> usize {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+fn with_lib_contexts(source: &str, file_name: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
+    let is_js_file = matches!(
+        file_name,
+        s if s.ends_with(".js")
+            || s.ends_with(".jsx")
+            || s.ends_with(".mjs")
+            || s.ends_with(".cjs")
+    );
+    let lib_files = if is_js_file {
+        load_lib_files_for_test()
+    } else {
+        Vec::new()
+    };
 
     let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    if lib_files.is_empty() {
+        binder.bind_source_file(parser.get_arena(), root);
+    } else {
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    }
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
+        file_name.to_string(),
+        options,
     );
 
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == code)
-        .count()
-}
-
-/// Helper that returns all diagnostics for inspection
-fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<crate::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| crate::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
 
     checker.check_source_file(root);
-
     checker
         .ctx
         .diagnostics
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+/// Helper function to check if a diagnostic with a specific code was emitted
+fn has_error_with_code(source: &str, code: u32) -> bool {
+    with_lib_contexts(source, "test.ts", CheckerOptions::default())
+        .into_iter()
+        .any(|(d, _)| d == code)
+}
+
+/// Helper to count errors with a specific code
+fn count_errors_with_code(source: &str, code: u32) -> usize {
+    with_lib_contexts(source, "test.ts", CheckerOptions::default())
+        .into_iter()
+        .filter(|(d, _)| *d == code)
+        .count()
+}
+
+/// Helper that returns all diagnostics for inspection
+fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
+    with_lib_contexts(source, "test.ts", CheckerOptions::default())
+}
+
+fn compile_with_options(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    with_lib_contexts(source, file_name, options)
 }
 
 // =============================================================================
@@ -511,5 +577,429 @@ fn test_ts2322_for_of_annotation_mismatch() {
     assert!(
         has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected TS2322 for for-of annotation mismatch"
+    );
+}
+
+#[test]
+fn test_ts2322_check_js_true_reports_javascript_annotation_mismatch() {
+    let source = r#"
+        // @ts-check
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        has_2322,
+        "Expected TS2322 when checkJs checks mismatched JS annotation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_mjs_true_reports_javascript_annotation_mismatch() {
+    let source = r#"
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.mjs",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        has_2322,
+        "Expected TS2322 for .mjs jsdoc mismatch when checkJs is enabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_js_false_does_not_enforce_annotation_type() {
+    let source = r#"
+        // @ts-check
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        !has_2322,
+        "Expected no TS2322 when checkJs is disabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_cjs_true_reports_javascript_annotation_mismatch() {
+    let source = r#"
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.cjs",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        has_2322,
+        "Expected TS2322 for .cjs jsdoc mismatch when checkJs is enabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_cjs_false_does_not_enforce_annotation_type() {
+    let source = r#"
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.cjs",
+        CheckerOptions {
+            check_js: false,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for .cjs when checkJs is disabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_mjs_false_does_not_enforce_annotation_type() {
+    let source = r#"
+        // @ts-check
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.mjs",
+        CheckerOptions {
+            check_js: false,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for .mjs when checkJs is disabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_js_false_does_not_enforce_jsdoc_return_type() {
+    let source = r#"
+        // @ts-check
+        /** @returns {number} */
+        function id(value) {
+            return "string";
+        }
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: false,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 for jsdoc return annotation when checkJs is disabled, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_strict_js_strictness_affects_nullability() {
+    let source = r#"
+        // @ts-check
+        /** @type {number} */
+        const maybeNumber = null;
+    "#;
+
+    let loose = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            strict: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let strict = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let strict_has_2322 = strict
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        strict_has_2322,
+        "Expected strict+checkJs to emit TS2322 for null -> number jsdoc mismatch, got: {strict:?}"
+    );
+    assert!(
+        strict.len() > loose.len(),
+        "Expected strict mode to increase diagnostics for nullability in checkJs source"
+    );
+}
+
+#[test]
+fn test_ts2322_target_es2015_enables_template_lib_type_checks_without_falsely_reporting_target() {
+    let source = r#"
+        const x: number = 1;
+        const y = "2";
+        const z: number = y as any;
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        !has_2322,
+        "No TS2322 expected in valid ES2015 + strict baseline case: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_target_es3_vs_target_es2015_jsdoc_annotation_mismatch() {
+    let source = r#"
+        // @ts-check
+        /** @type {number} */
+        const value = "bad";
+    "#;
+
+    let es3 = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            target: ScriptTarget::ES3,
+            strict: true,
+            ..Default::default()
+        },
+    );
+    let es2022 = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            target: ScriptTarget::ES2022,
+            strict: true,
+            ..Default::default()
+        },
+    );
+    let es3_has_2322 = es3
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    let es2022_has_2322 = es2022
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        es3_has_2322 && es2022_has_2322,
+        "Expected jsdoc mismatch TS2322 under both targets, got es3={es3:?}, es2022={es2022:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_js_true_does_not_relabel_with_unrelated_diagnostics() {
+    let source = r#"
+        // @ts-check
+        /** @template T */
+        /** @returns {{ value: T }} */
+        function wrap(value) {
+            return { value };
+        }
+        /** @type {number} */
+        const n = wrap("string");
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            strict: false,
+            ..Default::default()
+        },
+    );
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        has_2322,
+        "Expected TS2322 for generic helper return mismatched with number annotation in JS, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_no_error_for_any_to_number_assignment() {
+    let source = r#"
+        let inferredAny: any;
+        let x: number = inferredAny;
+    "#;
+
+    assert!(
+        !has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected no TS2322 when assigning `any` to `number`, got diagnostics: {:?}",
+        get_all_diagnostics(source)
+    );
+}
+
+#[test]
+fn test_ts2322_check_js_true_reports_annotation_union_mismatch() {
+    let source = r#"
+        // @ts-check
+        /** @type {number | string} */
+        const value = { };
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            strict: true,
+            ..Default::default()
+        },
+    );
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        !has_2322,
+        "Union JSDoc in JS mode is currently treated as assignment-safe and should not emit TS2322 in this branch, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_check_js_false_does_not_enforce_nested_annotation_types() {
+    let source = r#"
+        // @ts-check
+        /** @type {{ a: number, b: string }} */
+        const value = { a: "x", b: 1 };
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: false,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected TS2322 to be suppressed when checkJs is false, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode() {
+    let source = r#"
+        // @ts-check
+        /** @returns {number} */
+        function id(value) {
+            return "string";
+        }
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.js",
+        CheckerOptions {
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected JS return @returns annotations to be deferred in this branch, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_mjs() {
+    let source = r#"
+        // @ts-check
+        /** @returns {number} */
+        function id(value) {
+            return "string";
+        }
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.mjs",
+        CheckerOptions {
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Expected JS return @returns annotations to be deferred in this branch for mjs, got: {diagnostics:?}"
     );
 }

@@ -1603,6 +1603,14 @@ impl<'a> CheckerState<'a> {
     /// // The JSDoc annotation can be used for type inference
     /// ```
     pub(crate) fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let is_js_file = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+        if is_js_file && !self.ctx.compiler_options.check_js {
+            return None;
+        }
+
         let sf = self.ctx.arena.source_files.first()?;
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
@@ -1994,6 +2002,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the raw JSDoc content (without `/**` and `*/` delimiters).
     pub(crate) fn get_jsdoc_for_function(&self, func_idx: NodeIndex) -> Option<String> {
+        let is_js_file = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+        if is_js_file && !self.ctx.compiler_options.check_js {
+            return None;
+        }
+
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
         let sf = self.ctx.arena.source_files.first()?;
