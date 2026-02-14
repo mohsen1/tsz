@@ -13,10 +13,10 @@
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::query_boundaries::assignability::{
-    AssignabilityEvalKind, ExcessPropertiesKind, TypeTraversalKind, are_types_overlapping_with_env,
+    AssignabilityEvalKind, ExcessPropertiesKind, TypeTraversalKind,
+    analyze_assignability_failure_with_context, are_types_overlapping_with_env,
     classify_for_assignability_eval, classify_for_excess_properties, classify_for_traversal,
-    explain_assignability_failure_with_context, is_callable_type,
-    is_weak_union_violation_with_context, object_shape_for_type,
+    is_callable_type, object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tracing::trace;
@@ -30,6 +30,16 @@ use tsz_solver::types::RelationCacheKey;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Centralized suppression for TS2322-style assignability diagnostics.
+    pub(crate) fn should_suppress_assignability_diagnostic(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        matches!(source, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
+            || matches!(target, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
+    }
+
     // =========================================================================
     // Type Evaluation for Assignability
     // =========================================================================
@@ -560,6 +570,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> bool {
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
         if self.is_assignable_to(source, target)
             || self.should_skip_weak_union_error(source, target, source_idx)
         {
@@ -579,6 +592,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> bool {
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return false;
+        }
         !self.is_assignable_to(source, target)
             && !self.should_skip_weak_union_error(source, target, source_idx)
     }
@@ -708,18 +724,18 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
-        let env = self.ctx.type_env.borrow();
-        is_weak_union_violation_with_context(self.ctx.types, &self.ctx, &*env, source, target)
-    }
-
-    pub(crate) fn explain_assignability_failure(
+    pub(crate) fn analyze_assignability_failure(
         &mut self,
         source: TypeId,
         target: TypeId,
-    ) -> Option<tsz_solver::SubtypeFailureReason> {
+    ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
         let env = self.ctx.type_env.borrow();
-        explain_assignability_failure_with_context(self.ctx.types, &self.ctx, &*env, source, target)
+        analyze_assignability_failure_with_context(self.ctx.types, &self.ctx, &*env, source, target)
+    }
+
+    pub(crate) fn is_weak_union_violation(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.analyze_assignability_failure(source, target)
+            .weak_union_violation
     }
 
     // =========================================================================
