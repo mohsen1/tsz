@@ -393,3 +393,25 @@ fn test_normalize_diagnostic_path_handles_private_var_alias() {
     let raw = "/private/var/folders/x/y/T/.tmp123/src/test.ts";
     assert_eq!(normalize_diagnostic_path(raw, root), "src/test.ts");
 }
+
+#[test]
+fn test_parse_diagnostics_from_text_extracts_error_codes() {
+    let output = "test.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.\n\
+        tests/foo.ts(2,5): error TS2304: Cannot find name 'missing'.\n\
+        note: unrelated text should be ignored";
+
+    let diagnostics = parse_diagnostics_from_text(output);
+    assert_eq!(extract_error_codes(&diagnostics), vec![2322, 2304]);
+    assert_eq!(diagnostics[0].message, output.lines().next().unwrap().to_string());
+    assert_eq!(diagnostics[1].message, output.lines().nth(1).unwrap().to_string());
+}
+
+#[test]
+fn test_parse_diagnostics_from_text_ignores_non_error_lines() {
+    let output = "tsserver: ready\n\
+        no TS codes here\n\
+        foo(1,1): warning: not parsed as error";
+
+    let diagnostics = parse_diagnostics_from_text(output);
+    assert_eq!(diagnostics.len(), 0);
+}
