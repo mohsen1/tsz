@@ -652,21 +652,42 @@ impl<'a> NamespaceES5Transformer<'a> {
                     };
 
                     // Check for trailing comment on the same line as this statement.
-                    // Skip namespace-like declarations since their sub-emitters handle
+                    // Skip namespace/class declarations since their sub-emitters handle
                     // internal comments.
-                    let function_export_sequence = stmt_node.kind
-                        == syntax_kind_ext::FUNCTION_DECLARATION
-                        && matches!(&ir, IRNode::Sequence(items) if items.len() > 1);
+                    let export_clause_kind = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    {
+                        self.arena
+                            .get_export_decl(stmt_node)
+                            .and_then(|d| self.arena.get(d.export_clause))
+                            .map(|n| n.kind)
+                    } else {
+                        None
+                    };
                     let skip = is_namespace_like(self.arena, stmt_node)
-                        || function_export_sequence
-                        || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION;
+                        || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || matches!(export_clause_kind, Some(k) if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::MODULE_DECLARATION);
+                    let trailing =
+                        self.extract_trailing_comment_in_stmt(stmt_node.pos, stmt_node.end);
+
+                    let mut ir = ir;
+                    let mut trailing_attached_in_sequence = false;
+                    // For exported function declarations inside namespaces, attach trailing
+                    // comments to the function declaration, not the namespace export assignment.
+                    if let IRNode::Sequence(items) = &mut ir
+                        && let Some(comment_text) = trailing.clone()
+                        && items.len() > 1
+                        && matches!(items.first(), Some(IRNode::FunctionDecl { .. }))
+                    {
+                        items.insert(1, IRNode::TrailingComment(comment_text));
+                        trailing_attached_in_sequence = true;
+                    }
+
                     result.push(ir);
-                    if !skip {
-                        if let Some(comment_text) =
-                            self.extract_trailing_comment_in_stmt(stmt_node.pos, stmt_node.end)
-                        {
-                            result.push(IRNode::TrailingComment(comment_text));
-                        }
+                    if !skip
+                        && !trailing_attached_in_sequence
+                        && let Some(comment_text) = trailing
+                    {
+                        result.push(IRNode::TrailingComment(comment_text));
                     }
                 } else {
                     // Erased statement (interface/type alias).
@@ -2561,6 +2582,19 @@ mod tests {
         assert!(
             output.contains("//trailing comment"),
             "Trailing comment should be preserved. Got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn test_namespace_exported_function_trailing_comment_stays_on_function() {
+        let source = r#"namespace M {
+    export function foo() { return 1; } //trailing comment
+}"#;
+        let output = transform_and_emit_with_comments(source);
+        assert!(
+            output.contains("} //trailing comment\n    M.foo = foo;"),
+            "Trailing comment should stay on function declaration. Got: {}",
             output
         );
     }
