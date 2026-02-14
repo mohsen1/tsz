@@ -59,6 +59,7 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/constructor_checker.rs`
 - `query_boundaries/call_checker.rs`
 - `query_boundaries/iterable_checker.rs`
+- `query_boundaries/iterators.rs`
 - `query_boundaries/namespace_checker.rs`
 - `query_boundaries/object_type.rs`
 - `query_boundaries/promise_checker.rs`
