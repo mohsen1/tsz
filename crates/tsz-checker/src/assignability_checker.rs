@@ -432,6 +432,51 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check assignability and emit a generic TS2322 diagnostic at `diag_idx`.
+    ///
+    /// This is used for call sites that intentionally avoid detailed reason rendering
+    /// but still share centralized mismatch/suppression behavior.
+    pub(crate) fn check_assignable_or_report_generic_at(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.is_assignable_to(source, target)
+            || self.should_skip_weak_union_error(source, target, source_idx)
+        {
+            return true;
+        }
+        self.error_type_not_assignable_generic_at(source, target, diag_idx);
+        false
+    }
+
+    /// Check assignability and emit argument-not-assignable diagnostics (TS2345-style).
+    ///
+    /// Returns true when no diagnostic was emitted (assignable or intentionally skipped),
+    /// false when an argument-assignability diagnostic was emitted.
+    pub(crate) fn check_argument_assignable_or_report(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.is_assignable_to(source, target)
+            || self.should_skip_weak_union_error(source, target, arg_idx)
+        {
+            return true;
+        }
+        self.error_argument_not_assignable_at(source, target, arg_idx);
+        false
+    }
+
     /// Returns true when an assignability mismatch should produce a diagnostic.
     ///
     /// This centralizes the standard "not assignable + not weak-union/excess-property

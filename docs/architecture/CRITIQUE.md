@@ -802,6 +802,8 @@ Make all assignment/call/return/property-write checks call these.
     * `'in'` expression RHS object-compatibility checks in `type_computation` now route via `check_assignable_or_report(...)`
     * class-member and JS export-assignment style checks in `state_checking_members` now route via `check_assignable_or_report(...)`
     * `satisfies` expression assignability checks in `dispatch` now route via `check_assignable_or_report(...)`
+    * call/new argument mismatch checks in `type_computation_complex` now route through `check_argument_assignable_or_report(...)`
+    * destructuring generic mismatch checks in `state_checking` now route through `check_assignable_or_report_generic_at(...)`
   * Extended architecture contract coverage to lock these modules onto centralized assignability gateway entrypoints.
 
 ---
