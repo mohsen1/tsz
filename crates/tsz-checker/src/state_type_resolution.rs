@@ -414,7 +414,6 @@ impl<'a> CheckerState<'a> {
                     tracing::debug!(
                         type_id = type_id.0,
                         result = result.0,
-                        result_key = ?self.ctx.types.lookup(result),
                         "get_type_from_type_reference: Proxy lowered result"
                     );
                 }
