@@ -1521,32 +1521,81 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the JSDoc contains `@param {someType} paramName`.
     pub(crate) fn jsdoc_has_param_type(jsdoc: &str, param_name: &str) -> bool {
+        // JSDoc @param may span multiple lines. Collect all text after each @param
+        // and process them. We also need to handle nested braces in types like
+        // @param {{ x: T, y: T}} obj
+        let mut in_param = false;
+        let mut param_text = String::new();
+
         for line in jsdoc.lines() {
-            let trimmed = line.trim();
-            let Some(rest) = trimmed.strip_prefix("@param") else {
-                continue;
-            };
-            let rest = rest.trim();
-            // Must have a type in braces: @param {type} name
-            if !rest.starts_with('{') {
-                continue;
-            }
-            let Some(brace_end) = rest.find('}') else {
-                continue;
-            };
-            // Extract name after the type
-            let after_type = rest[brace_end + 1..].trim();
-            // The name is the first word (may be followed by description)
-            let name = after_type.split_whitespace().next().unwrap_or("");
-            // Handle [name] and [name=default] syntax
-            let name = name.trim_start_matches('[');
-            let name = name.split('=').next().unwrap_or(name);
-            let name = name.trim_end_matches(']');
-            if name == param_name {
-                return true;
+            let trimmed = line.trim().trim_start_matches('*').trim();
+
+            // Check if this line starts a new @tag
+            if trimmed.starts_with('@') {
+                // Process any accumulated @param text
+                if in_param {
+                    if Self::check_param_text(&param_text, param_name) {
+                        return true;
+                    }
+                    param_text.clear();
+                }
+                if let Some(rest) = trimmed.strip_prefix("@param") {
+                    in_param = true;
+                    param_text = rest.to_string();
+                } else {
+                    in_param = false;
+                }
+            } else if in_param {
+                // Continuation line for multi-line @param
+                param_text.push(' ');
+                param_text.push_str(trimmed);
             }
         }
+        // Process the last @param if any
+        if in_param && Self::check_param_text(&param_text, param_name) {
+            return true;
+        }
         false
+    }
+
+    /// Helper to check if a @param text (after "@param") matches a parameter name.
+    /// Handles nested braces in type expressions like `{{ x: T, y: T}}`.
+    fn check_param_text(text: &str, param_name: &str) -> bool {
+        let rest = text.trim();
+        // Must have a type in braces: @param {type} name
+        if !rest.starts_with('{') {
+            return false;
+        }
+        // Find matching closing brace, handling nesting
+        let mut depth = 0;
+        let mut brace_end = None;
+        for (i, ch) in rest.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        brace_end = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(brace_end) = brace_end else {
+            return false;
+        };
+        // Extract name after the type
+        let after_type = rest[brace_end + 1..].trim();
+        // The name is the first word (may be followed by description)
+        let name = after_type.split_whitespace().next().unwrap_or("");
+        // Handle [name] and [name=default] syntax
+        let name = name.trim_start_matches('[');
+        let name = name.split('=').next().unwrap_or(name);
+        let name = name.trim_end_matches(']');
+        // Handle backtick-quoted names like `args`
+        let name = name.trim_matches('`');
+        name == param_name
     }
 
     /// Check if a JSDoc comment has any type annotations (`@param {type}`, `@returns {type}`,
