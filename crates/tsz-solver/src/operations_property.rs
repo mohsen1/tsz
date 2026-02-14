@@ -14,6 +14,7 @@ use crate::visitor::TypeVisitor;
 use crate::{
     ApparentMemberKind, TypeDatabase, apparent_object_member_kind, apparent_primitive_member_kind,
 };
+use crate::utils;
 use std::cell::RefCell;
 use tsz_common::interner::Atom;
 
@@ -2814,12 +2815,10 @@ pub fn is_readonly_index_signature(
 
 /// Check if a string represents a valid numeric property name.
 ///
-/// Returns `true` only for non-negative finite integers that round-trip correctly
-/// through JavaScript's `Number.toString()` conversion.
+/// Returns `true` for numeric literals that TypeScript treats as valid numeric
+/// property names, using the shared `utils::is_numeric_literal_name` helper.
 ///
-/// This is used for determining if a property access can use numeric index signatures:
-/// - `"0"` through `"4294967295"` are valid numeric property names (fits in usize)
-/// - `"1.5"`, `"-1"`, `NaN`, `Infinity` are NOT valid numeric property names
+/// This is used for determining if a property access can use numeric index signatures.
 ///
 /// # Examples
 /// - `is_numeric_index_name("0")` → `true`
@@ -2828,14 +2827,7 @@ pub fn is_readonly_index_signature(
 /// - `is_numeric_index_name("-1")` → `false` (negative)
 /// - `is_numeric_index_name("NaN")` → `false` (special value)
 fn is_numeric_index_name(name: &str) -> bool {
-    let parsed: f64 = match name.parse() {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    if !parsed.is_finite() || parsed.fract() != 0.0 || parsed < 0.0 {
-        return false;
-    }
-    parsed <= (usize::MAX as f64)
+    utils::is_numeric_literal_name(name)
 }
 
 // =============================================================================

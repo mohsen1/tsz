@@ -30,6 +30,7 @@
 use crate::types::{IndexInfo, IndexSignature, ObjectShapeId};
 use crate::visitor::TypeVisitor;
 use crate::{TypeDatabase, TypeId};
+use crate::utils;
 
 /// Distinguishes between string and numeric index signatures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,24 +391,22 @@ impl<'a> IndexSignatureResolver<'a> {
 
     /// Check if a property name is a valid numeric index.
     ///
-    /// This is a simplified check that returns `true` if the name starts
-    /// with a digit. For more sophisticated numeric literal checking,
-    /// use `is_numeric_property_name` from the utils module.
-    ///
     /// ## Examples
     ///
     /// - `"0"` → `true`
     /// - `"42"` → `true`
     /// - `"foo"` → `false`
-    /// - `"-1"` → `false` (starts with minus)
+    /// - `"-1"` → `false`
+    /// - `"NaN"` → `true`
+    /// - `"Infinity"` → `true`
     pub fn is_numeric_index_name(&self, name: &str) -> bool {
-        name.as_bytes()
-            .first()
-            .map(|b| b.is_ascii_digit())
-            .unwrap_or(false)
+        if name.starts_with('-') && name != "-Infinity" {
+            return false;
+        }
+        utils::is_numeric_literal_name(name)
     }
 }
 
 #[cfg(test)]
-#[path = "tests/index_signatures_tests.rs"]
+#[path = "../tests/index_signatures_tests.rs"]
 mod tests;
