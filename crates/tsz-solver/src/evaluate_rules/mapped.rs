@@ -671,7 +671,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if is_readonly {
             // Wrap the array type in ReadonlyType to get readonly semantics
             let array_type = self.interner().array(mapped_element);
-            self.interner().intern(TypeKey::ReadonlyType(array_type))
+            self.interner().readonly_type(array_type)
         } else {
             self.interner().array(mapped_element)
         }
@@ -709,7 +709,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if final_readonly {
             // Wrap the array type in ReadonlyType to get readonly semantics
             let array_type = self.interner().array(mapped_element);
-            self.interner().intern(TypeKey::ReadonlyType(array_type))
+            self.interner().readonly_type(array_type)
         } else {
             self.interner().array(mapped_element)
         }
