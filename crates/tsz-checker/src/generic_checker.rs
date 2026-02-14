@@ -135,10 +135,6 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
                 };
 
-                // Resolve refs and lazy types before checking
-                self.ensure_refs_resolved(type_arg);
-                self.ensure_refs_resolved(instantiated_constraint);
-
                 // Skip if the instantiated constraint contains type parameters
                 if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
                     continue;
@@ -242,10 +238,6 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
                 };
 
-                // Resolve refs and lazy types before checking
-                self.ensure_refs_resolved(type_arg);
-                self.ensure_refs_resolved(instantiated_constraint);
-
                 // Also skip if the instantiated constraint contains type parameters.
                 // This can happen when the constraint references other type params
                 // that weren't fully substituted (e.g., `K extends keyof T` where T
@@ -324,10 +316,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
                 };
-
-                // Resolve refs and lazy types before checking
-                self.ensure_refs_resolved(type_arg);
-                self.ensure_refs_resolved(instantiated_constraint);
 
                 // Skip if the instantiated constraint contains type parameters
                 if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {

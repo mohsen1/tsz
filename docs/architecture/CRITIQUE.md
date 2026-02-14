@@ -727,6 +727,9 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
   * Aligned subtype relation preconditions with assignability in `assignability_checker` by resolving both lazy refs and application symbols before subtype cache lookup.
   * Moved subtype cache access to occur after preconditions are established, reducing stale-cache risk from precondition-dependent relation answers.
   * Added focused architecture contract coverage to lock this ordering and enforce application-symbol preconditions in `is_subtype_of` and `is_subtype_of_with_env`.
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Removed redundant checker-local precondition traversal from generic-constraint validation in `crates/tsz-checker/src/generic_checker.rs` (`ensure_refs_resolved(type_arg/instantiated_constraint)`), relying on centralized `is_assignable_to(...)` precondition orchestration.
+  * Added architecture contract coverage to guard generic constraint checks against reintroducing local ref-resolution traversal preconditions.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
 
