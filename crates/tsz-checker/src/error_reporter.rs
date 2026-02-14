@@ -970,7 +970,27 @@ impl<'a> CheckerState<'a> {
             (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
                 || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
         });
-        if is_primitive_type_keyword && (node_has_parse_error || self.has_syntax_parse_errors()) {
+        let is_import_equals_module_specifier = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .is_some_and(|parent_node| {
+                if parent_node.kind
+                    != tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                {
+                    return false;
+                }
+                self.ctx
+                    .arena
+                    .get_import_decl(parent_node)
+                    .is_some_and(|imp| imp.module_specifier == idx)
+            });
+
+        if is_primitive_type_keyword
+            && !is_import_equals_module_specifier
+            && (node_has_parse_error || self.has_syntax_parse_errors())
+        {
             self.error_type_only_value_at(name, idx);
             return;
         }
