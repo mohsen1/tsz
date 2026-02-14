@@ -4535,6 +4535,21 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
         if let Some(export_decl) = self.ctx.arena.get_export_decl_at(export_idx) {
+            // TS1194: `export { ... }` / `export ... from` forms are not valid inside namespaces.
+            let is_reexport_syntax = !export_decl.module_specifier.is_none()
+                || self
+                    .ctx
+                    .arena
+                    .get(export_decl.export_clause)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
+            if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) {
+                self.error_at_node(
+                    export_idx,
+                    crate::types::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
+                    crate::types::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
+                );
+            }
+
             // Check module specifier for unresolved modules (TS2792)
             if !export_decl.module_specifier.is_none() {
                 self.check_export_module_specifier(export_idx);

@@ -993,6 +993,42 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Check whether a node is nested inside a namespace declaration.
+    /// String-literal ambient modules (`declare module "x"`) are excluded.
+    pub(crate) fn is_inside_namespace_declaration(&self, node_idx: NodeIndex) -> bool {
+        let mut current = node_idx;
+
+        while !current.is_none() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+
+            let Some(module_decl) = self.ctx.arena.get_module(node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(module_decl.name) else {
+                continue;
+            };
+
+            if name_node.kind != SyntaxKind::StringLiteral as u16 {
+                return true;
+            }
+        }
+
+        false
+    }
+
     // =========================================================================
     // Import Alias Duplicate Checking
     // =========================================================================
