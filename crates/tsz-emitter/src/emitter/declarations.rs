@@ -65,7 +65,10 @@ impl<'a> Printer<'a> {
 
         // Push temp scope for function body - each function gets fresh temp variables
         self.push_temp_scope();
+        let prev_in_generator = self.ctx.flags.in_generator;
+        self.ctx.flags.in_generator = func.asterisk_token;
         self.emit(func.body);
+        self.ctx.flags.in_generator = prev_in_generator;
         self.pop_temp_scope();
 
         // Track function name to prevent duplicate var declarations for merged namespaces.
@@ -964,7 +967,10 @@ impl<'a> Printer<'a> {
         // Skip return type for JavaScript emit
 
         self.write(" ");
+        let prev_in_generator = self.ctx.flags.in_generator;
+        self.ctx.flags.in_generator = method.asterisk_token;
         self.emit(method.body);
+        self.ctx.flags.in_generator = prev_in_generator;
     }
 
     /// Emit method modifiers for JavaScript (static, async only)
