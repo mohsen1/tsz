@@ -1208,7 +1208,11 @@ impl ParserState {
             | SyntaxKind::InferKeyword
             | SyntaxKind::UsingKeyword
             | SyntaxKind::KeyOfKeyword
-            | SyntaxKind::UniqueKeyword => true,
+            | SyntaxKind::UniqueKeyword
+            | SyntaxKind::GlobalKeyword
+            | SyntaxKind::InterfaceKeyword
+            | SyntaxKind::EnumKeyword
+            | SyntaxKind::DeferKeyword => true,
             // Private identifiers (e.g., #field in obj)
             SyntaxKind::PrivateIdentifier => true,
             // Unary operators
