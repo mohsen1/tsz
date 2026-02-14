@@ -454,6 +454,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    #[allow(dead_code)]
     fn is_super_property_in_super_call_arguments(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;

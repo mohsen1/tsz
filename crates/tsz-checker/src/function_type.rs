@@ -105,7 +105,7 @@ impl<'a> CheckerState<'a> {
                 return return_with_cleanup!(TypeId::ERROR); // Missing function/method/accessor data - propagate error
             };
 
-        let (function_is_async, function_is_generator) =
+        let (_function_is_async, function_is_generator) =
             if let Some(func) = self.ctx.arena.get_function(node) {
                 (func.is_async, func.asterisk_token)
             } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
@@ -222,7 +222,10 @@ impl<'a> CheckerState<'a> {
         //   @template T
         //   @returns {T}
         // This enables return assignability checks for expression-bodied arrows.
-        if self.is_js_file() && type_params.is_empty() && let Some(ref jsdoc) = func_jsdoc {
+        if self.is_js_file()
+            && type_params.is_empty()
+            && let Some(ref jsdoc) = func_jsdoc
+        {
             let template_names = Self::jsdoc_template_type_params(jsdoc);
             if !template_names.is_empty() {
                 let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
@@ -462,8 +465,11 @@ impl<'a> CheckerState<'a> {
 
             let mut has_contextual_return = false;
             if !has_type_annotation {
-                let return_context = jsdoc_return_context
-                    .or_else(|| ctx_helper.as_ref().and_then(|helper| helper.get_return_type()));
+                let return_context = jsdoc_return_context.or_else(|| {
+                    ctx_helper
+                        .as_ref()
+                        .and_then(|helper| helper.get_return_type())
+                });
                 // TS7010/TS7011: Only count as contextual return if it's not UNKNOWN
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);

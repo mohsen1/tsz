@@ -4932,23 +4932,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 let clause_idx = export_decl.export_clause;
                 self.check_statement(clause_idx);
 
-                let is_inline_object_literal = self
-                    .ctx
-                    .arena
-                    .get(clause_idx)
-                    .is_some_and(|clause_node| {
-                        if clause_node.kind == syntax_kind_ext::OBJECT_LITERAL {
+                let is_inline_object_literal =
+                    self.ctx.arena.get(clause_idx).is_some_and(|clause_node| {
+                        if clause_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                             return true;
                         }
                         if clause_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                             if let Some(paren) = self.ctx.arena.get_parenthesized(clause_node) {
-                                return self
-                                    .ctx
-                                    .arena
-                                    .get(paren.expression)
-                                    .is_some_and(|expr_node| {
-                                        expr_node.kind == syntax_kind_ext::OBJECT_LITERAL
-                                    });
+                                return self.ctx.arena.get(paren.expression).is_some_and(
+                                    |expr_node| {
+                                        expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    },
+                                );
                             }
                         }
                         false

@@ -2,9 +2,8 @@
 
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC,
-    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
-    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK,
-    IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT,
+    CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
 };
 use crate::parser::{NodeIndex, NodeList, node::*, parse_rules::*, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
