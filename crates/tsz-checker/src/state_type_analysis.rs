@@ -1998,7 +1998,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         let factory = self.ctx.types.factory();
-        use tsz_solver::TypeLowering;
+        use tsz_lowering::TypeLowering;
 
         // Handle cross-file symbol resolution via delegation
         if let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id) {

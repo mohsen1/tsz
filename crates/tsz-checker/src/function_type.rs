@@ -1720,13 +1720,14 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
+        use tsz_lowering::TypeLowering;
         use tsz_parser::parser::NodeArena;
         use tsz_parser::parser::node::NodeAccess;
+        use tsz_solver::is_compiler_managed_type;
         use tsz_solver::operations_property::PropertyAccessResult;
         use tsz_solver::type_queries::{
             get_array_element_type, get_tuple_elements, get_type_application, unwrap_readonly,
         };
-        use tsz_solver::{TypeLowering, types::is_compiler_managed_type};
 
         let base_type = unwrap_readonly(self.ctx.types, object_type);
 

@@ -847,7 +847,7 @@ fn test_diagnostics_property_name_collection_uses_solver_traversal_rules() {
 }
 
 #[test]
-fn test_solver_sources_quarantine_parser_checker_imports_to_lower_rs_only() {
+fn test_solver_sources_forbid_parser_checker_imports() {
     fn is_rs_source_file(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()) == Some("rs")
     }
@@ -882,8 +882,6 @@ fn test_solver_sources_quarantine_parser_checker_imports_to_lower_rs_only() {
     for path in source_files {
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
-        let is_legacy_allowlisted = path.ends_with("tsz-solver/src/lower.rs");
-
         for (line_index, line) in source.lines().enumerate() {
             let trimmed = line.trim_start();
             if trimmed.starts_with("//") {
@@ -891,7 +889,7 @@ fn test_solver_sources_quarantine_parser_checker_imports_to_lower_rs_only() {
             }
             let has_forbidden_import =
                 line.contains("tsz_parser::") || line.contains("tsz_checker::");
-            if has_forbidden_import && !is_legacy_allowlisted {
+            if has_forbidden_import {
                 violations.push(format!("{}:{}", path.display(), line_index + 1));
             }
         }
@@ -899,7 +897,7 @@ fn test_solver_sources_quarantine_parser_checker_imports_to_lower_rs_only() {
 
     assert!(
         violations.is_empty(),
-        "solver parser/checker imports must remain quarantined to lower.rs while migration is in progress; violations: {}",
+        "solver source must not import parser/checker crates; violations: {}",
         violations.join(", ")
     );
 }

@@ -1365,6 +1365,7 @@ dependencies = [
  "tsz-checker",
  "tsz-common",
  "tsz-emitter",
+ "tsz-lowering",
  "tsz-lsp",
  "tsz-parser",
  "tsz-scanner",
@@ -1398,6 +1399,7 @@ dependencies = [
  "tracing",
  "tsz-binder",
  "tsz-common",
+ "tsz-lowering",
  "tsz-parser",
  "tsz-scanner",
  "tsz-solver",
@@ -1486,6 +1488,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsz-lowering"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "rustc-hash",
+ "tsz-binder",
+ "tsz-common",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+]
+
+[[package]]
 name = "tsz-lsp"
 version = "0.1.0"
 dependencies = [
@@ -1541,7 +1556,6 @@ dependencies = [
  "tracing",
  "tsz-binder",
  "tsz-common",
- "tsz-parser",
  "tsz-scanner",
 ]
 

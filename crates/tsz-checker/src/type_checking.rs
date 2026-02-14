@@ -1920,7 +1920,7 @@ impl<'a> CheckerState<'a> {
                             // Interface not cached - check if it has construct signatures by examining declarations
                             // This handles lib.d.ts interfaces like ObjectConstructor that may not be resolved yet
                             // IMPORTANT: Use the correct arena for the symbol (may be different for lib types)
-                            use tsz_solver::TypeLowering;
+                            use tsz_lowering::TypeLowering;
                             let symbol_arena = self
                                 .ctx
                                 .binder

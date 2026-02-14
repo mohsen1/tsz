@@ -1029,7 +1029,8 @@ impl Parser {
     #[wasm_bindgen(js_name = debugTypeLowering)]
     pub fn debug_type_lowering(&self, interface_name: &str) -> String {
         use parser::syntax_kind_ext;
-        use tsz_solver::{TypeData, TypeLowering};
+        use tsz_lowering::TypeLowering;
+        use tsz_solver::TypeData;
 
         let arena = self.parser.get_arena();
         let mut result = Vec::new();

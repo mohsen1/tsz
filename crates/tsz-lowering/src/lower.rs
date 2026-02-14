@@ -5,10 +5,6 @@
 //!
 //! Lowering is lazy - types are only computed when queried.
 
-use crate::def::DefId;
-use crate::subtype::{SubtypeChecker, TypeResolver};
-use crate::types::*;
-use crate::{QueryDatabase, TypeDatabase};
 use indexmap::IndexMap;
 use rustc_hash::FxHashSet;
 use std::cell::RefCell;
@@ -19,6 +15,9 @@ use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::{IndexSignatureData, NodeArena, SignatureData, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::def::DefId;
+use tsz_solver::types::*;
+use tsz_solver::{QueryDatabase, SubtypeChecker, TypeDatabase, TypeResolver};
 
 /// Maximum number of type lowering operations to prevent infinite loops
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
@@ -1214,7 +1213,7 @@ impl<'a> TypeLowering<'a> {
     pub fn lower_type_alias_declaration(
         &self,
         alias: &TypeAliasData,
-    ) -> (TypeId, Vec<crate::TypeParamInfo>) {
+    ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         if let Some(params) = alias.type_parameters.as_ref()
             && !params.nodes.is_empty()
         {
@@ -1271,7 +1270,7 @@ impl<'a> TypeLowering<'a> {
                         (params, this_type, return_type, type_predicate)
                     });
 
-                self.interner.function(crate::FunctionShape {
+                self.interner.function(tsz_solver::FunctionShape {
                     type_params,
                     params,
                     this_type,
@@ -1292,7 +1291,7 @@ impl<'a> TypeLowering<'a> {
                 // For overload checking, we usually compare the function shapes.
                 let return_type = return_type_override.unwrap_or(TypeId::VOID);
 
-                self.interner.function(crate::FunctionShape {
+                self.interner.function(tsz_solver::FunctionShape {
                     type_params: Vec::new(), // Constructors don't have own type params
                     params,
                     this_type,
@@ -1321,7 +1320,7 @@ impl<'a> TypeLowering<'a> {
                         (params, this_type, return_type, type_predicate)
                     });
 
-                self.interner.function(crate::FunctionShape {
+                self.interner.function(tsz_solver::FunctionShape {
                     type_params,
                     params,
                     this_type,
@@ -2612,7 +2611,7 @@ impl<'a> TypeLowering<'a> {
                             {
                                 let type_arg = self.lower_type(first_arg);
                                 return self.interner.string_intrinsic(
-                                    crate::types::StringIntrinsicKind::Uppercase,
+                                    tsz_solver::types::StringIntrinsicKind::Uppercase,
                                     type_arg,
                                 );
                             }
@@ -2624,7 +2623,7 @@ impl<'a> TypeLowering<'a> {
                             {
                                 let type_arg = self.lower_type(first_arg);
                                 return self.interner.string_intrinsic(
-                                    crate::types::StringIntrinsicKind::Lowercase,
+                                    tsz_solver::types::StringIntrinsicKind::Lowercase,
                                     type_arg,
                                 );
                             }
@@ -2636,7 +2635,7 @@ impl<'a> TypeLowering<'a> {
                             {
                                 let type_arg = self.lower_type(first_arg);
                                 return self.interner.string_intrinsic(
-                                    crate::types::StringIntrinsicKind::Capitalize,
+                                    tsz_solver::types::StringIntrinsicKind::Capitalize,
                                     type_arg,
                                 );
                             }
@@ -2648,7 +2647,7 @@ impl<'a> TypeLowering<'a> {
                             {
                                 let type_arg = self.lower_type(first_arg);
                                 return self.interner.string_intrinsic(
-                                    crate::types::StringIntrinsicKind::Uncapitalize,
+                                    tsz_solver::types::StringIntrinsicKind::Uncapitalize,
                                     type_arg,
                                 );
                             }
@@ -2964,7 +2963,8 @@ impl<'a> TypeLowering<'a> {
                 && let Some(head_lit) = self.arena.get_literal(head_node)
                 && !head_lit.text.is_empty()
             {
-                let processed = crate::types::process_template_escape_sequences(&head_lit.text);
+                let processed =
+                    tsz_solver::types::process_template_escape_sequences(&head_lit.text);
                 spans.push(TemplateSpan::Text(self.interner.intern_string(&processed)));
             }
 
@@ -2984,7 +2984,7 @@ impl<'a> TypeLowering<'a> {
                     {
                         // Process escape sequences in the text part
                         let processed =
-                            crate::types::process_template_escape_sequences(&lit_data.text);
+                            tsz_solver::types::process_template_escape_sequences(&lit_data.text);
                         spans.push(TemplateSpan::Text(self.interner.intern_string(&processed)));
                     }
                 }
@@ -3013,7 +3013,7 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a constructor type (new () => T)
     fn lower_constructor_type(&self, node_idx: NodeIndex) -> TypeId {
-        use crate::CallSignature;
+        use tsz_solver::CallSignature;
 
         let node = match self.arena.get(node_idx) {
             Some(n) => n,
@@ -3042,7 +3042,7 @@ impl<'a> TypeLowering<'a> {
             };
 
             // Create a Callable shape with construct_signatures
-            let shape = crate::CallableShape {
+            let shape = tsz_solver::CallableShape {
                 call_signatures: vec![],
                 construct_signatures: vec![construct_sig],
                 properties: vec![],

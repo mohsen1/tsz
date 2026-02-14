@@ -91,7 +91,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                let lowering = tsz_solver::TypeLowering::with_hybrid_resolver(
+                let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
                     &type_resolver,
@@ -400,7 +400,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                let lowering = tsz_solver::TypeLowering::with_hybrid_resolver(
+                let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
                     self.ctx.types,
                     &type_resolver,
@@ -1009,7 +1009,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        use tsz_solver::TypeLowering;
+        use tsz_lowering::TypeLowering;
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             tracing::debug!(

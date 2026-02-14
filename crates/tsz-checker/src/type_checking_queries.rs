@@ -11,6 +11,7 @@ use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_lowering::TypeLowering;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex, node_flags};
@@ -2392,8 +2393,9 @@ impl<'a> CheckerState<'a> {
     /// // lib Window type is merged with augmentation
     /// ```
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
+        use tsz_lowering::TypeLowering;
         use tsz_parser::parser::node::NodeAccess;
-        use tsz_solver::{TypeLowering, types::is_compiler_managed_type};
+        use tsz_solver::is_compiler_managed_type;
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
         let mut lib_type_id: Option<TypeId> = None;
@@ -2772,9 +2774,7 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use tsz_parser::parser::node::NodeAccess;
-        use tsz_solver::{
-            TypeInstantiator, TypeLowering, TypeSubstitution, types::is_compiler_managed_type,
-        };
+        use tsz_solver::{TypeInstantiator, TypeSubstitution, types::is_compiler_managed_type};
 
         let factory = self.ctx.types.factory();
         let lib_contexts = self.ctx.lib_contexts.clone();

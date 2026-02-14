@@ -35,7 +35,6 @@ mod instantiate;
 mod intern;
 pub mod judge;
 mod lawyer;
-mod lower;
 mod narrowing;
 mod object_literal;
 pub mod objects;
@@ -81,7 +80,6 @@ pub use instantiate::*;
 pub use intern::*;
 pub use judge::*;
 pub use lawyer::*;
-pub use lower::*;
 pub use narrowing::*;
 pub use object_literal::*;
 pub use objects::*;
@@ -121,7 +119,6 @@ mod enum_nominality;
 #[path = "../tests/intersection_union_tests.rs"]
 mod intersection_union_tests;
 // lawyer_tests: loaded from lawyer.rs
-// lower_tests: loaded from lower.rs
 #[cfg(test)]
 #[path = "../tests/mapped_key_remap_tests.rs"]
 mod mapped_key_remap_tests;

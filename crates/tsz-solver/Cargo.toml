@@ -11,7 +11,6 @@ authors.workspace = true
 [dependencies]
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
-tsz-parser = { workspace = true }
 tsz-binder = { workspace = true }
 rustc-hash = { workspace = true }
 ena = { workspace = true }

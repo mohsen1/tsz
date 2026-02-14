@@ -139,7 +139,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // (conditional types, indexed access types, etc.)
             _ => {
                 use tsz_binder::symbol_flags;
-                use tsz_solver::TypeLowering;
+                use tsz_lowering::TypeLowering;
                 use tsz_solver::is_compiler_managed_type;
 
                 let type_param_bindings: Vec<(tsz_common::interner::Atom, TypeId)> = self
@@ -262,7 +262,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Get type from a type reference node (e.g., "number", "string", "MyType").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_binder::symbol_flags;
-        use tsz_solver::TypeLowering;
+        use tsz_lowering::TypeLowering;
         use tsz_solver::is_compiler_managed_type;
 
         // Create a type resolver that looks up symbols in the binder
@@ -603,7 +603,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Get type from a function type node (e.g., () => number, (x: string) => void).
     fn get_type_from_function_type(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_binder::symbol_flags;
-        use tsz_solver::TypeLowering;
+        use tsz_lowering::TypeLowering;
         use tsz_solver::is_compiler_managed_type;
 
         let Some(_node) = self.ctx.arena.get(idx) else {
@@ -1130,7 +1130,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ///
     /// Creates a TypeQuery type that captures the type of a value.
     fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_solver::TypeLowering;
+        use tsz_lowering::TypeLowering;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -1159,8 +1159,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// This function validates the mapped type and emits TS7039 if the type expression
     /// after the colon is missing (e.g., `{[P in "bar"]}` instead of `{[P in "bar"]: string}`).
     fn get_type_from_mapped_type(&mut self, idx: NodeIndex) -> TypeId {
+        use tsz_lowering::TypeLowering;
         use tsz_parser::parser::NodeIndex as ParserNodeIndex;
-        use tsz_solver::TypeLowering;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
