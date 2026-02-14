@@ -106,6 +106,7 @@ read_key() {
 
 MODEL="$(read_key model)"
 MODEL_SPARK="$(read_key model_spark)"
+MODEL_REASONING_EFFORT="$(read_key model_reasoning_effort)"
 CODEX_CLI_TIMEOUT="$(read_key command_timeout_seconds)"
 # Backward-compat: accept approval_mode from previous YAML.
 APPROVAL_MODE="$(read_key approval_mode)"
@@ -262,7 +263,12 @@ while true; do
     PROMPT_TEXT="${PROMPT_TEXT} Architecture loop requirements for this iteration: (1) drive work from ${ARCH_DOC} roadmap items, (2) if you complete any roadmap item(s), update ${ARCH_DOC} in the same iteration and mark status done/progress explicitly, (3) run relevant tests for every code change and include exact test commands plus pass/fail results in your iteration summary, (4) do not mark roadmap work done without tests."
   fi
 
-  CMD=(codex exec --model "$MODEL" -C "$WORKDIR" -c 'model_reasoning_effort="low"')
+  CMD=(codex exec --model "$MODEL" -C "$WORKDIR")
+  if [[ -n "$MODEL_REASONING_EFFORT" ]]; then
+    CMD+=( -c "model_reasoning_effort=\"${MODEL_REASONING_EFFORT}\"" )
+  else
+    CMD+=( -c 'model_reasoning_effort="low"' )
+  fi
 
   if [[ "$BYPASS" == "true" ]]; then
     CMD+=(--dangerously-bypass-approvals-and-sandbox)
