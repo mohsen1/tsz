@@ -2139,6 +2139,10 @@ fn collect_diagnostics(
                                 | ModuleKind::ESNext
                                 | ModuleKind::Preserve
                         );
+                        let resolution_prefers_2792 = matches!(
+                            options.effective_module_resolution(),
+                            tsz::config::ModuleResolutionKind::Classic
+                        );
 
                         // Convert TS2307 to TS2792 for bare specifiers in these module kinds
                         let is_bare_specifier = !specifier.starts_with("./")
@@ -2148,7 +2152,7 @@ fn collect_diagnostics(
 
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
                             && is_bare_specifier
-                            && module_kind_prefers_2792
+                            && (module_kind_prefers_2792 || resolution_prefers_2792)
                         {
                             diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
                             diagnostic.message = format!(
