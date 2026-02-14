@@ -879,11 +879,11 @@ impl ParserState {
                 let start_pos = self.token_pos();
                 self.consume_keyword(); // TS1260 check for await keyword with escapes
 
-                // Check for missing operand (e.g., just "await" with nothing after it)
-                if self.can_parse_semicolon()
-                    || self.is_token(SyntaxKind::SemicolonToken)
-                    || !self.is_expression_start()
-                {
+                // Unlike return/throw, `await` does NOT participate in ASI
+                // for its operand. `await\n1` parses as `await 1`, not `await; 1;`.
+                // Only emit TS1109 when the next token truly can't start an expression
+                // (`;`, `)`, `}`, EOF, etc.), not when there's a line break before a valid expr.
+                if !self.is_expression_start() {
                     self.error_expression_expected();
                 }
 
