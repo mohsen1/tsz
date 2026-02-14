@@ -1048,9 +1048,7 @@ impl<'a> Printer<'a> {
             // ES5 path: __awaiter + __generator state machine
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
             async_emitter.set_indent_level(self.writer.indent_level() + 1);
-            if let Some(text) = self.source_text_for_map()
-                && self.writer.has_source_map()
-            {
+            if let Some(text) = self.source_text_for_map() {
                 async_emitter.set_source_map_context(text, self.writer.current_source_index());
             }
             async_emitter.set_lexical_this(this_expr != "this");
@@ -1116,6 +1114,10 @@ impl<'a> Printer<'a> {
             && let Some(block) = self.arena.get_block(body_node)
         {
             for &stmt in &block.statements.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt) {
+                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                    self.emit_comments_before_pos(actual_start);
+                }
                 self.emit(stmt);
                 self.write_line();
             }
