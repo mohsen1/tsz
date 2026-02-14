@@ -15,8 +15,8 @@ use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
     ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, SymbolRef, TemplateLiteralId,
-    TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeId, TypeKey,
-    TypeListId, TypeParamInfo, Variance,
+    TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId,
+    TypeKey, TypeListId, TypeParamInfo, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -31,8 +31,8 @@ use tsz_common::interner::Atom;
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
 pub trait TypeDatabase {
-    fn intern(&self, key: TypeKey) -> TypeId;
-    fn lookup(&self, id: TypeId) -> Option<TypeKey>;
+    fn intern(&self, key: TypeData) -> TypeId;
+    fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn intern_string(&self, s: &str) -> Atom;
     fn resolve_atom(&self, atom: Atom) -> String;
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str>;
@@ -107,11 +107,11 @@ pub trait TypeDatabase {
 }
 
 impl TypeDatabase for TypeInterner {
-    fn intern(&self, key: TypeKey) -> TypeId {
+    fn intern(&self, key: TypeData) -> TypeId {
         TypeInterner::intern(self, key)
     }
 
-    fn lookup(&self, id: TypeId) -> Option<TypeKey> {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
         TypeInterner::lookup(self, id)
     }
 
@@ -1024,11 +1024,11 @@ impl<'a> QueryCache<'a> {
 }
 
 impl TypeDatabase for QueryCache<'_> {
-    fn intern(&self, key: TypeKey) -> TypeId {
+    fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
     }
 
-    fn lookup(&self, id: TypeId) -> Option<TypeKey> {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
         self.interner.lookup(id)
     }
 
@@ -1665,11 +1665,11 @@ impl<'a> BinderTypeDatabase<'a> {
 }
 
 impl TypeDatabase for BinderTypeDatabase<'_> {
-    fn intern(&self, key: TypeKey) -> TypeId {
+    fn intern(&self, key: TypeData) -> TypeId {
         self.query_cache.intern(key)
     }
 
-    fn lookup(&self, id: TypeId) -> Option<TypeKey> {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
         self.query_cache.lookup(id)
     }
 
