@@ -152,7 +152,8 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         // Get function details - all function types use FunctionData
-        let (name, params, body_idx) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+        let (name, params, body_idx, await_default_param_name, recover_await_default) = if node.kind
+            == syntax_kind_ext::FUNCTION_DECLARATION
             || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || node.kind == syntax_kind_ext::ARROW_FUNCTION
         {
@@ -163,7 +164,23 @@ impl<'a> AsyncES5Transformer<'a> {
                     Some(self.get_identifier_text(func.name))
                 };
                 let params = self.collect_parameters(&func.parameters);
-                (name, params, func.body)
+                let await_default_param_name =
+                    self.first_await_default_param_name(&func.parameters);
+                let recover_await_default = self.block_is_empty(func.body)
+                    && await_default_param_name.is_some()
+                    && func
+                        .parameters
+                        .nodes
+                        .iter()
+                        .copied()
+                        .any(|p| self.param_initializer_has_top_level_await(p));
+                (
+                    name,
+                    params,
+                    func.body,
+                    await_default_param_name,
+                    recover_await_default,
+                )
             } else {
                 return IRNode::Undefined;
             }
@@ -174,6 +191,43 @@ impl<'a> AsyncES5Transformer<'a> {
         // Check if body contains await
         let has_await = self.body_contains_await(body_idx);
         self.state.has_await = has_await;
+
+        if recover_await_default {
+            let mut generated = String::new();
+            generated.push_str("return __awaiter(this, arguments, void 0, function (");
+            generated.push_str(&params.join(", "));
+            generated.push_str(") {\n");
+            if let Some(param_name) = await_default_param_name {
+                generated.push_str("    if (");
+                generated.push_str(&param_name);
+                generated.push_str(" === void 0) { ");
+                generated.push_str(&param_name);
+                generated.push_str(" = _a.sent(); }\n");
+            }
+            generated.push_str("    return __generator(this, function (_a) {\n");
+            generated.push_str("        switch (_a.label) {\n");
+            generated.push_str("            case 0: return [4 /*yield*/, ];\n");
+            generated.push_str("            case 1: return [2 /*return*/];\n");
+            generated.push_str("        }\n");
+            generated.push_str("    });\n");
+            generated.push_str("});");
+
+            if let Some(func_name) = name {
+                return IRNode::FunctionDecl {
+                    name: func_name,
+                    parameters: Vec::new(),
+                    body: vec![IRNode::Raw(generated)],
+                    body_source_range: None,
+                };
+            }
+            return IRNode::FunctionExpr {
+                name: None,
+                parameters: Vec::new(),
+                body: vec![IRNode::Raw(generated)],
+                is_expression_body: false,
+                body_source_range: None,
+            };
+        }
 
         // Build the generator body
         let generator_body = self.build_generator_body(body_idx, has_await);
@@ -411,6 +465,19 @@ impl<'a> AsyncES5Transformer<'a> {
                             }
                         }
                     }
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = self.arena.get_function(node) {
+                    if func.is_async {
+                        // Nested async function declarations inside async bodies must be
+                        // lowered as standalone functions in the generator case block.
+                        current_statements.push(self.transform_async_function(idx));
+                    } else {
+                        current_statements.push(IRNode::ASTRef(idx));
+                    }
+                } else {
+                    current_statements.push(IRNode::ASTRef(idx));
                 }
             }
 
@@ -958,6 +1025,66 @@ impl<'a> AsyncES5Transformer<'a> {
             return node.kind == syntax_kind_ext::AWAIT_EXPRESSION;
         }
         false
+    }
+
+    fn param_initializer_has_top_level_await(&self, param_idx: NodeIndex) -> bool {
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+        if param.initializer.is_none() {
+            return false;
+        }
+        let Some(init_node) = self.arena.get(param.initializer) else {
+            return false;
+        };
+        init_node.kind == syntax_kind_ext::AWAIT_EXPRESSION
+    }
+
+    fn first_await_default_param_name(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+    ) -> Option<String> {
+        for &param_idx in &params.nodes {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.initializer.is_none() {
+                continue;
+            }
+            let Some(init_node) = self.arena.get(param.initializer) else {
+                continue;
+            };
+            if init_node.kind != syntax_kind_ext::AWAIT_EXPRESSION {
+                continue;
+            }
+            let Some(name_node) = self.arena.get(param.name) else {
+                continue;
+            };
+            if name_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let name = self.get_identifier_text(param.name);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    fn block_is_empty(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return false;
+        };
+        block.statements.nodes.is_empty()
     }
 
     /// Get identifier text from a node
