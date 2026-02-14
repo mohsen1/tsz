@@ -5,31 +5,51 @@
 //! those files instead of skipping them as "non-UTF-8".
 
 /// Decode source text from raw bytes, supporting common BOM-based encodings.
-pub fn decode_source_text(bytes: &[u8]) -> Result<String, &'static str> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodedSourceText {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+/// Decode source text from raw bytes.
+///
+/// - UTF-16 with BOM decodes to text.
+/// - UTF-8 (with or without BOM) decodes to text.
+/// - Invalid UTF-8 without BOM is treated as binary and passed through unchanged.
+pub fn decode_source_text(bytes: &[u8]) -> DecodedSourceText {
     // UTF-8 BOM
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        return std::str::from_utf8(&bytes[3..])
-            .map(|s| s.to_string())
-            .map_err(|_| "invalid UTF-8");
+        return match std::str::from_utf8(&bytes[3..]) {
+            Ok(s) => DecodedSourceText::Text(s.to_string()),
+            Err(_) => DecodedSourceText::Binary(bytes.to_vec()),
+        };
     }
 
     // UTF-16 LE BOM
     if bytes.starts_with(&[0xFF, 0xFE]) {
-        return decode_utf16_with_endianness(&bytes[2..], true);
+        return decode_utf16_with_endianness(&bytes[2..], true)
+            .map(DecodedSourceText::Text)
+            .unwrap_or_else(|_| DecodedSourceText::Binary(bytes.to_vec()));
     }
 
     // UTF-16 BE BOM
     if bytes.starts_with(&[0xFE, 0xFF]) {
-        return decode_utf16_with_endianness(&bytes[2..], false);
+        return decode_utf16_with_endianness(&bytes[2..], false)
+            .map(DecodedSourceText::Text)
+            .unwrap_or_else(|_| DecodedSourceText::Binary(bytes.to_vec()));
     }
 
     // Plain UTF-8
-    std::str::from_utf8(bytes)
-        .map(|s| s.to_string())
-        .map_err(|_| "unsupported text encoding")
+    match std::str::from_utf8(bytes) {
+        Ok(s) => DecodedSourceText::Text(s.to_string()),
+        Err(_) => DecodedSourceText::Binary(bytes.to_vec()),
+    }
 }
 
-fn decode_utf16_with_endianness(bytes: &[u8], little_endian: bool) -> Result<String, &'static str> {
+fn decode_utf16_with_endianness(
+    bytes: &[u8],
+    little_endian: bool,
+) -> Result<String, &'static str> {
     if !bytes.len().is_multiple_of(2) {
         return Err("invalid UTF-16 byte length");
     }
@@ -50,24 +70,49 @@ fn decode_utf16_with_endianness(bytes: &[u8], little_endian: bool) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::decode_source_text;
+    use super::DecodedSourceText;
 
     #[test]
     fn decodes_utf8_bom() {
         let bytes = [0xEF, 0xBB, 0xBF, b'a', b'=', b'1'];
-        assert_eq!(decode_source_text(&bytes).unwrap(), "a=1");
+        assert_eq!(decode_source_text(&bytes), DecodedSourceText::Text("a=1".to_string()));
     }
 
     #[test]
     fn decodes_utf16le_bom_with_unicode() {
         // "µs" in UTF-16LE with BOM
         let bytes = [0xFF, 0xFE, 0xB5, 0x00, 0x73, 0x00];
-        assert_eq!(decode_source_text(&bytes).unwrap(), "µs");
+        assert_eq!(
+            decode_source_text(&bytes),
+            DecodedSourceText::Text("µs".to_string())
+        );
     }
 
     #[test]
     fn decodes_utf16be_bom_with_unicode() {
         // "µs" in UTF-16BE with BOM
         let bytes = [0xFE, 0xFF, 0x00, 0xB5, 0x00, 0x73];
-        assert_eq!(decode_source_text(&bytes).unwrap(), "µs");
+        assert_eq!(
+            decode_source_text(&bytes),
+            DecodedSourceText::Text("µs".to_string())
+        );
+    }
+
+    #[test]
+    fn non_utf8_bytes_become_binary() {
+        let bytes = [0x47, 0x40, 0x04, 0x92];
+        assert!(matches!(
+            decode_source_text(&bytes),
+            DecodedSourceText::Binary(_)
+        ));
+    }
+
+    #[test]
+    fn corrupted_bytes_become_binary() {
+        let bytes = [0xC6, 0x1F, 0xBC, 0x03, 0x08, 0x19, 0x1F, 0x00];
+        assert!(matches!(
+            decode_source_text(&bytes),
+            DecodedSourceText::Binary(_)
+        ));
     }
 }

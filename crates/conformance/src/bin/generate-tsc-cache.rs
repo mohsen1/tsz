@@ -270,18 +270,29 @@ fn process_test_file(
 
     // Read and decode file content (UTF-8/UTF-8 BOM/UTF-16 BOM).
     let bytes = fs::read(path)?;
-    let content = match tsz_conformance::text_decode::decode_source_text(&bytes) {
-        Ok(s) => s,
-        Err(_) => return Ok(None),
+    let decoded = tsz_conformance::text_decode::decode_source_text(&bytes);
+
+    let (content, filenames, options, binary_bytes) = match decoded {
+        tsz_conformance::text_decode::DecodedSourceText::Text(content) => {
+            // Parse directives
+            let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
+
+            // Check if should skip
+            if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
+                return Ok(None);
+            }
+
+            (
+                Some(content),
+                parsed.directives.filenames,
+                parsed.directives.options,
+                None,
+            )
+        }
+        tsz_conformance::text_decode::DecodedSourceText::Binary(bytes) => {
+            (None, Vec::new(), HashMap::new(), Some(bytes))
+        }
     };
-
-    // Parse directives
-    let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
-
-    // Check if should skip
-    if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
-        return Ok(None);
-    }
 
     // Get file metadata
     let metadata = fs::metadata(path)?;
@@ -305,15 +316,13 @@ fn process_test_file(
     let work_dir = temp_dir.path();
 
     // Create tsconfig.json with parsed @-directives unless test provides its own.
-    let has_tsconfig_file = parsed
-        .directives
-        .filenames
+    let has_tsconfig_file = filenames
         .iter()
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
     if !has_tsconfig_file {
         let tsconfig_path = work_dir.join("tsconfig.json");
         let tsconfig_content = serde_json::json!({
-            "compilerOptions": convert_options_to_tsconfig(&parsed.directives.options),
+            "compilerOptions": convert_options_to_tsconfig(&options),
             "include": ["*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"],
             "exclude": ["node_modules"]
         });
@@ -324,14 +333,18 @@ fn process_test_file(
     }
 
     // Write test files
-    if parsed.directives.filenames.is_empty() {
+    if filenames.is_empty() {
         // Single-file test
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("ts");
         let main_file = work_dir.join(format!("test.{}", ext));
-        fs::write(&main_file, strip_directive_comments(&content))?;
+        if let Some(content) = content {
+            fs::write(&main_file, strip_directive_comments(&content))?;
+        } else if let Some(bytes) = binary_bytes {
+            fs::write(&main_file, bytes)?;
+        }
     } else {
         // Multi-file test: write files from @filename directives
-        for (filename, file_content) in &parsed.directives.filenames {
+        for (filename, file_content) in &filenames {
             let sanitized = filename
                 .replace("..", "_")
                 .trim_start_matches('/')
