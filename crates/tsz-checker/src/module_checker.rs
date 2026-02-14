@@ -12,7 +12,7 @@
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::types::Visibility;
+use tsz_solver::Visibility;
 
 // =============================================================================
 // Module and Import Checking Methods

@@ -393,6 +393,7 @@ if __name__ == "__main__":
 * **Completed in this iteration (Milestone 0 sub-item):**
   * Enforced dependency-direction **freeze guardrail** in `scripts/check-checker-boundaries.sh` so CI fails if any new non-test solver source (outside legacy `crates/tsz-solver/src/lower.rs`) imports `tsz_parser::` or `tsz_checker::`.
   * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` that recursively scans non-test solver source files and fails on parser/checker import patterns outside the `lower.rs` legacy quarantine.
+  * Added a checker boundary guardrail in `scripts/check-checker-boundaries.sh` that fails on any non-test `tsz_solver::types::...` import path usage, forcing checker code onto public `tsz_solver::*` APIs only.
 * **Remaining for Milestone 0:**
   * Complete the `lower.rs` migration so solver has zero parser/checker crate imports.
   * Add/standardize architecture report generation in CI artifacts.
@@ -540,6 +541,9 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
   * Tightened top-level checker boundary guardrails so direct `TypeKey` import/intern checks now cover all non-test checker code (including `query_boundaries`), removing the previous path exception.
   * Added an explicit raw-interner checker guard in `scripts/check-checker-boundaries.sh` that fails on `.intern(...)` usage in non-test checker code, enforcing solver-constructor-only type construction.
   * Expanded checker architecture contract tests to fail on direct raw interner usage (`.intern(...)`) in checker source files.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Migrated checker non-test code from solver-internal module paths (`tsz_solver::types::...`) to public solver exports (`tsz_solver::...`) across relation flags, symbol refs, visibility, intrinsic/index helpers, and index signatures.
+  * Strengthened architecture contract coverage to fail if non-test checker source imports `tsz_solver::types::...`, preventing new solver-internal module coupling.
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
   * Keep tightening guard patterns as solver constructor surface expands (for example, forbid additional raw interner access patterns beyond `TypeKey`).

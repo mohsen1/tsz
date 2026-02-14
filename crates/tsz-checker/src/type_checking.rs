@@ -2755,7 +2755,7 @@ impl<'a> CheckerState<'a> {
     /// hardcoded lists. For example, "foo".length will look up the String interface
     /// from lib.d.ts and find the length property there.
     pub(crate) fn register_boxed_types(&mut self) {
-        use tsz_solver::types::IntrinsicKind;
+        use tsz_solver::IntrinsicKind;
 
         // Only register if lib files are loaded
         if !self.ctx.has_lib_loaded() {

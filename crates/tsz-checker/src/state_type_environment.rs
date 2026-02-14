@@ -11,7 +11,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::types::Visibility;
+use tsz_solver::Visibility;
 use tsz_solver::visitor::{
     collect_enum_def_ids, collect_lazy_def_ids, collect_referenced_types, collect_type_queries,
     lazy_def_id,

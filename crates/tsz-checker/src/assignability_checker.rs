@@ -22,8 +22,8 @@ use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::RelationCacheKey;
 use tsz_solver::TypeId;
-use tsz_solver::types::RelationCacheKey;
 use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 
 // =============================================================================
@@ -649,7 +649,7 @@ impl<'a> CheckerState<'a> {
             let binder = self.ctx.binder;
 
             // Helper to check if a symbol is a class (for nominal subtyping)
-            let is_class_fn = |sym_ref: tsz_solver::types::SymbolRef| -> bool {
+            let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {
                 let sym_id = tsz_binder::SymbolId(sym_ref.0);
                 if let Some(sym) = binder.get_symbol(sym_id) {
                     (sym.flags & symbol_flags::CLASS) != 0
@@ -712,7 +712,7 @@ impl<'a> CheckerState<'a> {
         self.ensure_refs_resolved(target);
 
         // Helper to check if a symbol is a class (for nominal subtyping)
-        let is_class_fn = |sym_ref: tsz_solver::types::SymbolRef| -> bool {
+        let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {
             let sym_id = tsz_binder::SymbolId(sym_ref.0);
             if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
                 (sym.flags & symbol_flags::CLASS) != 0

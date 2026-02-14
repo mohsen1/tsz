@@ -183,7 +183,7 @@ pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
 pub use reachability_analyzer::ReachabilityAnalyzer;
 pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
-pub use tsz_solver::types::Visibility;
+pub use tsz_solver::Visibility;
 pub use type_node::TypeNodeChecker;
 pub use types::{
     ArrayTypeInfo, ConditionalType, EnumTypeInfo, FunctionType, IndexInfo, IndexType,

@@ -41,7 +41,7 @@ fn types_are_subtype_with_env(
 ) -> bool {
     let mut flags = 0u16;
     if strict_null_checks {
-        flags |= tsz_solver::types::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+        flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
     }
 
     tsz_solver::query_relation_with_resolver(

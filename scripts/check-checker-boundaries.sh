@@ -55,6 +55,22 @@ fi
 
 echo "Checker TypeKey import/intern guardrail passed."
 
+# Guardrail: checker must not import solver internal module paths directly.
+#
+# Checker should consume only public tsz_solver re-exports, not tsz_solver::types::...
+SOLVER_INTERNAL_IMPORT_HITS="$(rg -n "tsz_solver::types::" crates/tsz-checker/src \
+  --glob '!**/tests/**' || true)"
+
+if [[ -n "$SOLVER_INTERNAL_IMPORT_HITS" ]]; then
+  echo "Checker boundary guardrail violation: direct solver internal module imports found:"
+  echo "$SOLVER_INTERNAL_IMPORT_HITS"
+  echo ""
+  echo "Use public tsz_solver::* exports instead of tsz_solver::types::* paths in checker code."
+  exit 1
+fi
+
+echo "Checker solver-internal import guardrail passed."
+
 # Guardrail: checker must construct semantic types through solver constructor APIs,
 # not by calling the raw interner directly.
 RAW_INTERN_HITS="$(rg -n "\\.intern\\(" crates/tsz-checker/src \

@@ -1360,7 +1360,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the symbol ID if the resolved symbol has the TYPE flag set.
     /// Returns None for built-in types that have special handling in TypeLowering.
     pub(crate) fn resolve_type_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
-        use tsz_solver::types::is_compiler_managed_type;
+        use tsz_solver::is_compiler_managed_type;
 
         // Skip built-in types that have special handling in TypeLowering
         // These types use built-in TypeKey representations instead of Refs

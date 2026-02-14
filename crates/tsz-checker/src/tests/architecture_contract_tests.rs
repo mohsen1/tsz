@@ -388,7 +388,7 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
 }
 
 #[test]
-fn test_checker_sources_forbid_direct_typekey_usage_patterns_and_raw_interning() {
+fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_interning() {
     fn is_rs_source_file(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()) == Some("rs")
     }
@@ -422,7 +422,8 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns_and_raw_interning()
             return false;
         }
 
-        line.contains("use tsz_solver::TypeKey")
+        line.contains("tsz_solver::types::")
+            || line.contains("use tsz_solver::TypeKey")
             || line.contains("use ") && line.contains("TypeKey")
             || line.contains("intern(TypeKey::")
             || line.contains("intern(tsz_solver::TypeKey::")
@@ -453,7 +454,7 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns_and_raw_interning()
 
     assert!(
         violations.is_empty(),
-        "checker source files must not import TypeKey or call raw interner APIs directly; violations: {}",
+        "checker source files must not import solver internals, import TypeKey, or call raw interner APIs directly; violations: {}",
         violations.join(", ")
     );
 }
