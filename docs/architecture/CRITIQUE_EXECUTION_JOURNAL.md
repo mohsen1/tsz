@@ -98,3 +98,5 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [ ] Migration action 095: incremental boundary migration artifact recorded.
 - [ ] Migration action 096: incremental boundary migration artifact recorded.
 - [ ] Migration action 097: incremental boundary migration artifact recorded.
+- [x] Migrated  JSDoc template type-param construction to solver  API.
+- [x] Migrated `function_type.rs` JSDoc template TypeParam construction from `intern(TypeKey::TypeParameter(...))` to `types.type_param(...)` to enforce solver-constructor-only path.
