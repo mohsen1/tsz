@@ -338,8 +338,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
             }
 
+            fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+                let members = self.db.type_list(TypeListId(list_id));
+                for &member in members.iter() {
+                    if let Some(shape) = self.visit_type(self.db, member) {
+                        return Some(shape);
+                    }
+                }
+                None
+            }
+
             // Future: Handle Union (return None or intersect of params)
-            // Future: Handle Intersection (pick first callable member)
         }
 
         let mut visitor = ContextualSignatureVisitor { db, arg_count };
