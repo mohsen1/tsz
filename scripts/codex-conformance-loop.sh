@@ -54,7 +54,7 @@ while true; do
 
   PROMPT_TEXT="$(tr '\n' ' ' < "$PROMPT_FILE")"
 
-  CMD=(codex exec --model "$MODEL" -C "$WORKDIR")
+  CMD=(codex exec --model "$MODEL" -C "$WORKDIR" -c 'model_reasoning_effort="low"')
 
   if [[ "$BYPASS" == "true" ]]; then
     CMD+=(--dangerously-bypass-approvals-and-sandbox)
