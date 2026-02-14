@@ -589,7 +589,7 @@ impl<'a> CheckerState<'a> {
     /// type T5 = typeof Array<string>;  // typeof Array with type args
     /// ```
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_solver::{SymbolRef, TypeKey};
+        use tsz_solver::SymbolRef;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -632,7 +632,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // For type arguments or when resolved is ANY/ERROR, use TypeQuery
-                let typequery_type = self.ctx.types.intern(TypeKey::TypeQuery(SymbolRef(sym_id)));
+                let typequery_type = self.ctx.types.type_query(SymbolRef(sym_id));
                 trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
                 typequery_type
             } else if self
@@ -698,9 +698,7 @@ impl<'a> CheckerState<'a> {
                 let mut hasher = DefaultHasher::new();
                 name.hash(&mut hasher);
                 let symbol_id = hasher.finish() as u32;
-                self.ctx
-                    .types
-                    .intern(TypeKey::TypeQuery(SymbolRef(symbol_id)))
+                self.ctx.types.type_query(SymbolRef(symbol_id))
             } else {
                 return TypeId::ERROR; // No name text - propagate error
             };
@@ -806,8 +804,6 @@ impl<'a> CheckerState<'a> {
         Vec<tsz_solver::TypeParamInfo>,
         Vec<(String, Option<TypeId>)>,
     ) {
-        use tsz_solver::TypeKey;
-
         let Some(list) = type_parameters else {
             return (Vec::new(), Vec::new());
         };
@@ -859,7 +855,7 @@ impl<'a> CheckerState<'a> {
                 default: None,
                 is_const: false,
             };
-            let type_id = self.ctx.types.intern(TypeKey::TypeParameter(info));
+            let type_id = self.ctx.types.type_param(info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous));
             param_indices.push(param_idx);
@@ -951,7 +947,7 @@ impl<'a> CheckerState<'a> {
             // UPDATE: Create a new TypeParameter with constraints and update the scope
             // This ensures that when function parameters reference these type parameters,
             // they get the constrained version, not the unconstrained placeholder
-            let constrained_type_id = self.ctx.types.intern(TypeKey::TypeParameter(info));
+            let constrained_type_id = self.ctx.types.type_param(info);
             self.ctx
                 .type_parameter_scope
                 .insert(name.clone(), constrained_type_id);
@@ -1074,7 +1070,7 @@ impl<'a> CheckerState<'a> {
                     != 0
                 {
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
-                    let lazy_type = self.ctx.types.intern(tsz_solver::TypeKey::Lazy(def_id));
+                    let lazy_type = self.ctx.types.lazy(def_id);
                     // Don't cache the Lazy type - we want to retry when the circular reference is broken
                     return lazy_type;
                 }
@@ -1122,7 +1118,7 @@ impl<'a> CheckerState<'a> {
                 != 0
             {
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
-                self.ctx.types.intern(tsz_solver::TypeKey::Lazy(def_id))
+                self.ctx.types.lazy(def_id)
             } else {
                 TypeId::ERROR
             }

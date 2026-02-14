@@ -80,6 +80,7 @@ pub trait TypeDatabase {
     fn reference(&self, symbol: SymbolRef) -> TypeId;
     fn lazy(&self, def_id: DefId) -> TypeId;
     fn type_param(&self, info: TypeParamInfo) -> TypeId;
+    fn type_query(&self, symbol: SymbolRef) -> TypeId;
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId;
 
     fn literal_string_atom(&self, atom: Atom) -> TypeId;
@@ -264,6 +265,10 @@ impl TypeDatabase for TypeInterner {
 
     fn type_param(&self, info: TypeParamInfo) -> TypeId {
         TypeInterner::type_param(self, info)
+    }
+
+    fn type_query(&self, symbol: SymbolRef) -> TypeId {
+        TypeInterner::type_query(self, symbol)
     }
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
@@ -1040,6 +1045,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.type_param(info)
     }
 
+    fn type_query(&self, symbol: SymbolRef) -> TypeId {
+        self.interner.type_query(symbol)
+    }
+
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         self.interner.application(base, args)
     }
@@ -1613,6 +1622,10 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
 
     fn type_param(&self, info: TypeParamInfo) -> TypeId {
         self.query_cache.type_param(info)
+    }
+
+    fn type_query(&self, symbol: SymbolRef) -> TypeId {
+        self.query_cache.type_query(symbol)
     }
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
