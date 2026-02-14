@@ -2516,6 +2516,11 @@ impl TypeInterner {
         self.intern(TypeKey::Array(element))
     }
 
+    /// Canonical `this` type.
+    pub fn this_type(&self) -> TypeId {
+        self.intern(TypeKey::ThisType)
+    }
+
     /// Intern a readonly array type
     /// Returns a distinct type from mutable arrays to enforce readonly semantics
     pub fn readonly_array(&self, element: TypeId) -> TypeId {

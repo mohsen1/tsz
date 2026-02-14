@@ -601,8 +601,8 @@ impl<'a> TypeLowering<'a> {
             // =========================================================================
             // This type
             // =========================================================================
-            k if k == SyntaxKind::ThisKeyword as u16 => self.interner.intern(TypeKey::ThisType),
-            k if k == syntax_kind_ext::THIS_TYPE => self.interner.intern(TypeKey::ThisType),
+            k if k == SyntaxKind::ThisKeyword as u16 => self.interner.this_type(),
+            k if k == syntax_kind_ext::THIS_TYPE => self.interner.this_type(),
 
             // =========================================================================
             // Parenthesized type
@@ -822,7 +822,7 @@ impl<'a> TypeLowering<'a> {
         let mut params = Vec::with_capacity(list.nodes.len());
         for &idx in &list.nodes {
             if let Some(info) = self.lower_type_parameter(idx) {
-                let type_id = self.interner.intern(TypeKey::TypeParameter(info.clone()));
+                let type_id = self.interner.type_param(info.clone());
                 self.add_type_param_binding(info.name, type_id);
                 params.push(info);
             }
@@ -2191,9 +2191,7 @@ impl<'a> TypeLowering<'a> {
         if let Some(data) = self.arena.get_mapped_type(node) {
             let (type_param, constraint) = self.lower_mapped_type_param(data.type_parameter);
             self.push_type_param_scope();
-            let type_param_id = self
-                .interner
-                .intern(TypeKey::TypeParameter(type_param.clone()));
+            let type_param_id = self.interner.type_param(type_param.clone());
             self.add_type_param_binding(type_param.name, type_param_id);
             let name_type = if data.name_type != NodeIndex::NONE {
                 Some(self.lower_type(data.name_type))
@@ -2314,8 +2312,7 @@ impl<'a> TypeLowering<'a> {
         if let Some(data) = self.arena.get_indexed_access_type(node) {
             let object_type = self.lower_type(data.object_type);
             let index_type = self.lower_type(data.index_type);
-            self.interner
-                .intern(TypeKey::IndexAccess(object_type, index_type))
+            self.interner.index_access(object_type, index_type)
         } else {
             TypeId::ERROR
         }
@@ -2686,7 +2683,7 @@ impl<'a> TypeLowering<'a> {
                                 .unwrap_or(TypeId::UNKNOWN);
                             let array_type = self.interner.array(elem_type);
                             if name == "ReadonlyArray" {
-                                return self.interner.intern(TypeKey::ReadonlyType(array_type));
+                    return self.interner.readonly_type(array_type);
                             }
                             return array_type;
                         }
@@ -2715,7 +2712,7 @@ impl<'a> TypeLowering<'a> {
         // Phase 4.2: Must resolve to DefId - no fallback to SymbolRef
         // The def_id_resolver closure must be provided and must return valid DefIds
         if let Some(def_id) = self.resolve_def_id(node_idx) {
-            return self.interner.intern(TypeKey::Lazy(def_id));
+            return self.interner.lazy(def_id);
         }
         // If def_id resolution failed, this is an error - don't create bogus Lazy types
         TypeId::ERROR
@@ -2771,13 +2768,13 @@ impl<'a> TypeLowering<'a> {
             // identifiers in different arenas (e.g., NodeIndex(50) is "Promise"
             // in arena A but "AbortSignal" in arena B).
             if let Some(def_id) = self.resolve_def_id_by_name(name) {
-                let lazy_type = self.interner.intern(TypeKey::Lazy(def_id));
+                let lazy_type = self.interner.lazy(def_id);
                 return lazy_type;
             }
             // Fall back to NodeIndex-based resolution for same-arena contexts
             // where no name-based resolver is available (e.g., user code).
             if let Some(def_id) = self.resolve_def_id(node_idx) {
-                let lazy_type = self.interner.intern(TypeKey::Lazy(def_id));
+                let lazy_type = self.interner.lazy(def_id);
                 return lazy_type;
             }
 
@@ -2812,9 +2809,7 @@ impl<'a> TypeLowering<'a> {
         if let Some(data) = self.arena.get_type_query(node) {
             // Create a symbol reference from the expression name
             if let Some(symbol_id) = self.resolve_value_symbol(data.expr_name) {
-                let base = self
-                    .interner
-                    .intern(TypeKey::TypeQuery(SymbolRef(symbol_id)));
+                let base = self.interner.type_query(SymbolRef(symbol_id));
                 if let Some(args) = &data.type_arguments
                     && !args.nodes.is_empty()
                 {
@@ -2843,9 +2838,9 @@ impl<'a> TypeLowering<'a> {
             // Check which operator it is
             match data.operator {
                 // KeyOfKeyword = 143
-                143 => self.interner.intern(TypeKey::KeyOf(inner_type)),
+                143 => self.interner.keyof(inner_type),
                 // ReadonlyKeyword = 148
-                148 => self.interner.intern(TypeKey::ReadonlyType(inner_type)),
+                148 => self.interner.readonly_type(inner_type),
                 // UniqueKeyword = 158 - unique symbol
                 158 => {
                     // unique symbol creates a unique symbol type
