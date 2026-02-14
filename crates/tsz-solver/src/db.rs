@@ -1749,8 +1749,11 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
-        self.query_cache
-            .evaluate_index_access(object_type, index_type)
+        self.evaluate_index_access_with_options(
+            object_type,
+            index_type,
+            self.no_unchecked_indexed_access(),
+        )
     }
 
     fn evaluate_index_access_with_options(
@@ -1759,11 +1762,14 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         index_type: TypeId,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
-        self.query_cache.evaluate_index_access_with_options(
-            object_type,
-            index_type,
-            no_unchecked_indexed_access,
-        )
+        // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution.
+        // This fixes the NoopResolver issue that prevents type alias resolution in index access
+        // (e.g. `OptionsForKey[K]` where OptionsForKey is a type alias).
+        let type_env = self.type_env.borrow();
+        let mut evaluator =
+            crate::evaluate::TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.evaluate_index_access(object_type, index_type)
     }
 
     fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
