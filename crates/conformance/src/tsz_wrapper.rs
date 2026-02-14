@@ -633,6 +633,16 @@ fn copy_tsconfig_to_root_if_needed(
         }
     };
 
+    // If there are no test directives, preserve the authored tsconfig as-is.
+    // This avoids reparsing JSONC tsconfig content (comments/trailing commas)
+    // through strict serde_json, which can drop compiler options like allowJs.
+    if options.is_empty() {
+        if !root_tsconfig.is_file() {
+            std::fs::write(&root_tsconfig, base_content)?;
+        }
+        return Ok(());
+    }
+
     // Merge directive options into the tsconfig's compilerOptions
     let directive_opts = convert_options_to_tsconfig(options);
     if let serde_json::Value::Object(ref directive_map) = directive_opts {
