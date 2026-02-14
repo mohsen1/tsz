@@ -90,29 +90,17 @@ impl<'a> CheckerState<'a> {
 
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
-        // ERROR TYPE SUPPRESSION
-        if source == TypeId::ERROR || target == TypeId::ERROR {
+        // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
+        if self.should_suppress_assignability_diagnostic(source, target) {
             if tracing::enabled!(Level::TRACE) {
                 trace!(
                     source = source.0,
                     target = target.0,
                     node_idx = idx.0,
                     file = %self.ctx.file_name,
-                    "suppressing TS2322 for error type"
+                    "suppressing TS2322 for non-actionable source/target types"
                 );
             }
-            return;
-        }
-
-        // ANY TYPE SUPPRESSION
-        if source == TypeId::ANY || target == TypeId::ANY {
-            return;
-        }
-
-        // UNKNOWN TYPE SUPPRESSION - when types couldn't be fully resolved
-        // (e.g., from unresolved imports, incomplete lib loading), suppress
-        // to prevent false positive cascading errors
-        if source == TypeId::UNKNOWN || target == TypeId::UNKNOWN {
             return;
         }
 
@@ -156,9 +144,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Use the solver's explain API to get the detailed reason
-        // Use the type environment to resolve TypeQuery and Ref types
-        let reason = self.explain_assignability_failure(source, target);
+        // Use one solver-boundary analysis path for TS2322 metadata.
+        let analysis = self.analyze_assignability_failure(source, target);
+        let reason = analysis.failure_reason;
 
         if tracing::enabled!(Level::TRACE) {
             let source_type = self.format_type(source);

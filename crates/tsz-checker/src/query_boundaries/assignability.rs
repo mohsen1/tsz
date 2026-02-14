@@ -58,26 +58,22 @@ pub(crate) fn are_types_overlapping_with_env(
     .is_related()
 }
 
-pub(crate) fn is_weak_union_violation_with_context(
-    db: &dyn TypeDatabase,
-    ctx: &crate::context::CheckerContext<'_>,
-    env: &tsz_solver::TypeEnvironment,
-    source: TypeId,
-    target: TypeId,
-) -> bool {
-    let mut checker = tsz_solver::CompatChecker::with_resolver(db, env);
-    ctx.configure_compat_checker(&mut checker);
-    checker.is_weak_union_violation(source, target)
+pub(crate) struct AssignabilityFailureAnalysis {
+    pub weak_union_violation: bool,
+    pub failure_reason: Option<SubtypeFailureReason>,
 }
 
-pub(crate) fn explain_assignability_failure_with_context(
+pub(crate) fn analyze_assignability_failure_with_context(
     db: &dyn TypeDatabase,
     ctx: &crate::context::CheckerContext<'_>,
     env: &tsz_solver::TypeEnvironment,
     source: TypeId,
     target: TypeId,
-) -> Option<SubtypeFailureReason> {
+) -> AssignabilityFailureAnalysis {
     let mut checker = tsz_solver::CompatChecker::with_resolver(db, env);
     ctx.configure_compat_checker(&mut checker);
-    checker.explain_failure(source, target)
+    AssignabilityFailureAnalysis {
+        weak_union_violation: checker.is_weak_union_violation(source, target),
+        failure_reason: checker.explain_failure(source, target),
+    }
 }
