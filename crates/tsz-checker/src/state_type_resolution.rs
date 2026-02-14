@@ -547,6 +547,7 @@ impl<'a> CheckerState<'a> {
         type_name_idx: NodeIndex,
         type_ref: &tsz_parser::parser::node::TypeRefData,
     ) -> TypeId {
+        let factory = self.ctx.types.factory();
         if let Some(type_id) = self.resolve_named_type_reference(name, type_name_idx) {
             return type_id;
         }
@@ -565,9 +566,9 @@ impl<'a> CheckerState<'a> {
             .and_then(|args| args.nodes.first().copied())
             .map(|idx| self.get_type_from_type_node(idx))
             .unwrap_or(TypeId::ERROR);
-        let array_type = self.ctx.types.array(elem_type);
+        let array_type = factory.array(elem_type);
         if name == "ReadonlyArray" {
-            self.ctx.types.readonly_type(array_type)
+            factory.readonly_type(array_type)
         } else {
             array_type
         }
@@ -582,6 +583,7 @@ impl<'a> CheckerState<'a> {
         name: &str,
         type_ref: &tsz_parser::parser::node::TypeRefData,
     ) -> TypeId {
+        let factory = self.ctx.types.factory();
         if name != "Array" && name != "ReadonlyArray" && name != "ConcatArray" {
             match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
                 TypeSymbolResolution::Type(sym_id) => {
@@ -618,8 +620,8 @@ impl<'a> CheckerState<'a> {
                             // This is critical for cross-file generic constraints like
                             // `TBase extends Constructor` where Constructor<T = {}>.
                             let _ = self.get_type_of_symbol(sym_id);
-                            let base_type_id = self.ctx.types.lazy(def_id);
-                            return self.ctx.types.application(base_type_id, default_args);
+                            let base_type_id = factory.lazy(def_id);
+                            return factory.application(base_type_id, default_args);
                         }
                     }
                 }
@@ -2543,7 +2545,8 @@ impl<'a> CheckerState<'a> {
             number_index: shape.number_index.clone(),
             symbol: None,
         };
-        self.ctx.types.callable(new_shape)
+        let factory = self.ctx.types.factory();
+        factory.callable(new_shape)
     }
 
     /// Apply explicit type arguments to a callable type for function calls.
@@ -2578,6 +2581,7 @@ impl<'a> CheckerState<'a> {
             return callee_type;
         }
 
+        let factory = self.ctx.types.factory();
         match query::classify_for_signatures(self.ctx.types, callee_type) {
             query::SignatureTypeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
@@ -2632,7 +2636,7 @@ impl<'a> CheckerState<'a> {
                     number_index: shape.number_index.clone(),
                     symbol: None,
                 };
-                self.ctx.types.callable(new_shape)
+                factory.callable(new_shape)
             }
             query::SignatureTypeKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
@@ -2661,7 +2665,7 @@ impl<'a> CheckerState<'a> {
                     number_index: None,
                     symbol: None,
                 };
-                self.ctx.types.callable(new_shape)
+                factory.callable(new_shape)
             }
             _ => callee_type,
         }
@@ -2707,7 +2711,8 @@ impl<'a> CheckerState<'a> {
         let ctor_type = if ctor_types.len() == 1 {
             ctor_types[0]
         } else {
-            self.ctx.types.intersection(ctor_types)
+            let factory = self.ctx.types.factory();
+            factory.intersection(ctor_types)
         };
         Some(self.apply_type_arguments_to_constructor_type(ctor_type, type_arguments))
     }
