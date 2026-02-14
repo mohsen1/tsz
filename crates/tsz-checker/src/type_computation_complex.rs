@@ -440,6 +440,12 @@ impl<'a> CheckerState<'a> {
         match result {
             CallResult::Success(return_type) => return_type,
             CallResult::NotCallable { .. } => {
+                // In circular class-resolution scenarios, class constructor targets can
+                // transiently lose construct signatures. TypeScript suppresses TS2351
+                // here and reports the underlying class/argument diagnostics instead.
+                if self.new_target_is_class_symbol(new_expr.expression) {
+                    return TypeId::ERROR;
+                }
                 self.error_not_constructable_at(constructor_type, idx);
                 TypeId::ERROR
             }
@@ -581,6 +587,28 @@ impl<'a> CheckerState<'a> {
             return Some(TypeId::ERROR);
         }
         None
+    }
+
+    fn new_target_is_class_symbol(&self, expr_idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+        let Some(ident) = self.ctx.arena.get_identifier_at(expr_idx) else {
+            return false;
+        };
+        let name = &ident.escaped_text;
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)
+            .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
+            .or_else(|| self.ctx.binder.file_locals.get(name))
+            .or_else(|| self.ctx.binder.get_symbols().find_by_name(name))
+        else {
+            return false;
+        };
+        self.ctx
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|symbol| (symbol.flags & symbol_flags::CLASS) != 0)
     }
 
     /// Resolve a self-referencing class constructor in a static initializer.
