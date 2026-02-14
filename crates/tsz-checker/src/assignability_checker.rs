@@ -298,9 +298,9 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the types can potentially be equal, false if they can never
     /// have any common value.
     pub fn are_types_overlapping(&mut self, left: TypeId, right: TypeId) -> bool {
-        // CRITICAL: Ensure all Ref types are resolved before overlap check.
-        self.ensure_refs_resolved(left);
-        self.ensure_refs_resolved(right);
+        // Ensure centralized relation preconditions before overlap check.
+        self.ensure_relation_input_ready(left);
+        self.ensure_relation_input_ready(right);
 
         let env = self.ctx.type_env.borrow();
         are_types_overlapping_with_env(
