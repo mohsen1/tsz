@@ -541,7 +541,7 @@ const c = 3;"#;
 
     // Should still parse statements (with recovery)
     assert!(
-        result.statements.len() >= 1,
+        !result.statements.is_empty(),
         "Expected at least 1 statement after recovery, got {}",
         result.statements.len()
     );
