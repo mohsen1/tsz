@@ -261,6 +261,50 @@ impl<'a> CheckerState<'a> {
         self.is_promise_executor_function(func_idx)
     }
 
+    /// Returns true when the parameter name belongs to an immediately-invoked
+    /// function expression.
+    pub(crate) fn is_parameter_in_iife(&self, param_name_idx: NodeIndex) -> bool {
+        let Some(func_idx) = self.find_enclosing_function(param_name_idx) else {
+            return false;
+        };
+        self.is_immediately_invoked_function(func_idx)
+    }
+
+    // Returns true if `func_idx` is an immediately-invoked function expression.
+    // Handles wrapped forms like `(function() {})()` and `((x) => x)(1)`.
+    pub(crate) fn is_immediately_invoked_function(&self, func_idx: NodeIndex) -> bool {
+        let mut current = func_idx;
+        let mut guard = 0;
+        loop {
+            guard += 1;
+            if guard > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = parent;
+                continue;
+            }
+            if (parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                && let Some(call) = self.ctx.arena.get_call_expr(parent_node)
+                && call.expression == current
+            {
+                return true;
+            }
+            return false;
+        }
+    }
+
     /// Check if `this` has a contextual owner (class or object literal).
     ///
     /// Walks up the AST to find the nearest non-arrow function. If that function is
