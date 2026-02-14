@@ -136,9 +136,6 @@ impl Runner {
                 let print_test_files = self.args.print_test_files;
                 let base = base_path.clone();
                 let test_dir = test_dir.clone();
-                let compare_fingerprints = compare_fingerprints;
-                let print_fingerprints = print_fingerprints;
-                let write_diff_artifacts = write_diff_artifacts;
                 let diff_artifacts_dir = diff_artifacts_dir.clone();
 
                 async move {
