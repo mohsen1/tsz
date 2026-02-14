@@ -1089,12 +1089,17 @@ impl<'a> CheckerState<'a> {
 
         // Get the property name first (needed for abstract property check regardless of object type)
         let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
-            return TypeId::ERROR; // Missing name node - propagate error
+            // Preserve diagnostics on the base expression (e.g. TS2304 for `missing.`)
+            // even when parser recovery could not build a property name node.
+            let _ = self.get_type_of_node(access.expression);
+            return TypeId::ERROR;
         };
         if let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && ident.escaped_text.is_empty()
         {
-            return TypeId::ERROR; // Empty identifier - propagate error
+            // Preserve diagnostics on the base expression when member name is missing.
+            let _ = self.get_type_of_node(access.expression);
+            return TypeId::ERROR;
         }
 
         // Check for abstract property access in constructor BEFORE evaluating types (error 2715)
