@@ -96,10 +96,9 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         if let Some(constraint) = param.constraint {
             if constraint == self.object_type {
                 Some(
-                    self.evaluator.interner().index_access(
-                        self.object_type,
-                        self.index_type,
-                    ),
+                    self.evaluator
+                        .interner()
+                        .index_access(self.object_type, self.index_type),
                 )
             } else {
                 Some(
@@ -109,7 +108,9 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             }
         } else {
             Some(
-                self.evaluator.interner().index_access(self.object_type, self.index_type),
+                self.evaluator
+                    .interner()
+                    .index_access(self.object_type, self.index_type),
             )
         }
     }

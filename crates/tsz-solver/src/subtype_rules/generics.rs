@@ -627,9 +627,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Build properties by instantiating template for each key
         let mut properties = Vec::new();
         for key_name in keys {
-            let key_literal = self
-                .interner
-                .literal_string_atom(key_name);
+            let key_literal = self.interner.literal_string_atom(key_name);
 
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);

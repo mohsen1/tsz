@@ -2611,12 +2611,10 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let type_arg = self.lower_type(first_arg);
-                                return self
-                                    .interner
-                                    .string_intrinsic(
-                                        crate::types::StringIntrinsicKind::Uppercase,
-                                        type_arg,
-                                    );
+                                return self.interner.string_intrinsic(
+                                    crate::types::StringIntrinsicKind::Uppercase,
+                                    type_arg,
+                                );
                             }
                             return TypeId::ERROR;
                         }
@@ -2625,12 +2623,10 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let type_arg = self.lower_type(first_arg);
-                                return self
-                                    .interner
-                                    .string_intrinsic(
-                                        crate::types::StringIntrinsicKind::Lowercase,
-                                        type_arg,
-                                    );
+                                return self.interner.string_intrinsic(
+                                    crate::types::StringIntrinsicKind::Lowercase,
+                                    type_arg,
+                                );
                             }
                             return TypeId::ERROR;
                         }
@@ -2639,12 +2635,10 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let type_arg = self.lower_type(first_arg);
-                                return self
-                                    .interner
-                                    .string_intrinsic(
-                                        crate::types::StringIntrinsicKind::Capitalize,
-                                        type_arg,
-                                    );
+                                return self.interner.string_intrinsic(
+                                    crate::types::StringIntrinsicKind::Capitalize,
+                                    type_arg,
+                                );
                             }
                             return TypeId::ERROR;
                         }
@@ -2653,12 +2647,10 @@ impl<'a> TypeLowering<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let type_arg = self.lower_type(first_arg);
-                                return self
-                                    .interner
-                                    .string_intrinsic(
-                                        crate::types::StringIntrinsicKind::Uncapitalize,
-                                        type_arg,
-                                    );
+                                return self.interner.string_intrinsic(
+                                    crate::types::StringIntrinsicKind::Uncapitalize,
+                                    type_arg,
+                                );
                             }
                             return TypeId::ERROR;
                         }
@@ -2691,7 +2683,7 @@ impl<'a> TypeLowering<'a> {
                                 .unwrap_or(TypeId::UNKNOWN);
                             let array_type = self.interner.array(elem_type);
                             if name == "ReadonlyArray" {
-                    return self.interner.readonly_type(array_type);
+                                return self.interner.readonly_type(array_type);
                             }
                             return array_type;
                         }
@@ -2853,8 +2845,7 @@ impl<'a> TypeLowering<'a> {
                 158 => {
                     // unique symbol creates a unique symbol type
                     // Use node index as unique identifier
-                    self.interner
-                        .unique_symbol(SymbolRef(node_idx.0))
+                    self.interner.unique_symbol(SymbolRef(node_idx.0))
                 }
                 _ => inner_type,
             }

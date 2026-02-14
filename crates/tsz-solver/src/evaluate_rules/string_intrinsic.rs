@@ -113,9 +113,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         kind: StringIntrinsicKind,
         type_arg: TypeId,
     ) -> TypeId {
-        let string_intrinsic = self
-            .interner()
-            .string_intrinsic(kind, type_arg);
+        let string_intrinsic = self.interner().string_intrinsic(kind, type_arg);
         self.evaluate(string_intrinsic)
     }
 

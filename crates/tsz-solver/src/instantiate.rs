@@ -612,7 +612,7 @@ impl<'a> TypeInstantiator<'a> {
                 let mapped = self.interner.mapped_type(*mapped_id);
                 let shadowed_len = self.shadowed.len();
                 let saved = self.visiting.clone();
-                    let tp_id = self.interner.type_param(mapped.type_param.clone());
+                let tp_id = self.interner.type_param(mapped.type_param.clone());
                 self.visiting.remove(&tp_id);
                 let saved_visiting = Some(saved);
                 self.shadowed.push(mapped.type_param.name);

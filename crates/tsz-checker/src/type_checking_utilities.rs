@@ -6,12 +6,12 @@
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MemberAccessLevel};
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
-use rustc_hash::{FxHashMap, FxHashSet};
 
 #[derive(Clone)]
 struct JsdocTypedefInfo {
@@ -1631,7 +1631,8 @@ impl<'a> CheckerState<'a> {
         self.jsdoc_type_from_expression(type_expr).or_else(|| {
             self.resolve_jsdoc_typedef_type(type_expr, node.pos, comments, source_text)
                 .or_else(|| {
-                    if let Some((module_specifier, member_name)) = Self::parse_jsdoc_import_type(type_expr)
+                    if let Some((module_specifier, member_name)) =
+                        Self::parse_jsdoc_import_type(type_expr)
                     {
                         if let Some(sym_id) =
                             self.resolve_cross_file_export(&module_specifier, &member_name)
@@ -1730,7 +1731,9 @@ impl<'a> CheckerState<'a> {
                     if let Some(name) = rest.strip_prefix("typeof") {
                         let name = name.trim();
                         if !name.is_empty()
-                            && name.chars().all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                            && name
+                                .chars()
+                                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
                         {
                             let symbols = self.ctx.binder.get_symbols();
                             let candidates = symbols.find_all_by_name(name);
