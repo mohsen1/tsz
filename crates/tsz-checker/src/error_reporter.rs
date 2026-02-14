@@ -37,6 +37,111 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn format_type_for_assignability_message(&self, ty: TypeId) -> String {
+        let formatted = self.format_type(ty);
+        // tsc commonly formats object type literals with a trailing semicolon before `}`.
+        if formatted.starts_with("{ ")
+            && formatted.ends_with(" }")
+            && formatted.contains(':')
+            && !formatted.ends_with("; }")
+        {
+            return format!("{}; }}", &formatted[..formatted.len() - 2]);
+        }
+        formatted
+    }
+
+    fn elaborate_type_mismatch_detail(&mut self, source: TypeId, target: TypeId) -> Option<String> {
+        let source_with_shape = {
+            let direct = source;
+            let resolved = self.resolve_type_for_property_access(direct);
+            let evaluated = self.judge_evaluate(resolved);
+            [direct, resolved, evaluated]
+                .into_iter()
+                .find(|candidate| {
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                })?
+        };
+        let target_with_shape = {
+            let direct = target;
+            let resolved = self.resolve_type_for_property_access(direct);
+            let evaluated = self.judge_evaluate(resolved);
+            [direct, resolved, evaluated]
+                .into_iter()
+                .find(|candidate| {
+                    tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate).is_some()
+                })?
+        };
+        let source_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, source_with_shape)?;
+        let target_shape =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, target_with_shape)?;
+        let source_props = source_shape.properties.as_slice();
+        let target_props = target_shape.properties.as_slice();
+
+        for target_prop in target_props {
+            let Some(source_prop) = source_props.iter().find(|p| p.name == target_prop.name) else {
+                continue;
+            };
+
+            let effective_target_type = if target_prop.optional {
+                self.ctx
+                    .types
+                    .union(vec![target_prop.type_id, TypeId::UNDEFINED])
+            } else {
+                target_prop.type_id
+            };
+
+            // Prefer property type incompatibility details when both optionality and type differ.
+            // tsc reports the type incompatibility first in this situation.
+            if !self.is_assignable_to(source_prop.type_id, target_prop.type_id) {
+                let prop_name = self.ctx.types.resolve_atom_ref(target_prop.name);
+                let prop_message = format_message(
+                    diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
+                    &[&prop_name],
+                );
+                let source_prop_str =
+                    self.format_type_for_assignability_message(source_prop.type_id);
+                let target_prop_str =
+                    self.format_type_for_assignability_message(target_prop.type_id);
+                let nested = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_prop_str, &target_prop_str],
+                );
+                return Some(format!("{} {}", prop_message, nested));
+            }
+
+            if source_prop.optional && !target_prop.optional {
+                let prop_name = self.ctx.types.resolve_atom_ref(target_prop.name);
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
+                return Some(format_message(
+                    diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    &[&prop_name, &source_str, &target_str],
+                ));
+            }
+
+            // Fallback assignability check for optional target properties.
+            if !self.is_assignable_to(source_prop.type_id, effective_target_type) {
+                let prop_name = self.ctx.types.resolve_atom_ref(target_prop.name);
+                let prop_message = format_message(
+                    diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
+                    &[&prop_name],
+                );
+                let source_prop_str =
+                    self.format_type_for_assignability_message(source_prop.type_id);
+                let target_prop_str =
+                    self.format_type_for_assignability_message(effective_target_type);
+                let nested = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_prop_str, &target_prop_str],
+                );
+                return Some(format!("{} {}", prop_message, nested));
+            }
+        }
+
+        None
+    }
+
     /// Prefer statement-level anchors for assignment diagnostics so TS2322 spans
     /// line up with tsc in assignment/variable-declaration contexts.
     fn assignment_diagnostic_anchor_idx(&self, idx: NodeIndex) -> NodeIndex {
@@ -271,7 +376,7 @@ impl<'a> CheckerState<'a> {
 
     /// Recursively render a SubtypeFailureReason into a Diagnostic.
     fn render_failure_reason(
-        &self,
+        &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
         source: TypeId,
         target: TypeId,
@@ -446,56 +551,43 @@ impl<'a> CheckerState<'a> {
                 target_property_type,
                 nested_reason,
             } => {
-                // At depth 0, emit TS2322 as the primary error (matching tsc behavior).
-                // TS2326 details go into related_information.
                 if depth == 0 {
-                    let source_str = self.format_type(source);
-                    let target_str = self.format_type(target);
-                    let message = format_message(
+                    let source_str = self.format_type_for_assignability_message(source);
+                    let target_str = self.format_type_for_assignability_message(target);
+                    let base = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
-                    let mut diag = Diagnostic::error(
-                        file_name.clone(),
-                        start,
-                        length,
-                        message,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    );
-
-                    // Add property incompatibility as related info
                     let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                     let prop_message = format_message(
                         diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                         &[&prop_name],
                     );
-                    diag.related_information.push(DiagnosticRelatedInformation {
-                        file: file_name.clone(),
-                        start,
-                        length,
-                        message_text: prop_message,
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-                    });
-
-                    if let Some(nested) = nested_reason {
-                        let nested_diag = self.render_failure_reason(
+                    let nested_message = if let Some(nested) = nested_reason {
+                        self.render_failure_reason(
                             nested,
                             *source_property_type,
                             *target_property_type,
                             idx,
                             depth + 1,
-                        );
-                        diag.related_information.push(DiagnosticRelatedInformation {
-                            file: nested_diag.file,
-                            start: nested_diag.start,
-                            length: nested_diag.length,
-                            message_text: nested_diag.message_text,
-                            category: DiagnosticCategory::Message,
-                            code: nested_diag.code,
-                        });
-                    }
-                    return diag;
+                        )
+                        .message_text
+                    } else {
+                        let src = self.format_type_for_assignability_message(*source_property_type);
+                        let tgt = self.format_type_for_assignability_message(*target_property_type);
+                        format_message(
+                            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            &[&src, &tgt],
+                        )
+                    };
+                    let message = format!("{} {} {}", base, prop_message, nested_message);
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
                 }
 
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
@@ -536,25 +628,25 @@ impl<'a> CheckerState<'a> {
             SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
                 // At depth 0, emit TS2322 as the primary error (matching tsc behavior).
                 if depth == 0 {
-                    let source_str = self.format_type(source);
-                    let target_str = self.format_type(target);
-                    let message = format_message(
+                    let source_str = self.format_type_for_assignability_message(source);
+                    let target_str = self.format_type_for_assignability_message(target);
+                    let base = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
                     );
                     let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                     let detail = format_message(
-                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &source_str, &target_str],
                     );
+                    let message = format!("{} {}", base, detail);
                     Diagnostic::error(
-                        file_name.clone(),
+                        file_name,
                         start,
                         length,
                         message,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     )
-                    .with_related(file_name, start, length, detail)
                 } else {
                     let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                     let source_str = self.format_type(source);
@@ -716,8 +808,8 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                let source_str = self.format_type(source);
-                let target_str = self.format_type(target);
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
@@ -731,14 +823,47 @@ impl<'a> CheckerState<'a> {
                 )
             }
 
+            SubtypeFailureReason::TypeMismatch {
+                source_type: _,
+                target_type: _,
+            } => {
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
+                let base = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+
+                if depth == 0
+                    && let Some(detail) = self.elaborate_type_mismatch_detail(source, target)
+                {
+                    let message = format!("{} {}", base, detail);
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    )
+                } else {
+                    Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        base,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    )
+                }
+            }
+
             _ => {
                 // All remaining variants produce a generic "Type X is not assignable to type Y"
                 // with TS2322 code. This covers: PropertyVisibilityMismatch,
                 // PropertyNominalMismatch, ParameterTypeMismatch, NoIntersectionMemberMatches,
-                // TypeMismatch, IntrinsicTypeMismatch, LiteralTypeMismatch, ErrorType,
+                // IntrinsicTypeMismatch, LiteralTypeMismatch, ErrorType,
                 // RecursionLimitExceeded, ParameterCountMismatch.
-                let source_str = self.format_type(source);
-                let target_str = self.format_type(target);
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
