@@ -44,6 +44,7 @@ use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tsz_common::interner::{Atom, Interner};
 
 #[cfg(target_arch = "wasm32")]
 fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBuf>> {
@@ -828,10 +829,13 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut wildcard_reexports: FxHashMap<String, Vec<String>> = FxHashMap::default();
     let mut global_lib_symbol_ids: FxHashSet<SymbolId> = FxHashSet::default();
 
+    // Track which symbols have been merged to avoid duplicate processing.
+    // Use interned atoms to avoid repeated String hashing/cloning on hot merge paths.
+    let mut name_interner = Interner::new();
     // Track which symbols have been merged to avoid duplicate processing
     // IMPORTANT: This map is ONLY for symbols in the ROOT scope (ScopeId(0))
     // Symbols from nested scopes should NEVER be merged across files/scopes
-    let mut merged_symbols: FxHashMap<String, SymbolId> = FxHashMap::default();
+    let mut merged_symbols: FxHashMap<Atom, SymbolId> = FxHashMap::default();
 
     // ==========================================================================
     // PHASE 1: Remap lib symbols to global arena
@@ -875,7 +879,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // IMPORTANT: Only merge top-level symbols (those in file_locals)
                 // Nested symbols (namespace members, etc.) should NEVER be merged across scopes
                 let global_id = if is_top_level {
-                    if let Some(&existing_id) = merged_symbols.get(&lib_sym.escaped_name) {
+                    let name_atom = name_interner.intern(&lib_sym.escaped_name);
+                    if let Some(&existing_id) = merged_symbols.get(&name_atom) {
                         // Symbol already exists - check if we can merge
                         if let Some(existing_sym) = global_symbols.get(existing_id) {
                             if can_merge_symbols_cross_file(existing_sym.flags, lib_sym.flags) {
@@ -883,8 +888,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                                 // Merge declarations from this lib
                                 if let Some(existing_mut) = global_symbols.get_mut(existing_id) {
                                     existing_mut.flags |= lib_sym.flags;
+                                    let mut seen: FxHashSet<NodeIndex> =
+                                        existing_mut.declarations.iter().copied().collect();
                                     for decl in &lib_sym.declarations {
-                                        if !existing_mut.declarations.contains(decl) {
+                                        if seen.insert(*decl) {
                                             existing_mut.declarations.push(*decl);
                                         }
                                     }
@@ -893,19 +900,19 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                             } else {
                                 // Cannot merge - allocate new (shadowing)
                                 let new_id = global_symbols.alloc_from(lib_sym);
-                                merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
+                                merged_symbols.insert(name_atom, new_id);
                                 new_id
                             }
                         } else {
                             // Shouldn't happen - allocate new
                             let new_id = global_symbols.alloc_from(lib_sym);
-                            merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
+                            merged_symbols.insert(name_atom, new_id);
                             new_id
                         }
                     } else {
                         // New symbol - allocate in global arena
                         let new_id = global_symbols.alloc_from(lib_sym);
-                        merged_symbols.insert(lib_sym.escaped_name.clone(), new_id);
+                        merged_symbols.insert(name_atom, new_id);
                         new_id
                     }
                 } else {
@@ -1009,13 +1016,14 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
     // Also remap lib file_locals entries that reference symbols by name
     // (for exported lib symbols like Array, Object, console)
-    let mut lib_name_to_global: FxHashMap<String, SymbolId> = FxHashMap::default();
+    let mut lib_name_to_global: FxHashMap<Atom, SymbolId> = FxHashMap::default();
     for lib_binder in &lib_binders {
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
         for (name, &local_id) in lib_binder.file_locals.iter() {
             if let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, local_id)) {
                 // Only keep the first mapping for each name (lib files are processed in order)
-                lib_name_to_global.entry(name.clone()).or_insert(global_id);
+                let name_atom = name_interner.intern(name);
+                lib_name_to_global.entry(name_atom).or_insert(global_id);
             }
         }
     }
@@ -1039,8 +1047,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // Merge wildcard reexports from this file
         for (file_name, source_modules) in &result.wildcard_reexports {
             let entry = wildcard_reexports.entry(file_name.clone()).or_default();
+            let mut seen: FxHashSet<String> = entry.iter().cloned().collect();
             for source_module in source_modules {
-                if !entry.contains(source_module) {
+                if seen.insert(source_module.clone()) {
                     entry.push(source_module.clone());
                 }
             }
@@ -1071,12 +1080,13 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     }
                     // Fallback: look up by name in merged_symbols or lib_name_to_global
                     if resolved_global_id.is_none() {
-                        if let Some(&global_id) = merged_symbols.get(&sym.escaped_name) {
+                        let name_atom = name_interner.intern(&sym.escaped_name);
+                        if let Some(&global_id) = merged_symbols.get(&name_atom) {
                             resolved_global_id = Some(global_id);
                         }
-                    }
-                    if resolved_global_id.is_none() {
-                        if let Some(&global_id) = lib_name_to_global.get(&sym.escaped_name) {
+                        if resolved_global_id.is_none()
+                            && let Some(&global_id) = lib_name_to_global.get(&name_atom)
+                        {
                             resolved_global_id = Some(global_id);
                         }
                     }
@@ -1090,8 +1100,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                             if extra_flags != 0 {
                                 global_sym.flags |= extra_flags;
                                 // Also copy user declarations that were merged into this symbol
+                                let mut seen: FxHashSet<NodeIndex> =
+                                    global_sym.declarations.iter().copied().collect();
                                 for decl in &sym.declarations {
-                                    if !global_sym.declarations.contains(decl) {
+                                    if seen.insert(*decl) {
                                         global_sym.declarations.push(*decl);
                                     }
                                 }
@@ -1120,7 +1132,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
                 // Nested scope symbols should NEVER be merged across scopes
                 let new_id = if !is_nested_symbol {
-                    if let Some(&existing_id) = merged_symbols.get(&sym.escaped_name) {
+                    let name_atom = name_interner.intern(&sym.escaped_name);
+                    if let Some(&existing_id) = merged_symbols.get(&name_atom) {
                         // Symbol exists - check if we can merge
                         if let Some(existing_sym) = global_symbols.get(existing_id) {
                             // Check if symbols can merge (interface+interface, namespace+namespace, etc.)
@@ -1132,21 +1145,21 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                                 let new_id =
                                     global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                                 symbol_arenas.insert(new_id, Arc::clone(&result.arena));
-                                merged_symbols.insert(sym.escaped_name.clone(), new_id);
+                                merged_symbols.insert(name_atom, new_id);
                                 new_id
                             }
                         } else {
                             // Shouldn't happen - allocate new
                             let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                             symbol_arenas.insert(new_id, Arc::clone(&result.arena));
-                            merged_symbols.insert(sym.escaped_name.clone(), new_id);
+                            merged_symbols.insert(name_atom, new_id);
                             new_id
                         }
                     } else {
                         // New symbol - allocate
                         let new_id = global_symbols.alloc(sym.flags, sym.escaped_name.clone());
                         symbol_arenas.insert(new_id, Arc::clone(&result.arena));
-                        merged_symbols.insert(sym.escaped_name.clone(), new_id);
+                        merged_symbols.insert(name_atom, new_id);
                         new_id
                     }
                 } else {
@@ -1329,8 +1342,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     // Cross-file merge: append declarations and merge flags
                     new_sym.flags |= old_sym.flags;
                     // Append new declarations from this file
+                    let mut seen: FxHashSet<NodeIndex> =
+                        new_sym.declarations.iter().copied().collect();
                     for decl in &old_sym.declarations {
-                        if !new_sym.declarations.contains(decl) {
+                        if seen.insert(*decl) {
                             new_sym.declarations.push(*decl);
                         }
                     }
@@ -1421,11 +1436,14 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 if !is_alias {
                     globals.set(name.clone(), new_sym_id);
                 }
-            } else if let Some(&global_id) = lib_name_to_global.get(name) {
-                // Lib symbol - use the pre-remapped global ID
-                // Only add to file_locals, NOT to globals (lib symbols are accessed
-                // through lib_contexts in the checker, not through globals)
-                remapped_file_locals.set(name.clone(), global_id);
+            } else {
+                let name_atom = name_interner.intern(name);
+                if let Some(&global_id) = lib_name_to_global.get(&name_atom) {
+                    // Lib symbol - use the pre-remapped global ID
+                    // Only add to file_locals, NOT to globals (lib symbols are accessed
+                    // through lib_contexts in the checker, not through globals)
+                    remapped_file_locals.set(name.clone(), global_id);
+                }
             }
         }
 

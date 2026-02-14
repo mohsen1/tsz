@@ -1,0 +1,70 @@
+name: Perf Bench Compare
+
+on:
+  pull_request:
+    branches: [main, rust]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/ci/bench-compare.sh'
+      - '.github/workflows/perf-bench-compare.yml'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Base branch to compare against
+        required: false
+        default: main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench-compare:
+    name: Bench Compare Against Base
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target-perf
+          key: ${{ runner.os }}-perf-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-perf-bench-
+
+      - name: Run benchmark comparison
+        env:
+          BASE_REF: ${{ github.base_ref || inputs.base_ref || 'main' }}
+          TSZ_PERF_TARGET_DIR: ${{ github.workspace }}/target-perf
+          TSZ_PERF_BENCHES: 'phase_timing_bench,real_world_bench'
+          TSZ_PERF_SAMPLE_SIZE: '15'
+          TSZ_PERF_WARMUP_TIME: '1'
+          TSZ_PERF_MEASUREMENT_TIME: '1'
+          TSZ_PERF_FAIL_THRESHOLD_PCT: '10'
+          TSZ_PERF_FAIL_ON_REGRESSION: '0'
+        run: ./scripts/ci/bench-compare.sh
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-bench-compare
+          path: ${{ runner.temp }}/tsz-perf-compare-*/out
+          if-no-files-found: warn
+          retention-days: 7
