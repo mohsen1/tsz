@@ -13,10 +13,9 @@
 //! The semantic walk leverages `collect_all_types()` from the solver to extract
 //! all referenced types, then maps `DefId` -> `SymbolId` via `TypeResolver`.
 
-#![allow(clippy::print_stderr)]
-
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
+use tracing::debug;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -658,18 +657,18 @@ impl<'a> UsageAnalyzer<'a> {
 
                     // Fallback: If AST walk didn't find the symbol, try semantic walk via TypeId
                     // This handles imported types where node_symbols doesn't have entries
-                    eprintln!(
+                    debug!(
                         "[DEBUG] TYPE_REFERENCE: looking up type_cache.node_types for type_idx={:?}",
                         type_idx
                     );
                     if let Some(&type_id) = self.type_cache.node_types.get(&type_idx.0) {
-                        eprintln!(
+                        debug!(
                             "[DEBUG] TYPE_REFERENCE: found type_id={:?}, walking it",
                             type_id
                         );
                         self.walk_type_id(type_id);
                     } else {
-                        eprintln!(
+                        debug!(
                             "[DEBUG] TYPE_REFERENCE: no type_id found for type_idx={:?}",
                             type_idx
                         );
@@ -882,13 +881,13 @@ impl<'a> UsageAnalyzer<'a> {
 
         match name_node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
-                eprintln!(
+                debug!(
                     "[DEBUG] analyze_entity_name: found Identifier, name_idx={:?}",
                     name_idx
                 );
                 // Found the leftmost identifier - mark as used
                 if let Some(&sym_id) = self.binder.node_symbols.get(&name_idx.0) {
-                    eprintln!("[DEBUG] analyze_entity_name: found sym_id={:?}", sym_id);
+                    debug!("[DEBUG] analyze_entity_name: found sym_id={:?}", sym_id);
                     let kind = if self.in_value_pos {
                         UsageKind::VALUE
                     } else {
@@ -896,19 +895,19 @@ impl<'a> UsageAnalyzer<'a> {
                     };
                     self.mark_symbol_used(sym_id, kind);
                 } else {
-                    eprintln!(
+                    debug!(
                         "[DEBUG] analyze_entity_name: no symbol found for name_idx={:?}",
                         name_idx
                     );
                     // Fallback: Try to find the symbol in import_name_map
                     // Get the identifier text and look it up
                     if let Some(ident) = self.arena.get_identifier(name_node) {
-                        eprintln!(
+                        debug!(
                             "[DEBUG] analyze_entity_name: looking up '{}' in import_name_map",
                             ident.escaped_text
                         );
                         if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
-                            eprintln!(
+                            debug!(
                                 "[DEBUG] analyze_entity_name: found sym_id={:?} from import_name_map",
                                 sym_id
                             );
@@ -919,7 +918,7 @@ impl<'a> UsageAnalyzer<'a> {
                             };
                             self.mark_symbol_used(sym_id, kind);
                         } else {
-                            eprintln!(
+                            debug!(
                                 "[DEBUG] analyze_entity_name: '{}' not found in import_name_map",
                                 ident.escaped_text
                             );
@@ -950,12 +949,12 @@ impl<'a> UsageAnalyzer<'a> {
     /// This is the semantic walk - uses TypeId analysis via collect_all_types.
     fn walk_inferred_type(&mut self, node_idx: NodeIndex) {
         // Look up the inferred TypeId for this node
-        eprintln!("[DEBUG] walk_inferred_type: node_idx={:?}", node_idx);
+        debug!("[DEBUG] walk_inferred_type: node_idx={:?}", node_idx);
         if let Some(&type_id) = self.type_cache.node_types.get(&node_idx.0) {
-            eprintln!("[DEBUG] walk_inferred_type: found type_id={:?}", type_id);
+            debug!("[DEBUG] walk_inferred_type: found type_id={:?}", type_id);
             self.walk_type_id(type_id);
         } else {
-            eprintln!(
+            debug!(
                 "[DEBUG] walk_inferred_type: NO TYPE FOUND for node_idx={:?}",
                 node_idx
             );
@@ -970,16 +969,16 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         }
 
-        eprintln!("[DEBUG] walk_type_id: type_id={:?}", type_id);
+        debug!("[DEBUG] walk_type_id: type_id={:?}", type_id);
 
         // Collect all types reachable from this TypeId
         let all_types = visitor::collect_all_types(self.type_interner, type_id);
 
-        eprintln!("[DEBUG] walk_type_id: collected {} types", all_types.len());
-        eprintln!("[DEBUG] walk_type_id: all_types = {:?}", all_types);
+        debug!("[DEBUG] walk_type_id: collected {} types", all_types.len());
+        debug!("[DEBUG] walk_type_id: all_types = {:?}", all_types);
 
         // Debug: Print def_to_symbol map
-        eprintln!(
+        debug!(
             "[DEBUG] walk_type_id: def_to_symbol map = {:?}",
             self.type_cache.def_to_symbol
         );
@@ -988,9 +987,9 @@ impl<'a> UsageAnalyzer<'a> {
         for other_type_id in all_types {
             // Extract Lazy(DefId)
             if let Some(def_id) = visitor::lazy_def_id(self.type_interner, other_type_id) {
-                eprintln!("[DEBUG] walk_type_id: found Lazy(DefId={:?})", def_id);
+                debug!("[DEBUG] walk_type_id: found Lazy(DefId={:?})", def_id);
                 if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
-                    eprintln!(
+                    debug!(
                         "[DEBUG] walk_type_id: DefId({:?}) -> SymbolId({:?})",
                         def_id, sym_id
                     );
@@ -999,7 +998,7 @@ impl<'a> UsageAnalyzer<'a> {
                         crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
                     );
                 } else {
-                    eprintln!(
+                    debug!(
                         "[DEBUG] walk_type_id: def_id={:?} NOT in def_to_symbol",
                         def_id
                     );
@@ -1008,7 +1007,7 @@ impl<'a> UsageAnalyzer<'a> {
 
             // Extract Enum(DefId, _)
             if let Some((def_id, _)) = visitor::enum_components(self.type_interner, other_type_id) {
-                eprintln!("[DEBUG] walk_type_id: found Enum(def_id={:?})", def_id);
+                debug!("[DEBUG] walk_type_id: found Enum(def_id={:?})", def_id);
                 if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
                     self.mark_symbol_used(
                         sym_id,
@@ -1052,7 +1051,7 @@ impl<'a> UsageAnalyzer<'a> {
                 .or_else(|| visitor::object_with_index_shape_id(self.type_interner, other_type_id))
             {
                 let shape = self.type_interner.object_shape(shape_id);
-                eprintln!(
+                debug!(
                     "[DEBUG] walk_type_id: ObjectShapeId={:?}, symbol={:?}",
                     shape_id, shape.symbol
                 );
@@ -1085,13 +1084,13 @@ impl<'a> UsageAnalyzer<'a> {
     /// - Local symbols: Added to used_symbols (for elision logic)
     /// - Foreign symbols: Added to both used_symbols AND foreign_symbols (for import generation)
     fn mark_symbol_used(&mut self, sym_id: SymbolId, usage_kind: UsageKind) {
-        eprintln!(
+        debug!(
             "[DEBUG] mark_symbol_used: sym_id={:?}, usage_kind={:?}",
             sym_id, usage_kind
         );
         // Check if this is a lib/global symbol
         if self.binder.lib_symbol_ids.contains(&sym_id) {
-            eprintln!(
+            debug!(
                 "[DEBUG] mark_symbol_used: sym_id={:?} is lib symbol - skipping",
                 sym_id
             );
@@ -1117,7 +1116,7 @@ impl<'a> UsageAnalyzer<'a> {
             })
             .unwrap_or(false);
 
-        eprintln!(
+        debug!(
             "[DEBUG] mark_symbol_used: sym_id={:?} is_local={}",
             sym_id, is_local
         );
@@ -1130,7 +1129,7 @@ impl<'a> UsageAnalyzer<'a> {
 
         // If it's from another file, track as foreign (for import generation)
         if !is_local {
-            eprintln!(
+            debug!(
                 "[DEBUG] mark_symbol_used: sym_id={:?} is FOREIGN - adding to foreign_symbols",
                 sym_id
             );
