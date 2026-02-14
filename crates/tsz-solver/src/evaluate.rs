@@ -916,5 +916,5 @@ pub fn evaluate_keyof(interner: &dyn TypeDatabase, operand: TypeId) -> TypeId {
 
 // Re-enabled evaluate tests - verifying API compatibility
 #[cfg(test)]
-#[path = "tests/evaluate_tests.rs"]
+#[path = "../tests/evaluate_tests.rs"]
 mod tests;

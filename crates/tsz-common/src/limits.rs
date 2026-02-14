@@ -213,5 +213,5 @@ pub const MAX_TYPE_RESOLUTION_OPS: u32 = 20_000;
 pub const MAX_TYPE_RESOLUTION_OPS: u32 = 100_000;
 
 #[cfg(test)]
-#[path = "tests/limits.rs"]
+#[path = "../tests/limits.rs"]
 mod tests;

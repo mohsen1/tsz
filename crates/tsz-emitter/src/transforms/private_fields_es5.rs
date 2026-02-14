@@ -337,5 +337,5 @@ pub fn generate_weakmap_instantiation(fields: &[PrivateFieldInfo]) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/private_fields_es5.rs"]
+#[path = "../../tests/private_fields_es5.rs"]
 mod tests;

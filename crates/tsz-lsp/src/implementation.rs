@@ -435,5 +435,5 @@ impl<'a> GoToImplementationProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/implementation_tests.rs"]
+#[path = "../tests/implementation_tests.rs"]
 mod implementation_tests;

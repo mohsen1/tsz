@@ -33,13 +33,14 @@ pub struct ParsedTest {
 ///
 /// # Example
 /// ```
+/// use tsz_conformance::test_parser::parse_test_file;
 /// let content = r#"
 /// // @strict: true
 /// // @target: es5
 /// // @filename: file1.ts
 /// function foo() {}
 /// "#;
-/// let parsed = parse_test_file(content)?;
+/// let parsed = parse_test_file(content).unwrap();
 /// assert_eq!(parsed.directives.options.get("strict"), Some(&"true".to_string()));
 /// ```
 pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {

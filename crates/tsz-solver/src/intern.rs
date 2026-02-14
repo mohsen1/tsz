@@ -3184,9 +3184,9 @@ impl Default for TypeInterner {
 }
 
 #[cfg(test)]
-#[path = "tests/intern_tests.rs"]
+#[path = "../tests/intern_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "tests/concurrent_tests.rs"]
+#[path = "../tests/concurrent_tests.rs"]
 mod concurrent_tests;

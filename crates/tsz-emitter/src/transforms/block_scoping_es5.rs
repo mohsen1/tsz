@@ -395,5 +395,5 @@ pub fn collect_loop_vars(arena: &NodeArena, initializer_idx: NodeIndex) -> Vec<S
 }
 
 #[cfg(test)]
-#[path = "tests/block_scoping_es5.rs"]
+#[path = "../../tests/block_scoping_es5.rs"]
 mod tests;

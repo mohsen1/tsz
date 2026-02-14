@@ -28,5 +28,5 @@ pub(crate) fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
 }
 
 #[cfg(test)]
-#[path = "tests/state_checking.rs"]
+#[path = "../../tests/state_checking.rs"]
 mod tests;

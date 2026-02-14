@@ -816,7 +816,13 @@ fn expand_module_path_candidates(
     package_type: Option<PackageType>,
 ) -> Vec<PathBuf> {
     let base = normalize_path(path);
-    let suffixes = &options.module_suffixes;
+    let mut default_suffixes: Vec<String> = Vec::new();
+    let suffixes = if options.module_suffixes.is_empty() {
+        default_suffixes.push(String::new());
+        &default_suffixes
+    } else {
+        &options.module_suffixes
+    };
     if let Some((base_no_ext, extension)) = split_path_extension(&base) {
         // Try extension substitution (.js → .ts/.tsx/.d.ts) for all resolution modes.
         // TypeScript resolves `.js` imports to `.ts` sources in all modes.

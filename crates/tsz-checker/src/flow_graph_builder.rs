@@ -1705,5 +1705,5 @@ impl<'a> FlowGraphBuilder<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/flow_graph_builder.rs"]
+#[path = "../tests/flow_graph_builder.rs"]
 mod tests;

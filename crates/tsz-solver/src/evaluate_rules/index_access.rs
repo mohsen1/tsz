@@ -195,17 +195,25 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        // For intersection types, try each member and return the first successful result.
-        // This handles cases where a class is intersected with a mixin or interface.
+        // For intersection types, evaluate all members and combine successful lookups.
+        // Returning the first non-undefined result can incorrectly lock onto `never`
+        // for mapped/index-signature helper intersections.
         let members = self.evaluator.interner().type_list(TypeListId(list_id));
+        let mut results = Vec::new();
         for &member in members.iter() {
             let result = self.evaluator.recurse_index_access(member, self.index_type);
+            if result == TypeId::ERROR {
+                return Some(TypeId::ERROR);
+            }
             if result != TypeId::UNDEFINED {
-                return Some(result);
+                results.push(result);
             }
         }
-        // If no member had the property, return UNDEFINED (not None which would defer evaluation)
-        Some(TypeId::UNDEFINED)
+        if results.is_empty() {
+            Some(TypeId::UNDEFINED)
+        } else {
+            Some(self.evaluator.interner().union(results))
+        }
     }
 
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {

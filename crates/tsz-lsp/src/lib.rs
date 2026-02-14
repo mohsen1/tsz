@@ -62,16 +62,16 @@ pub mod utils;
 pub mod workspace_symbols;
 
 #[cfg(test)]
-#[path = "tests/code_actions_tests.rs"]
+#[path = "../tests/code_actions_tests.rs"]
 mod code_actions_tests;
 #[cfg(test)]
-#[path = "tests/file_rename_tests.rs"]
+#[path = "../tests/file_rename_tests.rs"]
 mod file_rename_tests;
 #[cfg(test)]
-#[path = "tests/project_tests.rs"]
+#[path = "../tests/project_tests.rs"]
 mod project_tests;
 #[cfg(test)]
-#[path = "tests/tests.rs"]
+#[path = "../tests/tests.rs"]
 mod tests;
 
 pub use code_actions::{

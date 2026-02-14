@@ -588,5 +588,5 @@ impl<'a> TypeHierarchyProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/type_hierarchy_tests.rs"]
+#[path = "../tests/type_hierarchy_tests.rs"]
 mod type_hierarchy_tests;

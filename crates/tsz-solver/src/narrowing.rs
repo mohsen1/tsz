@@ -3111,5 +3111,5 @@ pub fn remove_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 }
 
 #[cfg(test)]
-#[path = "tests/narrowing_tests.rs"]
+#[path = "../tests/narrowing_tests.rs"]
 mod tests;

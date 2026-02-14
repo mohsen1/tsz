@@ -269,5 +269,5 @@ impl<'a> CodeLensProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/code_lens_tests.rs"]
+#[path = "../tests/code_lens_tests.rs"]
 mod code_lens_tests;

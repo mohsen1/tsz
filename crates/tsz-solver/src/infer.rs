@@ -4007,5 +4007,5 @@ impl<'a> InferenceContext<'a> {
 // DISABLED: Tests use deprecated add_candidate / resolve_with_constraints API
 // The inference system has been refactored to use unification-based inference.
 #[cfg(test)]
-#[path = "tests/infer_tests.rs"]
+#[path = "../tests/infer_tests.rs"]
 mod tests;

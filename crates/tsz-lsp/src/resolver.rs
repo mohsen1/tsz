@@ -1949,5 +1949,5 @@ impl<'a> ScopeWalker<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/resolver_tests.rs"]
+#[path = "../tests/resolver_tests.rs"]
 mod resolver_tests;

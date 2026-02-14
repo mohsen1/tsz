@@ -188,5 +188,5 @@ impl NewLineKind {
 }
 
 #[cfg(test)]
-#[path = "tests/common.rs"]
+#[path = "../tests/common.rs"]
 mod tests;

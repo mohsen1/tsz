@@ -663,5 +663,5 @@ enum ObjectSegment {
 }
 
 #[cfg(test)]
-#[path = "tests/spread_es5.rs"]
+#[path = "../../tests/spread_es5.rs"]
 mod tests;

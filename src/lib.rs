@@ -53,14 +53,14 @@ fn get_or_create_lib_file(file_name: String, source_text: String) -> Arc<lib_loa
 
 // Shared test fixtures for reduced allocation overhead
 #[cfg(test)]
-#[path = "tests/test_fixtures.rs"]
+#[path = "../tests/test_fixtures.rs"]
 pub mod test_fixtures;
 
 // Re-export foundation types from tsz-common workspace crate
 pub use tsz_common::interner;
 pub use tsz_common::interner::{Atom, Interner, ShardedInterner};
 #[cfg(test)]
-#[path = "tests/interner_tests.rs"]
+#[path = "../tests/interner_tests.rs"]
 mod interner_tests;
 
 pub use tsz_common::common;
@@ -75,10 +75,10 @@ pub use tsz_scanner::scanner_impl;
 pub use tsz_scanner::scanner_impl::*;
 pub use tsz_scanner::*;
 #[cfg(test)]
-#[path = "tests/scanner_impl_tests.rs"]
+#[path = "../tests/scanner_impl_tests.rs"]
 mod scanner_impl_tests;
 #[cfg(test)]
-#[path = "tests/scanner_tests.rs"]
+#[path = "../tests/scanner_tests.rs"]
 mod scanner_tests;
 
 // Parser AST types - re-exported from tsz-parser workspace crate
@@ -89,22 +89,22 @@ pub use tsz_parser::syntax;
 
 // Parser - Cache-optimized parser using NodeArena (Phase 0.1)
 #[cfg(test)]
-#[path = "tests/parser_state_tests.rs"]
+#[path = "../tests/parser_state_tests.rs"]
 mod parser_state_tests;
 
 // TS1038 - declare modifier in ambient context tests
 #[cfg(test)]
-#[path = "tests/parser_ts1038_tests.rs"]
+#[path = "../tests/parser_ts1038_tests.rs"]
 mod parser_ts1038_tests;
 
 // Control flow validation tests (TS1104, TS1105)
 #[cfg(test)]
-#[path = "tests/control_flow_validation_tests.rs"]
+#[path = "../tests/control_flow_validation_tests.rs"]
 mod control_flow_validation_tests;
 
 // Regex flag error detection tests
 #[cfg(test)]
-#[path = "tests/regex_flag_tests.rs"]
+#[path = "../tests/regex_flag_tests.rs"]
 mod regex_flag_tests;
 
 // Binder types and implementation - re-exported from tsz-binder workspace crate
@@ -112,7 +112,7 @@ pub use tsz_binder as binder;
 
 // BinderState - Binder using NodeArena (Phase 0.1)
 #[cfg(test)]
-#[path = "tests/binder_state_tests.rs"]
+#[path = "../tests/binder_state_tests.rs"]
 mod binder_state_tests;
 
 // Module Resolution Debugging - re-exported from tsz-binder
@@ -125,12 +125,12 @@ pub use tsz_binder::lib_loader;
 pub use tsz_checker as checker;
 
 #[cfg(test)]
-#[path = "tests/checker_state_tests.rs"]
+#[path = "../tests/checker_state_tests.rs"]
 mod checker_state_tests;
 
 // Cross-file module resolution tests
 #[cfg(test)]
-#[path = "tests/module_resolution_tests.rs"]
+#[path = "../tests/module_resolution_tests.rs"]
 mod module_resolution_tests;
 
 pub use checker::state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
@@ -138,13 +138,13 @@ pub use checker::state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 // Emitter - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::emitter;
 #[cfg(test)]
-#[path = "tests/transform_api_tests.rs"]
+#[path = "../tests/transform_api_tests.rs"]
 mod transform_api_tests;
 
 // Printer - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::printer;
 #[cfg(test)]
-#[path = "tests/printer_tests.rs"]
+#[path = "../tests/printer_tests.rs"]
 mod printer_tests;
 
 // Span - Source location tracking (byte offsets)
@@ -165,31 +165,31 @@ pub mod parallel;
 // Comment preservation (Phase 6.3)
 pub use tsz_common::comments;
 #[cfg(test)]
-#[path = "tests/comments_tests.rs"]
+#[path = "../tests/comments_tests.rs"]
 mod comments_tests;
 
 // Source Map generation (Phase 6.2)
 pub use tsz_common::source_map;
 #[cfg(test)]
-#[path = "tests/source_map_test_utils.rs"]
+#[path = "../tests/source_map_test_utils.rs"]
 mod source_map_test_utils;
 #[cfg(test)]
-#[path = "tests/source_map_tests_1.rs"]
+#[path = "../tests/source_map_tests_1.rs"]
 mod source_map_tests_1;
 #[cfg(test)]
-#[path = "tests/source_map_tests_2.rs"]
+#[path = "../tests/source_map_tests_2.rs"]
 mod source_map_tests_2;
 #[cfg(test)]
-#[path = "tests/source_map_tests_3.rs"]
+#[path = "../tests/source_map_tests_3.rs"]
 mod source_map_tests_3;
 #[cfg(test)]
-#[path = "tests/source_map_tests_4.rs"]
+#[path = "../tests/source_map_tests_4.rs"]
 mod source_map_tests_4;
 
 // SourceWriter - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::source_writer;
 #[cfg(test)]
-#[path = "tests/source_writer_tests.rs"]
+#[path = "../tests/source_writer_tests.rs"]
 mod source_writer_tests;
 
 // EmitContext - re-exported from tsz-emitter workspace crate
@@ -215,12 +215,12 @@ pub use tsz_lsp as lsp;
 
 // Test Harness - Infrastructure for unit and conformance tests
 #[cfg(test)]
-#[path = "tests/test_harness.rs"]
+#[path = "../tests/test_harness.rs"]
 mod test_harness;
 
 // Isolated Test Runner - Process-based test execution with resource limits
 #[cfg(test)]
-#[path = "tests/isolated_test_runner.rs"]
+#[path = "../tests/isolated_test_runner.rs"]
 mod isolated_test_runner;
 
 // Compiler configuration types (shared between core and CLI)
@@ -2636,16 +2636,16 @@ pub fn is_word_character(ch: u32) -> bool {
 
 // ASI Conformance tests for verifying TS1005/TS1109 patterns
 #[cfg(test)]
-#[path = "tests/asi_conformance_tests.rs"]
+#[path = "../tests/asi_conformance_tests.rs"]
 mod asi_conformance_tests;
 
 #[cfg(test)]
-#[path = "tests/debug_asi.rs"]
+#[path = "../tests/debug_asi.rs"]
 mod debug_asi;
 
 // P1 Error Recovery tests for synchronization point improvements
 #[cfg(test)]
-#[path = "tests/p1_error_recovery_tests.rs"]
+#[path = "../tests/p1_error_recovery_tests.rs"]
 mod p1_error_recovery_tests;
 
 // Tests moved to checker crate: strict_null_manual, generic_inference_manual,
@@ -2653,53 +2653,53 @@ mod p1_error_recovery_tests;
 
 // Constructor accessibility tests
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/constructor_accessibility.rs"]
+#[path = "../crates/tsz-checker/tests/constructor_accessibility.rs"]
 mod constructor_accessibility;
 
 // Void return exception tests
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/void_return_exception.rs"]
+#[path = "../crates/tsz-checker/tests/void_return_exception.rs"]
 mod void_return_exception;
 
 // Any-propagation tests
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/any_propagation.rs"]
+#[path = "../crates/tsz-checker/tests/any_propagation.rs"]
 mod any_propagation;
 
 // Tests that depend on test_fixtures (require root crate context)
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/any_propagation_tests.rs"]
+#[path = "../crates/tsz-checker/tests/any_propagation_tests.rs"]
 mod any_propagation_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/const_assertion_tests.rs"]
+#[path = "../crates/tsz-checker/tests/const_assertion_tests.rs"]
 mod const_assertion_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/contextual_typing_tests.rs"]
+#[path = "../crates/tsz-checker/tests/contextual_typing_tests.rs"]
 mod contextual_typing_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/freshness_stripping_tests.rs"]
+#[path = "../crates/tsz-checker/tests/freshness_stripping_tests.rs"]
 mod freshness_stripping_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/function_bivariance.rs"]
+#[path = "../crates/tsz-checker/tests/function_bivariance.rs"]
 mod function_bivariance;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/global_type_tests.rs"]
+#[path = "../crates/tsz-checker/tests/global_type_tests.rs"]
 mod global_type_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/symbol_resolution_tests.rs"]
+#[path = "../crates/tsz-checker/tests/symbol_resolution_tests.rs"]
 mod symbol_resolution_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/ts2300_tests.rs"]
+#[path = "../crates/tsz-checker/tests/ts2300_tests.rs"]
 mod ts2300_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/ts2304_tests.rs"]
+#[path = "../crates/tsz-checker/tests/ts2304_tests.rs"]
 mod ts2304_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/ts2305_tests.rs"]
+#[path = "../crates/tsz-checker/tests/ts2305_tests.rs"]
 mod ts2305_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/ts2306_tests.rs"]
+#[path = "../crates/tsz-checker/tests/ts2306_tests.rs"]
 mod ts2306_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/src/tests/widening_integration_tests.rs"]
+#[path = "../crates/tsz-checker/tests/widening_integration_tests.rs"]
 mod widening_integration_tests;

@@ -1456,5 +1456,5 @@ impl Variance {
 }
 
 #[cfg(test)]
-#[path = "tests/types_tests.rs"]
+#[path = "../tests/types_tests.rs"]
 mod tests;

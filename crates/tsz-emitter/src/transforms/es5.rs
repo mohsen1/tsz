@@ -1417,5 +1417,5 @@ enum AsyncStatement {
 }
 
 #[cfg(test)]
-#[path = "tests/es5.rs"]
+#[path = "../../tests/es5.rs"]
 mod tests;

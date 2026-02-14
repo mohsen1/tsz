@@ -497,5 +497,5 @@ pub enum JsxError {
 }
 
 #[cfg(test)]
-#[path = "tests/jsx.rs"]
+#[path = "../tests/jsx.rs"]
 mod tests;

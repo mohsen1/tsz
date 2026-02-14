@@ -607,5 +607,5 @@ impl<'a> HoverProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/hover_tests.rs"]
+#[path = "../tests/hover_tests.rs"]
 mod hover_tests;

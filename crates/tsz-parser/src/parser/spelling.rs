@@ -223,5 +223,5 @@ fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
 }
 
 #[cfg(test)]
-#[path = "tests/spelling.rs"]
+#[path = "../../tests/spelling.rs"]
 mod tests;

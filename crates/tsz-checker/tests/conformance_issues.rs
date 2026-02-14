@@ -1095,6 +1095,52 @@ var r23 = dot(id)(id);
     );
 }
 
+#[test]
+fn test_settimeout_callback_assignable_to_function_union() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+setTimeout(() => 1, 0);
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2345),
+        "Should NOT emit TS2345 for setTimeout callback assignability.\nActual errors: {:#?}",
+        relevant
+    );
+}
+
+#[test]
+fn test_typed_array_constructor_accepts_number_array() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function makeTyped(obj: number[]) {
+    var typedArrays = [];
+    typedArrays[0] = new Int8Array(obj);
+    return typedArrays;
+}
+        "#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
+    assert!(
+        !has_error(&relevant, 2769),
+        "Should NOT emit TS2769 for Int8Array(number[]).\nActual errors: {:#?}",
+        relevant
+    );
+}
+
 /// Regression test: TS7006 SHOULD still fire for closures without any contextual type
 #[test]
 fn test_ts7006_still_fires_without_contextual_type() {

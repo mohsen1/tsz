@@ -218,5 +218,5 @@ fn configured_subtype_checker<'a, R: TypeResolver>(
 }
 
 #[cfg(test)]
-#[path = "tests/relation_queries_tests.rs"]
+#[path = "../tests/relation_queries_tests.rs"]
 mod tests;

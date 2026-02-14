@@ -3,8 +3,11 @@
 //! These tests verify that TS2307 errors are properly emitted when path mappings
 //! configured in tsconfig.json don't resolve to actual files.
 
-use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
-use crate::driver::{ModuleResolutionCache, resolve_module_specifier};
+use crate::config::{
+    CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, resolve_compiler_options,
+};
+use crate::driver_resolution::{ModuleResolutionCache, resolve_module_specifier};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use tsz::emitter::ModuleKind;
@@ -17,14 +20,42 @@ fn create_test_structure() -> TempDir {
 /// Helper function to create compiler options with path mappings
 fn create_options_with_paths(
     base_url: PathBuf,
-    paths: Vec<PathMapping>,
+    paths: Vec<(String, Vec<String>)>,
 ) -> ResolvedCompilerOptions {
-    ResolvedCompilerOptions {
-        base_url: Some(base_url),
-        paths: Some(paths),
-        module_resolution: Some(ModuleResolutionKind::Node16),
-        ..Default::default()
+    let mut path_mappings = FxHashMap::default();
+    for (pattern, targets) in paths {
+        path_mappings.insert(pattern, targets);
     }
+
+    let compiler_options = CompilerOptions {
+        base_url: Some(base_url.to_string_lossy().into_owned()),
+        module_resolution: Some("node16".to_string()),
+        paths: Some(path_mappings),
+        ..Default::default()
+    };
+
+    let mut resolved =
+        resolve_compiler_options(Some(&compiler_options)).expect("valid test compiler options");
+    resolved.module_resolution = Some(ModuleResolutionKind::Node16);
+    resolved
+}
+
+fn resolve_for_test(
+    from_file: &Path,
+    module_specifier: &str,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+    cache: &mut ModuleResolutionCache,
+) -> Option<PathBuf> {
+    let known_files = FxHashSet::default();
+    resolve_module_specifier(
+        from_file,
+        module_specifier,
+        options,
+        base_dir,
+        cache,
+        &known_files,
+    )
 }
 
 #[cfg(test)]
@@ -40,17 +71,14 @@ mod ts2307_path_mapping_tests {
         let base_url = temp_dir.path().to_path_buf();
 
         // Create a path mapping: "@utils/*" -> "./utils/*"
-        let paths = vec![PathMapping {
-            pattern: "@utils/*".to_string(),
-            targets: vec!["./utils/*".to_string()],
-        }];
+        let paths = vec![("@utils/*".to_string(), vec!["./utils/*".to_string()])];
 
         let options = create_options_with_paths(base_url.clone(), paths);
-        let mut cache = ModuleResolutionCache::new();
+        let mut cache = ModuleResolutionCache::default();
 
         // Try to resolve a module that matches the path mapping pattern
         // but the file doesn't exist
-        let result = resolve_module_specifier(
+        let result = resolve_for_test(
             &base_url.join("src/index.ts"),
             "@utils/helper",
             &options,
@@ -80,16 +108,13 @@ mod ts2307_path_mapping_tests {
         std::fs::write(&helper_file, "export function foo() {}").unwrap();
 
         // Create a path mapping: "@utils/*" -> "./utils/*"
-        let paths = vec![PathMapping {
-            pattern: "@utils/*".to_string(),
-            targets: vec!["./utils/*".to_string()],
-        }];
+        let paths = vec![("@utils/*".to_string(), vec!["./utils/*".to_string()])];
 
         let options = create_options_with_paths(base_url.clone(), paths);
-        let mut cache = ModuleResolutionCache::new();
+        let mut cache = ModuleResolutionCache::default();
 
         // Try to resolve a module that matches the path mapping
-        let result = resolve_module_specifier(
+        let result = resolve_for_test(
             &base_url.join("src/index.ts"),
             "@utils/helper",
             &options,
@@ -119,16 +144,13 @@ mod ts2307_path_mapping_tests {
         let base_url = temp_dir.path().to_path_buf();
 
         // Create a path mapping for a different pattern
-        let paths = vec![PathMapping {
-            pattern: "@other/*".to_string(),
-            targets: vec!["./other/*".to_string()],
-        }];
+        let paths = vec![("@other/*".to_string(), vec!["./other/*".to_string()])];
 
         let options = create_options_with_paths(base_url.clone(), paths);
-        let mut cache = ModuleResolutionCache::new();
+        let mut cache = ModuleResolutionCache::default();
 
         // Try to resolve a module that doesn't match the path mapping
-        let result = resolve_module_specifier(
+        let result = resolve_for_test(
             &base_url.join("src/index.ts"),
             "lodash", // Bare specifier, should try node_modules
             &options,
@@ -164,8 +186,8 @@ mod ts2307_path_mapping_tests {
         options.printer.module = ModuleKind::Node16;
         options.checker.module = ModuleKind::Node16;
 
-        let mut cache = ModuleResolutionCache::new();
-        let result = resolve_module_specifier(
+        let mut cache = ModuleResolutionCache::default();
+        let result = resolve_for_test(
             &base_dir.join("src/index.ts"),
             "pkg",
             &options,
@@ -197,10 +219,10 @@ mod ts2307_path_mapping_tests {
             module_resolution: Some(ModuleResolutionKind::Node16),
             ..Default::default()
         };
-        let mut cache = ModuleResolutionCache::new();
+        let mut cache = ModuleResolutionCache::default();
 
         // Try to resolve a relative import
-        let result = resolve_module_specifier(
+        let result = resolve_for_test(
             &src_dir.join("index.ts"),
             "./helper",
             &options,
@@ -230,10 +252,10 @@ mod ts2307_path_mapping_tests {
             module_resolution: Some(ModuleResolutionKind::Node16),
             ..Default::default()
         };
-        let mut cache = ModuleResolutionCache::new();
+        let mut cache = ModuleResolutionCache::default();
 
         // Try to resolve a relative import to a non-existent file
-        let result = resolve_module_specifier(
+        let result = resolve_for_test(
             &src_dir.join("index.ts"),
             "./nonexistent",
             &options,
@@ -265,17 +287,14 @@ mod ts2307_path_mapping_tests {
         }
 
         // Create a path mapping with wildcard: "@utils/*" -> "./utils/*"
-        let paths = vec![PathMapping {
-            pattern: "@utils/*".to_string(),
-            targets: vec!["./utils/*".to_string()],
-        }];
+        let paths = vec![("@utils/*".to_string(), vec!["./utils/*".to_string()])];
 
         let options = create_options_with_paths(base_url.clone(), paths);
-        let mut cache = ModuleResolutionCache::new();
+        let mut cache = ModuleResolutionCache::default();
 
         // Test that the wildcard is correctly substituted
         for module_name in &["@utils/helper", "@utils/utils", "@utils/constants"] {
-            let result = resolve_module_specifier(
+            let result = resolve_for_test(
                 &base_url.join("src/index.ts"),
                 module_name,
                 &options,
@@ -310,16 +329,16 @@ mod ts2307_path_mapping_tests {
         std::fs::write(&lib_helper, "// lib version").unwrap();
 
         // Create a path mapping with multiple targets
-        let paths = vec![PathMapping {
-            pattern: "*".to_string(),
-            targets: vec!["./src/*".to_string(), "./lib/*".to_string()],
-        }];
+        let paths = vec![(
+            "*".to_string(),
+            vec!["./src/*".to_string(), "./lib/*".to_string()],
+        )];
 
         let options = create_options_with_paths(base_url.clone(), paths);
-        let mut cache = ModuleResolutionCache::new();
+        let mut cache = ModuleResolutionCache::default();
 
         // Should resolve to one of the targets (implementation-dependent which one)
-        let result = resolve_module_specifier(
+        let result = resolve_for_test(
             &base_url.join("index.ts"),
             "helper",
             &options,

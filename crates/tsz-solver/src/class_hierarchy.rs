@@ -178,5 +178,5 @@ pub fn would_create_inheritance_cycle(
 }
 
 #[cfg(test)]
-#[path = "tests/class_hierarchy_tests.rs"]
+#[path = "../tests/class_hierarchy_tests.rs"]
 mod tests;

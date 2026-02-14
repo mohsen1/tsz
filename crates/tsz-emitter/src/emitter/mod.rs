@@ -414,6 +414,16 @@ impl<'a> Printer<'a> {
         self.writer.ensure_output_capacity(estimated);
     }
 
+    /// Enable declaration emit mode for `.d.ts` output.
+    ///
+    /// Declaration mode changes emission behavior in multiple nodes, such as:
+    /// - Skipping JS-only constructs
+    /// - Emitting `declare` signatures instead of values
+    /// - Keeping type-only information
+    pub fn set_declaration_emit(&mut self, enabled: bool) {
+        self.ctx.flags.in_declaration_emit = enabled;
+    }
+
     /// Set source text for source map generation without enabling comment emission.
     pub fn set_source_map_text(&mut self, text: &'a str) {
         self.source_map_text = Some(text);

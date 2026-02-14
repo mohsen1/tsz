@@ -1934,5 +1934,5 @@ impl<'a> IRPrinter<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/ir_printer.rs"]
+#[path = "../../tests/ir_printer.rs"]
 mod tests;

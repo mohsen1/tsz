@@ -314,5 +314,5 @@ pub fn is_es2015_plus_type(name: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests/lib_loader.rs"]
+#[path = "../tests/lib_loader.rs"]
 mod tests;

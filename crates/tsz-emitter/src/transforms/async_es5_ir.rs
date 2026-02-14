@@ -1594,5 +1594,5 @@ impl<'a> AsyncES5Transformer<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/async_es5_ir.rs"]
+#[path = "../../tests/async_es5_ir.rs"]
 mod tests;

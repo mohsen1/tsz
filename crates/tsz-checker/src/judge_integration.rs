@@ -124,5 +124,5 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/judge_integration.rs"]
+#[path = "../tests/judge_integration.rs"]
 mod tests;
