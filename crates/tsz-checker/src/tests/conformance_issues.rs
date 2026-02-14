@@ -396,6 +396,27 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_this_before_missing_super_reports_ts17009() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base {}
+
+class Derived extends Base {
+    constructor() {
+        this.x;
+    }
+}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 17009),
+        "Expected TS17009 when 'this' is used in a derived constructor without super(). Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_super_property_before_super_call_reports_ts17011() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
