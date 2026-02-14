@@ -1936,6 +1936,9 @@ impl<'a> CheckerState<'a> {
         if self.is_this_parameter_name(param.name) {
             return;
         }
+        if self.is_parameter_in_promise_executor(param.name) {
+            return;
+        }
 
         // Enhanced destructuring parameter detection
         // Check if the parameter name is a destructuring pattern (object/array binding)
