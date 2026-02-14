@@ -138,16 +138,29 @@ impl CompilationCache {
 
     #[cfg(test)]
     pub(crate) fn symbol_cache_len(&self, path: &Path) -> Option<usize> {
-        self.type_caches
-            .get(path)
-            .map(|type_cache| type_cache.symbol_types.len())
+        self.type_caches.get(path).map(|cache| cache.symbol_types.len())
     }
 
     #[cfg(test)]
     pub(crate) fn node_cache_len(&self, path: &Path) -> Option<usize> {
-        self.type_caches
-            .get(path)
-            .map(|type_cache| type_cache.node_types.len())
+        self.type_caches.get(path).map(|cache| cache.node_types.len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_paths_with_dependents<I>(&mut self, paths: I)
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        let changed: FxHashSet<PathBuf> = paths.into_iter().collect();
+        let affected = self.collect_dependents(changed.iter().cloned());
+        for path in affected {
+            self.type_caches.remove(&path);
+            self.bind_cache.remove(&path);
+            self.diagnostics.remove(&path);
+            self.export_hashes.remove(&path);
+            self.import_symbol_ids.remove(&path);
+            self.star_export_dependencies.remove(&path);
+        }
     }
 
     pub(crate) fn invalidate_paths_with_dependents_symbols<I>(&mut self, paths: I)
@@ -1531,6 +1544,34 @@ fn has_no_default_lib_directive(source: &str) -> bool {
         if let Some(true) = parse_reference_no_default_lib_value(trimmed) {
             return true;
         }
+    }
+    false
+}
+
+pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
+    for line in source.lines().take(32) {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("//") {
+            continue;
+        }
+
+        let lower = trimmed.to_ascii_lowercase();
+        let Some(idx) = lower.find("@notypesandsymbols") else {
+            continue;
+        };
+
+        let mut rest = &trimmed[idx + "@noTypesAndSymbols".len()..];
+        rest = rest.trim_start();
+        if !rest.starts_with(':') {
+            continue;
+        }
+        rest = rest[1..].trim_start();
+
+        let value = rest
+            .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+            .find(|s| !s.is_empty())
+            .unwrap_or("");
+        return value.eq_ignore_ascii_case("true");
     }
     false
 }
