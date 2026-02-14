@@ -507,7 +507,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             self.checker
                                 .ensure_application_symbols_resolved(asserted_type);
 
-                            // Don't check if either type is error, any, unknown, or never
+                            // Don't check if either type is error, any, unknown, or never.
+                            // TS also skips this warning for unconcretized type-parameter
+                            // assertions like `{}` as T, which are common in generic code.
                             let should_check = !self.checker.type_contains_error(expr_type)
                                 && !self.checker.type_contains_error(asserted_type)
                                 && expr_type != TypeId::ANY
@@ -515,7 +517,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 && expr_type != TypeId::UNKNOWN
                                 && asserted_type != TypeId::UNKNOWN
                                 && expr_type != TypeId::NEVER
-                                && asserted_type != TypeId::NEVER;
+                                && asserted_type != TypeId::NEVER
+                                && !query::is_type_parameter_type(
+                                    self.checker.ctx.types,
+                                    expr_type,
+                                )
+                                && !query::is_type_parameter_type(
+                                    self.checker.ctx.types,
+                                    asserted_type,
+                                );
 
                             if should_check {
                                 // TS2352 is emitted if neither type is assignable to the other
