@@ -1,4 +1,6 @@
-use super::module_commonjs::*;
+use crate::transforms::module_commonjs::*;
+use crate::transforms::module_commonjs_ir::CommonJsTransformContext;
+use crate::transforms::ir::IRNode;
 use tsz_parser::parser::ParserState;
 
 #[test]
