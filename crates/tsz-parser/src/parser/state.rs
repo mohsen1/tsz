@@ -1804,6 +1804,48 @@ impl ParserState {
         }
     }
 
+    /// Check if the current token starts with `<` (includes `<<` and `<<=`).
+    /// Mirrors `is_greater_than_or_compound` for the opening side.
+    pub(crate) fn is_less_than_or_compound(&self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::LessThanToken
+                | SyntaxKind::LessThanLessThanToken
+                | SyntaxKind::LessThanLessThanEqualsToken
+        )
+    }
+
+    /// Consume a single `<` from the current token.
+    /// Handles compound tokens like `<<` and `<<=` by leaving the scanner
+    /// position unchanged (past the compound token) and setting current_token
+    /// to the remainder. Unlike `>`, `<` is eagerly combined by the scanner,
+    /// so we cannot back up—the scanner would re-combine. Instead, we leave
+    /// pos past the compound and set current_token to the remainder.
+    /// When the remainder is later consumed via `parse_expected(<)` →
+    /// `next_token()`, the scanner scans from past the compound, correctly
+    /// yielding the token that follows.
+    pub(crate) fn parse_expected_less_than(&mut self) {
+        match self.current_token {
+            SyntaxKind::LessThanToken => {
+                self.next_token();
+            }
+            SyntaxKind::LessThanLessThanToken => {
+                // `<<` → consume first `<`, remainder is `<`
+                // Scanner pos stays past `<<`; when the second `<` is consumed,
+                // next_token() will scan from past both, yielding the following token.
+                self.current_token = SyntaxKind::LessThanToken;
+            }
+            SyntaxKind::LessThanLessThanEqualsToken => {
+                // `<<=` → consume first `<`, remainder is `<=`
+                // Scanner pos stays past `<<=`; same logic as above.
+                self.current_token = SyntaxKind::LessThanEqualsToken;
+            }
+            _ => {
+                self.error_token_expected("<");
+            }
+        }
+    }
+
     /// Create a NodeList from a Vec of NodeIndex
     pub(crate) fn make_node_list(&self, nodes: Vec<NodeIndex>) -> NodeList {
         NodeList {

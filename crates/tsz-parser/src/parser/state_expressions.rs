@@ -1250,7 +1250,7 @@ impl ParserState {
                 // Optional chaining: expr?.prop, expr?.[index], expr?.()
                 SyntaxKind::QuestionDotToken => {
                     self.next_token();
-                    if self.is_token(SyntaxKind::LessThanToken)
+                    if self.is_less_than_or_compound()
                         && let Some(type_args) = self.try_parse_type_arguments_for_call()
                     {
                         if self.is_token(SyntaxKind::OpenParenToken) {
@@ -1386,7 +1386,8 @@ impl ParserState {
                     );
                 }
                 // Type arguments followed by call: expr<T>() or expr<T, U>()
-                SyntaxKind::LessThanToken => {
+                // Also handles `<<` for nested generics: foo<<T>(x: T) => number>(fn)
+                SyntaxKind::LessThanToken | SyntaxKind::LessThanLessThanToken => {
                     // Try to parse as type arguments for a call expression
                     // This is tricky because < could be comparison operator
                     if let Some(type_args) = self.try_parse_type_arguments_for_call() {
@@ -3473,7 +3474,7 @@ impl ParserState {
 
         // Parse type arguments: new Array<string>()
         // Use try_parse to handle ambiguity with comparison operators (e.g., new Date<A)
-        let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
+        let type_arguments = if self.is_less_than_or_compound() {
             self.try_parse_type_arguments_for_call()
         } else {
             None

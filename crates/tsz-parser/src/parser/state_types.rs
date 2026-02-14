@@ -513,7 +513,8 @@ impl ParserState {
         let type_name = self.parse_qualified_name_rest(first_name);
 
         // Check for type arguments: Foo<T, U>
-        let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
+        // Also handles Foo<<T>...> where `<<` must be split.
+        let type_arguments = if self.is_less_than_or_compound() {
             Some(self.parse_type_arguments())
         } else {
             None
@@ -799,7 +800,7 @@ impl ParserState {
         }
 
         // Parse optional type arguments for instantiation expressions: typeof Err<U>
-        let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
+        let type_arguments = if self.is_less_than_or_compound() {
             Some(self.parse_type_arguments())
         } else {
             None
@@ -849,7 +850,7 @@ impl ParserState {
         }
 
         // Parse optional type arguments: import("./a").Type<T>
-        let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
+        let type_arguments = if self.is_less_than_or_compound() {
             Some(self.parse_type_arguments())
         } else {
             None
@@ -1305,8 +1306,9 @@ impl ParserState {
     }
 
     /// Parse type arguments: <T, U, V>
+    /// Handles compound `<<` by splitting into two `<` tokens.
     pub(crate) fn parse_type_arguments(&mut self) -> NodeList {
-        self.parse_expected(SyntaxKind::LessThanToken);
+        self.parse_expected_less_than();
 
         let mut args = Vec::new();
 
@@ -1343,8 +1345,8 @@ impl ParserState {
         let saved_arena_len = self.arena.nodes.len();
         let saved_diagnostics_len = self.parse_diagnostics.len();
 
-        // Consume <
-        self.next_token();
+        // Consume `<` (handles `<<` by splitting into two `<` tokens)
+        self.parse_expected_less_than();
 
         // Check for empty type argument list: <>
         // TypeScript reports TS1099: "Type argument list cannot be empty"
@@ -2121,7 +2123,7 @@ impl ParserState {
         let tag_name = self.parse_jsx_element_name();
 
         // Parse optional type arguments
-        let type_arguments = if self.is_token(SyntaxKind::LessThanToken) {
+        let type_arguments = if self.is_less_than_or_compound() {
             Some(self.parse_type_arguments())
         } else {
             None
