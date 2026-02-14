@@ -677,7 +677,6 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
     codes
 }
 
-
 /// Parse @symlink associations from raw test file content.
 /// Returns a map of source filename -> list of symlink paths.
 /// Format in test files: @filename: /path followed by @symlink: /link1,/link2

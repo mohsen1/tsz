@@ -1198,6 +1198,32 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // In files with real syntax errors, unresolved names inside `typeof` type queries
+        // are often cascades from malformed declaration syntax; TypeScript commonly keeps
+        // the primary parse diagnostic only for these.
+        if self.has_syntax_parse_errors() {
+            let mut current = idx;
+            let mut guard = 0;
+            while !current.is_none() {
+                guard += 1;
+                if guard > 256 {
+                    break;
+                }
+                if let Some(node) = self.ctx.arena.get(current)
+                    && node.kind == syntax_kind_ext::TYPE_QUERY
+                {
+                    return;
+                }
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            }
+        }
+
         // Check if this is an ES2015+ type that requires a specific lib
         // If so, emit TS2583 with a suggestion to change the lib
         if lib_loader::is_es2015_plus_type(name) {
