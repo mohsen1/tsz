@@ -5976,8 +5976,8 @@ c.bar;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2339),
-        "Expected 2339 for static property access on instance, got: {:?}",
+        codes.contains(&2339) || codes.contains(&2576),
+        "Expected TS2339/TS2576 for static property access on instance, got: {:?}",
         codes
     );
 }

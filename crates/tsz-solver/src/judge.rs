@@ -491,11 +491,9 @@ impl<'a> Judge for DefaultJudge<'a> {
                     {
                         return true;
                     }
-                    self.get_call_signatures(method_type).iter().any(|sig| {
-                        sig.params
-                            .iter()
-                            .all(|param| param.optional || param.rest)
-                    })
+                    self.get_call_signatures(method_type)
+                        .iter()
+                        .any(|sig| sig.params.iter().all(|param| param.optional || param.rest))
                 };
 
                 // Check for Symbol.iterator
