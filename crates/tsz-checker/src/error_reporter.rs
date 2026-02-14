@@ -1167,8 +1167,7 @@ impl<'a> CheckerState<'a> {
                 let flags = node.flags as u32;
                 if !force_emit_for_ambiguous_generic
                     && ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                    || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                    )
+                        || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0)
                 {
                     return;
                 }
