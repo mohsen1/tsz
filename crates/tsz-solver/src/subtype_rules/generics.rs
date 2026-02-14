@@ -64,8 +64,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        s_sym: &SymbolRef,
-        t_sym: &SymbolRef,
+        s_sym: SymbolRef,
+        t_sym: SymbolRef,
     ) -> SubtypeResult {
         // Identity check: same symbol is always a subtype of itself
         if s_sym == t_sym {
@@ -79,7 +79,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // symbol level, preventing infinite expansion. We check this BEFORE
         // resolving the symbols to their structural forms.
         // =======================================================================
-        let ref_pair = (*s_sym, *t_sym);
+        let ref_pair = (s_sym, t_sym);
         if self.seen_refs.contains(&ref_pair) {
             // We're in a cycle at the symbol level - return CycleDetected
             // This implements coinductive semantics for recursive types
@@ -87,7 +87,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Also check the reversed pair for bivariant cross-recursion
-        let reversed_ref_pair = (*t_sym, *s_sym);
+        let reversed_ref_pair = (t_sym, s_sym);
         if self.seen_refs.contains(&reversed_ref_pair) {
             return SubtypeResult::CycleDetected;
         }
@@ -99,8 +99,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This short-circuits expensive structural checks for class inheritance
         if let (Some(graph), Some(is_class)) = (self.inheritance_graph, self.is_class_symbol) {
             // Check if both symbols are classes (not interfaces or type aliases)
-            let s_is_class = is_class(*s_sym);
-            let t_is_class = is_class(*t_sym);
+            let s_is_class = is_class(s_sym);
+            let t_is_class = is_class(t_sym);
 
             if s_is_class && t_is_class {
                 // Both are classes - use nominal inheritance check
@@ -120,18 +120,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*s_sym) {
+        let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(s_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(*s_sym, self.interner);
+            let r = self.resolver.resolve_ref(s_sym, self.interner);
             r
         };
-        let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*t_sym) {
+        let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(t_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(*t_sym, self.interner);
+            let r = self.resolver.resolve_ref(t_sym, self.interner);
             r
         };
         let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
@@ -153,8 +153,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        s_def: &DefId,
-        t_def: &DefId,
+        s_def: DefId,
+        t_def: DefId,
     ) -> SubtypeResult {
         // =======================================================================
         // IDENTITY CHECK: O(1) DefId equality
@@ -172,10 +172,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // preventing infinite expansion. We check this BEFORE resolving the DefIds
         // to their structural forms.
         // =======================================================================
-        let def_pair = (*s_def, *t_def);
+        let def_pair = (s_def, t_def);
 
         // Check reversed pair for bivariant cross-recursion
-        if self.def_guard.is_visiting(&(*t_def, *s_def)) {
+        if self.def_guard.is_visiting(&(t_def, s_def)) {
             return SubtypeResult::CycleDetected;
         }
 
@@ -197,8 +197,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =======================================================================
         if let Some(graph) = self.inheritance_graph {
             if let (Some(s_sym), Some(t_sym)) = (
-                self.resolver.def_to_symbol_id(*s_def),
-                self.resolver.def_to_symbol_id(*t_def),
+                self.resolver.def_to_symbol_id(s_def),
+                self.resolver.def_to_symbol_id(t_def),
             ) {
                 if let Some(is_class) = self.is_class_symbol {
                     // Check if both symbols are classes (not interfaces or type aliases)
@@ -219,8 +219,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Resolve DefIds to their structural forms
-        let s_resolved = self.resolver.resolve_lazy(*s_def, self.interner);
-        let t_resolved = self.resolver.resolve_lazy(*t_def, self.interner);
+        let s_resolved = self.resolver.resolve_lazy(s_def, self.interner);
+        let t_resolved = self.resolver.resolve_lazy(t_def, self.interner);
         let result = self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved);
 
         // Leave def_guard after checking
@@ -234,25 +234,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        s_sym: &SymbolRef,
-        t_sym: &SymbolRef,
+        s_sym: SymbolRef,
+        t_sym: SymbolRef,
     ) -> SubtypeResult {
         if s_sym == t_sym {
             return SubtypeResult::True;
         }
 
-        let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*s_sym) {
+        let s_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(s_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(*s_sym, self.interner);
+            let r = self.resolver.resolve_ref(s_sym, self.interner);
             r
         };
-        let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*t_sym) {
+        let t_resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(t_sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(*t_sym, self.interner);
+            let r = self.resolver.resolve_ref(t_sym, self.interner);
             r
         };
         self.check_resolved_pair_subtype(source, target, s_resolved, t_resolved)
@@ -266,13 +266,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         _source: TypeId,
         target: TypeId,
-        sym: &SymbolRef,
+        sym: SymbolRef,
     ) -> SubtypeResult {
-        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*sym) {
+        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(*sym, self.interner);
+            let r = self.resolver.resolve_ref(sym, self.interner);
             r
         };
         match resolved {
@@ -289,13 +289,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         _target: TypeId,
-        sym: &SymbolRef,
+        sym: SymbolRef,
     ) -> SubtypeResult {
-        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*sym) {
+        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(*sym, self.interner);
+            let r = self.resolver.resolve_ref(sym, self.interner);
             r
         };
         match resolved {
@@ -309,13 +309,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         _source: TypeId,
         target: TypeId,
-        sym: &SymbolRef,
+        sym: SymbolRef,
     ) -> SubtypeResult {
-        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*sym) {
+        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(*sym, self.interner);
+            let r = self.resolver.resolve_ref(sym, self.interner);
             r
         };
         match resolved {
@@ -329,13 +329,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         _target: TypeId,
-        sym: &SymbolRef,
+        sym: SymbolRef,
     ) -> SubtypeResult {
-        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(*sym) {
+        let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             #[allow(deprecated)]
-            let r = self.resolver.resolve_ref(*sym, self.interner);
+            let r = self.resolver.resolve_ref(sym, self.interner);
             r
         };
         match resolved {

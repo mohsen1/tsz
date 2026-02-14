@@ -168,9 +168,10 @@ mod deserialize_additional_edits {
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 /// Helper for serde `skip_serializing_if`.
 fn is_false(v: &bool) -> bool {
-    !v
+    !*v
 }
 
 impl CompletionItem {

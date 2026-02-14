@@ -615,7 +615,7 @@ impl Server {
     }
 
     /// Convert LSP 0-based Position to tsserver 1-based {line, offset} JSON.
-    fn lsp_to_tsserver_position(pos: &Position) -> serde_json::Value {
+    fn lsp_to_tsserver_position(pos: Position) -> serde_json::Value {
         serde_json::json!({
             "line": pos.line + 1,
             "offset": pos.character + 1
@@ -629,8 +629,8 @@ impl Server {
     ) -> serde_json::Value {
         let mut result = serde_json::json!({
             "file": file,
-            "start": Self::lsp_to_tsserver_position(&info.location.range.start),
-            "end": Self::lsp_to_tsserver_position(&info.location.range.end),
+            "start": Self::lsp_to_tsserver_position(info.location.range.start),
+            "end": Self::lsp_to_tsserver_position(info.location.range.end),
             "kind": info.kind,
             "name": info.name,
             "containerName": info.container_name,
@@ -641,8 +641,8 @@ impl Server {
             "failedAliasResolution": false,
         });
         if let Some(ref ctx) = info.context_span {
-            result["contextStart"] = Self::lsp_to_tsserver_position(&ctx.start);
-            result["contextEnd"] = Self::lsp_to_tsserver_position(&ctx.end);
+            result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
+            result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
         }
         result
     }
@@ -1014,7 +1014,7 @@ impl Server {
                             diag.length,
                             &diag.message_text,
                             diag.code,
-                            &diag.category,
+                            diag.category,
                             &line_map,
                             &content,
                             include_line_position,
@@ -1064,7 +1064,7 @@ impl Server {
                             d.length,
                             &d.message,
                             d.code,
-                            &DiagnosticCategory::Error,
+                            DiagnosticCategory::Error,
                             &line_map,
                             &content,
                             include_line_position,
@@ -1100,7 +1100,7 @@ impl Server {
         length: u32,
         message: &str,
         code: u32,
-        category: &DiagnosticCategory,
+        category: DiagnosticCategory,
         line_map: &LineMap,
         content: &str,
         include_line_position: bool,
@@ -1257,8 +1257,8 @@ impl Server {
                 "kind": kind,
                 "kindModifiers": kind_modifiers,
                 "tags": tags,
-                "start": Self::lsp_to_tsserver_position(&range.start),
-                "end": Self::lsp_to_tsserver_position(&range.end),
+                "start": Self::lsp_to_tsserver_position(range.start),
+                "end": Self::lsp_to_tsserver_position(range.end),
             }))
         })();
 
@@ -1274,8 +1274,8 @@ impl Server {
                 "kind": "",
                 "kindModifiers": "",
                 "tags": [],
-                "start": Self::lsp_to_tsserver_position(&position),
-                "end": Self::lsp_to_tsserver_position(&position),
+                "start": Self::lsp_to_tsserver_position(position),
+                "end": Self::lsp_to_tsserver_position(position),
             }))
         })();
         self.stub_response(
@@ -1339,19 +1339,19 @@ impl Server {
                     let start_pos = line_map.offset_to_position(node.pos, &source_text);
                     let end_pos = line_map.offset_to_position(node.end, &source_text);
                     serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(&start_pos),
-                        "end": Self::lsp_to_tsserver_position(&end_pos),
+                        "start": Self::lsp_to_tsserver_position(start_pos),
+                        "end": Self::lsp_to_tsserver_position(end_pos),
                     })
                 } else {
                     serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(&position),
-                        "end": Self::lsp_to_tsserver_position(&position),
+                        "start": Self::lsp_to_tsserver_position(position),
+                        "end": Self::lsp_to_tsserver_position(position),
                     })
                 }
             } else {
                 serde_json::json!({
-                    "start": Self::lsp_to_tsserver_position(&position),
-                    "end": Self::lsp_to_tsserver_position(&position),
+                    "start": Self::lsp_to_tsserver_position(position),
+                    "end": Self::lsp_to_tsserver_position(position),
                 })
             };
 
@@ -1397,8 +1397,8 @@ impl Server {
                 .map(|ref_info| {
                     serde_json::json!({
                         "file": ref_info.location.file_path,
-                        "start": Self::lsp_to_tsserver_position(&ref_info.location.range.start),
-                        "end": Self::lsp_to_tsserver_position(&ref_info.location.range.end),
+                        "start": Self::lsp_to_tsserver_position(ref_info.location.range.start),
+                        "end": Self::lsp_to_tsserver_position(ref_info.location.range.end),
                         "lineText": ref_info.line_text,
                         "isWriteAccess": ref_info.is_write_access,
                         "isDefinition": ref_info.is_definition,
@@ -2401,8 +2401,8 @@ impl Server {
                         None => "none",
                     };
                     serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(&hl.range.start),
-                        "end": Self::lsp_to_tsserver_position(&hl.range.end),
+                        "start": Self::lsp_to_tsserver_position(hl.range.start),
+                        "end": Self::lsp_to_tsserver_position(hl.range.end),
                         "kind": kind_str,
                     })
                 })
@@ -2466,8 +2466,8 @@ impl Server {
                 .iter()
                 .map(|ref_info| {
                     let mut loc = serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(&ref_info.location.range.start),
-                        "end": Self::lsp_to_tsserver_position(&ref_info.location.range.end),
+                        "start": Self::lsp_to_tsserver_position(ref_info.location.range.start),
+                        "end": Self::lsp_to_tsserver_position(ref_info.location.range.end),
                     });
                     // Add contextSpan for definition locations
                     if ref_info.is_definition {
@@ -2476,9 +2476,8 @@ impl Server {
                                 if def.location.range == ref_info.location.range {
                                     if let Some(ref ctx) = def.context_span {
                                         loc["contextStart"] =
-                                            Self::lsp_to_tsserver_position(&ctx.start);
-                                        loc["contextEnd"] =
-                                            Self::lsp_to_tsserver_position(&ctx.end);
+                                            Self::lsp_to_tsserver_position(ctx.start);
+                                        loc["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
                                         break;
                                     }
                                 }
@@ -2496,7 +2495,7 @@ impl Server {
                     "kind": info.kind,
                     "kindModifiers": info.kind_modifiers,
                     "triggerSpan": {
-                        "start": Self::lsp_to_tsserver_position(&info.trigger_span.start),
+                        "start": Self::lsp_to_tsserver_position(info.trigger_span.start),
                         "length": trigger_length
                     }
                 },
@@ -3147,8 +3146,8 @@ impl Server {
                         .iter()
                         .map(|edit| {
                             serde_json::json!({
-                                "start": Self::lsp_to_tsserver_position(&edit.range.start),
-                                "end": Self::lsp_to_tsserver_position(&edit.range.end),
+                                "start": Self::lsp_to_tsserver_position(edit.range.start),
+                                "end": Self::lsp_to_tsserver_position(edit.range.end),
                                 "newText": edit.new_text,
                             })
                         })
@@ -3201,8 +3200,8 @@ impl Server {
                         .iter()
                         .map(|edit| {
                             serde_json::json!({
-                                "start": Self::lsp_to_tsserver_position(&edit.range.start),
-                                "end": Self::lsp_to_tsserver_position(&edit.range.end),
+                                "start": Self::lsp_to_tsserver_position(edit.range.start),
+                                "end": Self::lsp_to_tsserver_position(edit.range.end),
                                 "newText": edit.new_text,
                             })
                         })
@@ -3332,7 +3331,7 @@ impl Server {
                     };
                     serde_json::json!({
                         "text": hint.label,
-                        "position": Self::lsp_to_tsserver_position(&hint.position),
+                        "position": Self::lsp_to_tsserver_position(hint.position),
                         "kind": kind,
                         "whitespaceBefore": false,
                         "whitespaceAfter": true,
@@ -3428,12 +3427,12 @@ impl Server {
                 "kind": format!("{:?}", item.kind).to_lowercase(),
                 "file": item.uri,
                 "span": {
-                    "start": Self::lsp_to_tsserver_position(&item.range.start),
-                    "end": Self::lsp_to_tsserver_position(&item.range.end),
+                    "start": Self::lsp_to_tsserver_position(item.range.start),
+                    "end": Self::lsp_to_tsserver_position(item.range.end),
                 },
                 "selectionSpan": {
-                    "start": Self::lsp_to_tsserver_position(&item.selection_range.start),
-                    "end": Self::lsp_to_tsserver_position(&item.selection_range.end),
+                    "start": Self::lsp_to_tsserver_position(item.selection_range.start),
+                    "end": Self::lsp_to_tsserver_position(item.selection_range.end),
                 },
             }]))
         })();
@@ -3461,8 +3460,8 @@ impl Server {
                             .iter()
                             .map(|r| {
                                 serde_json::json!({
-                                    "start": Self::lsp_to_tsserver_position(&r.start),
-                                    "end": Self::lsp_to_tsserver_position(&r.end),
+                                    "start": Self::lsp_to_tsserver_position(r.start),
+                                    "end": Self::lsp_to_tsserver_position(r.end),
                                 })
                             })
                             .collect();
@@ -3472,12 +3471,12 @@ impl Server {
                                 "kind": format!("{:?}", call.from.kind).to_lowercase(),
                                 "file": call.from.uri,
                                 "span": {
-                                    "start": Self::lsp_to_tsserver_position(&call.from.range.start),
-                                    "end": Self::lsp_to_tsserver_position(&call.from.range.end),
+                                    "start": Self::lsp_to_tsserver_position(call.from.range.start),
+                                    "end": Self::lsp_to_tsserver_position(call.from.range.end),
                                 },
                                 "selectionSpan": {
-                                    "start": Self::lsp_to_tsserver_position(&call.from.selection_range.start),
-                                    "end": Self::lsp_to_tsserver_position(&call.from.selection_range.end),
+                                    "start": Self::lsp_to_tsserver_position(call.from.selection_range.start),
+                                    "end": Self::lsp_to_tsserver_position(call.from.selection_range.end),
                                 },
                             },
                             "fromSpans": from_ranges,
@@ -3495,8 +3494,8 @@ impl Server {
                             .iter()
                             .map(|r| {
                                 serde_json::json!({
-                                    "start": Self::lsp_to_tsserver_position(&r.start),
-                                    "end": Self::lsp_to_tsserver_position(&r.end),
+                                    "start": Self::lsp_to_tsserver_position(r.start),
+                                    "end": Self::lsp_to_tsserver_position(r.end),
                                 })
                             })
                             .collect();
@@ -3506,12 +3505,12 @@ impl Server {
                                 "kind": format!("{:?}", call.to.kind).to_lowercase(),
                                 "file": call.to.uri,
                                 "span": {
-                                    "start": Self::lsp_to_tsserver_position(&call.to.range.start),
-                                    "end": Self::lsp_to_tsserver_position(&call.to.range.end),
+                                    "start": Self::lsp_to_tsserver_position(call.to.range.start),
+                                    "end": Self::lsp_to_tsserver_position(call.to.range.end),
                                 },
                                 "selectionSpan": {
-                                    "start": Self::lsp_to_tsserver_position(&call.to.selection_range.start),
-                                    "end": Self::lsp_to_tsserver_position(&call.to.selection_range.end),
+                                    "start": Self::lsp_to_tsserver_position(call.to.selection_range.start),
+                                    "end": Self::lsp_to_tsserver_position(call.to.selection_range.end),
                                 },
                             },
                             "fromSpans": from_ranges,
@@ -3555,8 +3554,8 @@ impl Server {
                 .map(|loc| {
                     serde_json::json!({
                         "file": loc.file_path,
-                        "start": Self::lsp_to_tsserver_position(&loc.range.start),
-                        "end": Self::lsp_to_tsserver_position(&loc.range.end),
+                        "start": Self::lsp_to_tsserver_position(loc.range.start),
+                        "end": Self::lsp_to_tsserver_position(loc.range.end),
                     })
                 })
                 .collect();
@@ -3579,18 +3578,22 @@ impl Server {
                     // Convert byte offsets to precise line/offset positions
                     let start_pos = line_map.offset_to_position(fr.start_offset, &source_text);
                     let end_pos = line_map.offset_to_position(fr.end_offset, &source_text);
-                    let hint_end_pos =
-                        line_map.offset_to_position(fr.end_offset.min(fr.start_offset + 200), &source_text);
+                    let hint_end_pos = line_map
+                        .offset_to_position(fr.end_offset.min(fr.start_offset + 200), &source_text);
 
                     let mut span = serde_json::json!({
                         "textSpan": {
-                            "start": Self::lsp_to_tsserver_position(&start_pos),
-                            "end": Self::lsp_to_tsserver_position(&end_pos),
+                            "start": Self::lsp_to_tsserver_position(start_pos),
+                            "end": Self::lsp_to_tsserver_position(end_pos),
                         },
                         "hintSpan": {
-                            "start": Self::lsp_to_tsserver_position(&start_pos),
+                            "start": Self::lsp_to_tsserver_position(start_pos),
                             "end": Self::lsp_to_tsserver_position(
-                                if hint_end_pos.line == start_pos.line { &hint_end_pos } else { &end_pos }
+                                if hint_end_pos.line == start_pos.line {
+                                    hint_end_pos
+                                } else {
+                                    end_pos
+                                }
                             ),
                         },
                         "bannerText": "...",

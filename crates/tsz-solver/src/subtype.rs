@@ -2955,7 +2955,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             // Phase 3.1: Use proper DefId-level cycle detection
             // Phase 3.2: Now checked before Ref types (priority)
-            return self.check_lazy_lazy_subtype(source, target, &s_def, &t_def);
+            return self.check_lazy_lazy_subtype(source, target, s_def, t_def);
         }
 
         // =======================================================================
@@ -3025,30 +3025,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             ref_symbol(self.interner, source),
             ref_symbol(self.interner, target),
         ) {
-            return self.check_ref_ref_subtype(source, target, &s_sym, &t_sym);
+            return self.check_ref_ref_subtype(source, target, s_sym, t_sym);
         }
 
         if let Some(s_sym) = ref_symbol(self.interner, source) {
-            return self.check_ref_subtype(source, target, &s_sym);
+            return self.check_ref_subtype(source, target, s_sym);
         }
 
         if let Some(t_sym) = ref_symbol(self.interner, target) {
-            return self.check_to_ref_subtype(source, target, &t_sym);
+            return self.check_to_ref_subtype(source, target, t_sym);
         }
 
         if let (Some(s_sym), Some(t_sym)) = (
             type_query_symbol(self.interner, source),
             type_query_symbol(self.interner, target),
         ) {
-            return self.check_typequery_typequery_subtype(source, target, &s_sym, &t_sym);
+            return self.check_typequery_typequery_subtype(source, target, s_sym, t_sym);
         }
 
         if let Some(s_sym) = type_query_symbol(self.interner, source) {
-            return self.check_typequery_subtype(source, target, &s_sym);
+            return self.check_typequery_subtype(source, target, s_sym);
         }
 
         if let Some(t_sym) = type_query_symbol(self.interner, target) {
-            return self.check_to_typequery_subtype(source, target, &t_sym);
+            return self.check_to_typequery_subtype(source, target, t_sym);
         }
 
         if let (Some(s_inner), Some(t_inner)) = (

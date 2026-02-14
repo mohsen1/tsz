@@ -158,7 +158,7 @@ impl WatchState {
     }
 
     fn handle_event(&mut self, event: Event) {
-        if !is_relevant_event(&event.kind) {
+        if !is_relevant_event(event.kind) {
             return;
         }
 
@@ -327,7 +327,7 @@ fn resolve_explicit_files(base_dir: &Path, files: &[PathBuf]) -> Option<FxHashSe
     Some(resolved)
 }
 
-fn is_relevant_event(kind: &EventKind) -> bool {
+fn is_relevant_event(kind: EventKind) -> bool {
     matches!(
         kind,
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) | EventKind::Any

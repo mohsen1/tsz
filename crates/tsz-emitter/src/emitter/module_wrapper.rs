@@ -4,7 +4,7 @@ use tsz_parser::parser::NodeIndex;
 impl<'a> Printer<'a> {
     pub(super) fn emit_module_wrapper(
         &mut self,
-        format: &crate::transform_context::ModuleFormat,
+        format: crate::transform_context::ModuleFormat,
         dependencies: &[String],
         source_node: &tsz_parser::parser::node::Node,
         source: &tsz_parser::parser::node::SourceFileData,
