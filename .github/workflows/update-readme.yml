@@ -55,6 +55,13 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Ensure automated PR label exists
+        if: steps.check_readme.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create automated --color 0E8A16 --description "Automated README metric updates" --force
+
       - name: Close prior automated README PRs
         if: steps.check_readme.outputs.changed == 'true'
         env:
