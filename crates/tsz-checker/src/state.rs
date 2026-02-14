@@ -786,28 +786,6 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        // OPTIMIZATION: Bypass recursion guard for primitive keywords
-        // Primitive types (string, number, boolean, etc.) are intrinsic and never recurse
-        // This prevents false positive recursion detection and improves performance
-        if let Some(node) = self.ctx.arena.get(idx) {
-            use tsz_scanner::SyntaxKind;
-            match node.kind as u32 {
-                k if k == SyntaxKind::StringKeyword as u32 => return TypeId::STRING,
-                k if k == SyntaxKind::NumberKeyword as u32 => return TypeId::NUMBER,
-                k if k == SyntaxKind::BooleanKeyword as u32 => return TypeId::BOOLEAN,
-                k if k == SyntaxKind::VoidKeyword as u32 => return TypeId::VOID,
-                k if k == SyntaxKind::AnyKeyword as u32 => return TypeId::ANY,
-                k if k == SyntaxKind::NeverKeyword as u32 => return TypeId::NEVER,
-                k if k == SyntaxKind::UnknownKeyword as u32 => return TypeId::UNKNOWN,
-                k if k == SyntaxKind::UndefinedKeyword as u32 => return TypeId::UNDEFINED,
-                k if k == SyntaxKind::NullKeyword as u32 => return TypeId::NULL,
-                k if k == SyntaxKind::ObjectKeyword as u32 => return TypeId::OBJECT,
-                k if k == SyntaxKind::BigIntKeyword as u32 => return TypeId::BIGINT,
-                k if k == SyntaxKind::SymbolKeyword as u32 => return TypeId::SYMBOL,
-                _ => {} // Fall through to general logic
-            }
-        }
-
         // Check fuel - return ERROR if exhausted to prevent timeout
         if !self.ctx.consume_fuel() {
             // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
@@ -924,6 +902,38 @@ impl<'a> CheckerState<'a> {
             }
             _ => {}
         }
+    }
+
+    pub(crate) fn is_keyword_type_used_as_value_position(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+
+        matches!(
+            parent_node.kind,
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::CALL_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::BINARY_EXPRESSION
+                || k == syntax_kind_ext::RETURN_STATEMENT
+                || k == syntax_kind_ext::VARIABLE_DECLARATION
+                || k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
+        )
     }
 
     /// Compute the type of a node (internal, not cached).

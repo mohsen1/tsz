@@ -821,8 +821,13 @@ impl<'a> CheckerState<'a> {
             )
             .with_def_store(&self.ctx.definition_store);
 
-            // Check for similar property names to provide "did you mean?" suggestions
-            let suggestion = self.find_similar_property(prop_name, type_id);
+            // On files with syntax parse errors, TypeScript generally avoids TS2551
+            // suggestion diagnostics and sticks with TS2339 to reduce cascades.
+            let suggestion = if self.has_syntax_parse_errors() {
+                None
+            } else {
+                self.find_similar_property(prop_name, type_id)
+            };
 
             let diag = if let Some(ref suggestion) = suggestion {
                 builder.property_not_exist_did_you_mean(
@@ -940,6 +945,27 @@ impl<'a> CheckerState<'a> {
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
         use tsz_binder::lib_loader;
         use tsz_parser::parser::node_flags;
+
+        // TypeScript primitive type keywords used as values should report TS2693
+        // even in malformed files where TS2304 is otherwise suppressed.
+        if matches!(
+            name,
+            "number"
+                | "string"
+                | "boolean"
+                | "symbol"
+                | "void"
+                | "undefined"
+                | "null"
+                | "any"
+                | "unknown"
+                | "never"
+                | "object"
+                | "bigint"
+        ) {
+            self.error_type_only_value_at(name, idx);
+            return;
+        }
 
         // Skip TS2304 for identifiers that are clearly not valid names.
         // These are likely parse errors (e.g., ",", ";", "(", or empty names) that were
