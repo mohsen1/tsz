@@ -255,4 +255,11 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !state_checking_members_src.contains("TypeKey::TypeParameter"),
         "state_checking_members should use solver type_param constructor API, not TypeKey::TypeParameter"
     );
+
+    let control_flow_narrowing_src = fs::read_to_string("src/control_flow_narrowing.rs")
+        .expect("failed to read src/control_flow_narrowing.rs for architecture guard");
+    assert!(
+        !control_flow_narrowing_src.contains("intern(TypeKey::Lazy("),
+        "control_flow_narrowing should use solver lazy constructor API, not direct TypeKey::Lazy interning"
+    );
 }

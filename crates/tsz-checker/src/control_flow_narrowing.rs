@@ -12,8 +12,8 @@ use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    NarrowingContext, ParamInfo, SymbolRef, TypeGuard, TypeId, TypeKey, TypePredicate,
-    TypePredicateTarget, TypeofKind,
+    NarrowingContext, ParamInfo, SymbolRef, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
+    TypeofKind,
     type_queries::{
         ConstructorInstanceKind, LiteralValueKind, NonObjectKind, PredicateSignatureKind,
         PropertyPresenceKind, TypeParameterConstraintKind, UnionMembersKind,
@@ -2258,7 +2258,7 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(sym_id) = self.binder.get_global_type("ArrayBufferView") {
             let symbol_ref = SymbolRef(sym_id.0);
             let mut view_type = if let Some(def_id) = self.interner.symbol_to_def_id(symbol_ref) {
-                self.interner.intern(TypeKey::Lazy(def_id))
+                self.interner.lazy(def_id)
             } else {
                 self.interner.reference(symbol_ref)
             };
@@ -2269,7 +2269,7 @@ impl<'a> FlowAnalyzer<'a> {
                 let array_buffer_like_ref = SymbolRef(array_buffer_like_sym.0);
                 let array_buffer_like =
                     if let Some(def_id) = self.interner.symbol_to_def_id(array_buffer_like_ref) {
-                        self.interner.intern(TypeKey::Lazy(def_id))
+                        self.interner.lazy(def_id)
                     } else {
                         self.interner.reference(array_buffer_like_ref)
                     };
