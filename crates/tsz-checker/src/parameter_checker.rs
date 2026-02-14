@@ -12,6 +12,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 // =============================================================================
@@ -19,6 +20,120 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn is_immediately_invoked_function_like(&self, node_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return false;
+        }
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+
+        if parent_node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.ctx.arena.get_call_expr(parent_node)
+            && call.expression == node_idx
+        {
+            return true;
+        }
+
+        if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(grand_ext) = self.ctx.arena.get_extended(parent_idx)
+        {
+            let grand_idx = grand_ext.parent;
+            if !grand_idx.is_none()
+                && let Some(grand_node) = self.ctx.arena.get(grand_idx)
+                && grand_node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.ctx.arena.get_call_expr(grand_node)
+                && call.expression == parent_idx
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn collect_parameter_forward_references_recursive(
+        &self,
+        node_idx: NodeIndex,
+        later_name: &str,
+        refs: &mut Vec<NodeIndex>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if node_idx.is_none() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if let Some(ident) = self.ctx.arena.get_identifier(node) {
+            if ident.escaped_text == later_name {
+                refs.push(node_idx);
+            }
+            return;
+        }
+
+        // Skip type-only references (e.g. typeof z in type position).
+        if node.kind == syntax_kind_ext::TYPE_QUERY {
+            return;
+        }
+
+        // Deferred function/class evaluation does not trigger TS2373.
+        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+        {
+            if !self.is_immediately_invoked_function_like(node_idx) {
+                return;
+            }
+        }
+
+        // For class expressions:
+        // - ES5/ES3 targets downlevel classes, so class body references are
+        //   effectively evaluated in the initializer context.
+        // - ES2015+ keeps deferred semantics except computed names.
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+        {
+            if self.ctx.compiler_options.target.is_es5() {
+                for child_idx in self.ctx.arena.get_children(node_idx) {
+                    self.collect_parameter_forward_references_recursive(
+                        child_idx, later_name, refs,
+                    );
+                }
+                return;
+            }
+            for child_idx in self.ctx.arena.get_children(node_idx) {
+                if let Some(child) = self.ctx.arena.get(child_idx)
+                    && child.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                {
+                    self.collect_parameter_forward_references_recursive(
+                        child_idx, later_name, refs,
+                    );
+                }
+            }
+            return;
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            self.collect_parameter_forward_references_recursive(child_idx, later_name, refs);
+        }
+    }
+
+    fn collect_parameter_forward_references(
+        &self,
+        init_idx: NodeIndex,
+        later_name: &str,
+    ) -> Vec<NodeIndex> {
+        let mut refs = Vec::new();
+        self.collect_parameter_forward_references_recursive(init_idx, later_name, &mut refs);
+        refs
+    }
+
     // =========================================================================
     // Duplicate Parameter Detection
     // =========================================================================
@@ -271,7 +386,7 @@ impl<'a> CheckerState<'a> {
     /// ## Error TS2372:
     /// "Parameter 'x' cannot reference itself."
     pub(crate) fn check_parameter_initializers(&mut self, parameters: &[NodeIndex]) {
-        for &param_idx in parameters {
+        for (param_pos, &param_idx) in parameters.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -306,6 +421,35 @@ impl<'a> CheckerState<'a> {
                             ref_node,
                             &msg,
                             diagnostic_codes::PARAMETER_CANNOT_REFERENCE_ITSELF,
+                        );
+                    }
+                }
+
+                // TS2373: parameter default cannot reference later parameters
+                for &later_param_idx in parameters.iter().skip(param_pos + 1) {
+                    let Some(later_param_node) = self.ctx.arena.get(later_param_idx) else {
+                        continue;
+                    };
+                    let Some(later_param) = self.ctx.arena.get_parameter(later_param_node) else {
+                        continue;
+                    };
+                    let Some(later_name) = self.get_parameter_name(later_param.name) else {
+                        continue;
+                    };
+                    let refs =
+                        self.collect_parameter_forward_references(param.initializer, &later_name);
+                    if refs.is_empty() {
+                        continue;
+                    }
+                    let msg = format!(
+                        "Parameter '{}' cannot reference identifier '{}' declared after it.",
+                        param_name, later_name
+                    );
+                    for ref_node in refs {
+                        self.error_at_node(
+                            ref_node,
+                            &msg,
+                            crate::types::diagnostics::diagnostic_codes::PARAMETER_CANNOT_REFERENCE_IDENTIFIER_DECLARED_AFTER_IT,
                         );
                     }
                 }
