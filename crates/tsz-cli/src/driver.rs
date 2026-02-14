@@ -45,7 +45,7 @@ use tsz::parser::ParseDiagnostic;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::parser::syntax_kind_ext;
 use tsz::scanner::SyntaxKind;
-use tsz_solver::{TypeFormatter, TypeId};
+use tsz_solver::{QueryCache, TypeFormatter, TypeId};
 
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,7 +265,7 @@ fn compilation_cache_to_build_info(
 
     // Convert each file's cache entry to BuildInfo format
     for (path, hash) in &cache.export_hashes {
-        let relative_path = path
+        let relative_path: String = path
             .strip_prefix(base_dir)
             .unwrap_or(path)
             .to_string_lossy()
@@ -313,7 +313,7 @@ fn compilation_cache_to_build_info(
     // Convert diagnostics to cached format
     let mut semantic_diagnostics_per_file = BTreeMap::new();
     for (path, diagnostics) in &cache.diagnostics {
-        let relative_path = path
+        let relative_path: String = path
             .strip_prefix(base_dir)
             .unwrap_or(path)
             .to_string_lossy()
@@ -850,7 +850,7 @@ fn compile_inner(
     perf_log_phase("build_lib_contexts", build_lib_contexts_start);
 
     let collect_diagnostics_start = Instant::now();
-    let mut diagnostics = collect_diagnostics(
+    let mut diagnostics: Vec<Diagnostic> = collect_diagnostics(
         &program,
         &resolved,
         &base_dir,
@@ -1789,7 +1789,7 @@ fn collect_diagnostics(
 ) -> Vec<Diagnostic> {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
-    let mut diagnostics = Vec::new();
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut used_paths = FxHashSet::default();
     let mut cache = cache;
     let mut resolution_cache = ModuleResolutionCache::default();
@@ -2068,7 +2068,7 @@ fn collect_diagnostics(
     let resolved_module_errors = Arc::new(resolved_module_errors);
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
-    let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+    let query_cache = QueryCache::new(&program.type_interner);
 
     // Prime Array<T> base type with global augmentations before any file checks.
     if !program.files.is_empty() && !lib_contexts.is_empty() {
@@ -2563,7 +2563,7 @@ fn check_file_for_parallel(
     file_idx: usize,
     binder: BinderState,
     program: &MergedProgram,
-    query_cache: &tsz_solver::QueryCache,
+    query_cache: &QueryCache,
     compiler_options: &tsz_common::CheckerOptions,
     lib_contexts: &[LibContext],
     all_arenas: &Arc<Vec<Arc<tsz::parser::node::NodeArena>>>,

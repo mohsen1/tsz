@@ -68,6 +68,7 @@ use tsz::parser::ParserState;
 use tsz::parser::base::NodeIndex;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz_cli::config::{checker_target_from_emitter, default_lib_name_for_target};
+use tsz_solver::QueryCache;
 use tsz_solver::TypeInterner;
 
 // Diagnostic code for "File appears to be binary."
@@ -3788,7 +3789,7 @@ impl Server {
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         let resolved_module_paths = Arc::new(resolved_module_paths);
 
-        let query_cache = tsz_solver::QueryCache::new(&type_interner);
+        let query_cache = QueryCache::new(&type_interner);
 
         let mut checker = CheckerState::new(
             &arena,
@@ -3971,7 +3972,7 @@ impl Server {
         let resolved_modules_arc: Arc<rustc_hash::FxHashSet<String>> = Arc::new(resolved_modules);
 
         // PHASE 4: Type check all files
-        let query_cache = tsz_solver::QueryCache::new(&type_interner);
+        let query_cache = QueryCache::new(&type_interner);
         let mut all_codes: Vec<i32> = Vec::new();
 
         // Add TS1490 for binary files detected earlier

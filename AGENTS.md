@@ -10,6 +10,7 @@
 - Visitor-driven type traversal.
 - Arena/interning everywhere possible.
 - One semantic `TypeId` universe (solver-canonical).
+- Public solver API uses `TypeData` naming at boundaries; raw type internals are crate-private.
 
 ## 2) Canonical Pipeline
 - `scanner -> parser -> binder -> checker -> solver -> emitter`
@@ -28,11 +29,13 @@
 - Checker must not implement ad-hoc type algorithms.
 - Checker must not pattern-match low-level type internals when Solver query exists.
 - Checker must not import/construct raw `TypeKey` or perform direct solver interning.
+- CLI and ancillary crates must consume checker diagnostics via `tsz_checker::diagnostics`.
 - Use visitor helpers for type traversal; avoid repeated `TypeKey` matching.
 - No forbidden shortcuts:
   - Binder importing Solver for semantic decisions.
   - Emitter importing Checker internals for semantic checks.
   - Any layer bypassing canonical query APIs.
+  - Checker or CLI using `tsz_checker::types` internal diagnostic paths.
 
 ## 5) Judge/Lawyer Model (Compatibility)
 - Judge (`SubtypeChecker`): strict structural/set-theoretic subtype logic.
@@ -46,7 +49,7 @@
 - Preferred default: `any` must not silence structural mismatches unless compatibility mode requires it.
 
 ## 6) DefId-First Semantic Type Resolution
-- Semantic refs in Solver are `TypeKey::Lazy(DefId)`.
+- Semantic refs in Solver are `TypeData::Lazy(DefId)` (with `TypeKey` sealed/private).
 - Checker creates/stabilizes `DefId` and ensures environment mapping exists.
 - `TypeEnvironment` resolves `DefId -> TypeId` during relation/evaluation.
 - Type-shape traversal and `Lazy(DefId)` discovery must use solver visitors, not checker recursion.
@@ -85,7 +88,7 @@
 - Owns relation/evaluation/inference/instantiation/operations/narrowing.
 - Owns type construction via safe factories/builders (`array`, `union`, `intersection`, `lazy`, etc.).
 - Uses memoization and cycle/coinductive handling.
-- Type graph represented through interned `TypeKey` variants (sealed from checker).
+- Type graph represented through interned `TypeData` variants (crate-private internals; no raw `TypeKey` leakage).
 - Owns algorithmic caches (relation/evaluation/instantiation/property/index/keyof/template).
 - Provides structured relation failure reasons for checker diagnostics.
 - Enforce recursion/fuel limits for subtype/evaluate/instantiate workloads.

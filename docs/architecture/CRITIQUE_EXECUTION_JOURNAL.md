@@ -223,3 +223,6 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 211: updated `.github/workflows/ci.yml` lint guard step to run `scripts/check-checker-boundaries.sh` and upload both JSON and Markdown architecture report artifacts (`arch-guard.json`, `arch-guard.md`).
 - [x] Migration action 212: expanded `scripts/render_architecture_report.py` with a “largest file per core crate” table (`tsz-checker`, `tsz-solver`, `tsz-lsp`, `tsz-emitter`) to improve ownership-level architecture metrics visibility.
 - [x] Migration action 213: added report-generation metadata in `scripts/render_architecture_report.py` (UTC timestamp + source JSON path) to improve architecture artifact traceability.
+- [x] Migration action 214: synchronized `docs/architecture/NORTH_STAR.md` tracker status and architecture commitment text with completed CRITIQUE milestone evidence.
+- [x] Migration action 215: updated `AGENTS.md` to enforce canonical checker diagnostics import paths and solver-boundary contracts (TypeData/TypeKey naming and non-checker internal surface expectations).
+- [x] Migration action 216: fixed CLI compile regressions from stale boundary assumptions by migrating `tsz::checker::types` and `tsz::solver` imports to canonical crate exports (`tsz::checker::diagnostics`, `tsz_solver` module crates).
