@@ -1,7 +1,5 @@
 use super::*;
-use tsz_solver::{
-    CallSignature, CallableShape, FunctionShape, TypeInterner, TypeKey, TypeParamInfo,
-};
+use tsz_solver::{CallSignature, CallableShape, FunctionShape, TypeInterner, TypeParamInfo};
 
 #[test]
 fn classifies_resolution_and_signature_paths() {
@@ -17,12 +15,12 @@ fn classifies_resolution_and_signature_paths() {
     });
     let function = types.function(FunctionShape::new(vec![], TypeId::STRING));
     let app = types.application(TypeId::STRING, vec![TypeId::NUMBER]);
-    let type_param = types.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = types.type_param(TypeParamInfo {
         name: types.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
-    }));
+    });
 
     assert!(callable_shape_for_type(&types, callable).is_some());
     assert!(matches!(

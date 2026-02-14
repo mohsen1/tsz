@@ -1,5 +1,5 @@
 use super::*;
-use tsz_solver::{TupleElement, TypeInterner, TypeKey, TypeParamInfo};
+use tsz_solver::{TypeInterner, TypeParamInfo};
 
 #[test]
 fn exposes_state_checking_boundary_queries() {
@@ -23,12 +23,12 @@ fn exposes_state_checking_boundary_queries() {
     let object = types.object(vec![]);
     let readonly_array = types.readonly_type(array);
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let type_param = types.intern(TypeKey::TypeParameter(TypeParamInfo {
+    let type_param = types.type_param(TypeParamInfo {
         name: types.intern_string("T"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
-    }));
+    });
 
     assert_eq!(array_element_type(&types, array), Some(TypeId::STRING));
     assert!(object_shape(&types, object).is_some());

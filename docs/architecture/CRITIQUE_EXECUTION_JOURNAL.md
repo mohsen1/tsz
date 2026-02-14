@@ -101,3 +101,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migrated  JSDoc template type-param construction to solver  API.
 - [x] Migrated `function_type.rs` JSDoc template TypeParam construction from `intern(TypeKey::TypeParameter(...))` to `types.type_param(...)` to enforce solver-constructor-only path.
 - [x] Migrated `type_checking_utilities.rs` `TypeKey::KeyOf` direct interning to `types.keyof(...)` constructor API.
+- [x] Migrated query-boundary tests to checker-safe constructor APIs by replacing `TypeKey::TypeParameter` and `TypeKey::KeyOf` calls with `types.type_param(...)` / `types.keyof(...)`.

@@ -1,5 +1,5 @@
 use super::*;
-use tsz_solver::{DefId, TypeInterner, TypeKey};
+use tsz_solver::{DefId, TypeInterner};
 
 #[test]
 fn classifies_and_extracts_environment_resolution_shapes() {
@@ -8,7 +8,7 @@ fn classifies_and_extracts_environment_resolution_shapes() {
     let lazy = types.lazy(DefId(42));
     let app = types.application(TypeId::STRING, vec![TypeId::NUMBER]);
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    let keyof_string = types.intern(TypeKey::KeyOf(TypeId::STRING));
+    let keyof_string = types.keyof(TypeId::STRING);
 
     assert!(matches!(
         lazy_def_id(&types, lazy),
