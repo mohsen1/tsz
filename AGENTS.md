@@ -150,3 +150,20 @@ Skill usage rules:
 - Parity with `tsc` overrides convenience.
 - Architecture direction is one-way; no cross-layer semantic leakage.
 - Solver is the single source of truth for type computation.
+
+## 22) TS2322 Priority Rules
+- `TS2322` parity is a top-level gate for checker/solver work.
+- Checker must use solver relation/explain APIs through `query_boundaries` for assignability diagnostics.
+- Checker must not instantiate solver internals in feature modules when a boundary helper can exist.
+- Keep `TS2322` behavior centralized:
+  - one suppression/prioritization policy,
+  - one mismatch decision gate,
+  - one explain-to-diagnostic rendering path.
+- Prefer moving new fixes into boundary helpers and solver query logic, not ad-hoc checker branches.
+
+## 23) TS2322 Change Review Checklist
+1. Does this change alter `Assignable`/`Subtype` behavior in checker code?
+2. If yes, can it be expressed as a solver relation query or boundary helper first?
+3. Are weak-union/excess-property/any-propagation behaviors preserved and explicit?
+4. Does the path resolve `Lazy(DefId)` via `TypeEnvironment` before relation checks?
+5. Is the diagnostic generated from solver failure reason instead of checker-local heuristics?

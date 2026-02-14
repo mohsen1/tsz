@@ -33,7 +33,6 @@ impl<'a> CheckerState<'a> {
         call_idx: NodeIndex,
     ) {
         use tsz_scanner::SyntaxKind;
-        use tsz_solver::AssignabilityChecker;
 
         if let Some(call_expr) = self.ctx.arena.get_call_expr_at(call_idx)
             && let Some(callee_node) = self.ctx.arena.get(call_expr.expression)
@@ -132,13 +131,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let is_satisfied = {
-                    let env = self.ctx.type_env.borrow();
-                    let mut checker =
-                        tsz_solver::CompatChecker::with_resolver(self.ctx.types, &*env);
-                    self.ctx.configure_compat_checker(&mut checker);
-                    checker.is_assignable_to(type_arg, instantiated_constraint)
-                };
+                let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
 
                 if !is_satisfied {
                     // Report TS2344 at the specific type argument node
@@ -165,7 +158,6 @@ impl<'a> CheckerState<'a> {
         type_args_list: &tsz_parser::parser::NodeList,
     ) {
         use tsz_binder::symbol_flags;
-        use tsz_solver::AssignabilityChecker;
 
         let mut sym_id = sym_id;
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -248,13 +240,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let is_satisfied = {
-                    let env = self.ctx.type_env.borrow();
-                    let mut checker =
-                        tsz_solver::CompatChecker::with_resolver(self.ctx.types, &*env);
-                    self.ctx.configure_compat_checker(&mut checker);
-                    checker.is_assignable_to(type_arg, instantiated_constraint)
-                };
+                let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
 
                 if !is_satisfied {
                     // Report TS2344 at the specific type argument node
@@ -278,8 +264,6 @@ impl<'a> CheckerState<'a> {
         type_args_list: &tsz_parser::parser::NodeList,
         _call_idx: NodeIndex,
     ) {
-        use tsz_solver::AssignabilityChecker;
-
         // Get the type parameters from the constructor type
         let Some(shape) = query::callable_shape_for_type(self.ctx.types, constructor_type) else {
             return;
@@ -335,13 +319,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let is_satisfied = {
-                    let env = self.ctx.type_env.borrow();
-                    let mut checker =
-                        tsz_solver::CompatChecker::with_resolver(self.ctx.types, &*env);
-                    self.ctx.configure_compat_checker(&mut checker);
-                    checker.is_assignable_to(type_arg, instantiated_constraint)
-                };
+                let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
 
                 if !is_satisfied {
                     // Report TS2344 at the specific type argument node
