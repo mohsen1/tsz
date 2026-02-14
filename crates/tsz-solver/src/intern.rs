@@ -2552,6 +2552,12 @@ impl TypeInterner {
         self.intern(TypeKey::IndexAccess(object_type, index_type))
     }
 
+    /// Build a nominal enum type that preserves DefId identity and carries
+    /// structural member information for compatibility with primitive relations.
+    pub fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
+        self.intern(TypeKey::Enum(def_id, structural_type))
+    }
+
     /// Intern an object type with properties.
     pub fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.object_with_flags(properties, ObjectFlags::empty())

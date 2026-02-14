@@ -81,6 +81,7 @@ pub trait TypeDatabase {
     fn lazy(&self, def_id: DefId) -> TypeId;
     fn type_param(&self, info: TypeParamInfo) -> TypeId;
     fn type_query(&self, symbol: SymbolRef) -> TypeId;
+    fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId;
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId;
 
     fn literal_string_atom(&self, atom: Atom) -> TypeId;
@@ -269,6 +270,10 @@ impl TypeDatabase for TypeInterner {
 
     fn type_query(&self, symbol: SymbolRef) -> TypeId {
         TypeInterner::type_query(self, symbol)
+    }
+
+    fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
+        TypeInterner::enum_type(self, def_id, structural_type)
     }
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
@@ -1049,6 +1054,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.type_query(symbol)
     }
 
+    fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
+        self.interner.enum_type(def_id, structural_type)
+    }
+
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
         self.interner.application(base, args)
     }
@@ -1626,6 +1635,10 @@ impl TypeDatabase for BinderTypeDatabase<'_> {
 
     fn type_query(&self, symbol: SymbolRef) -> TypeId {
         self.query_cache.type_query(symbol)
+    }
+
+    fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
+        self.query_cache.enum_type(def_id, structural_type)
     }
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {

@@ -277,6 +277,10 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !state_type_analysis_src.contains("intern(tsz_solver::TypeKey::Lazy("),
         "state_type_analysis should use solver lazy constructor API, not direct TypeKey::Lazy interning"
     );
+    assert!(
+        !state_type_analysis_src.contains("intern(TypeKey::Enum("),
+        "state_type_analysis should use solver enum_type constructor API, not TypeKey::Enum interning"
+    );
 
     let function_type_src = fs::read_to_string("src/function_type.rs")
         .expect("failed to read src/function_type.rs for architecture guard");
@@ -294,5 +298,16 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     assert!(
         !assignability_checker_src.contains("classify_for_traversal("),
         "assignability_checker should use solver visitor helpers instead of traversal classification"
+    );
+
+    let state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
+        .expect("failed to read src/state_type_environment.rs for architecture guard");
+    assert!(
+        !state_type_environment_src.contains("intern(TypeKey::Enum("),
+        "state_type_environment should use solver enum_type constructor API, not TypeKey::Enum"
+    );
+    assert!(
+        !state_type_environment_src.contains("intern(TypeKey::Literal("),
+        "state_type_environment should use solver literal constructors, not TypeKey::Literal"
     );
 }

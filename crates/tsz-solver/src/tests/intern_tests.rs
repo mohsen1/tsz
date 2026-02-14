@@ -69,6 +69,16 @@ fn test_interner_type_query_constructor() {
 }
 
 #[test]
+fn test_interner_enum_constructor() {
+    let interner = TypeInterner::new();
+    let enum_ty = interner.enum_type(DefId(9), TypeId::NUMBER);
+    assert_eq!(
+        interner.lookup(enum_ty),
+        Some(TypeKey::Enum(DefId(9), TypeId::NUMBER))
+    );
+}
+
+#[test]
 fn test_interner_fresh_object_distinct_from_non_fresh() {
     let interner = TypeInterner::new();
     let prop = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);
