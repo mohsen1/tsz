@@ -6,10 +6,11 @@
 #![allow(clippy::print_stderr)]
 
 use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
-use tsz_checker::TypeCache;
 use tsz_common::interner::Atom;
 use tsz_solver::TypeInterner;
 use tsz_solver::types::{TypeId, TypeKey};
+
+use crate::type_cache_view::TypeCacheView;
 
 /// Prints types as TypeScript syntax for declaration emit.
 ///
@@ -27,7 +28,7 @@ pub struct TypePrinter<'a> {
     /// Symbol arena for checking symbol visibility
     symbol_arena: Option<&'a SymbolArena>,
     /// Type cache for resolving Lazy(DefId) types
-    type_cache: Option<&'a TypeCache>,
+    type_cache: Option<&'a TypeCacheView>,
     /// Current recursion depth (to prevent infinite loops)
     current_depth: u32,
     /// Maximum recursion depth
@@ -52,7 +53,7 @@ impl<'a> TypePrinter<'a> {
     }
 
     /// Set the type cache for resolving Lazy(DefId) types.
-    pub fn with_type_cache(mut self, type_cache: &'a TypeCache) -> Self {
+    pub fn with_type_cache(mut self, type_cache: &'a TypeCacheView) -> Self {
         self.type_cache = Some(type_cache);
         self
     }

@@ -468,9 +468,11 @@ if __name__ == "__main__":
 * **Completed in this iteration (Milestone 0 sub-item):**
   * Enforced dependency-direction **freeze guardrail** in `scripts/check-checker-boundaries.sh` so CI fails if any new non-test solver source (outside legacy `crates/tsz-solver/src/lower.rs`) imports `tsz_parser::` or `tsz_checker::`.
   * Added binder dependency-direction guardrail to `scripts/arch_guard.py` so CI fails if non-test binder code imports `tsz_solver::...`.
+  * Added emitter dependency-direction guardrail to `scripts/arch_guard.py` so CI fails if non-test emitter code imports `tsz_checker::...`.
   * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` that recursively scans non-test solver source files and fails on parser/checker import patterns outside the `lower.rs` legacy quarantine.
   * Added a checker boundary guardrail in `scripts/check-checker-boundaries.sh` that fails on any non-test `tsz_solver::types::...` import path usage, forcing checker code onto public `tsz_solver::*` APIs only.
   * Reduced one emitter→checker dependency edge by switching enum checker diagnostics in `crates/tsz-emitter/src/enums/checker.rs` from `tsz_checker::diagnostics::Diagnostic` to `tsz_common::diagnostics::Diagnostic`.
+  * Removed remaining non-test emitter imports of checker `TypeCache` by introducing emitter-local `TypeCacheView` and migrating usage-analyzer/type-printer consumers onto that local view type.
 * **Remaining for Milestone 0:**
   * Complete the `lower.rs` migration so solver has zero parser/checker crate imports.
   * Add/standardize architecture report generation in CI artifacts. **Completed in this iteration.**

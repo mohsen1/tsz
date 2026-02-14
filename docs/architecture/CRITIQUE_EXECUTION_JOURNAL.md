@@ -192,3 +192,6 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 180: added binder dependency-direction freeze guardrail in `scripts/arch_guard.py` to fail on non-test `tsz-binder` imports of `tsz_solver::...`.
 - [x] Migration action 181: reduced one emitter→checker dependency edge by switching `crates/tsz-emitter/src/enums/checker.rs` to `tsz_common::diagnostics::Diagnostic` instead of `tsz_checker::diagnostics::Diagnostic`.
 - [x] Migration action 182: migrated overlap-check precondition setup in `crates/tsz-checker/src/assignability_checker.rs::are_types_overlapping` from direct `ensure_refs_resolved(...)` calls to `ensure_relation_input_ready(...)`.
+- [x] Migration action 183: removed remaining non-test emitter imports of checker `TypeCache` by introducing emitter-local `TypeCacheView` (`crates/tsz-emitter/src/type_cache_view.rs`) and migrating `usage_analyzer` / `type_printer` to consume that view.
+- [x] Migration action 184: updated `crates/tsz-cli/src/driver_resolution.rs` declaration-emit usage analysis path to build/pass `TypeCacheView` instead of passing checker `TypeCache` directly into emitter internals.
+- [x] Migration action 185: added emitter dependency-direction freeze guardrail in `scripts/arch_guard.py` to fail on non-test `tsz-emitter` imports of `tsz_checker::...`.

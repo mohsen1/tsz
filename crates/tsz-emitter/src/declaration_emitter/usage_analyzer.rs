@@ -18,13 +18,14 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
-use tsz_checker::TypeCache;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
 use tsz_solver::visitor;
+
+use crate::type_cache_view::TypeCacheView;
 
 /// Tracks how a symbol is used - as a type, a value, or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,8 +71,8 @@ pub struct UsageAnalyzer<'a> {
     arena: &'a NodeArena,
     /// Binder state for symbol resolution (node_symbols)
     binder: &'a BinderState,
-    /// Type cache for inferred types and def_to_symbol mapping
-    type_cache: &'a TypeCache,
+    /// Type cache view for inferred types and def_to_symbol mapping
+    type_cache: &'a TypeCacheView,
     /// Type interner for type operations
     type_interner: &'a TypeInterner,
     /// Map of import name -> SymbolId for resolving type references
@@ -109,7 +110,7 @@ impl<'a> UsageAnalyzer<'a> {
     pub fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
-        type_cache: &'a TypeCache,
+        type_cache: &'a TypeCacheView,
         type_interner: &'a TypeInterner,
         current_arena: Arc<NodeArena>,
         import_name_map: &'a FxHashMap<String, SymbolId>,
