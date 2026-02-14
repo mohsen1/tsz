@@ -19,8 +19,6 @@
 //!
 //! Environment variables (tsserver-compatible):
 
-#![allow(clippy::print_stderr)]
-
 //! Environment variables (tsserver-compatible):
 //!   TSS_LOG     - Configure logging (e.g., "-level verbose -file /tmp/tsserver.log")
 //!   TSS_DEBUG   - Enable debug mode on specified port
@@ -41,6 +39,7 @@ use std::io::{BufRead, BufReader, Read as IoRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::{debug, info};
 
 use tsz::binder::{BinderState, SymbolId};
 use tsz::checker::context::{CheckerOptions, LibContext};
@@ -526,7 +525,7 @@ impl Server {
     fn new(args: &ServerArgs) -> Result<Self> {
         let lib_dir = Self::find_lib_dir()?;
         let tests_lib_dir = PathBuf::from("TypeScript/tests/lib");
-        eprintln!("Using lib directory: {}", lib_dir.display());
+        info!("Using lib directory: {}", lib_dir.display());
 
         let server_mode = if args.syntax_only {
             ServerMode::Syntactic
@@ -542,17 +541,17 @@ impl Server {
 
         // Log TSS_DEBUG/TSS_DEBUG_BRK presence
         if let Ok(port) = std::env::var("TSS_DEBUG") {
-            eprintln!("TSS_DEBUG detected: port {}", port);
+            debug!("TSS_DEBUG detected: port {}", port);
         }
         if let Ok(port) = std::env::var("TSS_DEBUG_BRK") {
-            eprintln!("TSS_DEBUG_BRK detected: port {} (break on startup)", port);
+            debug!("TSS_DEBUG_BRK detected: port {} (break on startup)", port);
         }
 
         if log_config.level != LogLevel::Off {
             if let Some(ref file) = log_config.file {
-                eprintln!("Log file: {}", file.display());
+                info!("Log file: {}", file.display());
             }
-            eprintln!("Log level: {:?}", log_config.level);
+            info!("Log level: {:?}", log_config.level);
         }
 
         Ok(Self {
@@ -4705,7 +4704,7 @@ fn main() -> Result<()> {
     let args = ServerArgs::parse();
     let mut server = Server::new(&args).context("failed to initialize server")?;
 
-    eprintln!("tsz-server ready (protocol: {:?})", args.protocol);
+    info!("tsz-server ready (protocol: {:?})", args.protocol);
 
     match args.protocol {
         Protocol::Tsserver => run_tsserver_protocol(&mut server)?,
