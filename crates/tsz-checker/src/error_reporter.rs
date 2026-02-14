@@ -1245,8 +1245,37 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Keep TS2304 for accessibility modifier keywords recovered as identifiers.
+        // tsc does not emit TS2552 suggestions (e.g. "private" -> "print") in these cases.
+        let is_accessibility_modifier_name = matches!(name, "public" | "private" | "protected");
+        let mut is_in_spread_element = false;
+        let mut current = idx;
+        let mut guard = 0;
+        while !current.is_none() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                is_in_spread_element = true;
+                break;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        let suppress_spelling_suggestion = is_accessibility_modifier_name || is_in_spread_element;
+
         // Try to find similar identifiers in scope for better error messages
-        if let Some(suggestions) = self.find_similar_identifiers(name, idx)
+        if !suppress_spelling_suggestion
+            && let Some(suggestions) = self.find_similar_identifiers(name, idx)
             && !suggestions.is_empty()
         {
             // Use the first suggestion for "Did you mean?" error
@@ -1729,7 +1758,7 @@ impl<'a> CheckerState<'a> {
         let visible_names = self.ctx.binder.collect_visible_symbol_names_filtered(
             self.ctx.arena,
             idx,
-            tsz_binder::symbol_flags::VALUE,
+            tsz_binder::symbol_flags::VALUE | tsz_binder::symbol_flags::TYPE,
         );
 
         let name_len = name.len();
