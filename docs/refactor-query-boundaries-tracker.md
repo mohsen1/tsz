@@ -56,8 +56,12 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/state_type_analysis.rs`
 - `query_boundaries/class_type.rs`
 - `query_boundaries/assignability.rs`
+- `query_boundaries/array_type.rs`
 - `query_boundaries/constructor_checker.rs`
 - `query_boundaries/call_checker.rs`
+- `query_boundaries/conditional_type.rs`
+- `query_boundaries/indexed_access_type.rs`
+- `query_boundaries/intersection_type.rs`
 - `query_boundaries/iterable_checker.rs`
 - `query_boundaries/iterators.rs`
 - `query_boundaries/namespace_checker.rs`
@@ -70,6 +74,8 @@ Notes: `docs/architecture/NORTH_STAR.md` updated with DefId/Lazy architecture se
 - `query_boundaries/state_type_environment.rs`
 - `query_boundaries/state_checking.rs`
 - `query_boundaries/callable_type.rs`
+- `query_boundaries/type_api.rs`
+- `query_boundaries/tuple_type.rs`
 - `query_boundaries/union_type.rs`
 - plus existing: `class.rs`, `diagnostics.rs`, `state.rs`
 

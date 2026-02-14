@@ -12,9 +12,9 @@
 //! This module extends CheckerState with utilities for tuple type
 //! operations, providing cleaner APIs for tuple type checking.
 
+use crate::query_boundaries::tuple_type as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries;
 
 // =============================================================================
 // Tuple Type Utilities
@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns 0 if the type is not a tuple.
     pub fn tuple_element_count(&self, type_id: TypeId) -> usize {
-        type_queries::get_tuple_elements(self.ctx.types, type_id)
+        query::tuple_elements(self.ctx.types, type_id)
             .map(|elements| elements.len())
             .unwrap_or(0)
     }
@@ -43,7 +43,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the element type if the index is valid and this is a tuple,
     /// or None otherwise.
     pub fn get_tuple_element_type(&self, tuple_type: TypeId, index: usize) -> Option<TypeId> {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .and_then(|elements| elements.get(index).map(|elem| elem.type_id))
     }
 
@@ -66,7 +66,7 @@ impl<'a> CheckerState<'a> {
     /// Returns a vector of TypeIds representing all elements in order.
     /// Returns an empty vec if the type is not a tuple.
     pub fn get_tuple_element_types(&self, tuple_type: TypeId) -> Vec<TypeId> {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .map(|elements| elements.iter().map(|elem| elem.type_id).collect())
             .unwrap_or_default()
     }
@@ -79,7 +79,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the element has an optional flag.
     pub fn is_tuple_element_optional(&self, tuple_type: TypeId, index: usize) -> bool {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .and_then(|elements| elements.get(index).map(|elem| elem.optional))
             .unwrap_or(false)
     }
@@ -88,7 +88,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if any element in the tuple is optional.
     pub fn tuple_has_optional_elements(&self, tuple_type: TypeId) -> bool {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .map(|elements| elements.iter().any(|elem| elem.optional))
             .unwrap_or(false)
     }
@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the last element is a rest element (e.g., ...string[]).
     pub fn tuple_has_rest_element(&self, tuple_type: TypeId) -> bool {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .and_then(|elements| elements.last().map(|elem| elem.rest))
             .unwrap_or(false)
     }
@@ -106,7 +106,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the rest element type if present, or None otherwise.
     pub fn get_tuple_rest_element_type(&self, tuple_type: TypeId) -> Option<TypeId> {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type).and_then(|elements| {
+        query::tuple_elements(self.ctx.types, tuple_type).and_then(|elements| {
             elements
                 .last()
                 .filter(|elem| elem.rest)
@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if the element has a name (e.g., `[name: string]`).
     pub fn is_tuple_element_named(&self, tuple_type: TypeId, index: usize) -> bool {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .and_then(|elements| elements.get(index).map(|elem| elem.name.is_some()))
             .unwrap_or(false)
     }
@@ -127,7 +127,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the element name if present and named, or None otherwise.
     pub fn get_tuple_element_name(&self, tuple_type: TypeId, index: usize) -> Option<String> {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type).and_then(|elements| {
+        query::tuple_elements(self.ctx.types, tuple_type).and_then(|elements| {
             elements.get(index).and_then(|elem| {
                 elem.name
                     .map(|atom| self.ctx.types.resolve_atom_ref(atom).to_string())
@@ -144,8 +144,8 @@ impl<'a> CheckerState<'a> {
     /// Returns true if both are tuples and have compatible element types.
     pub fn tuple_types_compatible(&mut self, tuple1: TypeId, tuple2: TypeId) -> bool {
         // Both must be tuples
-        let is_t1_tuple = tsz_solver::type_queries::is_tuple_type(self.ctx.types, tuple1);
-        let is_t2_tuple = tsz_solver::type_queries::is_tuple_type(self.ctx.types, tuple2);
+        let is_t1_tuple = query::is_tuple_type(self.ctx.types, tuple1);
+        let is_t2_tuple = query::is_tuple_type(self.ctx.types, tuple2);
 
         if !is_t1_tuple || !is_t2_tuple {
             return false;
@@ -160,7 +160,7 @@ impl<'a> CheckerState<'a> {
     /// This is a convenience wrapper that combines tuple type checking
     /// with element type assignability.
     pub fn is_tuple_assignable_to(&mut self, tuple_type: TypeId, target_type: TypeId) -> bool {
-        let is_tuple = tsz_solver::type_queries::is_tuple_type(self.ctx.types, tuple_type);
+        let is_tuple = query::is_tuple_type(self.ctx.types, tuple_type);
         if !is_tuple {
             return false;
         }
@@ -178,7 +178,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the count of non-optional elements before the first optional
     /// or rest element.
     pub fn get_tuple_min_length(&self, tuple_type: TypeId) -> usize {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .map(|elements| {
                 elements
                     .iter()
@@ -192,7 +192,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the number of elements before any rest element.
     pub fn get_tuple_fixed_length(&self, tuple_type: TypeId) -> usize {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .map(|elements| elements.iter().take_while(|elem| !elem.rest).count())
             .unwrap_or(0)
     }
@@ -201,7 +201,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if all elements have the same type (e.g., `[number, number]`).
     pub fn is_homogeneous_tuple(&self, tuple_type: TypeId) -> bool {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .map(|elements| {
                 if elements.is_empty() {
                     return true;
@@ -218,7 +218,7 @@ impl<'a> CheckerState<'a> {
     /// or None otherwise.
     pub fn get_homogeneous_tuple_element_type(&self, tuple_type: TypeId) -> Option<TypeId> {
         if self.is_homogeneous_tuple(tuple_type) {
-            type_queries::get_tuple_elements(self.ctx.types, tuple_type).and_then(|elements| {
+            query::tuple_elements(self.ctx.types, tuple_type).and_then(|elements| {
                 if !elements.is_empty() {
                     Some(elements[0].type_id)
                 } else {
@@ -234,7 +234,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for the empty tuple type `[]`.
     pub fn is_empty_tuple(&self, tuple_type: TypeId) -> bool {
-        type_queries::get_tuple_elements(self.ctx.types, tuple_type)
+        query::tuple_elements(self.ctx.types, tuple_type)
             .map(|elements| elements.is_empty())
             .unwrap_or(false)
     }
