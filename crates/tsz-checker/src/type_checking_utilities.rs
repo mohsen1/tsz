@@ -10,7 +10,7 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeId, TypeKey};
 
 impl<'a> CheckerState<'a> {
     // ============================================================================
@@ -1591,9 +1591,99 @@ impl<'a> CheckerState<'a> {
     /// function foo(x) {}
     /// // The JSDoc annotation can be used for type inference
     /// ```
-    pub(crate) fn jsdoc_type_annotation_for_node(&mut self, _idx: NodeIndex) -> Option<TypeId> {
-        // TODO: jsdoc_for_node lives in the LSP module; stub until LSP is extracted
+    pub(crate) fn jsdoc_type_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = self.ctx.arena.get(idx)?;
+        let mut jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text);
+        if jsdoc.is_none() {
+            let mut current = idx;
+            for _ in 0..4 {
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                let parent = ext.parent;
+                if parent.is_none() {
+                    break;
+                }
+                let Some(parent_node) = self.ctx.arena.get(parent) else {
+                    break;
+                };
+                jsdoc = self.try_leading_jsdoc(comments, parent_node.pos, source_text);
+                if jsdoc.is_some() {
+                    break;
+                }
+                current = parent;
+            }
+        }
+        let jsdoc = jsdoc?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let type_expr = type_expr.trim();
+
+        // Narrow support for conformance-critical pattern:
+        //   @type {keyof typeof <identifier>}
+        if let Some(rest) = type_expr.strip_prefix("keyof") {
+            let rest = rest.trim_start();
+            if let Some(name) = rest.strip_prefix("typeof") {
+                let name = name.trim();
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                {
+                    let symbols = self.ctx.binder.get_symbols();
+                    let candidates = symbols.find_all_by_name(name);
+                    for sym_id in candidates {
+                        let Some(sym) = symbols.get(sym_id) else {
+                            continue;
+                        };
+                        // Resolve value-like symbols only.
+                        let value_mask = symbol_flags::FUNCTION_SCOPED_VARIABLE
+                            | symbol_flags::BLOCK_SCOPED_VARIABLE
+                            | symbol_flags::FUNCTION
+                            | symbol_flags::CLASS
+                            | symbol_flags::ENUM
+                            | symbol_flags::VALUE_MODULE;
+                        if (sym.flags & value_mask) == 0 {
+                            continue;
+                        }
+                        let operand = self.get_type_of_symbol(sym_id);
+                        if operand == TypeId::ERROR {
+                            continue;
+                        }
+                        let keyof = self.ctx.types.intern(TypeKey::KeyOf(operand));
+                        return Some(self.judge_evaluate(keyof));
+                    }
+                }
+            }
+        }
+
         None
+    }
+
+    fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
+        let tag_pos = jsdoc.find("@type")?;
+        let rest = &jsdoc[tag_pos + "@type".len()..];
+        let open = rest.find('{')?;
+        let after_open = &rest[open + 1..];
+        let mut depth = 1usize;
+        let mut end_idx = None;
+        for (i, ch) in after_open.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end_idx = end_idx?;
+        Some(after_open[..end_idx].trim())
     }
 
     // =========================================================================
