@@ -1496,8 +1496,6 @@ impl<'a> CheckerState<'a> {
     ///   `function foo(/** @type {string} */ msg, /** @type {number} */ count)`
     /// These annotations suppress TS7006 because the parameter type is provided via JSDoc.
     pub(crate) fn param_has_inline_jsdoc_type(&self, param_idx: NodeIndex) -> bool {
-        
-
         let sf = match self.ctx.arena.source_files.first() {
             Some(sf) => sf,
             None => return false,

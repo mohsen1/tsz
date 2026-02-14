@@ -2264,11 +2264,21 @@ impl<'a> CheckerState<'a> {
                     let has_paired_getter = self
                         .get_property_name(accessor.name)
                         .is_some_and(|name| obj_getter_names.contains(&name));
+                    // Check if accessor JSDoc has @param type annotations
+                    let accessor_jsdoc = self.get_jsdoc_for_function(elem_idx);
                     for &param_idx in &accessor.parameters.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
-                            self.maybe_report_implicit_any_parameter(param, has_paired_getter);
+                            let has_jsdoc = has_paired_getter
+                                || self.param_has_inline_jsdoc_type(param_idx)
+                                || if let Some(ref jsdoc) = accessor_jsdoc {
+                                    let pname = self.parameter_name_for_error(param.name);
+                                    Self::jsdoc_has_param_type(jsdoc, &pname)
+                                } else {
+                                    false
+                                };
+                            self.maybe_report_implicit_any_parameter(param, has_jsdoc);
                         }
                     }
                 }
