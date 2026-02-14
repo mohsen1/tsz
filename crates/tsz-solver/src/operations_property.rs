@@ -1193,7 +1193,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Evaluate keyof if needed
         let evaluated = if let Some(TypeKey::KeyOf(operand)) = self.interner().lookup(constraint) {
-            let keyof_type = self.interner().intern(TypeKey::KeyOf(operand));
+            let keyof_type = self.interner().keyof(operand);
             self.db
                 .evaluate_type_with_options(keyof_type, self.no_unchecked_indexed_access)
         } else {
