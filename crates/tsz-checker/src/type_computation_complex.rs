@@ -1507,7 +1507,12 @@ impl<'a> CheckerState<'a> {
                             index,
                             actual,
                         ) {
-                            self.error_argument_not_assignable_at(actual, expected, arg_idx);
+                            // Try to elaborate: for object literal arguments, report TS2322
+                            // on specific mismatched properties instead of TS2345 on the
+                            // whole argument. This matches tsc behavior.
+                            if !self.try_elaborate_object_literal_arg_error(arg_idx, expected) {
+                                self.error_argument_not_assignable_at(actual, expected, arg_idx);
+                            }
                         }
                     }
                 } else if !args.is_empty() {
@@ -1519,7 +1524,9 @@ impl<'a> CheckerState<'a> {
                             index,
                             actual,
                         ) {
-                            self.error_argument_not_assignable_at(actual, expected, last_arg);
+                            if !self.try_elaborate_object_literal_arg_error(last_arg, expected) {
+                                self.error_argument_not_assignable_at(actual, expected, last_arg);
+                            }
                         }
                     }
                 }

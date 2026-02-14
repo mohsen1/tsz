@@ -1532,6 +1532,99 @@ impl<'a> CheckerState<'a> {
     // Function Call Errors
     // =========================================================================
 
+    /// Try to elaborate an argument type mismatch for object literal arguments.
+    ///
+    /// When an object literal argument has a property whose value type doesn't match
+    /// the expected property type, tsc reports TS2322 on the specific property name
+    /// rather than TS2345 on the whole argument. This method implements that elaboration.
+    ///
+    /// Returns `true` if elaboration produced at least one property-level error (TS2322),
+    /// meaning the caller should NOT emit TS2345 on the whole argument.
+    pub fn try_elaborate_object_literal_arg_error(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Check if the argument is an object literal expression
+        let arg_node = match self.ctx.arena.get(arg_idx) {
+            Some(node) if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => node,
+            _ => return false,
+        };
+
+        let obj = match self.ctx.arena.get_literal_expr(arg_node) {
+            Some(obj) => obj.clone(),
+            None => return false,
+        };
+
+        let mut elaborated = false;
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            // Only elaborate regular property assignments and shorthand properties
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_property_assignment(elem_node) {
+                        Some(prop) => (prop.name, prop.initializer),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_shorthand_property(elem_node) {
+                        Some(prop) => (prop.name, prop.name),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            // Get the property name string
+            let prop_name = match self.ctx.arena.get_identifier_at(prop_name_idx) {
+                Some(ident) => ident.escaped_text.clone(),
+                None => continue,
+            };
+
+            // Look up the expected property type in the target parameter type
+            let target_prop_type = match self
+                .resolve_property_access_with_env(param_type, &prop_name)
+            {
+                tsz_solver::operations_property::PropertyAccessResult::Success {
+                    type_id, ..
+                } => type_id,
+                _ => continue,
+            };
+
+            // Get the type of the property value in the object literal
+            let source_prop_type = self.get_type_of_node(prop_value_idx);
+
+            // Skip if types are unresolved
+            if source_prop_type == TypeId::ERROR
+                || source_prop_type == TypeId::ANY
+                || target_prop_type == TypeId::ERROR
+                || target_prop_type == TypeId::ANY
+            {
+                continue;
+            }
+
+            // Check if the property value type is assignable to the target property type
+            if !self.is_assignable_to(source_prop_type, target_prop_type) {
+                // Emit TS2322 on the property name node
+                self.error_type_not_assignable_at(
+                    source_prop_type,
+                    target_prop_type,
+                    prop_name_idx,
+                );
+                elaborated = true;
+            }
+        }
+
+        elaborated
+    }
+
     /// Report an argument not assignable error using solver diagnostics with source tracking.
     pub fn error_argument_not_assignable_at(
         &mut self,
