@@ -688,13 +688,13 @@ impl<'a> CheckerState<'a> {
             // Store the index signature based on parameter type
             // Own index signatures take priority over inherited ones
             if param_type == TypeId::NUMBER {
-                index_info.number_index = Some(tsz_solver::types::IndexSignature {
+                index_info.number_index = Some(tsz_solver::IndexSignature {
                     key_type: TypeId::NUMBER,
                     value_type,
                     readonly: false,
                 });
             } else if param_type == TypeId::STRING {
-                index_info.string_index = Some(tsz_solver::types::IndexSignature {
+                index_info.string_index = Some(tsz_solver::IndexSignature {
                     key_type: TypeId::STRING,
                     value_type,
                     readonly: false,

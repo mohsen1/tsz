@@ -10,8 +10,8 @@ use super::context::CheckerContext;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
+use tsz_solver::Visibility;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
-use tsz_solver::types::Visibility;
 
 /// Type node checker that operates on the shared context.
 ///
@@ -140,7 +140,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             _ => {
                 use tsz_binder::symbol_flags;
                 use tsz_solver::TypeLowering;
-                use tsz_solver::types::is_compiler_managed_type;
+                use tsz_solver::is_compiler_managed_type;
 
                 let type_param_bindings: Vec<(tsz_common::interner::Atom, TypeId)> = self
                     .ctx
@@ -263,7 +263,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_binder::symbol_flags;
         use tsz_solver::TypeLowering;
-        use tsz_solver::types::is_compiler_managed_type;
+        use tsz_solver::is_compiler_managed_type;
 
         // Create a type resolver that looks up symbols in the binder
         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
@@ -598,7 +598,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     fn get_type_from_function_type(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_binder::symbol_flags;
         use tsz_solver::TypeLowering;
-        use tsz_solver::types::is_compiler_managed_type;
+        use tsz_solver::is_compiler_managed_type;
 
         let Some(_node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -1182,7 +1182,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let ident = self.ctx.arena.get_identifier_at(node_idx)?;
             let name = ident.escaped_text.as_str();
 
-            if tsz_solver::types::is_compiler_managed_type(name) {
+            if tsz_solver::is_compiler_managed_type(name) {
                 return None;
             }
 

@@ -18,7 +18,7 @@ use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::types::Visibility;
+use tsz_solver::Visibility;
 
 // =============================================================================
 // Namespace Type Checking

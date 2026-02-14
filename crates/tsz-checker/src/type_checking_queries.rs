@@ -15,7 +15,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex, node_flags};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::types::TypeParamInfo;
+use tsz_solver::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 /// Result of tsc's `getSyntacticTruthySemantics` — purely syntactic truthiness.
@@ -239,8 +239,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_visibility_from_modifiers(
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
-    ) -> tsz_solver::types::Visibility {
-        use tsz_solver::types::Visibility;
+    ) -> tsz_solver::Visibility {
+        use tsz_solver::Visibility;
 
         if self.has_private_modifier(modifiers) {
             Visibility::Private

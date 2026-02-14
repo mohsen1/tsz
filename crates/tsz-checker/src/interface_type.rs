@@ -25,7 +25,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::types::Visibility;
+use tsz_solver::Visibility;
 use tsz_solver::visitor::is_template_literal_type;
 
 // =============================================================================

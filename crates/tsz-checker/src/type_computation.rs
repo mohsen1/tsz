@@ -17,7 +17,7 @@ use crate::types::{Diagnostic, DiagnosticCategory};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::types::Visibility;
+use tsz_solver::Visibility;
 use tsz_solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
 
 // =============================================================================

@@ -36,7 +36,7 @@ pub(crate) fn are_types_overlapping_with_env(
 ) -> bool {
     let mut flags: u16 = 0;
     if strict_null_checks {
-        flags |= tsz_solver::types::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+        flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
     }
 
     let policy = tsz_solver::RelationPolicy::from_flags(flags);

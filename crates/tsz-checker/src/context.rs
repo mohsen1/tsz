@@ -16,8 +16,8 @@ use crate::module_resolution::module_specifier_candidates;
 use crate::types::diagnostics::Diagnostic;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_solver::RelationCacheKey;
 use tsz_solver::def::{DefId, DefinitionStore};
-use tsz_solver::types::RelationCacheKey;
 use tsz_solver::{PropertyInfo, QueryDatabase, TypeEnvironment, TypeId, judge::JudgeConfig};
 
 // Re-export CheckerOptions and ScriptTarget from tsz-common
@@ -2733,7 +2733,7 @@ impl<'a> CheckerContext<'a> {
     /// `RelationCacheKey` flags field. This is the single source of truth for
     /// flag packing — call this instead of manually constructing the bitmask.
     pub fn pack_relation_flags(&self) -> u16 {
-        use tsz_solver::types::RelationCacheKey;
+        use tsz_solver::RelationCacheKey;
         let mut flags: u16 = 0;
         if self.strict_null_checks() {
             flags |= RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
@@ -2844,7 +2844,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     #[allow(deprecated)]
     fn resolve_ref(
         &self,
-        symbol: tsz_solver::types::SymbolRef,
+        symbol: tsz_solver::SymbolRef,
         _interner: &dyn tsz_solver::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
@@ -2919,7 +2919,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     #[allow(deprecated)]
     fn get_type_params(
         &self,
-        _symbol: tsz_solver::types::SymbolRef,
+        _symbol: tsz_solver::SymbolRef,
     ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
         None
     }
@@ -3158,7 +3158,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// This is the reverse of def_to_symbol_id.
     ///
     /// Returns None if the SymbolRef doesn't have a corresponding DefId.
-    fn symbol_to_def_id(&self, symbol: tsz_solver::types::SymbolRef) -> Option<tsz_solver::DefId> {
+    fn symbol_to_def_id(&self, symbol: tsz_solver::SymbolRef) -> Option<tsz_solver::DefId> {
         use tsz_binder::SymbolId;
 
         // Convert SymbolRef to SymbolId
