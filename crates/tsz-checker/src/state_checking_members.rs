@@ -1859,12 +1859,18 @@ impl<'a> CheckerState<'a> {
                         if method.body.is_none() && !is_abstract {
                             // Method overload signature - check for implementation
                             let method_name = self.get_method_name_from_node(member_idx);
+                            // TSC reports at the method name node, not the declaration
+                            let error_node = if !method.name.is_none() {
+                                method.name
+                            } else {
+                                member_idx
+                            };
                             if let Some(name) = method_name {
                                 let (has_impl, impl_name, impl_idx) =
                                     self.find_method_impl(members, i + 1, &name);
                                 if !has_impl {
                                     self.error_at_node(
-                                        member_idx,
+                                        error_node,
                                         "Function implementation is missing or not immediately following the declaration.",
                                         diagnostic_codes::FUNCTION_IMPLEMENTATION_IS_MISSING_OR_NOT_IMMEDIATELY_FOLLOWING_THE_DECLARATION
                                     );
@@ -1872,12 +1878,21 @@ impl<'a> CheckerState<'a> {
                                     && actual_name != name
                                 {
                                     // Implementation has wrong name — report at the
-                                    // implementation node, and only on the last overload
-                                    // (the one immediately preceding the implementation).
+                                    // implementation's name node, and only on the last
+                                    // overload (the one immediately preceding the implementation).
                                     let impl_member_idx = impl_idx.unwrap_or(i + 1);
                                     if impl_member_idx == i + 1 {
+                                        let impl_node_idx = members[impl_member_idx];
+                                        let impl_error_node = self
+                                            .ctx
+                                            .arena
+                                            .get(impl_node_idx)
+                                            .and_then(|n| self.ctx.arena.get_method_decl(n))
+                                            .map(|m| m.name)
+                                            .filter(|n| !n.is_none())
+                                            .unwrap_or(impl_node_idx);
                                         self.error_at_node(
-                                            members[impl_member_idx],
+                                            impl_error_node,
                                             &format!(
                                                 "Function implementation name must be '{}'.",
                                                 name
