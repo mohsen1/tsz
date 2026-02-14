@@ -3069,6 +3069,68 @@ impl ParserState {
             false
         };
 
+        // Recovery for malformed generator object members:
+        //   *{}        -> synthesize empty parameter list and parse body
+        //   *<T>() {}  -> parse type params/signature, omit missing name
+        //   *} / *,    -> drop invalid member
+        if asterisk
+            && (self.is_token(SyntaxKind::LessThanToken)
+                || self.is_token(SyntaxKind::OpenParenToken)
+                || self.is_token(SyntaxKind::OpenBraceToken)
+                || self.is_token(SyntaxKind::CloseBraceToken)
+                || self.is_token(SyntaxKind::CommaToken))
+        {
+            if self.is_token(SyntaxKind::CloseBraceToken) || self.is_token(SyntaxKind::CommaToken) {
+                return NodeIndex::NONE;
+            }
+
+            let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+                Some(self.parse_type_parameters())
+            } else {
+                None
+            };
+
+            let parameters = if self.is_token(SyntaxKind::OpenParenToken) {
+                self.parse_expected(SyntaxKind::OpenParenToken);
+                let params = self.parse_parameter_list();
+                self.parse_expected(SyntaxKind::CloseParenToken);
+                params
+            } else {
+                self.make_node_list(vec![])
+            };
+
+            let saved_flags = self.context_flags;
+            if is_async {
+                self.context_flags |= CONTEXT_FLAG_ASYNC;
+            }
+            self.context_flags |= CONTEXT_FLAG_GENERATOR;
+            self.push_label_scope();
+            let body = if self.is_token(SyntaxKind::OpenBraceToken) {
+                self.parse_block()
+            } else {
+                NodeIndex::NONE
+            };
+            self.pop_label_scope();
+            self.context_flags = saved_flags;
+
+            let end_pos = self.token_end();
+            return self.arena.add_method_decl(
+                syntax_kind_ext::METHOD_DECLARATION,
+                start_pos,
+                end_pos,
+                crate::parser::node::MethodDeclData {
+                    modifiers,
+                    asterisk_token: true,
+                    name: NodeIndex::NONE,
+                    question_token: false,
+                    type_parameters,
+                    parameters,
+                    type_annotation: NodeIndex::NONE,
+                    body,
+                },
+            );
+        }
+
         let name = self.parse_property_name();
 
         // TS18016: Check for private identifiers in object literals

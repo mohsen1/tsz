@@ -650,12 +650,17 @@ impl<'a> NamespaceES5Transformer<'a> {
                     } else {
                         ir
                     };
-                    result.push(ir);
 
                     // Check for trailing comment on the same line as this statement.
                     // Skip namespace-like declarations since their sub-emitters handle
                     // internal comments.
-                    let skip = is_namespace_like(self.arena, stmt_node);
+                    let function_export_sequence = stmt_node.kind
+                        == syntax_kind_ext::FUNCTION_DECLARATION
+                        && matches!(&ir, IRNode::Sequence(items) if items.len() > 1);
+                    let skip = is_namespace_like(self.arena, stmt_node)
+                        || function_export_sequence
+                        || stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION;
+                    result.push(ir);
                     if !skip {
                         if let Some(comment_text) =
                             self.extract_trailing_comment_in_stmt(stmt_node.pos, stmt_node.end)
