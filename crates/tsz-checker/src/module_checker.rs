@@ -266,7 +266,11 @@ impl<'a> CheckerState<'a> {
         self.ctx.import_resolution_stack.pop();
     }
 
-    fn check_export_target_is_module(&mut self, module_specifier_idx: NodeIndex, module_name: &str) {
+    fn check_export_target_is_module(
+        &mut self,
+        module_specifier_idx: NodeIndex,
+        module_name: &str,
+    ) {
         use crate::types::diagnostics::diagnostic_codes;
 
         let Some(target_idx) = self.ctx.resolve_import_target(module_name) else {
@@ -277,7 +281,9 @@ impl<'a> CheckerState<'a> {
         };
         if target_binder.is_external_module
             || self.is_ambient_module_match(module_name)
-            || target_binder.declared_modules.contains(module_name.trim_matches('"').trim_matches('\''))
+            || target_binder
+                .declared_modules
+                .contains(module_name.trim_matches('"').trim_matches('\''))
         {
             return;
         }
