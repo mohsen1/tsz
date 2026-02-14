@@ -2093,8 +2093,12 @@ impl<'a> CheckerState<'a> {
             }
             // Shorthand property: { x } - identifier is both name and value
             else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
-                if let Some(ident) = self.ctx.arena.get_identifier(elem_node) {
+                if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
+                    && let Some(name_node) = self.ctx.arena.get(shorthand.name)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                {
                     let name = ident.escaped_text.clone();
+                    let shorthand_name_idx = shorthand.name;
 
                     // Get contextual type for this property
                     let property_context_type = if let Some(ctx_type) = self.ctx.contextual_type {
@@ -2108,7 +2112,24 @@ impl<'a> CheckerState<'a> {
                     let prev_context = self.ctx.contextual_type;
                     self.ctx.contextual_type = property_context_type;
 
-                    let value_type = self.get_type_of_node(elem_idx);
+                    let value_type = if self.resolve_identifier_symbol(shorthand_name_idx).is_none()
+                    {
+                        // TS18004: Missing value binding for shorthand property name
+                        // Example: `({ arguments })` inside arrow function where `arguments`
+                        // is not in scope as a value.
+                        let message = format_message(
+                            diagnostic_messages::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            elem_idx,
+                            &message,
+                            diagnostic_codes::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
+                        );
+                        TypeId::ANY
+                    } else {
+                        self.get_type_of_node(elem_idx)
+                    };
 
                     // Restore context
                     self.ctx.contextual_type = prev_context;
