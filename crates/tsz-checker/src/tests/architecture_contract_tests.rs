@@ -533,8 +533,28 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_checking should not manually orchestrate application-symbol preconditions"
     );
 
-    let state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
+    let mut state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
         .expect("failed to read src/state_checking_members.rs for architecture guard");
+    state_checking_members_src.push_str(
+        &fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
+            .expect("failed to read ambient_signature_checks.rs for architecture guard"),
+    );
+    state_checking_members_src.push_str(
+        &fs::read_to_string("src/state_checking_members/member_access.rs")
+            .expect("failed to read member_access.rs for architecture guard"),
+    );
+    state_checking_members_src.push_str(
+        &fs::read_to_string("src/state_checking_members/member_declaration_checks.rs")
+            .expect("failed to read member_declaration_checks.rs for architecture guard"),
+    );
+    state_checking_members_src.push_str(
+        &fs::read_to_string("src/state_checking_members/statement_callback_bridge.rs")
+            .expect("failed to read statement_callback_bridge.rs for architecture guard"),
+    );
+    state_checking_members_src.push_str(
+        &fs::read_to_string("src/state_checking_members/statement_checks.rs")
+            .expect("failed to read statement_checks.rs for architecture guard"),
+    );
     assert!(
         state_checking_members_src.contains("check_assignable_or_report("),
         "state_checking_members assignment-style checks should route through check_assignable_or_report"

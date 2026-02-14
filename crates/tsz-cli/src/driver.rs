@@ -222,16 +222,6 @@ impl CompilationCache {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn invalidate_paths_with_dependents<I>(&mut self, paths: I)
-    where
-        I: IntoIterator<Item = PathBuf>,
-    {
-        let changed: FxHashSet<PathBuf> = paths.into_iter().collect();
-        let affected = self.collect_dependents(changed.iter().cloned());
-        self.invalidate_paths(affected);
-    }
-
     pub(crate) fn invalidate_paths<I>(&mut self, paths: I)
     where
         I: IntoIterator<Item = PathBuf>,
@@ -563,49 +553,6 @@ pub fn compile_project(
     config_path: &Path,
 ) -> Result<CompilationResult> {
     compile_inner(args, cwd, None, None, None, Some(config_path))
-}
-
-#[cfg(test)]
-pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
-    for line in source.lines().take(32) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let is_comment =
-            trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
-        if !is_comment {
-            break;
-        }
-
-        let lower = trimmed.to_ascii_lowercase();
-        let Some(pos) = lower.find("@notypesandsymbols") else {
-            continue;
-        };
-        let after_key = &lower[pos + "@notypesandsymbols".len()..];
-        let Some(colon_pos) = after_key.find(':') else {
-            continue;
-        };
-
-        let value = after_key[colon_pos + 1..].trim();
-        let value_clean = if let Some(comma_pos) = value.find(',') {
-            &value[..comma_pos]
-        } else if let Some(semicolon_pos) = value.find(';') {
-            &value[..semicolon_pos]
-        } else {
-            value
-        }
-        .trim();
-
-        match value_clean {
-            "true" => return true,
-            "false" => return false,
-            _ => continue,
-        }
-    }
-
-    false
 }
 
 pub(crate) fn compile_with_cache(
