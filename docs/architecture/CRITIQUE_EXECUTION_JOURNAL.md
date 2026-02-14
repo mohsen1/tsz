@@ -206,3 +206,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 194: migrated `crates/tsz-lsp/src/completions.rs` off direct `TypeKey` matching and `TypeInterner::lookup(...)` in property/parameter completion paths by routing through solver `visitor` extractors.
 - [x] Migration action 195: added LSP-specific architecture guardrail in `scripts/arch_guard.py` to block direct solver `.lookup(...)` traversal in non-test `crates/tsz-lsp`.
 - [x] Migration action 196: migrated `crates/tsz-lsp/src/signature_help.rs` call-signature extraction off direct `TypeKey` matching and `TypeInterner::lookup(...)` by routing through solver `visitor` helpers (`function_shape_id`, `callable_shape_id`, `union_list_id`).
+- [x] Migration action 197: introduced `TypeData` as the solver public representation name in `crates/tsz-solver/src/types.rs` and retained `TypeKey` as a compatibility alias to stage the final crate-private `TypeKey` transition.

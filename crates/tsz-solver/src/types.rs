@@ -526,7 +526,7 @@ impl WellKnownSymbolKey {
 /// This is the key used for interning - structurally identical types
 /// will have the same TypeKey and therefore the same TypeId.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum TypeKey {
+pub enum TypeData {
     /// Intrinsic types (any, unknown, never, void, null, undefined, boolean, number, string, bigint, symbol, object)
     Intrinsic(IntrinsicKind),
 
@@ -704,6 +704,9 @@ pub enum TypeKey {
     /// Error type for recovery
     Error,
 }
+
+/// Compatibility alias while external callsites migrate to `TypeData`.
+pub type TypeKey = TypeData;
 
 /// Generic type application (Base<Args>)
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
