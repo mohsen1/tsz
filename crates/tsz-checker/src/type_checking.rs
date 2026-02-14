@@ -4643,20 +4643,20 @@ impl<'a> CheckerState<'a> {
     /// - `start`: Position to start searching from
     /// - `name`: The function name to search for
     ///
-    /// Returns (found: bool, name: Option<String>).
+    /// Returns (found: bool, name: Option<String>, node: Option<NodeIndex>).
     pub(crate) fn find_function_impl(
         &self,
         statements: &[NodeIndex],
         start: usize,
         name: &str,
-    ) -> (bool, Option<String>) {
+    ) -> (bool, Option<String>, Option<NodeIndex>) {
         if start >= statements.len() {
-            return (false, None);
+            return (false, None, None);
         }
 
         let stmt_idx = statements[start];
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return (false, None);
+            return (false, None, None);
         };
 
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
@@ -4666,7 +4666,7 @@ impl<'a> CheckerState<'a> {
             if !func.body.is_none() {
                 // This is an implementation - check if name matches
                 let impl_name = self.get_function_name_from_node(stmt_idx);
-                return (true, impl_name);
+                return (true, impl_name, Some(stmt_idx));
             } else {
                 // Another overload signature without body - need to look further
                 // but we should check if this is the same function name
@@ -4678,6 +4678,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        (false, None)
+        (false, None, None)
     }
 }
