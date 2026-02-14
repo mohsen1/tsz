@@ -1621,6 +1621,25 @@ impl<'a> CheckerState<'a> {
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
+        // Common primitive/simple JSDoc forms.
+        match type_expr {
+            "string" => return Some(TypeId::STRING),
+            "number" => return Some(TypeId::NUMBER),
+            "boolean" => return Some(TypeId::BOOLEAN),
+            "object" => return Some(TypeId::OBJECT),
+            "any" => return Some(TypeId::ANY),
+            "unknown" => return Some(TypeId::UNKNOWN),
+            "undefined" => return Some(TypeId::UNDEFINED),
+            "null" => return Some(TypeId::NULL),
+            "void" => return Some(TypeId::VOID),
+            "never" => return Some(TypeId::NEVER),
+            _ => {}
+        }
+
+        if let Some(tp) = self.ctx.type_parameter_scope.get(type_expr) {
+            return Some(*tp);
+        }
+
         // Narrow support for conformance-critical pattern:
         //   @type {keyof typeof <identifier>}
         if let Some(rest) = type_expr.strip_prefix("keyof") {
@@ -1917,6 +1936,66 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    /// Extract `@template` type parameter names from a JSDoc comment.
+    ///
+    /// Supports simple forms like:
+    /// - `@template T`
+    /// - `@template T,U`
+    /// - `@template T U`
+    pub(crate) fn jsdoc_template_type_params(jsdoc: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let Some(rest) = trimmed.strip_prefix("@template") else {
+                continue;
+            };
+            for token in rest.split([',', ' ', '\t']) {
+                let name = token.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                if name
+                    .chars()
+                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                    && !out.iter().any(|existing| existing == name)
+                {
+                    out.push(name.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// Extract a simple identifier from `@returns {T}` / `@return {T}`.
+    ///
+    /// Returns `None` for complex type expressions.
+    pub(crate) fn jsdoc_returns_type_name(jsdoc: &str) -> Option<String> {
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let Some(rest) = trimmed
+                .strip_prefix("@returns")
+                .or_else(|| trimmed.strip_prefix("@return"))
+            else {
+                continue;
+            };
+            let rest = rest.trim_start();
+            if !rest.starts_with('{') {
+                continue;
+            }
+            let after_open = &rest[1..];
+            let end = after_open.find('}')?;
+            let type_expr = after_open[..end].trim();
+            if !type_expr.is_empty()
+                && type_expr
+                    .chars()
+                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            {
+                return Some(type_expr.to_string());
+            }
+        }
+        None
     }
 
     // =========================================================================
