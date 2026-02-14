@@ -430,7 +430,12 @@ impl<'a> CheckerState<'a> {
             let has_jsdoc_return = func_jsdoc
                 .as_ref()
                 .is_some_and(|j| Self::jsdoc_has_type_annotations(j));
-            if !is_function_declaration && !is_async && !has_contextual_return && !has_jsdoc_return
+            let is_promise_executor = self.is_promise_executor_function(idx);
+            if !is_function_declaration
+                && !is_async
+                && !has_contextual_return
+                && !has_jsdoc_return
+                && !is_promise_executor
             {
                 self.maybe_report_implicit_any_return(
                     name_for_error,

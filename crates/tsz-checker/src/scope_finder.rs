@@ -219,6 +219,48 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns true when `func_idx` is the executor callback passed to
+    /// `new Promise(...)` (first argument, function/arrow expression).
+    pub(crate) fn is_promise_executor_function(&self, func_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(func_idx) else {
+            return false;
+        };
+        if ext.parent.is_none() {
+            return false;
+        }
+        let Some(parent) = self.ctx.arena.get(ext.parent) else {
+            return false;
+        };
+        if parent.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(parent) else {
+            return false;
+        };
+        let Some(args) = &call.arguments else {
+            return false;
+        };
+        if args.nodes.first().copied() != Some(func_idx) {
+            return false;
+        }
+        let Some(callee) = self.ctx.arena.get(call.expression) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier(callee)
+            .map(|i| i.escaped_text == "Promise")
+            .unwrap_or(false)
+    }
+
+    /// Returns true when the parameter name belongs to a Promise executor callback.
+    pub(crate) fn is_parameter_in_promise_executor(&self, param_name_idx: NodeIndex) -> bool {
+        let Some(func_idx) = self.find_enclosing_function(param_name_idx) else {
+            return false;
+        };
+        self.is_promise_executor_function(func_idx)
+    }
+
     /// Check if `this` has a contextual owner (class or object literal).
     ///
     /// Walks up the AST to find the nearest non-arrow function. If that function is
