@@ -11,10 +11,10 @@
 //! This module extends CheckerState with utilities for type query
 //! operations, providing cleaner APIs for typeof and keyof operations.
 
+use crate::query_boundaries::type_query as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type};
 
 // =============================================================================
 // Type Query Utilities
@@ -61,14 +61,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for literal types
-        match classify_literal_type(self.ctx.types, type_id) {
-            LiteralTypeKind::String(_) => "string".to_string(),
-            LiteralTypeKind::Number(_) => "number".to_string(),
-            LiteralTypeKind::Boolean(_) => "boolean".to_string(),
-            LiteralTypeKind::BigInt(_) => "bigint".to_string(),
-            LiteralTypeKind::NotLiteral => {
-                if tsz_solver::type_queries::is_callable_type(self.ctx.types, type_id)
-                    || tsz_solver::type_queries::is_function_type(self.ctx.types, type_id)
+        match query::classify_literal_type(self.ctx.types, type_id) {
+            query::LiteralTypeKind::String(_) => "string".to_string(),
+            query::LiteralTypeKind::Number(_) => "number".to_string(),
+            query::LiteralTypeKind::Boolean(_) => "boolean".to_string(),
+            query::LiteralTypeKind::BigInt(_) => "bigint".to_string(),
+            query::LiteralTypeKind::NotLiteral => {
+                if query::is_callable_type(self.ctx.types, type_id)
+                    || query::is_function_type(self.ctx.types, type_id)
                 {
                     "function".to_string()
                 } else {
