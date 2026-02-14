@@ -169,6 +169,7 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.visit_arrow_function(node, idx),
             k if k == syntax_kind_ext::CONSTRUCTOR => self.visit_constructor(node, idx),
             k if k == syntax_kind_ext::CALL_EXPRESSION => self.visit_call_expression(node, idx),
+            k if k == syntax_kind_ext::NEW_EXPRESSION => self.visit_new_expression(node),
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 self.visit_variable_statement(node, idx)
             }
@@ -1655,6 +1656,20 @@ impl<'a> LoweringPass<'a> {
         // Continue traversal
         self.visit(call.expression);
         if let Some(ref args) = call.arguments {
+            for &arg_idx in &args.nodes {
+                self.visit(arg_idx);
+            }
+        }
+    }
+
+    /// Visit a new expression and traverse callee + arguments for nested transforms.
+    fn visit_new_expression(&mut self, node: &Node) {
+        let Some(new_expr) = self.arena.get_call_expr(node) else {
+            return;
+        };
+
+        self.visit(new_expr.expression);
+        if let Some(ref args) = new_expr.arguments {
             for &arg_idx in &args.nodes {
                 self.visit(arg_idx);
             }

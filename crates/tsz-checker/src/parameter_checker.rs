@@ -369,7 +369,12 @@ impl<'a> CheckerState<'a> {
             let declared_type = self.get_type_from_type_node(param.type_annotation);
 
             // TypeScript accepts `...args: any` as a valid rest parameter type.
-            if declared_type == TypeId::ANY {
+            // Also skip unresolved/error types to avoid cascading TS2370 when
+            // type resolution itself already failed.
+            if declared_type == TypeId::ANY
+                || declared_type == TypeId::UNKNOWN
+                || declared_type == TypeId::ERROR
+            {
                 continue;
             }
 

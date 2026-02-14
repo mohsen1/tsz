@@ -484,11 +484,25 @@ impl<'a> Judge for DefaultJudge<'a> {
             }
             TypeKey::Literal(LiteralValue::String(_)) => IterableKind::String,
             TypeKey::Object(shape_id) | TypeKey::ObjectWithIndex(shape_id) => {
+                let has_usable_iterator_signature = |method_type: TypeId| {
+                    if method_type == TypeId::ANY
+                        || method_type == TypeId::UNKNOWN
+                        || method_type == TypeId::ERROR
+                    {
+                        return true;
+                    }
+                    self.get_call_signatures(method_type).iter().any(|sig| {
+                        sig.params
+                            .iter()
+                            .all(|param| param.optional || param.rest)
+                    })
+                };
+
                 // Check for Symbol.iterator
                 let shape = self.db.object_shape(shape_id);
                 let iterator_name = self.db.intern_string("[Symbol.iterator]");
                 for prop in &shape.properties {
-                    if prop.name == iterator_name {
+                    if prop.name == iterator_name && has_usable_iterator_signature(prop.type_id) {
                         // Found iterator - extract element type
                         return IterableKind::SyncIterator {
                             iterator_type: prop.type_id,
@@ -499,7 +513,9 @@ impl<'a> Judge for DefaultJudge<'a> {
                 // Check for Symbol.asyncIterator
                 let async_iterator_name = self.db.intern_string("[Symbol.asyncIterator]");
                 for prop in &shape.properties {
-                    if prop.name == async_iterator_name {
+                    if prop.name == async_iterator_name
+                        && has_usable_iterator_signature(prop.type_id)
+                    {
                         return IterableKind::AsyncIterator {
                             iterator_type: prop.type_id,
                             element_type: self.extract_iterator_element_type(prop.type_id),
