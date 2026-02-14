@@ -107,9 +107,10 @@ impl<'a> Printer<'a> {
             "var"
         };
         self.write(keyword);
-        self.write(" ");
-
-        self.emit_comma_separated(&decl_list.declarations.nodes);
+        if !decl_list.declarations.nodes.is_empty() {
+            self.write(" ");
+            self.emit_comma_separated(&decl_list.declarations.nodes);
+        }
     }
 
     pub(super) fn emit_variable_declaration(&mut self, node: &Node) {
