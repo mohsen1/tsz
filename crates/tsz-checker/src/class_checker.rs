@@ -1344,7 +1344,7 @@ impl<'a> CheckerState<'a> {
     /// - Incompatible member types (property type or method signature mismatch)
     pub(crate) fn check_implements_clauses(
         &mut self,
-        _class_idx: NodeIndex,
+        class_idx: NodeIndex,
         class_data: &tsz_parser::parser::node::ClassData,
     ) {
         use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
@@ -1386,6 +1386,8 @@ impl<'a> CheckerState<'a> {
             String::from("<anonymous>")
         };
 
+        let class_namespace = self.enclosing_namespace_node(class_idx);
+
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                 continue;
@@ -1425,11 +1427,21 @@ impl<'a> CheckerState<'a> {
                     let interface_name = self
                         .heritage_name_text(expr_idx)
                         .unwrap_or_else(|| symbol.escaped_name.clone());
-                    let interface_idx = if !symbol.value_declaration.is_none() {
-                        symbol.value_declaration
-                    } else if let Some(&decl_idx) = symbol.declarations.first() {
-                        decl_idx
-                    } else {
+                    let interface_idx = symbol
+                        .declarations
+                        .iter()
+                        .copied()
+                        .find(|&decl_idx| {
+                            self.enclosing_namespace_node(decl_idx) == class_namespace
+                        })
+                        .or_else(|| {
+                            if !symbol.value_declaration.is_none() {
+                                Some(symbol.value_declaration)
+                            } else {
+                                symbol.declarations.first().copied()
+                            }
+                        });
+                    let Some(interface_idx) = interface_idx else {
                         continue;
                     };
 
@@ -1474,7 +1486,7 @@ impl<'a> CheckerState<'a> {
                     if self.interface_extends_class_with_inaccessible_members(
                         interface_idx,
                         interface_decl,
-                        _class_idx,
+                        class_idx,
                         class_data,
                     ) {
                         self.error_at_node(
@@ -1657,6 +1669,29 @@ impl<'a> CheckerState<'a> {
                     self.pop_type_parameters(interface_type_param_updates);
                 }
             }
+        }
+    }
+
+    fn enclosing_namespace_node(&self, decl_idx: NodeIndex) -> NodeIndex {
+        let mut current = decl_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return NodeIndex::NONE;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return NodeIndex::NONE;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return NodeIndex::NONE;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                return parent;
+            }
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return NodeIndex::NONE;
+            }
+            current = parent;
         }
     }
 
