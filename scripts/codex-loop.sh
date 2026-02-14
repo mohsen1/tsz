@@ -105,6 +105,7 @@ read_key() {
 }
 
 MODEL="$(read_key model)"
+MODEL_SPARK="$(read_key model_spark)"
 # Backward-compat: accept approval_mode from previous YAML.
 APPROVAL_MODE="$(read_key approval_mode)"
 ASK_FOR_APPROVAL="$(read_key ask_for_approval)"
@@ -122,6 +123,7 @@ CONF_QUARTERS="$(read_key conformance_quarters)"
 CONF_TOTAL_FAILURES="$(read_key conformance_total_failures)"
 
 MODEL="${MODEL:-gpt-5.3-codex}"
+MODEL_BASE="$MODEL"
 APPROVAL_MODE="${APPROVAL_MODE:-full-auto}"
 ASK_FOR_APPROVAL="${ASK_FOR_APPROVAL:-}"
 BYPASS="${BYPASS:-false}"
@@ -172,6 +174,12 @@ if [[ -z "$MODE" ]]; then
   else
     MODE="$DEFAULT_MODE"
   fi
+fi
+
+SPARK_MODEL_FALLBACK_ATTEMPTED="false"
+
+if [[ "$MODE" == "spark" && -n "$MODEL_SPARK" ]]; then
+  MODEL="$MODEL_SPARK"
 fi
 
 # Mode-specific prompt selection; fallback to legacy key, then hardcoded defaults.
@@ -266,10 +274,24 @@ while true; do
     fi
   fi
 
+  ITER_TMP="$(mktemp)"
   set +e
-  "${CMD[@]}" "$PROMPT_TEXT" 2>&1 | tee -a "$LOG_FILE"
+  "${CMD[@]}" "$PROMPT_TEXT" 2>&1 | tee -a "$LOG_FILE" | tee "$ITER_TMP"
   status=$?
   set -e
+  if grep -qiE "You've hit your usage limit|state db missing rollout path|model_not_found|The requested model .* does not exist" "$ITER_TMP"; then
+    if [[ "$MODE" == "spark" && "$MODEL" != "$MODEL_BASE" && "$SPARK_MODEL_FALLBACK_ATTEMPTED" == "false" ]]; then
+      SPARK_MODEL_FALLBACK_ATTEMPTED="true"
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i spark model unavailable; falling back to model=$MODEL_BASE" | tee -a "$LOG_FILE"
+      MODEL="$MODEL_BASE"
+      rm -f "$ITER_TMP"
+      continue
+    fi
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i hard-stop-trigger matched terminal failure" | tee -a "$LOG_FILE"
+    rm -f "$ITER_TMP"
+    exit 1
+  fi
+  rm -f "$ITER_TMP"
 
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$i exit_status=$status" | tee -a "$LOG_FILE"
   sleep "$SLEEP_SECS"

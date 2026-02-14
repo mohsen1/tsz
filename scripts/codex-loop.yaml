@@ -1,4 +1,5 @@
 model: gpt-5.3-codex
+model_spark: gpt-5.3-codex-spark
 approval_mode: full-auto
 bypass_approvals_and_sandbox: true
 sleep_seconds: 2
