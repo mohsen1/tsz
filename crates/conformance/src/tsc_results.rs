@@ -4,6 +4,7 @@
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// File metadata for fast cache validation
@@ -23,6 +24,89 @@ pub struct TscResult {
 
     /// Error codes reported by TSC (sorted, unique)
     pub error_codes: Vec<u32>,
+
+    /// Diagnostic fingerprints with location and normalized message details.
+    ///
+    /// This enables richer mismatch tracking than code-only comparisons.
+    /// Defaults to empty for backward compatibility with older cache files.
+    #[serde(default)]
+    pub diagnostic_fingerprints: Vec<DiagnosticFingerprint>,
+}
+
+/// Stable diagnostic identity used for richer conformance comparisons.
+///
+/// `line` and `column` are 1-based when available, or 0 when unknown.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq)]
+pub struct DiagnosticFingerprint {
+    pub code: u32,
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
+    pub message_key: String,
+}
+
+impl DiagnosticFingerprint {
+    /// Build a fingerprint from raw diagnostic fields.
+    pub fn new(code: u32, file: String, line: u32, column: u32, message: &str) -> Self {
+        Self {
+            code,
+            file,
+            line,
+            column,
+            message_key: Self::normalize_message_key(message),
+        }
+    }
+
+    /// Best-effort message normalization to reduce noisy text differences.
+    fn normalize_message_key(message: &str) -> String {
+        let mut normalized = String::with_capacity(message.len());
+        let mut prev_space = false;
+        for ch in message.trim().chars() {
+            if ch.is_whitespace() {
+                if !prev_space {
+                    normalized.push(' ');
+                    prev_space = true;
+                }
+            } else {
+                normalized.push(ch);
+                prev_space = false;
+            }
+        }
+        normalized
+    }
+
+    /// Human-readable compact key for summaries.
+    pub fn display_key(&self) -> String {
+        let file = if self.file.is_empty() {
+            "<unknown>"
+        } else {
+            self.file.as_str()
+        };
+        format!(
+            "TS{} {}:{}:{} {}",
+            self.code, file, self.line, self.column, self.message_key
+        )
+    }
+}
+
+impl PartialEq for DiagnosticFingerprint {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.file == other.file
+            && self.line == other.line
+            && self.column == other.column
+            && self.message_key == other.message_key
+    }
+}
+
+impl Hash for DiagnosticFingerprint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.code.hash(state);
+        self.file.hash(state);
+        self.line.hash(state);
+        self.column.hash(state);
+        self.message_key.hash(state);
+    }
 }
 
 /// Test comparison result
@@ -40,6 +124,10 @@ pub enum TestResult {
         missing: Vec<u32>,
         /// Extra error codes (present in tsz but not TSC)
         extra: Vec<u32>,
+        /// Missing diagnostic fingerprints (present in TSC but not tsz)
+        missing_fingerprints: Vec<DiagnosticFingerprint>,
+        /// Extra diagnostic fingerprints (present in tsz but not TSC)
+        extra_fingerprints: Vec<DiagnosticFingerprint>,
         /// Resolved compiler options used
         options: std::collections::HashMap<String, String>,
     },
@@ -59,6 +147,8 @@ pub struct ErrorFrequency {
     /// Map of error code -> (missing count, extra count)
     /// DashMap provides lock-free concurrent access
     pub frequencies: DashMap<u32, (usize, usize)>,
+    /// Diagnostic fingerprint mismatch frequencies.
+    pub fingerprint_frequencies: DashMap<DiagnosticFingerprint, (usize, usize)>,
 }
 
 impl ErrorFrequency {
@@ -78,6 +168,22 @@ impl ErrorFrequency {
             .or_insert((0, 1));
     }
 
+    /// Record a missing fingerprint (thread-safe, no locking).
+    pub fn record_missing_fingerprint(&self, fingerprint: DiagnosticFingerprint) {
+        self.fingerprint_frequencies
+            .entry(fingerprint)
+            .and_modify(|(missing, _)| *missing += 1)
+            .or_insert((1, 0));
+    }
+
+    /// Record an extra fingerprint (thread-safe, no locking).
+    pub fn record_extra_fingerprint(&self, fingerprint: DiagnosticFingerprint) {
+        self.fingerprint_frequencies
+            .entry(fingerprint)
+            .and_modify(|(_, extra)| *extra += 1)
+            .or_insert((0, 1));
+    }
+
     /// Get top N error codes by total frequency
     pub fn top_errors(&self, n: usize) -> Vec<(u32, usize, usize)> {
         let mut errors: Vec<_> = self
@@ -89,6 +195,21 @@ impl ErrorFrequency {
             })
             .collect();
 
+        errors.sort_by_key(|(_, missing, extra)| *extra + *missing);
+        errors.reverse();
+        errors.into_iter().take(n).collect()
+    }
+
+    /// Get top N fingerprint mismatches by total frequency.
+    pub fn top_fingerprint_errors(&self, n: usize) -> Vec<(DiagnosticFingerprint, usize, usize)> {
+        let mut errors: Vec<_> = self
+            .fingerprint_frequencies
+            .iter()
+            .map(|entry| {
+                let (fingerprint, &(missing, extra)) = entry.pair();
+                (fingerprint.clone(), missing, extra)
+            })
+            .collect();
         errors.sort_by_key(|(_, missing, extra)| *extra + *missing);
         errors.reverse();
         errors.into_iter().take(n).collect()

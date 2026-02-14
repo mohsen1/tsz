@@ -1134,6 +1134,19 @@ impl QueryDatabase for QueryCache<'_> {
         type_id: TypeId,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
+        let trace_enabled = crate::query_trace::enabled();
+        let trace_query_id = if trace_enabled {
+            let query_id = crate::query_trace::next_query_id();
+            crate::query_trace::unary_start(
+                query_id,
+                "evaluate_type_with_options",
+                type_id,
+                no_unchecked_indexed_access,
+            );
+            Some(query_id)
+        } else {
+            None
+        };
         let key = (type_id, no_unchecked_indexed_access);
         // Handle poisoned locks gracefully
         let cached = match self.eval_cache.read() {
@@ -1142,6 +1155,9 @@ impl QueryDatabase for QueryCache<'_> {
         };
 
         if let Some(result) = cached {
+            if let Some(query_id) = trace_query_id {
+                crate::query_trace::unary_end(query_id, "evaluate_type_with_options", result, true);
+            }
             return result;
         }
 
@@ -1156,10 +1172,27 @@ impl QueryDatabase for QueryCache<'_> {
                 e.into_inner().insert(key, result);
             }
         }
+        if let Some(query_id) = trace_query_id {
+            crate::query_trace::unary_end(query_id, "evaluate_type_with_options", result, false);
+        }
         result
     }
 
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        let trace_enabled = crate::query_trace::enabled();
+        let trace_query_id = if trace_enabled {
+            let query_id = crate::query_trace::next_query_id();
+            crate::query_trace::relation_start(
+                query_id,
+                "is_subtype_of_with_flags",
+                source,
+                target,
+                flags,
+            );
+            Some(query_id)
+        } else {
+            None
+        };
         let key = RelationCacheKey::subtype(source, target, flags, 0);
         // Handle poisoned locks gracefully
         let cached = match self.subtype_cache.read() {
@@ -1168,6 +1201,14 @@ impl QueryDatabase for QueryCache<'_> {
         };
 
         if let Some(result) = cached {
+            if let Some(query_id) = trace_query_id {
+                crate::query_trace::relation_end(
+                    query_id,
+                    "is_subtype_of_with_flags",
+                    result,
+                    true,
+                );
+            }
             return result;
         }
 
@@ -1185,14 +1226,39 @@ impl QueryDatabase for QueryCache<'_> {
                 e.into_inner().insert(key, result);
             }
         }
+        if let Some(query_id) = trace_query_id {
+            crate::query_trace::relation_end(query_id, "is_subtype_of_with_flags", result, false);
+        }
         result
     }
 
     fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        let trace_enabled = crate::query_trace::enabled();
+        let trace_query_id = if trace_enabled {
+            let query_id = crate::query_trace::next_query_id();
+            crate::query_trace::relation_start(
+                query_id,
+                "is_assignable_to_with_flags",
+                source,
+                target,
+                flags,
+            );
+            Some(query_id)
+        } else {
+            None
+        };
         // Task A: Use passed flags instead of hardcoded 0,0
         let key = RelationCacheKey::assignability(source, target, flags, 0);
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
+            if let Some(query_id) = trace_query_id {
+                crate::query_trace::relation_end(
+                    query_id,
+                    "is_assignable_to_with_flags",
+                    result,
+                    true,
+                );
+            }
             return result;
         }
 
@@ -1208,6 +1274,14 @@ impl QueryDatabase for QueryCache<'_> {
         let result = checker.is_assignable(source, target);
 
         self.insert_cache(&self.assignability_cache, key, result);
+        if let Some(query_id) = trace_query_id {
+            crate::query_trace::relation_end(
+                query_id,
+                "is_assignable_to_with_flags",
+                result,
+                false,
+            );
+        }
         result
     }
 
