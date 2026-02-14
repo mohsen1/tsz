@@ -2570,6 +2570,31 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        // Match tsc's special-case for `await(...)` inside sync functions.
+        // In these contexts TypeScript treats this as an unresolved identifier use
+        // and reports TS2311 instead of await-context diagnostics.
+        if !self.ctx.in_async_context()
+            && self.ctx.function_depth > 0
+            && self.await_expression_uses_call_like_syntax(idx)
+        {
+            use crate::types::diagnostics::{
+                diagnostic_codes, diagnostic_messages, format_message,
+            };
+            if let Some((start, _)) = self.get_node_span(idx) {
+                let message = format_message(
+                    diagnostic_messages::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,
+                    &["await"],
+                );
+                self.error_at_position(
+                    start,
+                    5,
+                    &message,
+                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,
+                );
+            }
+            return TypeId::ANY;
+        }
+
         // Phase 6 Task 3: Propagate contextual type to await operand
         // If we have a contextual type T, transform it to T | PromiseLike<T>
         let prev_context = self.ctx.contextual_type;
@@ -2610,6 +2635,22 @@ impl<'a> CheckerState<'a> {
             }
         }
         current_type
+    }
+
+    fn await_expression_uses_call_like_syntax(&self, idx: NodeIndex) -> bool {
+        let Some((start, end)) = self.get_node_span(idx) else {
+            return false;
+        };
+        if end <= start {
+            return false;
+        }
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        source_file
+            .text
+            .get(start as usize..end as usize)
+            .is_some_and(|text| text.starts_with("await("))
     }
 
     /// Get PromiseLike<T> for a given type T.
