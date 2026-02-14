@@ -28,6 +28,17 @@ CHECKS = [
         {"exclude_dirs": {"query_boundaries", "tests"}},
     ),
     (
+        "Checker legacy surface must stay removed",
+        ROOT / "crates" / "tsz-checker" / "src",
+        re.compile(
+            r"\bmod\s+types\s*;"
+            r"|\bpub\s+mod\s+types\s*;"
+            r"|\bpub\s+mod\s+arena\s*;"
+            r"|\bpub\s+use\s+arena::TypeArena\b"
+        ),
+        {"exclude_dirs": {"tests"}},
+    ),
+    (
         "Checker boundary: direct TypeKey inspection outside query boundaries/tests",
         ROOT / "crates" / "tsz-checker",
         re.compile(r"^\s*(match|if let|if matches!|matches!\().*TypeKey::"),
@@ -141,6 +152,11 @@ MANIFEST_CHECKS = [
         "Binder manifest dependency freeze",
         ROOT / "crates" / "tsz-binder" / "Cargo.toml",
         re.compile(r"^\s*tsz-solver\s*=", re.MULTILINE),
+    ),
+    (
+        "Checker manifest: legacy type arena feature must stay removed",
+        ROOT / "crates" / "tsz-checker" / "Cargo.toml",
+        re.compile(r"^\s*legacy-type-arena\s*=", re.MULTILINE),
     ),
 ]
 
