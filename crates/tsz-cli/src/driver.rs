@@ -2489,8 +2489,8 @@ fn collect_diagnostics(
                 let is_js = is_js_file(Path::new(&file.file_name));
                 let has_ts_check_pragma = js_file_has_ts_check_pragma(file);
                 let has_ts_nocheck_pragma = js_file_has_ts_nocheck_pragma(file);
-                let should_filter_type_errors = is_js
-                    && (has_ts_nocheck_pragma || (!options.check_js && !has_ts_check_pragma));
+                let should_filter_type_errors =
+                    is_js && (has_ts_nocheck_pragma || (!options.check_js && !has_ts_check_pragma));
                 let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
 
                 if should_filter_type_errors {
@@ -2808,7 +2808,11 @@ fn js_file_has_ts_nocheck_pragma(file: &BoundFile) -> bool {
     let Some(source) = file.arena.get_source_file_at(file.source_file) else {
         return false;
     };
-    source.text.as_ref().to_ascii_lowercase().contains("@ts-nocheck")
+    source
+        .text
+        .as_ref()
+        .to_ascii_lowercase()
+        .contains("@ts-nocheck")
 }
 
 fn is_exported_symbol(symbols: &tsz::binder::SymbolArena, sym_id: SymbolId) -> bool {

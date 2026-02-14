@@ -2001,6 +2001,53 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check whether a class declaration merges with an interface declaration
+    /// that has an extends clause.
+    pub(crate) fn class_has_merged_interface_extends(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if class.name.is_none() {
+            return false;
+        }
+
+        let Some(name_node) = self.ctx.arena.get(class.name) else {
+            return false;
+        };
+        let Some(name_ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        let Some(sym_id) = self.ctx.binder.file_locals.get(&name_ident.escaped_text) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        for &decl_idx in &symbol.declarations {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
+                continue;
+            }
+            let Some(iface) = self.ctx.arena.get_interface(decl_node) else {
+                continue;
+            };
+            let Some(heritage_clauses) = &iface.heritage_clauses else {
+                continue;
+            };
+            if !heritage_clauses.nodes.is_empty() {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Check whether a class requires a super() call in its constructor.
     pub(crate) fn class_requires_super_call(
         &self,

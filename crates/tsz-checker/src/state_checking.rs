@@ -4330,6 +4330,28 @@ impl<'a> CheckerState<'a> {
         // Check strict property initialization (TS2564)
         self.check_property_initialization(stmt_idx, class, is_declared, is_abstract_class);
 
+        // TS2417 (classExtendsNull2): a class that extends `null` and merges with an
+        // interface that has heritage must report static-side incompatibility with `null`.
+        if self.class_extends_null(class) && self.class_has_merged_interface_extends(class) {
+            let class_name = if let Some(name_node) = self.ctx.arena.get(class.name) {
+                self.ctx
+                    .arena
+                    .get_identifier(name_node)
+                    .map(|id| id.escaped_text.clone())
+                    .unwrap_or_else(|| "<anonymous>".to_string())
+            } else {
+                "<anonymous>".to_string()
+            };
+            self.error_at_node(
+                class.name,
+                &format!(
+                    "Class static side 'typeof {}' incorrectly extends base class static side 'null'.",
+                    class_name
+                ),
+                diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
+            );
+        }
+
         // Check for property type compatibility with base class (error 2416)
         // Property type in derived class must be assignable to same property in base class
         self.check_property_inheritance_compatibility(stmt_idx, class);
