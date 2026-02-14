@@ -1,8 +1,6 @@
 // Copyright 2025 tsz authors. All rights reserved.
 // MIT License.
 
-#![allow(clippy::print_stderr)]
-
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
@@ -87,7 +85,7 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
                 if !args.force {
                     // Print diagnostics
                     for diag in &result.diagnostics {
-                        eprintln!("  {:?}", diag);
+                        warn!("  {:?}", diag);
                     }
                     return Ok(false);
                 }
@@ -107,9 +105,9 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
 
     // Print all diagnostics at the end
     if !all_diagnostics.is_empty() {
-        eprintln!("\n=== Diagnostics ===");
+        warn!("\n=== Diagnostics ===");
         for diag in &all_diagnostics {
-            eprintln!("{:?}", diag);
+            warn!("{:?}", diag);
         }
     }
 
