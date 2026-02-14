@@ -41,6 +41,7 @@ interface Config {
 interface TestCase {
   baselineFile: string;
   testPath: string | null;
+  sourceFileName: string | null;
   source: string;
   expectedJs: string | null;
   expectedDts: string | null;
@@ -61,6 +62,17 @@ interface TestResult {
   elapsed?: number;
   skipped?: boolean;
   timeout?: boolean;
+}
+
+function summarizeErrorMessage(message: string): string {
+  const normalized = message.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return 'Unknown error';
+  const tsDiag = lines.find(l => /\bTS\d{4}\b/.test(l));
+  if (tsDiag) return tsDiag;
+  const commandFailed = lines.find(l => l.startsWith('Command failed:'));
+  if (commandFailed) return commandFailed;
+  return lines[0];
 }
 
 interface CacheEntry {
@@ -309,6 +321,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     return {
       baselineFile,
       testPath: baseline.testPath,
+      sourceFileName: baseline.sourceFileName,
       source: baseline.source,
       expectedJs: baseline.js,
       expectedDts: baseline.dts,
@@ -354,6 +367,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       tszDts = cached.dtsOutput;
     } else {
       const transpileResult = await transpiler.transpile(testCase.source, testCase.target, testCase.module, {
+        sourceFileName: testCase.sourceFileName ?? undefined,
         declaration: emitDeclarations,
         alwaysStrict: testCase.alwaysStrict,
         sourceMap: testCase.sourceMap,
@@ -395,14 +409,15 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
     result.elapsed = Date.now() - start;
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : String(e);
+    const summarized = summarizeErrorMessage(errorMsg);
     result.timeout = errorMsg === 'TIMEOUT';
     if (!config.dtsOnly) {
       result.jsMatch = false;
-      result.jsError = result.timeout ? 'TIMEOUT' : errorMsg;
+      result.jsError = result.timeout ? 'TIMEOUT' : summarized;
     }
     if (!config.jsOnly) {
       result.dtsMatch = false;
-      result.dtsError = result.timeout ? 'TIMEOUT' : errorMsg;
+      result.dtsError = result.timeout ? 'TIMEOUT' : summarized;
     }
     result.elapsed = Date.now() - start;
   }

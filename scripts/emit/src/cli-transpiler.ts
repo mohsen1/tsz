@@ -122,11 +122,13 @@ export class CliTranspiler {
     source: string,
     target: number,
     module: number,
-    options: { declaration?: boolean; alwaysStrict?: boolean; sourceMap?: boolean; downlevelIteration?: boolean; noEmitHelpers?: boolean } = {}
+    options: { sourceFileName?: string; declaration?: boolean; alwaysStrict?: boolean; sourceMap?: boolean; downlevelIteration?: boolean; noEmitHelpers?: boolean } = {}
   ): Promise<TranspileResult> {
-    const { declaration = false, alwaysStrict = false, sourceMap = false, downlevelIteration = false, noEmitHelpers = false } = options;
+    const { sourceFileName, declaration = false, alwaysStrict = false, sourceMap = false, downlevelIteration = false, noEmitHelpers = false } = options;
     const testName = `test_${this.counter++}`;
-    const inputFile = path.join(this.tempDir, `${testName}.ts`);
+    const extMatch = sourceFileName?.match(/\.(ts|tsx|mts|cts)$/);
+    const inputExt = extMatch ? extMatch[0] : '.ts';
+    const inputFile = path.join(this.tempDir, `${testName}${inputExt}`);
 
     try {
       fs.writeFileSync(inputFile, source, 'utf-8');
@@ -147,24 +149,50 @@ export class CliTranspiler {
       if (sourceMap) args.push('--sourceMap');
       if (downlevelIteration) args.push('--downlevelIteration');
       if (noEmitHelpers) args.push('--noEmitHelpers');
-      args.push('--target', targetArg, '--module', moduleArg, inputFile);
+      const trailingArgs = ['--target', targetArg, '--module', moduleArg, inputFile];
+      args.push(...trailingArgs);
 
       // Run CLI asynchronously without shell overhead.
       // Use SIGKILL for timeout so the child can't ignore the signal and linger.
-      const promise = execFile(this.tszPath, args, {
-        cwd: this.tempDir,
-        encoding: 'utf-8',
-        timeout: this.timeoutMs,
-        killSignal: 'SIGKILL',
-      });
-      const child = promise.child;
-      this.activeChildren.add(child);
-      child.on('exit', () => this.activeChildren.delete(child));
-      await promise;
+      const runWithArgs = async (cliArgs: string[]) => {
+        const promise = execFile(this.tszPath, cliArgs, {
+          cwd: this.tempDir,
+          encoding: 'utf-8',
+          timeout: this.timeoutMs,
+          killSignal: 'SIGKILL',
+        });
+        const child = promise.child;
+        this.activeChildren.add(child);
+        child.on('exit', () => this.activeChildren.delete(child));
+        return await promise;
+      };
+
+      try {
+        await runWithArgs(args);
+      } catch (e) {
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        // Declaration mode can fail on unresolved imports in isolated baseline snippets.
+        // Retry with noCheck/noLib to still exercise declaration printer paths.
+        const shouldRetryDeclarationFastPath =
+          declaration &&
+          (errorMsg.includes('TS2307') || errorMsg.includes('TS2304'));
+        if (!shouldRetryDeclarationFastPath) {
+          throw e;
+        }
+        const retryArgs = ['--declaration', '--noCheck', '--noLib'];
+        if (alwaysStrict) retryArgs.push('--alwaysStrict', 'true');
+        if (sourceMap) retryArgs.push('--sourceMap');
+        if (downlevelIteration) retryArgs.push('--downlevelIteration');
+        if (noEmitHelpers) retryArgs.push('--noEmitHelpers');
+        retryArgs.push(...trailingArgs);
+        await runWithArgs(retryArgs);
+      }
 
       // Read output files
-      const jsFile = inputFile.replace('.ts', '.js');
-      const dtsFile = inputFile.replace('.ts', '.d.ts');
+      const sourceStem = inputFile.replace(/\.(ts|tsx|mts|cts)$/, '');
+      const jsExt = inputExt === '.tsx' ? '.jsx' : inputExt === '.mts' ? '.mjs' : inputExt === '.cts' ? '.cjs' : '.js';
+      const jsFile = `${sourceStem}${jsExt}`;
+      const dtsFile = `${sourceStem}.d.ts`;
 
       let js = '';
       let dts: string | null = null;
