@@ -94,10 +94,11 @@ pub mod type_literal_checker;
 pub mod type_node;
 pub mod type_parameter;
 pub mod type_query;
+#[cfg(feature = "legacy-type-arena")]
 mod types;
 pub mod union_type;
 pub mod diagnostics {
-    pub use crate::types::diagnostics::{
+    pub use tsz_common::diagnostics::{
         Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
         diagnostic_messages, format_message,
     };

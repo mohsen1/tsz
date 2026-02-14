@@ -12,7 +12,7 @@ use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
-fn check_with_no_unused_params(source: &str) -> Vec<crate::types::Diagnostic> {
+fn check_with_no_unused_params(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -35,7 +35,7 @@ fn check_with_no_unused_params(source: &str) -> Vec<crate::types::Diagnostic> {
     checker.ctx.diagnostics.clone()
 }
 
-fn check_with_no_unused_locals(source: &str) -> Vec<crate::types::Diagnostic> {
+fn check_with_no_unused_locals(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -58,11 +58,11 @@ fn check_with_no_unused_locals(source: &str) -> Vec<crate::types::Diagnostic> {
     checker.ctx.diagnostics.clone()
 }
 
-fn ts6133_count(diags: &[crate::types::Diagnostic]) -> usize {
+fn ts6133_count(diags: &[crate::diagnostics::Diagnostic]) -> usize {
     diags.iter().filter(|d| d.code == 6133).count()
 }
 
-fn ts6133_names(diags: &[crate::types::Diagnostic]) -> Vec<String> {
+fn ts6133_names(diags: &[crate::diagnostics::Diagnostic]) -> Vec<String> {
     diags
         .iter()
         .filter(|d| d.code == 6133)

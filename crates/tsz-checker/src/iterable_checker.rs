@@ -12,6 +12,7 @@
 //! This module extends CheckerState with methods for iterable/iterator protocol
 //! checking, providing cleaner APIs for iteration-related type operations.
 
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::iterable_checker::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, call_signatures_for_type,
     classify_async_iterable_type, classify_for_of_element_type, classify_full_iterable_type,
@@ -19,7 +20,6 @@ use crate::query_boundaries::iterable_checker::{
     union_members_for_type,
 };
 use crate::state::CheckerState;
-use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 

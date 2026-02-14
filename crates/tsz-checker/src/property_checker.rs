@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
         error_node: NodeIndex,
         object_type: tsz_solver::TypeId,
     ) -> bool {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let is_property_identifier = self
             .ctx
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
             && let Some(false) =
                 self.is_method_member_in_class_hierarchy(class_idx, property_name, is_static)
         {
-            use crate::types::diagnostics::format_message;
+            use crate::diagnostics::format_message;
             let message = format_message(
                 diagnostic_messages::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
                 &[property_name],
@@ -202,7 +202,7 @@ impl<'a> CheckerState<'a> {
         // Suppress this diagnostic in files with parse errors to avoid noise (e.g., [await] without operand).
         let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
         if !self.has_parse_errors() && !evaluator.is_valid_computed_property_name_type(expr_type) {
-            use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 name_idx,
                 diagnostic_messages::A_COMPUTED_PROPERTY_NAME_MUST_BE_OF_TYPE_STRING_NUMBER_SYMBOL_OR_ANY,

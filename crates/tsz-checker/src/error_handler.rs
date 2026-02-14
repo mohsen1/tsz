@@ -6,8 +6,8 @@
 //! The trait provides a consistent API for error reporting across the codebase,
 //! eliminating code duplication and making error emission more maintainable.
 
+use crate::diagnostics::{Diagnostic, DiagnosticCategory};
 use crate::state::CheckerState;
-use crate::types::diagnostics::{Diagnostic, DiagnosticCategory};
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
@@ -489,7 +489,7 @@ impl<'a> ErrorHandler for CheckerState<'a> {
     // =========================================================================
 
     fn emit_get_accessor_must_return(&mut self, idx: NodeIndex) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         match self.get_node_span(idx) {
             Some((start, end)) => {
@@ -501,7 +501,7 @@ impl<'a> ErrorHandler for CheckerState<'a> {
                     length,
                     message_text: diagnostic_messages::A_GET_ACCESSOR_MUST_RETURN_A_VALUE
                         .to_string(),
-                    category: crate::types::diagnostics::DiagnosticCategory::Error,
+                    category: crate::diagnostics::DiagnosticCategory::Error,
                     code: diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                     related_information: Vec::new(),
                 });

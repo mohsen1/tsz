@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         call: &tsz_parser::parser::node::CallExprData,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -146,7 +146,7 @@ impl<'a> CheckerState<'a> {
     /// - Validates re-exported members exist in source module
     /// - Checks for circular re-export chains
     pub(crate) fn check_export_module_specifier(&mut self, stmt_idx: NodeIndex) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -271,7 +271,7 @@ impl<'a> CheckerState<'a> {
         module_specifier_idx: NodeIndex,
         module_name: &str,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let Some(target_idx) = self.ctx.resolve_import_target(module_name) else {
             return;
@@ -322,7 +322,7 @@ impl<'a> CheckerState<'a> {
         export_decl: &tsz_parser::parser::node::ExportDeclData,
         module_name: &str,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_parser::parser::syntax_kind_ext;
 
         // Only validate named exports (not wildcard exports or declarations)

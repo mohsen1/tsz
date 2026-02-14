@@ -98,7 +98,7 @@ impl<'a> CheckerState<'a> {
                     TypeSymbolResolution::Type(sym_id) => self.type_reference_symbol_type(sym_id),
                     TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => {
                         if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
-                            use crate::types::diagnostics::diagnostic_codes;
+                            use crate::diagnostics::diagnostic_codes;
                             self.error_at_node_msg(
                                 qn.left,
                                 diagnostic_codes::CANNOT_FIND_NAMESPACE,
@@ -264,7 +264,7 @@ impl<'a> CheckerState<'a> {
             && !self.is_unresolved_import_symbol(qn.left)
             && let Some(ident) = self.ctx.arena.get_identifier(left_node)
         {
-            use crate::types::diagnostics::diagnostic_codes;
+            use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 qn.left,
                 diagnostic_codes::CANNOT_FIND_NAMESPACE,
@@ -845,7 +845,7 @@ impl<'a> CheckerState<'a> {
             if !seen_names.insert(name.clone()) {
                 self.error_at_node_msg(
                     data.name,
-                    crate::types::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
                     &[&name],
                 );
             }
@@ -903,7 +903,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         data.constraint,
                         &format!("Type parameter '{}' has a circular constraint.", name),
-                        crate::types::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+                        crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                     );
                     Some(TypeId::UNKNOWN)
                 } else {
@@ -927,7 +927,7 @@ impl<'a> CheckerState<'a> {
                     let constraint_str = self.format_type(constraint_type);
                     self.error_at_node_msg(
                         data.default,
-                        crate::types::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+                        crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                         &[&type_str, &constraint_str],
                     );
                 }
@@ -2407,7 +2407,7 @@ impl<'a> CheckerState<'a> {
                 // A type alias circularly references itself if it resolves to itself
                 // without structural wrapping (e.g., `type A = B; type B = A;`)
                 if self.is_direct_circular_reference(sym_id, alias_type, type_alias.type_node) {
-                    use crate::types::diagnostics::{
+                    use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
                     };
 
@@ -3220,7 +3220,7 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
         object_type: TypeId,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let class_name = self
             .get_class_name_from_type(object_type)
             .unwrap_or_else(|| "the class".to_string());
@@ -3241,7 +3241,7 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
         object_type: TypeId,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let type_string = self
             .get_class_name_from_type(object_type)
             .unwrap_or_else(|| "the type".to_string());

@@ -170,7 +170,7 @@ impl<'a> CheckerState<'a> {
         name_idx: NodeIndex,
         seen: &mut rustc_hash::FxHashSet<String>,
     ) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(name_idx) else {
@@ -262,7 +262,7 @@ impl<'a> CheckerState<'a> {
     /// ## Error TS1016:
     /// "A required parameter cannot follow an optional parameter."
     pub(crate) fn check_parameter_ordering(&mut self, parameters: &tsz_parser::parser::NodeList) {
-        use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let mut seen_optional = false;
 
@@ -311,7 +311,7 @@ impl<'a> CheckerState<'a> {
     /// ## Error TS2374:
     /// "A parameter property is only allowed in a constructor implementation."
     pub(crate) fn check_parameter_properties(&mut self, parameters: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         for &param_idx in parameters {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -414,7 +414,7 @@ impl<'a> CheckerState<'a> {
             if let Some(param_name) = self.get_parameter_name(param.name) {
                 let self_refs = self.collect_self_references(param.initializer, &param_name);
                 if !self_refs.is_empty() {
-                    use crate::types::diagnostics::diagnostic_codes;
+                    use crate::diagnostics::diagnostic_codes;
                     let msg = format!("Parameter '{}' cannot reference itself.", param_name);
                     for ref_node in self_refs {
                         self.error_at_node(
@@ -449,7 +449,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             ref_node,
                             &msg,
-                            crate::types::diagnostics::diagnostic_codes::PARAMETER_CANNOT_REFERENCE_IDENTIFIER_DECLARED_AFTER_IT,
+                            crate::diagnostics::diagnostic_codes::PARAMETER_CANNOT_REFERENCE_IDENTIFIER_DECLARED_AFTER_IT,
                         );
                     }
                 }
@@ -486,7 +486,7 @@ impl<'a> CheckerState<'a> {
     /// ## Error TS2370:
     /// "A rest parameter must be of an array type."
     pub(crate) fn check_rest_parameter_types(&mut self, parameters: &[NodeIndex]) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         for &param_idx in parameters {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {

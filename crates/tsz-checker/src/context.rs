@@ -12,8 +12,8 @@ use std::sync::Arc;
 use tracing::trace;
 
 use crate::control_flow::FlowGraph;
+use crate::diagnostics::Diagnostic;
 use crate::module_resolution::module_specifier_candidates;
-use crate::types::diagnostics::Diagnostic;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::def::{DefId, DefinitionStore};

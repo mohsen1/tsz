@@ -855,7 +855,7 @@ impl<'a> CheckerState<'a> {
         class_sym: SymbolId,
         is_private: bool,
     ) {
-        use crate::types::diagnostics::diagnostic_codes;
+        use crate::diagnostics::diagnostic_codes;
 
         let class_name = self.get_symbol_display_name(class_sym);
 

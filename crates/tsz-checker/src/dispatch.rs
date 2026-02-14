@@ -306,7 +306,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::Identifier as u16 => self.checker.get_type_of_identifier(idx),
             k if k == SyntaxKind::ThisKeyword as u16 => {
                 {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     // TS2331: 'this' cannot be referenced in a module or namespace body
                     if self.checker.is_this_in_namespace_body(idx) {
                         self.checker.error_at_node(
@@ -352,7 +352,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .is_some()
                 {
                     // TS2683: 'this' implicitly has type 'any'
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
                         idx,
                         diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
@@ -378,7 +378,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     < (tsz_common::common::ScriptTarget::ES2020 as u32)
                     && !self.checker.is_ambient_declaration(idx)
                 {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
                         idx,
                         diagnostic_messages::BIGINT_LITERALS_ARE_NOT_AVAILABLE_WHEN_TARGETING_LOWER_THAN_ES2020,
@@ -513,9 +513,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         let is_valid = evaluator.is_arithmetic_operand(operand_type);
 
                         if !is_valid {
-                            use crate::types::diagnostics::{
-                                diagnostic_codes, diagnostic_messages,
-                            };
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             self.checker.error_at_node(
                                 unary.operand,
                                 diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
@@ -898,7 +896,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
                 // TS8013: Non-null assertions can only be used in TypeScript files
                 if self.checker.is_js_file() {
-                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
                         idx,
                         diagnostic_messages::NON_NULL_ASSERTIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,

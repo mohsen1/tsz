@@ -15,8 +15,8 @@ use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
-use crate::solver::{TypeId, TypeInterner, Visibility, types::RelationCacheKey, types::TypeKey};
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
+use tsz_solver::{TypeId, TypeInterner, Visibility, types::RelationCacheKey, types::TypeKey};
 
 // =============================================================================
 // Basic Type Checker Tests
@@ -2155,7 +2155,7 @@ c.foo("ok");
 #[test]
 fn test_new_expression_infers_class_instance_type() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 class Foo {
@@ -2246,7 +2246,7 @@ const f = new Foo();
 #[test]
 fn test_new_expression_infers_parameter_properties() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 class Foo {
@@ -2318,7 +2318,7 @@ const f = new Foo(1, "x", 2);
 #[test]
 fn test_new_expression_infers_base_class_properties() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 class Base<T> {
@@ -2391,7 +2391,7 @@ const d = new Derived();
 #[test]
 fn test_new_expression_infers_generic_class_type_params() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 class Box<T> {
@@ -5337,13 +5337,13 @@ c.ro = "error: lhs of assignment can't be readonly";
 
 #[test]
 fn test_contextual_typing_for_function_parameters() {
-    use crate::solver::ContextualTypeContext;
+    use tsz_solver::ContextualTypeContext;
 
     // Test that ContextualTypeContext can extract parameter types from function types
     let types = TypeInterner::new();
 
     // Create a function type: (x: string, y: number) => boolean
-    use crate::solver::{FunctionShape, ParamInfo};
+    use tsz_solver::{FunctionShape, ParamInfo};
 
     let func_shape = FunctionShape {
         type_params: vec![],
@@ -5386,7 +5386,7 @@ fn test_contextual_typing_for_function_parameters() {
 fn test_contextual_typing_skips_this_parameter() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 function takesHandler(fn: (this: { value: number }, x: string) => void) {}
@@ -5534,13 +5534,13 @@ register((x) => {
 
 #[test]
 fn test_contextual_typing_for_object_properties() {
-    use crate::solver::ContextualTypeContext;
+    use tsz_solver::ContextualTypeContext;
 
     // Test that ContextualTypeContext can extract property types from object types
     let types = TypeInterner::new();
 
     // Create an object type: { name: string, age: number }
-    use crate::solver::PropertyInfo;
+    use tsz_solver::PropertyInfo;
 
     let obj_type = types.object(vec![
         PropertyInfo {
@@ -6202,8 +6202,8 @@ c.y;
 
 #[test]
 fn test_strict_null_checks_property_access() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-    use crate::solver::{PropertyInfo, TypeId, Visibility};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
     // Test property access on nullable types
     let types = TypeInterner::new();
@@ -6243,8 +6243,8 @@ fn test_strict_null_checks_property_access() {
 
 #[test]
 fn test_strict_null_checks_undefined_type() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-    use crate::solver::{PropertyInfo, TypeId, Visibility};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
     // Test property access on possibly undefined types
     let types = TypeInterner::new();
@@ -6282,8 +6282,8 @@ fn test_strict_null_checks_undefined_type() {
 
 #[test]
 fn test_strict_null_checks_both_null_and_undefined() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-    use crate::solver::{PropertyInfo, TypeId, TypeKey, Visibility};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::{PropertyInfo, TypeId, TypeKey, Visibility};
 
     // Test property access on type that is both null and undefined
     let types = TypeInterner::new();
@@ -6333,8 +6333,8 @@ fn test_strict_null_checks_both_null_and_undefined() {
 
 #[test]
 fn test_strict_null_checks_non_nullable_success() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-    use crate::solver::{PropertyInfo, TypeId, Visibility};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
     // Test that non-nullable types succeed normally
     let types = TypeInterner::new();
@@ -6367,7 +6367,7 @@ fn test_strict_null_checks_non_nullable_success() {
 
 #[test]
 fn test_strict_null_checks_null_only() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing property directly on null type
     let types = TypeInterner::new();
@@ -6511,7 +6511,7 @@ fn test_variable_self_reference_no_2403() {
 
 #[test]
 fn test_symbol_property_access_description() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing .description on symbol type
     let types = TypeInterner::new();
@@ -6540,7 +6540,7 @@ fn test_symbol_property_access_description() {
 
 #[test]
 fn test_symbol_property_access_methods() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing methods on symbol type
     let types = TypeInterner::new();
@@ -6576,7 +6576,7 @@ fn test_symbol_property_access_methods() {
 
 #[test]
 fn test_symbol_property_not_found() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing non-existent property on symbol type
     let types = TypeInterner::new();
@@ -6725,7 +6725,7 @@ const val = obj.x;
 #[test]
 fn test_checker_lowers_full_source_file() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 interface Foo { x: number; }
@@ -7352,7 +7352,7 @@ interface Derived extends Base {
 #[test]
 fn test_checker_cross_namespace_type_reference() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 namespace Outer {
@@ -7626,7 +7626,7 @@ namespace Models {
 #[test]
 fn test_checker_module_augmentation_merges_exports() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 namespace Outer {
@@ -7724,7 +7724,7 @@ type AliasB = Outer.B;
 #[test]
 fn test_checker_lower_generic_type_reference_applies_args() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 type Box<T> = { value: T };
@@ -7790,7 +7790,7 @@ type Alias = Box<string>;
 #[test]
 fn test_checker_lowers_generic_function_type_annotation_uses_type_params() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 const f: <T>(value: T) => T = (value) => value;
@@ -7862,7 +7862,7 @@ const f: <T>(value: T) => T = (value) => value;
 #[test]
 fn test_interface_generic_call_signature_uses_type_params() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 interface Callable {
@@ -7946,7 +7946,7 @@ interface Callable {
 #[test]
 fn test_interface_generic_construct_signature_uses_type_params() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 interface Factory {
@@ -8030,7 +8030,7 @@ interface Factory {
 #[test]
 fn test_checker_lowers_generic_function_declaration_uses_type_params() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 function id<T>(value: T): T {
@@ -8104,7 +8104,7 @@ function id<T>(value: T): T {
 #[test]
 fn test_function_return_type_inferred_from_body() {
     use crate::parser::ParserState;
-    use crate::solver::{TypeId, TypeKey};
+    use tsz_solver::{TypeId, TypeKey};
 
     let source = r#"
 function id(x: string) {
@@ -8150,7 +8150,7 @@ function id(x: string) {
 #[test]
 fn test_arrow_function_return_type_inferred_union() {
     use crate::parser::ParserState;
-    use crate::solver::{TypeId, TypeKey};
+    use tsz_solver::{TypeId, TypeKey};
 
     let source = r#"
 const f = (flag: boolean) => {
@@ -9427,7 +9427,7 @@ const value = arr[0];
 #[ignore = "TODO: Feature implementation in progress"]
 fn test_array_literal_best_common_type_prefers_supertype_element() {
     use crate::parser::ParserState;
-    use crate::solver::{PropertyInfo, TypeId, TypeKey};
+    use tsz_solver::{PropertyInfo, TypeId, TypeKey};
 
     let source = r#"
 const arr = [{ a: "x" }, { a: "y", b: 1 }];
@@ -9563,7 +9563,7 @@ const value = arr[0];
 #[test]
 fn test_checker_tuple_optional_element_access_includes_undefined() {
     use crate::parser::ParserState;
-    use crate::solver::{TypeId, TypeKey};
+    use tsz_solver::{TypeId, TypeKey};
 
     let source = r#"
 const tup: [string?] = ["a"];
@@ -9685,9 +9685,7 @@ const length = arr["length"];
     let is_number = length_type == TypeId::NUMBER
         || matches!(
             types.lookup(length_type),
-            Some(TypeKey::Intrinsic(
-                crate::solver::types::IntrinsicKind::Number
-            ))
+            Some(TypeKey::Intrinsic(tsz_solver::types::IntrinsicKind::Number))
         );
     assert!(
         is_number,
@@ -9946,7 +9944,7 @@ const value = obj[key];
 #[test]
 fn test_checker_lowers_element_access_literal_key_union() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 interface Foo { a: number; b: string; }
@@ -9994,7 +9992,7 @@ const value = obj[key];
 #[test]
 fn test_checker_element_access_union_key_cross_product() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 type A = { kind: "a"; val: 1 } | { kind: "b"; val: 2 };
@@ -10087,7 +10085,7 @@ const value = obj[key];
 #[test]
 fn test_checker_lowers_element_access_numeric_literal_union() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 const tup: [string, number, boolean] = ["a", 1, true];
@@ -10135,7 +10133,7 @@ const value = tup[idx];
 #[test]
 fn test_checker_lowers_element_access_mixed_literal_key_union() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 const arr: string[] = ["a"];
@@ -10226,7 +10224,7 @@ const value = obj["a"];
 #[test]
 fn test_checker_element_access_optional_chain_nullable_object() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 type Foo = { a: number };
@@ -10273,7 +10271,7 @@ const value = obj?.["a"];
 #[test]
 fn test_checker_property_access_optional_chain_nullable_object() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 type Foo = { a: number };
@@ -10320,7 +10318,7 @@ const value = obj?.a;
 #[test]
 fn test_checker_property_access_union_type() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     // Test union property access WITHOUT narrowing
     // Using declare prevents CFA narrowing on initialization
@@ -10369,7 +10367,7 @@ const value = obj.a;
 #[test]
 fn test_checker_namespace_merges_with_class_exports() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 class Foo {}
@@ -10432,7 +10430,7 @@ type Alias = Foo.Bar;
 #[test]
 fn test_checker_namespace_merges_with_class_exports_reverse_order() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 namespace Foo {
@@ -10633,7 +10631,7 @@ const sum = Merge.a + Merge.b;
 #[test]
 fn test_checker_namespace_merges_across_decls_type_access() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 namespace Merge {
@@ -10799,7 +10797,7 @@ const direct = Merge.extra;
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 function Merge() {}
@@ -10862,7 +10860,7 @@ type Alias = Merge.Extra;
 #[test]
 fn test_checker_namespace_merges_with_function_type_exports_reverse_order() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 namespace Merge {
@@ -11025,7 +11023,7 @@ const direct = Merge.extra;
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 enum Merge {
@@ -11090,7 +11088,7 @@ type Alias = Merge.Extra;
 #[test]
 fn test_checker_namespace_merges_with_enum_type_exports_reverse_order() {
     use crate::parser::ParserState;
-    use crate::solver::TypeKey;
+    use tsz_solver::TypeKey;
 
     let source = r#"
 namespace Merge {
@@ -11203,7 +11201,7 @@ const direct = Foo["value"];
 #[test]
 fn test_checker_interface_typeof_value_reference() {
     use crate::parser::ParserState;
-    use crate::solver::{SymbolRef, TypeKey};
+    use tsz_solver::{SymbolRef, TypeKey};
 
     let source = r#"
 const Foo = 1;
@@ -11335,7 +11333,7 @@ type T = typeof Alias.value;
 #[test]
 fn test_checker_typeof_with_type_arguments() {
     use crate::parser::ParserState;
-    use crate::solver::{SymbolRef, TypeKey};
+    use tsz_solver::{SymbolRef, TypeKey};
 
     let source = r#"
 const Foo = <T>(value: T) => value;
@@ -11424,8 +11422,8 @@ type B = A;
 
 #[test]
 fn test_index_signature_at_solver_level() {
-    use crate::solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
-    use crate::solver::{IndexSignature, ObjectFlags, ObjectShape};
+    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape};
 
     // Test that index signature resolution is tracked at solver level
     let types = TypeInterner::new();
@@ -29989,7 +29987,7 @@ fn test_iterator_for_of_number_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -30038,7 +30036,7 @@ fn test_iterator_for_of_array_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const arr: number[] = [1, 2, 3];
@@ -30087,7 +30085,7 @@ fn test_iterator_for_of_string_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const str: string = "hello";
@@ -30136,7 +30134,7 @@ fn test_iterator_spread_number_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -30183,7 +30181,7 @@ fn test_iterator_spread_array_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const arr1: number[] = [1, 2, 3];
@@ -30230,7 +30228,7 @@ fn test_iterator_spread_in_call_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 function foo(a: number, b: number): void {}
@@ -30278,7 +30276,7 @@ fn test_iterator_for_of_boolean_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const b: boolean = true;
@@ -30327,7 +30325,7 @@ fn test_iterator_for_of_tuple_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const tuple: [number, string, boolean] = [1, "hello", true];
@@ -30376,7 +30374,7 @@ fn test_iterator_array_destructuring_number_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -30423,7 +30421,7 @@ fn test_iterator_array_destructuring_array_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const arr: number[] = [1, 2, 3];
@@ -30474,7 +30472,7 @@ fn test_array_destructuring_number_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -30521,7 +30519,7 @@ fn test_array_destructuring_boolean_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const flag: boolean = true;
@@ -30568,7 +30566,7 @@ fn test_array_destructuring_object_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const obj = { a: 1, b: 2 };
@@ -30615,7 +30613,7 @@ fn test_array_destructuring_array_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const arr: number[] = [1, 2, 3];
@@ -30662,7 +30660,7 @@ fn test_array_destructuring_string_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const str: string = "hello";
@@ -30710,7 +30708,7 @@ fn test_array_destructuring_union_non_iterable_emits_ts2488() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const val: string | number = "hello";
@@ -30757,7 +30755,7 @@ fn test_array_destructuring_tuple_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const tuple: [number, string] = [1, "hello"];
@@ -30804,7 +30802,7 @@ fn test_array_destructuring_nested_pattern_iterability() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const num: number = 42;
@@ -30855,7 +30853,7 @@ fn test_async_iterator_for_await_of_number_emits_ts2504() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 async function test() {
@@ -30904,7 +30902,7 @@ fn test_async_iterator_for_await_of_array_no_error() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 async function test() {
@@ -30953,7 +30951,7 @@ fn test_async_iterator_for_await_of_boolean_emits_ts2504() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 async function test() {
@@ -31002,7 +31000,7 @@ fn test_async_iterator_for_await_of_object_emits_ts2504() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 async function test() {
@@ -31055,7 +31053,7 @@ fn test_required_param_after_optional_ts1016() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 function foo(a?: number, b: string) {
@@ -31109,7 +31107,7 @@ fn test_required_param_after_optional_arrow_ts1016() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 const fn = (a?: number, b: string) => a;
@@ -31161,7 +31159,7 @@ fn test_required_param_after_optional_method_ts1016() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 class Foo {
@@ -31217,7 +31215,7 @@ fn test_required_param_after_optional_constructor_ts1016() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 class Foo {
@@ -31271,7 +31269,7 @@ fn test_no_ts1016_for_proper_parameter_order() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 function foo(a: number, b?: string, c?: boolean) {
@@ -31325,7 +31323,7 @@ fn test_no_ts1016_for_param_with_default_after_optional() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 function foo(a?: number, b: string = "default") {
@@ -31379,7 +31377,7 @@ fn test_no_ts1016_for_rest_param_after_optional() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 function foo(a?: number, ...rest: string[]) {
@@ -31433,7 +31431,7 @@ fn test_multiple_required_params_after_optional_ts1016() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 function foo(a?: number, b: string, c: boolean) {
@@ -31490,7 +31488,7 @@ fn test_contextual_typing_destructuring_param_object() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 type Handler = (item: { x: number, y: string }) => void;
@@ -31545,7 +31543,7 @@ fn test_contextual_typing_destructuring_param_array() {
     use crate::binder::BinderState;
     use crate::checker::state::CheckerState;
     use crate::parser::ParserState;
-    use crate::solver::TypeInterner;
+    use tsz_solver::TypeInterner;
 
     let source = r#"
 type Handler = (item: [number, string]) => void;

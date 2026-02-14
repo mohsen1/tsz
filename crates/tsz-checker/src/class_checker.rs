@@ -10,11 +10,11 @@
 //! This module extends CheckerState with class/interface-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
+use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
 };
 use crate::state::CheckerState;
-use crate::types::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;

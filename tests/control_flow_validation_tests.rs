@@ -5,8 +5,8 @@
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
-use crate::solver::TypeInterner;
 use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
+use tsz_solver::TypeInterner;
 
 #[test]
 fn test_break_at_top_level_emits_ts1105() {
