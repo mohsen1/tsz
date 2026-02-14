@@ -2459,7 +2459,23 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types.contextual_property_type(ctx_type, &name);
                     }
 
+                    // If no explicit ThisType marker exists, use the object literal's
+                    // contextual type as `this` inside method bodies.
+                    let mut pushed_contextual_this = false;
+                    if marker_this_type.is_none()
+                        && self.current_this_type().is_none()
+                        && let Some(ctx_type) = prev_context
+                    {
+                        let ctx_type = self.evaluate_contextual_type(ctx_type);
+                        self.ctx.this_type_stack.push(ctx_type);
+                        pushed_contextual_this = true;
+                    }
+
                     let method_type = self.get_type_of_function(elem_idx);
+
+                    if pushed_contextual_this {
+                        self.ctx.this_type_stack.pop();
+                    }
 
                     // Restore context
                     self.ctx.contextual_type = prev_context;
