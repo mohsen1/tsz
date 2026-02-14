@@ -945,6 +945,7 @@ impl<'a> CheckerState<'a> {
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
         use tsz_binder::lib_loader;
         use tsz_parser::parser::node_flags;
+        use tsz_parser::parser::syntax_kind_ext;
 
         let is_primitive_type_keyword = matches!(
             name,
@@ -993,6 +994,22 @@ impl<'a> CheckerState<'a> {
         {
             self.error_type_only_value_at(name, idx);
             return;
+        }
+
+        // In `import x = <expr>` module reference position, unresolved names should
+        // report namespace/module diagnostics (TS2503/TS2307), not TS2304.
+        let mut cur = idx;
+        while let Some(ext) = self.ctx.arena.get_extended(cur) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent)
+                && parent_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
+                return;
+            }
+            cur = parent;
         }
 
         // Skip TS2304 for identifiers that are clearly not valid names.
