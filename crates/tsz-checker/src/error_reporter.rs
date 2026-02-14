@@ -1697,7 +1697,7 @@ impl<'a> CheckerState<'a> {
         candidate: &str,
         name_len: usize,
         maximum_length_difference: usize,
-        best_distance: &mut usize,
+        best_distance: &mut f64,
         best_candidate: &mut Option<String>,
     ) {
         if candidate == name {
@@ -1711,25 +1711,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc: for short names (<3), only suggest if differs by case
-        if name_len < 3 && candidate.to_lowercase() != name.to_lowercase() {
+        // tsc: for short candidate names (<3), only suggest if differs by case
+        if candidate_len < 3 && candidate.to_lowercase() != name.to_lowercase() {
             return;
         }
 
-        // Case-insensitive exact match is distance 1
-        if candidate.to_lowercase() == name.to_lowercase() {
-            let distance = 1;
+        if let Some(distance) = Self::levenshtein_with_max(name, candidate, *best_distance - 0.1) {
             if distance < *best_distance {
                 *best_distance = distance;
                 *best_candidate = Some(candidate.to_string());
             }
-            return;
-        }
-
-        let distance = Self::levenshtein_distance(name, candidate);
-        if distance < *best_distance {
-            *best_distance = distance;
-            *best_candidate = Some(candidate.to_string());
         }
     }
 
@@ -1754,7 +1745,7 @@ impl<'a> CheckerState<'a> {
             2
         };
         // tsc: initial bestDistance = floor(name.length * 0.4) + 1
-        let mut best_distance = name_len * 4 / 10 + 1;
+        let mut best_distance = (name_len * 4 / 10 + 1) as f64;
         let mut best_candidate: Option<String> = None;
 
         for candidate in visible_names {
@@ -1795,7 +1786,11 @@ impl<'a> CheckerState<'a> {
         best_candidate.map(|c| vec![c])
     }
 
-    /// Calculate Levenshtein distance between two strings (case-sensitive, matching tsc).
+    fn chars_equal_ignore_case(a: char, b: char) -> bool {
+        a.to_lowercase().eq(b.to_lowercase())
+    }
+
+    /// Calculate Levenshtein distance between two strings.
     fn levenshtein_distance(a: &str, b: &str) -> usize {
         let a_chars: Vec<char> = a.chars().collect();
         let b_chars: Vec<char> = b.chars().collect();
@@ -1830,6 +1825,81 @@ impl<'a> CheckerState<'a> {
         }
 
         prev[b_len]
+    }
+
+    /// Levenshtein distance with threshold pruning, matching tsc's behavior.
+    /// Case-only substitutions are cheaper than other substitutions.
+    fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
+        let s1_chars: Vec<char> = s1.chars().collect();
+        let s2_chars: Vec<char> = s2.chars().collect();
+
+        if s1_chars.is_empty() {
+            let dist = s2_chars.len() as f64;
+            return (dist <= max).then_some(dist);
+        }
+        if s2_chars.is_empty() {
+            let dist = s1_chars.len() as f64;
+            return (dist <= max).then_some(dist);
+        }
+
+        let mut previous = vec![0.0; s2_chars.len() + 1];
+        let mut current = vec![0.0; s2_chars.len() + 1];
+        let big = max + 0.01;
+
+        for (i, value) in previous.iter_mut().enumerate() {
+            *value = i as f64;
+        }
+
+        for i in 1..=s1_chars.len() {
+            let c1 = s1_chars[i - 1];
+            let min_j = if (i as f64) > max {
+                ((i as f64) - max).ceil() as usize
+            } else {
+                1
+            };
+            let max_j = if (s2_chars.len() as f64) > (max + i as f64) {
+                (max + i as f64).floor() as usize
+            } else {
+                s2_chars.len()
+            };
+
+            current[0] = i as f64;
+            let mut col_min = i as f64;
+
+            for value in current.iter_mut().take(min_j).skip(1) {
+                *value = big;
+            }
+
+            for j in min_j..=max_j {
+                let substitution_distance = if Self::chars_equal_ignore_case(c1, s2_chars[j - 1]) {
+                    previous[j - 1] + 0.1
+                } else {
+                    previous[j - 1] + 2.0
+                };
+                let dist = if c1 == s2_chars[j - 1] {
+                    previous[j - 1]
+                } else {
+                    (previous[j] + 1.0)
+                        .min(current[j - 1] + 1.0)
+                        .min(substitution_distance)
+                };
+                current[j] = dist;
+                col_min = col_min.min(dist);
+            }
+
+            for value in current.iter_mut().take(s2_chars.len() + 1).skip(max_j + 1) {
+                *value = big;
+            }
+
+            if col_min > max {
+                return None;
+            }
+
+            std::mem::swap(&mut previous, &mut current);
+        }
+
+        let result = previous[s2_chars.len()];
+        (result <= max).then_some(result)
     }
 
     // =========================================================================
