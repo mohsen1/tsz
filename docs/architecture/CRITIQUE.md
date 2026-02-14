@@ -485,6 +485,9 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Migrated `state_checking_members` missing-name type-parameter scope construction away from direct `intern(TypeKey::TypeParameter(...))` calls to solver constructor API (`types.type_param(...)`).
   * Extended checker architecture guard coverage so `state_checking_members` is explicitly checked for `TypeKey::TypeParameter` regressions.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Migrated `control_flow_narrowing` ArrayBuffer predicate construction away from direct `intern(TypeKey::Lazy(...))` calls to solver constructor API (`types.lazy(...)`).
+  * Extended checker architecture guard coverage so `control_flow_narrowing` is explicitly checked for `TypeKey::Lazy` regression on this path.
 * **Remaining for Milestone 2:**
   * Migrate remaining checker `TypeKey` construction/import sites.
   * Add CI guard that fails on checker `TypeKey` imports/usages.
