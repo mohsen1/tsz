@@ -2562,6 +2562,14 @@ impl TypeInterner {
         self.intern(TypeKey::Infer(info))
     }
 
+    pub fn bound_parameter(&self, index: u32) -> TypeId {
+        self.intern(TypeKey::BoundParameter(index))
+    }
+
+    pub fn recursive(&self, depth: u32) -> TypeId {
+        self.intern(TypeKey::Recursive(depth))
+    }
+
     /// Wrap a type in a KeyOf marker.
     pub fn keyof(&self, inner: TypeId) -> TypeId {
         self.intern(TypeKey::KeyOf(inner))
