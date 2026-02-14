@@ -5,7 +5,7 @@
 use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
-use tsz::diagnostics::{Diagnostic, DiagnosticSeverity};
+use tsz::diagnostics::Diagnostic;
 use tsz::span::Span;
 
 /// Result of compiling a test file
@@ -201,8 +201,7 @@ pub fn parse_tsz_output(
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}\n{}", stdout, stderr);
     let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
-    let diagnostics = parse_diagnostics_from_text(&combined);
-    let mut error_codes = extract_error_codes(&diagnostics);
+    let mut error_codes = parse_error_codes_from_text(&combined);
     const TS5110: u32 = 5110;
     if !error_codes.contains(&TS5110) {
         if let (Some(module_resolution), Some(module)) =
@@ -315,6 +314,50 @@ fn parse_diagnostic_fingerprints_from_text(
     });
     fingerprints.dedup();
     fingerprints
+}
+
+fn parse_diagnostics_from_text(text: &str) -> Vec<Diagnostic> {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
+            .expect("valid regex")
+    });
+    static DIAG_NO_POS_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
+
+    let mut diagnostics = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(caps) = DIAG_WITH_POS_RE.captures(line) {
+            if let Some(code) = caps
+                .name("code")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+            {
+                let file = caps.name("file").map(|m| m.as_str()).unwrap_or_default();
+                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                diagnostics.push(Diagnostic::error(file, Span::dummy(), message, code));
+            }
+            continue;
+        }
+
+        if let Some(caps) = DIAG_NO_POS_RE.captures(line) {
+            if let Some(code) = caps
+                .name("code")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+            {
+                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                diagnostics.push(Diagnostic::error("", Span::dummy(), message, code));
+            }
+        }
+    }
+
+    diagnostics
 }
 
 fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
@@ -614,20 +657,23 @@ fn copy_tsconfig_to_root_if_needed(
     Ok(())
 }
 
-/// Extract error codes from diagnostics
-fn extract_error_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
+fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static DIAG_CODE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\berror\s+TS(?P<code>\d+):").expect("valid regex"));
+
     let mut codes = Vec::new();
-
-    for diag in diagnostics {
-        // Only collect errors, not warnings or suggestions
-        if diag.severity != DiagnosticSeverity::Error {
+    for caps in DIAG_CODE_RE.captures_iter(text) {
+        let Some(code) = caps
+            .name("code")
+            .and_then(|m| m.as_str().parse::<u32>().ok())
+        else {
             continue;
-        }
-
-        // The code field already contains the numeric error code
-        codes.push(diag.code);
+        };
+        codes.push(code);
     }
-
     codes
 }
 

@@ -364,7 +364,10 @@ impl<'a> Printer<'a> {
 
         // Push temp scope for function body - each function gets fresh temp variables
         self.push_temp_scope();
+        let prev_in_generator = self.ctx.flags.in_generator;
+        self.ctx.flags.in_generator = func.asterisk_token;
         self.emit(func.body);
+        self.ctx.flags.in_generator = prev_in_generator;
         self.pop_temp_scope();
     }
 

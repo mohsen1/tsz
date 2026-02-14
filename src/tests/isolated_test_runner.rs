@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 #![allow(clippy::print_stderr)]
 //! Isolated Test Runner - Process-based test execution with resource limits
 //!

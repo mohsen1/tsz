@@ -1459,6 +1459,11 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
         use tsz_parser::parser::node_flags;
 
+        // Declarations inside .d.ts files are ambient by definition.
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
         let mut current = var_idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current) {
@@ -1606,7 +1611,6 @@ impl<'a> CheckerState<'a> {
                 | "ReadonlySet"
                 // Promise types
                 | "Promise"
-                | "PromiseLike"
                 | "PromiseConstructor"
                 | "PromiseConstructorLike"
                 | "Awaited"
@@ -2459,6 +2463,32 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Collect interface type parameter names in declaration order.
+    fn interface_type_parameter_names(&self, decl_idx: NodeIndex) -> Option<Vec<String>> {
+        let node = self.ctx.arena.get(decl_idx)?;
+        let interface = self.ctx.arena.get_interface(node)?;
+        let list = interface.type_parameters.as_ref()?;
+
+        let mut names = Vec::with_capacity(list.nodes.len());
+        for &param_idx in &list.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return None;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                return None;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                return None;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                return None;
+            };
+            names.push(self.ctx.arena.resolve_identifier_text(ident).to_string());
+        }
+
+        Some(names)
+    }
+
     /// Verify that a declaration node actually has a name matching the expected symbol name.
     /// This is used to filter out false matches when lib declarations' NodeIndex values
     /// overlap with user arena indices and point to unrelated user nodes.
@@ -3083,6 +3113,34 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // TS2428: interface merges must have identical type parameters.
+            let interface_decls: Vec<NodeIndex> = declarations
+                .iter()
+                .filter(|(_, flags)| (flags & symbol_flags::INTERFACE) != 0)
+                .map(|(decl_idx, _)| *decl_idx)
+                .collect();
+            if interface_decls.len() > 1 {
+                let baseline = self.interface_type_parameter_names(interface_decls[0]);
+                let mismatch = interface_decls[1..]
+                    .iter()
+                    .any(|&decl_idx| self.interface_type_parameter_names(decl_idx) != baseline);
+                if mismatch {
+                    let message = format_message(
+                        diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                        &[&symbol.escaped_name],
+                    );
+                    for decl_idx in interface_decls {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                        );
+                    }
+                }
+            }
+
             self.check_merged_enum_declaration_diagnostics(&declarations);
 
             let mut conflicts = FxHashSet::default();
@@ -3561,130 +3619,6 @@ impl<'a> CheckerState<'a> {
                 if conflicts.contains(&decl_idx) {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                     self.error_at_node(error_node, &message, code);
-                }
-            }
-        }
-    }
-
-    /// Check that all interface declarations with the same name have identical type parameters (TS2428).
-    ///
-    /// TypeScript requires that when multiple interface declarations merge, they must have
-    /// the same type parameter names in the same order.
-    #[allow(dead_code)] // TODO: Re-enable after fixing binder scope merging bug
-    pub(crate) fn check_interface_type_parameters(&mut self) {
-        use crate::types::diagnostics::diagnostic_codes;
-        use rustc_hash::FxHashSet;
-
-        // Collect all interface symbols
-        let mut interface_symbols = FxHashSet::default();
-        if !self.ctx.binder.scopes.is_empty() {
-            for scope in &self.ctx.binder.scopes {
-                for (_, &sym_id) in scope.table.iter() {
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        if symbol.flags & symbol_flags::INTERFACE != 0 {
-                            interface_symbols.insert(sym_id);
-                        }
-                    }
-                }
-            }
-        } else {
-            for (_, &sym_id) in self.ctx.binder.file_locals.iter() {
-                if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                    if symbol.flags & symbol_flags::INTERFACE != 0 {
-                        interface_symbols.insert(sym_id);
-                    }
-                }
-            }
-        }
-
-        // Check each interface symbol
-        for sym_id in interface_symbols {
-            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                continue;
-            };
-
-            if symbol.declarations.len() < 2 {
-                continue; // Nothing to validate with single declaration
-            }
-
-            // Get type parameter names from the first declaration
-            let first_decl = symbol.declarations[0];
-            let Some(first_node) = self.ctx.arena.get(first_decl) else {
-                continue;
-            };
-            let Some(first_interface) = self.ctx.arena.get_interface(first_node) else {
-                continue;
-            };
-
-            let first_param_names: Vec<String> = first_interface
-                .type_parameters
-                .as_ref()
-                .map(|params| {
-                    params
-                        .nodes
-                        .iter()
-                        .filter_map(|&param_idx| {
-                            self.ctx
-                                .arena
-                                .get(param_idx)
-                                .and_then(|param_node| {
-                                    self.ctx.arena.get_type_parameter(param_node)
-                                })
-                                .and_then(|param_data| self.ctx.arena.get(param_data.name))
-                                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                                .map(|id_data| id_data.escaped_text.clone())
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            // Check if ANY subsequent declarations differ from the first
-            let has_mismatch = symbol.declarations[1..].iter().any(|&decl_idx| {
-                let Some(node) = self.ctx.arena.get(decl_idx) else {
-                    return false;
-                };
-                let Some(interface) = self.ctx.arena.get_interface(node) else {
-                    return false;
-                };
-
-                let param_names: Vec<String> = interface
-                    .type_parameters
-                    .as_ref()
-                    .map(|params| {
-                        params
-                            .nodes
-                            .iter()
-                            .filter_map(|&param_idx| {
-                                self.ctx
-                                    .arena
-                                    .get(param_idx)
-                                    .and_then(|param_node| {
-                                        self.ctx.arena.get_type_parameter(param_node)
-                                    })
-                                    .and_then(|param_data| self.ctx.arena.get(param_data.name))
-                                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                                    .map(|id_data| id_data.escaped_text.clone())
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                // Check if type parameter lists differ
-                first_param_names.len() != param_names.len()
-                    || !first_param_names
-                        .iter()
-                        .zip(&param_names)
-                        .all(|(a, b)| a == b)
-            });
-
-            // If there's a mismatch, emit TS2428 on ALL declarations
-            if has_mismatch {
-                for &decl_idx in &symbol.declarations {
-                    self.error_at_node_msg(
-                        decl_idx,
-                        diagnostic_codes::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
-                        &[&symbol.escaped_name],
-                    );
                 }
             }
         }

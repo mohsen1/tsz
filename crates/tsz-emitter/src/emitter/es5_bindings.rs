@@ -378,6 +378,16 @@ impl<'a> Printer<'a> {
             let (effective_count, has_rest) = self.count_effective_bindings(pattern_node);
             if effective_count == 1
                 && !has_rest
+                && self.emit_single_object_binding_inline_simple(
+                    pattern_node,
+                    decl.initializer,
+                    first,
+                )
+            {
+                return;
+            }
+            if effective_count == 1
+                && !has_rest
                 && self.emit_single_array_binding_inline(pattern_node, decl.initializer, first)
             {
                 return;
@@ -406,6 +416,93 @@ impl<'a> Printer<'a> {
 
             self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
         }
+    }
+
+    // ES5 parity: for a single object binding with an identifier key, inline source access.
+    // Example: var { x } = { x: 1 } -> var x = { x: 1 }.x
+    // Default initializer still uses a value temp:
+    // var { z = "" } = { z: undefined } -> var _a = { z: undefined }.z, z = _a === void 0 ? "" : _a
+    fn emit_single_object_binding_inline_simple(
+        &mut self,
+        pattern_node: &Node,
+        initializer: NodeIndex,
+        first: &mut bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+
+        let mut elems = pattern
+            .elements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|n| !n.is_none());
+        let Some(elem_idx) = elems.next() else {
+            return false;
+        };
+        if elems.next().is_some() {
+            return false;
+        }
+
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return false;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return false;
+        };
+        if elem.dot_dot_dot_token
+            || self.is_binding_pattern(elem.name)
+            || !self.has_identifier_text(elem.name)
+        {
+            return false;
+        }
+
+        let key_idx = if !elem.property_name.is_none() {
+            elem.property_name
+        } else {
+            elem.name
+        };
+        let Some(key_node) = self.arena.get(key_idx) else {
+            return false;
+        };
+        if key_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let key_text = self.get_identifier_text(key_idx);
+
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+
+        if elem.initializer.is_none() {
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.emit(initializer);
+            self.write(".");
+            self.write(&key_text);
+        } else {
+            let value_name = self.get_temp_var_name();
+            self.write(&value_name);
+            self.write(" = ");
+            self.emit(initializer);
+            self.write(".");
+            self.write(&key_text);
+            self.write(", ");
+            self.write_identifier_text(elem.name);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(elem.initializer);
+            self.write(" : ");
+            self.write(&value_name);
+        }
+
+        true
     }
 
     fn emit_es5_destructuring_from_value(

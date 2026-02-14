@@ -110,6 +110,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(name)` if the identifier refers to a const, `None` otherwise.
     fn get_const_variable_name(&self, ident_idx: NodeIndex) -> Option<String> {
+        let ident_idx = self.unwrap_assignment_target_for_symbol(ident_idx);
         let node = self.ctx.arena.get(ident_idx)?;
         if node.kind != SyntaxKind::Identifier as u16 {
             return None;
@@ -117,12 +118,11 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = ident.escaped_text.clone();
 
-        let sym_id = self.resolve_identifier_symbol_no_mark(ident_idx)?;
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, ident_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-
-        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0 {
-            return None;
-        }
 
         let value_decl = symbol.value_declaration;
         if value_decl.is_none() {
@@ -146,6 +146,46 @@ impl<'a> CheckerState<'a> {
             Some(name)
         } else {
             None
+        }
+    }
+
+    /// Strip wrappers that preserve assignment target identity for symbol checks.
+    ///
+    /// Examples:
+    /// - `(x)` -> `x`
+    /// - `x!` -> `x`
+    /// - `(x as T)` -> `x`
+    /// - `(x satisfies T)` -> `x`
+    fn unwrap_assignment_target_for_symbol(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    idx = paren.expression;
+                    continue;
+                }
+                return idx;
+            }
+            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+                if let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                    idx = unary.expression;
+                    continue;
+                }
+                return idx;
+            }
+            if node.kind == syntax_kind_ext::TYPE_ASSERTION
+                || node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            {
+                if let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
+                    idx = assertion.expression;
+                    continue;
+                }
+                return idx;
+            }
+            return idx;
         }
     }
 
@@ -357,6 +397,7 @@ impl<'a> CheckerState<'a> {
             if should_check_iterability {
                 self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
             }
+            self.check_tuple_destructuring_bounds(left_idx, right_type);
         }
 
         let is_readonly = if !is_const {
@@ -430,6 +471,53 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
         );
         true
+    }
+
+    fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {
+        let rhs = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, right_type);
+        let Some(tuple_elements) =
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rhs)
+        else {
+            return;
+        };
+
+        let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
+        if has_rest_tail {
+            return;
+        }
+
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return;
+        };
+        let Some(array_lit) = self.ctx.arena.get_literal_expr(left_node) else {
+            return;
+        };
+
+        for (index, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
+            if index < tuple_elements.len() || element_idx.is_none() {
+                continue;
+            }
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                return;
+            }
+
+            self.error_at_node(
+                element_idx,
+                &format!(
+                    "Tuple type of length '{}' has no element at index '{}'.",
+                    tuple_elements.len(),
+                    index
+                ),
+                diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+            );
+            return;
+        }
     }
 
     // =========================================================================

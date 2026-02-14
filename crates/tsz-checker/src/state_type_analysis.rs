@@ -520,35 +520,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Helper to resolve an identifier as a type reference (for qualified name left sides).
-    #[allow(dead_code)]
-    pub(crate) fn get_type_from_type_reference_by_name(&mut self, idx: NodeIndex) -> TypeId {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-
-        if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            let name = &ident.escaped_text;
-
-            if let TypeSymbolResolution::Type(sym_id) =
-                self.resolve_identifier_symbol_in_type_position(idx)
-            {
-                // Reference tracking is handled by resolve_identifier_symbol_in_type_position wrapper
-                return self.type_reference_symbol_type(sym_id);
-            }
-
-            // Not found - but suppress TS2304 if this is an unresolved import
-            // (TS2307 was already emitted for the import statement)
-            if self.is_unresolved_import_symbol(idx) {
-                return TypeId::ANY;
-            }
-            self.error_cannot_find_name_at(name, idx);
-            return TypeId::ERROR;
-        }
-
-        TypeId::ERROR // Not an identifier - propagate error
-    }
-
     /// Get type from a union type node (A | B).
     ///
     /// Parses a union type expression and creates a Union type with all members.

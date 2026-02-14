@@ -161,11 +161,6 @@ impl<'a> CheckerState<'a> {
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
-            // Check interface type parameters (TS2428)
-            // TODO: Re-enable after fixing binder bug where symbols from different scopes
-            // (e.g. file-scope and namespace-scope) get incorrectly merged into one symbol
-            // self.check_interface_type_parameters();
-
             // Check for missing global types (2318)
             // Emits errors at file start for essential types when libs are not loaded
             self.check_missing_global_types();
@@ -2068,7 +2063,7 @@ impl<'a> CheckerState<'a> {
                                 .or_else(|| elems.last())
                                 .map(|e| e.type_id)
                                 .unwrap_or(TypeId::ANY);
-                            self.ctx.types.array(rest_elem)
+                            self.rest_binding_array_type(rest_elem)
                         } else {
                             continue;
                         };
@@ -2109,22 +2104,101 @@ impl<'a> CheckerState<'a> {
                     } else {
                         TypeId::ANY
                     };
-                return self.ctx.types.array(elem_type);
+                return self.rest_binding_array_type(elem_type);
             }
 
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
                 elem
             } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                elems
-                    .get(element_index)
-                    .map(|e| e.type_id)
-                    .unwrap_or(TypeId::ANY)
+                if let Some(e) = elems.get(element_index) {
+                    e.type_id
+                } else {
+                    let has_rest_tail = elems.last().is_some_and(|element| element.rest);
+                    if !has_rest_tail {
+                        self.error_at_node(
+                            element_data.name,
+                            &format!(
+                                "Tuple type of length '{}' has no element at index '{}'.",
+                                elems.len(),
+                                element_index
+                            ),
+                            crate::types::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                        );
+                    }
+                    TypeId::ANY
+                }
             } else {
                 TypeId::ANY
             };
         }
 
         // Get the property name or index
+        if !element_data.property_name.is_none() {
+            // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
+            // check index signatures when the key is not a simple identifier key.
+            // This aligns with TS2537 behavior for destructuring from `{}`.
+            let computed_expr = self
+                .ctx
+                .arena
+                .get(element_data.property_name)
+                .and_then(|prop_node| self.ctx.arena.get_computed_property(prop_node))
+                .map(|computed| computed.expression);
+            let computed_is_identifier = computed_expr
+                .and_then(|expr_idx| {
+                    self.ctx
+                        .arena
+                        .get(expr_idx)
+                        .and_then(|expr_node| self.ctx.arena.get_identifier(expr_node))
+                })
+                .is_some();
+
+            if !computed_is_identifier {
+                let key_type = computed_expr
+                    .map(|expr_idx| self.get_type_of_node(expr_idx))
+                    .unwrap_or(TypeId::ANY);
+                let key_is_string = key_type == TypeId::STRING;
+                let key_is_number = key_type == TypeId::NUMBER;
+
+                if key_is_string || key_is_number {
+                    let has_matching_index = |ty: TypeId| {
+                        query::object_shape(self.ctx.types, ty).is_some_and(|shape| {
+                            if key_is_string {
+                                shape.string_index.is_some()
+                            } else {
+                                shape.number_index.is_some() || shape.string_index.is_some()
+                            }
+                        })
+                    };
+
+                    let has_index_signature =
+                        if let Some(members) = query::union_members(self.ctx.types, parent_type) {
+                            members.into_iter().all(has_matching_index)
+                        } else {
+                            has_matching_index(parent_type)
+                        };
+
+                    if !has_index_signature
+                        && parent_type != TypeId::ANY
+                        && parent_type != TypeId::ERROR
+                        && parent_type != TypeId::UNKNOWN
+                    {
+                        let mut formatter = self.ctx.create_type_formatter();
+                        let object_str = formatter.format(parent_type);
+                        let index_str = formatter.format(key_type);
+                        let message = crate::types::diagnostics::format_message(
+                            crate::types::diagnostics::diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                            &[&object_str, &index_str],
+                        );
+                        self.error_at_node(
+                            element_data.property_name,
+                            &message,
+                            crate::types::diagnostics::diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
+                        );
+                    }
+                }
+            }
+        }
+
         let property_name = if !element_data.property_name.is_none() {
             // { x: a } - property_name is "x"
             if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
@@ -2197,6 +2271,18 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             TypeId::ANY
+        }
+    }
+
+    /// Rest bindings from tuple members should produce an array type.
+    /// Variadic tuple members can already carry array types (`...T[]`), so avoid
+    /// wrapping those into nested arrays.
+    fn rest_binding_array_type(&mut self, tuple_member_type: TypeId) -> TypeId {
+        let tuple_member_type = query::unwrap_readonly_deep(self.ctx.types, tuple_member_type);
+        if query::array_element_type(self.ctx.types, tuple_member_type).is_some() {
+            tuple_member_type
+        } else {
+            self.ctx.types.array(tuple_member_type)
         }
     }
 
@@ -3047,16 +3133,36 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .arena
                         .get_expr_type_args(type_node)
-                        .and_then(|e| e.type_arguments.as_ref());
+                        .and_then(|e| e.type_arguments.as_ref())
+                        .or_else(|| {
+                            self.ctx
+                                .arena
+                                .get(expr_idx)
+                                .and_then(|expr_node| self.ctx.arena.get_call_expr(expr_node))
+                                .and_then(|call| call.type_arguments.as_ref())
+                        });
 
                     let required_count = self.count_required_type_params(heritage_sym);
                     let total_type_params = self.get_type_params_for_symbol(heritage_sym).len();
 
                     if let Some(type_args) = type_args {
                         if total_type_params == 0 {
-                            if let Some(&arg_idx) = type_args.nodes.first()
-                                && let Some(name) = self.heritage_name_text(expr_idx)
+                            let symbol_type = self.get_type_of_symbol(heritage_sym);
+                            let has_generic_construct_signature =
+                                tsz_solver::type_queries::get_construct_signatures(
+                                    self.ctx.types,
+                                    symbol_type,
+                                )
+                                .is_some_and(|sigs| {
+                                    sigs.iter().any(|sig| !sig.type_params.is_empty())
+                                });
+
+                            if !has_generic_construct_signature
+                                && let Some(&arg_idx) = type_args.nodes.first()
                             {
+                                let name = self
+                                    .heritage_name_text(expr_idx)
+                                    .unwrap_or_else(|| "<expression>".to_string());
                                 self.error_at_node_msg(
                                     arg_idx,
                                     crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
@@ -3119,7 +3225,14 @@ impl<'a> CheckerState<'a> {
                             self.get_type_of_symbol(sym_to_check)
                         };
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_to_check) {
-                            if symbol.flags & symbol_flags::MODULE != 0 {
+                            let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
+                            // Merged declarations like `namespace N {}` + `class N {}`
+                            // are valid values in `extends`. Only emit TS2708 for
+                            // namespace-only symbols.
+                            let has_non_namespace_value = (symbol.flags
+                                & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE))
+                                != 0;
+                            if is_namespace && !has_non_namespace_value {
                                 if let Some(name) = self.heritage_name_text(expr_idx) {
                                     if is_class_declaration && is_extends_clause {
                                         self.error_namespace_used_as_value_at(&name, expr_idx);
@@ -3247,6 +3360,30 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else {
+                    // Heritage expression with explicit type arguments over a call expression
+                    // (e.g. `class C extends getBase()<T> {}`) should report TS2315 when
+                    // the expression resolves but is not generic.
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+                        && let Some(type_args) = expr_type_args.type_arguments.as_ref()
+                        && !type_args.nodes.is_empty()
+                        && let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                        && expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                    {
+                        let expr_type = self.get_type_of_node(expr_idx);
+                        if !tsz_solver::type_queries::is_generic_type(self.ctx.types, expr_type)
+                            && let Some(&arg_idx) = type_args.nodes.first()
+                        {
+                            let name = self
+                                .heritage_name_text(expr_idx)
+                                .unwrap_or_else(|| "<expression>".to_string());
+                            self.error_at_node_msg(
+                                arg_idx,
+                                crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                                &[name.as_str()],
+                            );
+                        }
+                    }
+
                     // Could not resolve as a heritage symbol - check if it's an identifier
                     // that references a value with a constructor type
                     //

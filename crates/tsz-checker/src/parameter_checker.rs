@@ -368,6 +368,16 @@ impl<'a> CheckerState<'a> {
             // Get the declared type
             let declared_type = self.get_type_from_type_node(param.type_annotation);
 
+            // TypeScript accepts `...args: any` as a valid rest parameter type.
+            // Also skip unresolved/error types to avoid cascading TS2370 when
+            // type resolution itself already failed.
+            if declared_type == TypeId::ANY
+                || declared_type == TypeId::UNKNOWN
+                || declared_type == TypeId::ERROR
+            {
+                continue;
+            }
+
             // Check if the type is an array type
             // We need to use a Solver query to check this - following architecture rule
             // that Checker never inspects TypeKey

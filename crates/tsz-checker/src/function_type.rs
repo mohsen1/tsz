@@ -1315,6 +1315,13 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
             }
 
+            if self.ctx.strict_bind_call_apply()
+                && let Some(strict_method_type) =
+                    self.strict_bind_call_apply_method_type(object_type_for_access, property_name)
+            {
+                return self.apply_flow_narrowing(idx, strict_method_type);
+            }
+
             // Use the environment-aware resolver so that array methods, boxed
             // primitive types, and other lib-registered types are available.
             let result =
@@ -1391,9 +1398,8 @@ impl<'a> CheckerState<'a> {
                     if self.is_super_expression(access.expression)
                         && let Some(ref class_info) = self.ctx.enclosing_class
                         && let Some(base_idx) = self.get_base_class_idx(class_info.class_idx)
-                        && self
-                            .is_method_member_in_class_hierarchy(base_idx, property_name, true)
-                            .is_some()
+                        && self.is_method_member_in_class_hierarchy(base_idx, property_name, true)
+                            == Some(true)
                     {
                         use crate::types::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
@@ -1401,6 +1407,33 @@ impl<'a> CheckerState<'a> {
 
                         let base_name = self.get_class_name_from_decl(base_idx);
                         let static_member_name = format!("{}.{}", base_name, property_name);
+                        let object_type_str = self.format_type(original_object_type);
+                        let message = format_message(
+                            diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
+                            &[property_name, &object_type_str, &static_member_name],
+                        );
+                        self.error_at_node(
+                            idx,
+                            &message,
+                            diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
+                        );
+                        return TypeId::ERROR;
+                    }
+
+                    // TS2576: instance.member where `member` exists on the class static side.
+                    if !self.is_super_expression(access.expression)
+                        && let Some((class_idx, is_static_access)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                        && !is_static_access
+                        && self.is_method_member_in_class_hierarchy(class_idx, property_name, true)
+                            == Some(true)
+                    {
+                        use crate::types::diagnostics::{
+                            diagnostic_codes, diagnostic_messages, format_message,
+                        };
+
+                        let class_name = self.get_class_name_from_decl(class_idx);
+                        let static_member_name = format!("{}.{}", class_name, property_name);
                         let object_type_str = self.format_type(original_object_type);
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
@@ -1836,5 +1869,63 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn strict_bind_call_apply_method_type(
+        &self,
+        object_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        if property_name != "apply" {
+            return None;
+        }
+
+        use tsz_solver::type_queries::{get_callable_shape, get_function_shape};
+
+        let (params, return_type) =
+            if let Some(shape) = get_function_shape(self.ctx.types, object_type) {
+                (shape.params.clone(), shape.return_type)
+            } else if let Some(shape) = get_callable_shape(self.ctx.types, object_type) {
+                let sig = shape.call_signatures.first()?;
+                (sig.params.clone(), sig.return_type)
+            } else {
+                return None;
+            };
+
+        let tuple_elements: Vec<tsz_solver::TupleElement> = params
+            .iter()
+            .map(|param| tsz_solver::TupleElement {
+                type_id: param.type_id,
+                name: param.name,
+                optional: param.optional,
+                rest: param.rest,
+            })
+            .collect();
+        let args_tuple = self.ctx.types.tuple(tuple_elements);
+
+        let method_shape = tsz_solver::FunctionShape {
+            params: vec![
+                tsz_solver::ParamInfo {
+                    name: Some(self.ctx.types.intern_string("thisArg")),
+                    type_id: TypeId::ANY,
+                    optional: false,
+                    rest: false,
+                },
+                tsz_solver::ParamInfo {
+                    name: Some(self.ctx.types.intern_string("args")),
+                    type_id: args_tuple,
+                    optional: true,
+                    rest: false,
+                },
+            ],
+            this_type: None,
+            return_type,
+            type_params: vec![],
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+
+        Some(self.ctx.types.function(method_shape))
     }
 }

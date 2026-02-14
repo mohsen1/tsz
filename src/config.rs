@@ -377,9 +377,15 @@ pub fn resolve_compiler_options(
         resolved.printer.module = kind;
         resolved.checker.module = kind;
     } else {
-        // Default to CommonJS initially; may be overridden below based on moduleResolution
-        resolved.printer.module = ModuleKind::CommonJS;
-        resolved.checker.module = ModuleKind::CommonJS;
+        // Match tsc: when --module is omitted, default depends on target.
+        // ES2015+ targets default to ES2015 modules; lower targets default to CommonJS.
+        let default_module = if resolved.printer.target.supports_es2015() {
+            ModuleKind::ES2015
+        } else {
+            ModuleKind::CommonJS
+        };
+        resolved.printer.module = default_module;
+        resolved.checker.module = default_module;
     }
 
     if let Some(module_resolution) = options.module_resolution.as_deref() {

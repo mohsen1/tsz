@@ -25,7 +25,6 @@
 
 // Re-exports from extracted modules
 // Note: These are intentionally pub re-exported for external API use
-#[allow(unused_imports)]
 pub use crate::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 
 use crate::diagnostics::PendingDiagnostic;

@@ -198,21 +198,5 @@ pub fn can_be_nullish(types: &dyn TypeDatabase, type_id: SolverTypeId) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tsz_parser::parser::node::NodeArena;
-
-    #[test]
-    fn test_optional_chain_info_creation() {
-        let arena = NodeArena::new();
-        let info = analyze_optional_chain(&arena, NodeIndex::NONE);
-        assert!(!info.is_optional);
-        assert!(!info.is_immediate_optional);
-    }
-
-    #[test]
-    fn test_is_optional_chain_empty() {
-        let arena = NodeArena::new();
-        assert!(!is_optional_chain(&arena, NodeIndex::NONE));
-    }
-}
+#[path = "tests/optional_chain.rs"]
+mod tests;

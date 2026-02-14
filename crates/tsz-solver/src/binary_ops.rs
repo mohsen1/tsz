@@ -66,7 +66,7 @@ pub enum PrimitiveClass {
 ///   - `check_intersection_any` — visit_intersection returns true when ANY member matches
 macro_rules! primitive_visitor {
     ($name:ident, $ik:expr, $lit_pat:pat => $lit_result:expr $(, $feat:ident)*) => {
-        struct $name<'a> { #[allow(dead_code)] db: &'a dyn TypeDatabase }
+        struct $name<'a> { _db: &'a dyn TypeDatabase }
         impl<'a> TypeVisitor for $name<'a> {
             type Output = bool;
             fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> bool { kind == $ik }
@@ -80,21 +80,21 @@ macro_rules! primitive_visitor {
     };
     (@method check_union_all) => {
         fn visit_union(&mut self, list_id: u32) -> bool {
-            let members = self.db.type_list(TypeListId(list_id));
-            !members.is_empty() && members.iter().all(|&m| self.visit_type(self.db, m))
+            let members = self._db.type_list(TypeListId(list_id));
+            !members.is_empty() && members.iter().all(|&m| self.visit_type(self._db, m))
         }
     };
     (@method check_constraint) => {
         fn visit_type_parameter(&mut self, info: &crate::types::TypeParamInfo) -> bool {
-            info.constraint.map(|c| self.visit_type(self.db, c)).unwrap_or(false)
+            info.constraint.map(|c| self.visit_type(self._db, c)).unwrap_or(false)
         }
         fn visit_infer(&mut self, info: &crate::types::TypeParamInfo) -> bool {
-            info.constraint.map(|c| self.visit_type(self.db, c)).unwrap_or(false)
+            info.constraint.map(|c| self.visit_type(self._db, c)).unwrap_or(false)
         }
     };
     (@method recurse_enum) => {
         fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> bool {
-            self.visit_type(self.db, member_type)
+            self.visit_type(self._db, member_type)
         }
     };
     (@method ref_conservative) => {
@@ -108,8 +108,8 @@ macro_rules! primitive_visitor {
     };
     (@method check_intersection_any) => {
         fn visit_intersection(&mut self, list_id: u32) -> bool {
-            let members = self.db.type_list(TypeListId(list_id));
-            members.iter().any(|&m| self.visit_type(self.db, m))
+            let members = self._db.type_list(TypeListId(list_id));
+            members.iter().any(|&m| self.visit_type(self._db, m))
         }
     };
 }
@@ -506,7 +506,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::NUMBER || type_id == TypeId::ANY {
             return true;
         }
-        let mut visitor = NumberLikeVisitor { db: self.interner };
+        let mut visitor = NumberLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
@@ -515,7 +515,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::STRING || type_id == TypeId::ANY {
             return true;
         }
-        let mut visitor = StringLikeVisitor { db: self.interner };
+        let mut visitor = StringLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
@@ -524,7 +524,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::BIGINT || type_id == TypeId::ANY {
             return true;
         }
-        let mut visitor = BigIntLikeVisitor { db: self.interner };
+        let mut visitor = BigIntLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
@@ -612,7 +612,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::SYMBOL {
             return true;
         }
-        let mut visitor = SymbolLikeVisitor { db: self.interner };
+        let mut visitor = SymbolLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
@@ -641,7 +641,7 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::BOOLEAN || type_id == TypeId::ANY {
             return true;
         }
-        let mut visitor = BooleanLikeVisitor { db: self.interner };
+        let mut visitor = BooleanLikeVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
@@ -659,10 +659,4 @@ impl<'a> BinaryOpEvaluator<'a> {
             || type_id == TypeId::UNDEFINED
             || type_id == TypeId::VOID
     }
-}
-
-#[cfg(test)]
-mod tests {
-    #[allow(unused_imports)]
-    use super::*;
 }

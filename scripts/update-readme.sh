@@ -8,9 +8,9 @@
 #   ./scripts/update-readme.sh --conformance-only # Only run conformance tests
 #   ./scripts/update-readme.sh --fourslash-only   # Only run fourslash tests
 #   ./scripts/update-readme.sh --emit-only        # Only run emit tests
-#   ./scripts/update-readme.sh --max=500          # Limit conformance tests
+#   ./scripts/update-readme.sh --max=all          # Limit conformance tests
 #   ./scripts/update-readme.sh --fourslash-max=100 # Limit fourslash tests
-#   ./scripts/update-readme.sh --emit-max=500     # Limit emit tests
+#   ./scripts/update-readme.sh --emit-max=all       # Limit emit tests
 #
 
 set -euo pipefail
@@ -48,7 +48,7 @@ for arg in "$@"; do
             echo "  --commit            Commit and push changes to git"
             echo "  --max=N             Limit conformance tests (default: all)"
             echo "  --fourslash-max=N   Limit fourslash tests (default: all)"
-            echo "  --emit-max=N        Limit emit tests (default: 500)"
+            echo "  --emit-max=N        Limit emit tests (default: all)"
             echo "  --conformance-only  Only run conformance tests"
             echo "  --fourslash-only    Only run fourslash tests"
             echo "  --emit-only         Only run emit tests"

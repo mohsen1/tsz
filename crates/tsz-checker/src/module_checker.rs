@@ -203,6 +203,7 @@ impl<'a> CheckerState<'a> {
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
         {
+            self.check_export_target_is_module(export_decl.module_specifier, module_name);
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
@@ -218,6 +219,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
         if self.ctx.binder.module_exports.contains_key(module_name) {
+            self.check_export_target_is_module(export_decl.module_specifier, module_name);
             // Check for circular re-export chains
             if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_name) {
                 let mut visited = FxHashSet::default();
@@ -262,6 +264,50 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.import_resolution_stack.pop();
+    }
+
+    fn check_export_target_is_module(
+        &mut self,
+        module_specifier_idx: NodeIndex,
+        module_name: &str,
+    ) {
+        use crate::types::diagnostics::diagnostic_codes;
+
+        let Some(target_idx) = self.ctx.resolve_import_target(module_name) else {
+            return;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_idx) else {
+            return;
+        };
+        if target_binder.is_external_module
+            || self.is_ambient_module_match(module_name)
+            || target_binder
+                .declared_modules
+                .contains(module_name.trim_matches('"').trim_matches('\''))
+        {
+            return;
+        }
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return;
+        };
+        if source_file.is_declaration_file {
+            return;
+        }
+        let file_name = source_file.file_name.as_str();
+        let is_js_like = file_name.ends_with(".js")
+            || file_name.ends_with(".jsx")
+            || file_name.ends_with(".mjs")
+            || file_name.ends_with(".cjs");
+        if is_js_like {
+            return;
+        }
+        let source_file_name = source_file.file_name.clone();
+        self.error_at_node_msg(
+            module_specifier_idx,
+            diagnostic_codes::FILE_IS_NOT_A_MODULE,
+            &[&source_file_name],
+        );
     }
 
     /// Validate that named re-exports exist in the target module.

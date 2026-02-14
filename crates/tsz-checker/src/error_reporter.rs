@@ -1198,6 +1198,32 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // In files with real syntax errors, unresolved names inside `typeof` type queries
+        // are often cascades from malformed declaration syntax; TypeScript commonly keeps
+        // the primary parse diagnostic only for these.
+        if self.has_syntax_parse_errors() {
+            let mut current = idx;
+            let mut guard = 0;
+            while !current.is_none() {
+                guard += 1;
+                if guard > 256 {
+                    break;
+                }
+                if let Some(node) = self.ctx.arena.get(current)
+                    && node.kind == syntax_kind_ext::TYPE_QUERY
+                {
+                    return;
+                }
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            }
+        }
+
         // Check if this is an ES2015+ type that requires a specific lib
         // If so, emit TS2583 with a suggestion to change the lib
         if lib_loader::is_es2015_plus_type(name) {
@@ -1554,8 +1580,21 @@ impl<'a> CheckerState<'a> {
     fn class_extends_any_base(&mut self, type_id: TypeId) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
+        use tsz_solver::visitor::{callable_shape_id, object_shape_id, object_with_index_shape_id};
 
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
+        let sym_id = self
+            .ctx
+            .resolve_type_to_symbol_id(type_id)
+            .or_else(|| {
+                object_shape_id(self.ctx.types, type_id)
+                    .or_else(|| object_with_index_shape_id(self.ctx.types, type_id))
+                    .and_then(|shape_id| self.ctx.types.object_shape(shape_id).symbol)
+            })
+            .or_else(|| {
+                callable_shape_id(self.ctx.types, type_id)
+                    .and_then(|shape_id| self.ctx.types.callable_shape(shape_id).symbol)
+            });
+        let Some(sym_id) = sym_id else {
             return false;
         };
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -1653,6 +1692,47 @@ impl<'a> CheckerState<'a> {
     // Identifier Suggestion Helpers
     // =========================================================================
 
+    fn consider_identifier_suggestion(
+        name: &str,
+        candidate: &str,
+        name_len: usize,
+        maximum_length_difference: usize,
+        best_distance: &mut usize,
+        best_candidate: &mut Option<String>,
+    ) {
+        if candidate == name {
+            return;
+        }
+        let candidate_len = candidate.len();
+
+        // tsc: skip candidates whose length is too different
+        let len_diff = name_len.abs_diff(candidate_len);
+        if len_diff > maximum_length_difference {
+            return;
+        }
+
+        // tsc: for short names (<3), only suggest if differs by case
+        if name_len < 3 && candidate.to_lowercase() != name.to_lowercase() {
+            return;
+        }
+
+        // Case-insensitive exact match is distance 1
+        if candidate.to_lowercase() == name.to_lowercase() {
+            let distance = 1;
+            if distance < *best_distance {
+                *best_distance = distance;
+                *best_candidate = Some(candidate.to_string());
+            }
+            return;
+        }
+
+        let distance = Self::levenshtein_distance(name, candidate);
+        if distance < *best_distance {
+            *best_distance = distance;
+            *best_candidate = Some(candidate.to_string());
+        }
+    }
+
     /// Find the best spelling suggestion for a name, matching tsc's `getSpellingSuggestion`.
     /// Returns `Some(best_name)` if a close-enough match is found.
     pub(crate) fn find_similar_identifiers(
@@ -1678,36 +1758,37 @@ impl<'a> CheckerState<'a> {
         let mut best_candidate: Option<String> = None;
 
         for candidate in visible_names {
-            if candidate == name {
-                continue;
-            }
-            let candidate_len = candidate.len();
+            Self::consider_identifier_suggestion(
+                name,
+                &candidate,
+                name_len,
+                maximum_length_difference,
+                &mut best_distance,
+                &mut best_candidate,
+            );
+        }
 
-            // tsc: skip candidates whose length is too different
-            let len_diff = name_len.abs_diff(candidate_len);
-            if len_diff > maximum_length_difference {
-                continue;
-            }
-
-            // tsc: for short names (<3), only suggest if differs by case
-            if name_len < 3 && candidate.to_lowercase() != name.to_lowercase() {
-                continue;
-            }
-
-            // Case-insensitive exact match is distance 1
-            if candidate.to_lowercase() == name.to_lowercase() {
-                let distance = 1;
-                if distance < best_distance {
-                    best_distance = distance;
-                    best_candidate = Some(candidate);
+        // Fall back to lib globals for spelling suggestions when local scope
+        // candidates don't produce a close enough match.
+        if best_candidate.is_none() {
+            let lib_binders = self.get_lib_binders();
+            for lib_binder in &lib_binders {
+                for (candidate, sym_id) in lib_binder.file_locals.iter() {
+                    if lib_binder
+                        .get_symbol(*sym_id)
+                        .is_none_or(|sym| sym.flags & tsz_binder::symbol_flags::VALUE == 0)
+                    {
+                        continue;
+                    }
+                    Self::consider_identifier_suggestion(
+                        name,
+                        candidate,
+                        name_len,
+                        maximum_length_difference,
+                        &mut best_distance,
+                        &mut best_candidate,
+                    );
                 }
-                continue;
-            }
-
-            let distance = Self::levenshtein_distance(name, &candidate);
-            if distance < best_distance {
-                best_distance = distance;
-                best_candidate = Some(candidate);
             }
         }
 
@@ -1783,8 +1864,72 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.try_elaborate_array_literal_elements(arg_idx, param_type)
             }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.try_elaborate_function_arg_return_error(arg_idx, param_type)
+            }
             _ => false,
         }
+    }
+
+    fn try_elaborate_function_arg_return_error(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(arg_node) else {
+            return false;
+        };
+
+        let Some(expected_return_type) = self.first_callable_return_type(param_type) else {
+            return false;
+        };
+
+        let Some(body_node) = self.ctx.arena.get(func.body) else {
+            return false;
+        };
+
+        match body_node.kind {
+            // Expression-bodied arrow function: () => ({ ... })
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                self.try_elaborate_object_literal_arg_error(func.body, expected_return_type)
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let Some(paren) = self.ctx.arena.get_parenthesized(body_node) else {
+                    return false;
+                };
+                self.try_elaborate_object_literal_arg_error(paren.expression, expected_return_type)
+            }
+            _ => false,
+        }
+    }
+
+    fn first_callable_return_type(&self, ty: TypeId) -> Option<TypeId> {
+        use tsz_solver::type_queries::{
+            get_callable_shape, get_function_shape, get_type_application,
+        };
+
+        if let Some(shape) = get_function_shape(self.ctx.types, ty) {
+            return Some(shape.return_type);
+        }
+
+        if let Some(shape) = get_callable_shape(self.ctx.types, ty) {
+            return shape.call_signatures.first().map(|sig| sig.return_type);
+        }
+
+        if let Some(app) = get_type_application(self.ctx.types, ty) {
+            return self.first_callable_return_type(app.base);
+        }
+
+        None
     }
 
     /// Elaborate object literal property type mismatches with TS2322.
