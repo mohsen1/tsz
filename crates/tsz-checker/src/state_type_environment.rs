@@ -1530,11 +1530,17 @@ impl<'a> CheckerState<'a> {
                 // In value position, primitive type keywords should emit TS2693.
                 if let Some(ext) = self.ctx.arena.get_extended(idx) {
                     let parent = ext.parent;
-                    if !parent.is_none()
-                        && let Some(parent_node) = self.ctx.arena.get(parent)
-                        && (parent_node.kind == syntax_kind_ext::LABELED_STATEMENT
-                            || parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
-                        && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    let recovery_stmt_kind = if !parent.is_none() {
+                        self.ctx.arena.get(parent).map(|parent_node| parent_node.kind)
+                    } else {
+                        None
+                    };
+                    if matches!(
+                        recovery_stmt_kind,
+                        Some(k)
+                            if k == syntax_kind_ext::LABELED_STATEMENT
+                                || k == syntax_kind_ext::EXPRESSION_STATEMENT
+                    ) && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                     {
                         if let Some(name) = self.entity_name_text(type_ref.type_name)
                             && matches!(
