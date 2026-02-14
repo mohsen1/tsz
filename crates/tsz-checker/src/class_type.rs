@@ -31,7 +31,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::types::Visibility;
+use tsz_solver::types::{ParamInfo, TypePredicate, Visibility};
 use tsz_solver::visitor::is_template_literal_type;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
@@ -1514,23 +1514,25 @@ impl<'a> CheckerState<'a> {
                     self.get_class_constructor_type(base_class_idx, base_class);
                 let substitution =
                     TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
-                let base_constructor_type =
+                let instantiated_base_constructor_type =
                     instantiate_type(self.ctx.types, base_constructor_type, &substitution);
                 self.pop_type_parameters(base_type_param_updates);
 
                 if let Some(base_shape) =
-                    callable_shape_for_type(self.ctx.types, base_constructor_type)
+                    callable_shape_for_type(self.ctx.types, instantiated_base_constructor_type)
                 {
                     for base_prop in base_shape.properties.iter() {
                         properties
                             .entry(base_prop.name)
                             .or_insert_with(|| base_prop.clone());
                     }
-                    inherited_construct_signatures = self.remap_inherited_construct_signatures(
-                        base_constructor_type,
-                        &class_type_params,
-                        instance_type,
-                    );
+                    inherited_construct_signatures = self
+                        .remap_inherited_construct_signatures_with_substitution(
+                            base_constructor_type,
+                            &substitution,
+                            &class_type_params,
+                            instance_type,
+                        );
                 }
 
                 break;
@@ -1675,6 +1677,53 @@ impl<'a> CheckerState<'a> {
                     this_type: sig.this_type,
                     return_type: instance_type,
                     type_predicate: sig.type_predicate.clone(),
+                    is_method: sig.is_method,
+                })
+                .collect(),
+        )
+    }
+
+    fn remap_inherited_construct_signatures_with_substitution(
+        &self,
+        constructor_type: TypeId,
+        substitution: &TypeSubstitution,
+        class_type_params: &[TypeParamInfo],
+        instance_type: TypeId,
+    ) -> Option<Vec<CallSignature>> {
+        let signatures = construct_signatures_for_type(self.ctx.types, constructor_type)?;
+        if signatures.is_empty() {
+            return None;
+        }
+
+        Some(
+            signatures
+                .iter()
+                .map(|sig| CallSignature {
+                    // In inherited constructors, class type params live on the deriving class.
+                    // Reusing base signature type_params can incorrectly shadow substitutions.
+                    type_params: class_type_params.to_vec(),
+                    params: sig
+                        .params
+                        .iter()
+                        .map(|p| ParamInfo {
+                            name: p.name,
+                            type_id: instantiate_type(self.ctx.types, p.type_id, substitution),
+                            optional: p.optional,
+                            rest: p.rest,
+                        })
+                        .collect(),
+                    this_type: sig
+                        .this_type
+                        .map(|t| instantiate_type(self.ctx.types, t, substitution)),
+                    return_type: instance_type,
+                    type_predicate: sig.type_predicate.as_ref().map(|pred| TypePredicate {
+                        asserts: pred.asserts,
+                        target: pred.target.clone(),
+                        type_id: pred
+                            .type_id
+                            .map(|t| instantiate_type(self.ctx.types, t, substitution)),
+                        parameter_index: pred.parameter_index,
+                    }),
                     is_method: sig.is_method,
                 })
                 .collect(),

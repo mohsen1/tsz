@@ -3398,6 +3398,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
                         && member_symbol.flags & symbol_flags::VALUE == 0
                         && member_symbol.flags & symbol_flags::ALIAS == 0
+                        && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
                     {
                         return None;
                     }
@@ -3452,6 +3453,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
                         && member_symbol.flags & symbol_flags::VALUE == 0
                         && member_symbol.flags & symbol_flags::ALIAS == 0
+                        && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
                     {
                         return None;
                     }
@@ -3475,6 +3477,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(member_symbol) = self.get_cross_file_symbol(reexported_sym)
                             && member_symbol.flags & symbol_flags::VALUE == 0
                             && member_symbol.flags & symbol_flags::ALIAS == 0
+                            && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
                         {
                             return None;
                         }
