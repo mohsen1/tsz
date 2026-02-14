@@ -138,7 +138,6 @@ struct TemplateParts {
     expressions: Vec<NodeIndex>,
 }
 
-#[allow(dead_code)]
 enum EmitDirective {
     Identity,
     ES5Class {

@@ -161,11 +161,6 @@ impl<'a> CheckerState<'a> {
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
-            // Check interface type parameters (TS2428)
-            // TODO: Re-enable after fixing binder bug where symbols from different scopes
-            // (e.g. file-scope and namespace-scope) get incorrectly merged into one symbol
-            // self.check_interface_type_parameters();
-
             // Check for missing global types (2318)
             // Emits errors at file start for essential types when libs are not loaded
             self.check_missing_global_types();

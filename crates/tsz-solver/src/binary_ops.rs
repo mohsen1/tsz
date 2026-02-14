@@ -66,7 +66,7 @@ pub enum PrimitiveClass {
 ///   - `check_intersection_any` — visit_intersection returns true when ANY member matches
 macro_rules! primitive_visitor {
     ($name:ident, $ik:expr, $lit_pat:pat => $lit_result:expr $(, $feat:ident)*) => {
-        struct $name<'a> { #[allow(dead_code)] db: &'a dyn TypeDatabase }
+        struct $name<'a> { db: &'a dyn TypeDatabase }
         impl<'a> TypeVisitor for $name<'a> {
             type Output = bool;
             fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> bool { kind == $ik }
@@ -659,10 +659,4 @@ impl<'a> BinaryOpEvaluator<'a> {
             || type_id == TypeId::UNDEFINED
             || type_id == TypeId::VOID
     }
-}
-
-#[cfg(test)]
-mod tests {
-    #[allow(unused_imports)]
-    use super::*;
 }
