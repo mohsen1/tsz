@@ -954,6 +954,27 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
 
+        // Keep TS2304 for ambiguous generic assertions such as `<<T>(x: T) => T>f`.
+        // These nodes can carry parse-error flags, but TypeScript still reports
+        // unresolved `T` alongside TS1005/TS1109.
+        let force_emit_for_ambiguous_generic = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|node| {
+                let source = self.ctx.arena.source_files.first()?.text.as_ref();
+                let pos = node.pos as usize;
+                if pos < 2 {
+                    return Some(false);
+                }
+                let bytes = source.as_bytes();
+                Some(
+                    bytes.get(pos.saturating_sub(2)) == Some(&b'<')
+                        && bytes.get(pos.saturating_sub(1)) == Some(&b'<'),
+                )
+            })
+            .unwrap_or(false);
+
         let is_primitive_type_keyword = matches!(
             name,
             "number"
@@ -1144,8 +1165,10 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(node) = self.ctx.arena.get(current) {
                 let flags = node.flags as u32;
-                if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                if !force_emit_for_ambiguous_generic
+                    && ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
                     || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                    )
                 {
                     return;
                 }
@@ -1163,7 +1186,7 @@ impl<'a> CheckerState<'a> {
 
         // Also suppress TS2304 for identifiers that appear shortly after a parse error.
         // These identifiers are likely artifacts of error recovery.
-        if !self.ctx.syntax_parse_error_positions.is_empty() {
+        if !force_emit_for_ambiguous_generic && !self.ctx.syntax_parse_error_positions.is_empty() {
             if let Some(node) = self.ctx.arena.get(idx) {
                 let ident_pos = node.pos;
                 for &err_pos in &self.ctx.syntax_parse_error_positions {
