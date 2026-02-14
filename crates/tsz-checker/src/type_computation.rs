@@ -1201,6 +1201,19 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+
+                // TS2791: bigint exponentiation requires target >= ES2016.
+                if (self.ctx.compiler_options.target as u32)
+                    < (tsz_common::common::ScriptTarget::ES2016 as u32)
+                    && self.is_subtype_of(left_type, TypeId::BIGINT)
+                    && self.is_subtype_of(right_type, TypeId::BIGINT)
+                {
+                    self.error_at_node_msg(
+                        node_idx,
+                        crate::types::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
+                        &[],
+                    );
+                }
             }
 
             // TS2367: Check for comparisons with no overlap

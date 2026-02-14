@@ -558,6 +558,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2791: bigint exponentiation assignment requires target >= ES2016.
+        if operator == SyntaxKind::AsteriskAsteriskEqualsToken as u16
+            && (self.ctx.compiler_options.target as u32)
+                < (tsz_common::common::ScriptTarget::ES2016 as u32)
+            && self.is_subtype_of(left_type, TypeId::BIGINT)
+            && self.is_subtype_of(right_type, TypeId::BIGINT)
+        {
+            self.error_at_node_msg(
+                expr_idx,
+                crate::types::diagnostics::diagnostic_codes::EXPONENTIATION_CANNOT_BE_PERFORMED_ON_BIGINT_VALUES_UNLESS_THE_TARGET_OPTION_IS,
+                &[],
+            );
+            emitted_operator_error = true;
+        }
+
         // Check bitwise compound assignments: &=, |=, ^=, <<=, >>=, >>>=
         let is_boolean_bitwise_compound = matches!(
             operator,
