@@ -1128,8 +1128,18 @@ impl ParserState {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
 
-        self.next_token(); // skip readonly
-        let is_mapped = self.is_token(SyntaxKind::OpenBracketToken);
+        self.next_token(); // skip readonly/+/-
+        // After readonly, check for `[identifier in` pattern (mapped type)
+        // vs `[identifier :` pattern (index signature)
+        let is_mapped = if self.is_token(SyntaxKind::OpenBracketToken) {
+            self.next_token(); // skip [
+            if self.is_token(SyntaxKind::Identifier) {
+                self.next_token(); // skip identifier
+            }
+            self.is_token(SyntaxKind::InKeyword)
+        } else {
+            false
+        };
 
         self.scanner.restore_state(snapshot);
         self.current_token = current;
