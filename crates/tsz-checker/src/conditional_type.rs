@@ -12,6 +12,7 @@
 //! This module extends CheckerState with utilities for conditional type
 //! operations, providing cleaner APIs for conditional type checking.
 
+use crate::query_boundaries::conditional_type as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -28,32 +29,28 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the `T` in `T extends U ? X : Y`, or None if not a conditional.
     pub fn get_conditional_check_type(&self, type_id: TypeId) -> Option<TypeId> {
-        tsz_solver::type_queries::get_conditional_type(self.ctx.types, type_id)
-            .map(|cond| cond.check_type)
+        query::conditional_type(self.ctx.types, type_id).map(|cond| cond.check_type)
     }
 
     /// Get the extends type from a conditional type.
     ///
     /// Returns the `U` in `T extends U ? X : Y`, or None if not a conditional.
     pub fn get_conditional_extends_type(&self, type_id: TypeId) -> Option<TypeId> {
-        tsz_solver::type_queries::get_conditional_type(self.ctx.types, type_id)
-            .map(|cond| cond.extends_type)
+        query::conditional_type(self.ctx.types, type_id).map(|cond| cond.extends_type)
     }
 
     /// Get the true branch type from a conditional type.
     ///
     /// Returns the `X` in `T extends U ? X : Y`, or None if not a conditional.
     pub fn get_conditional_true_type(&self, type_id: TypeId) -> Option<TypeId> {
-        tsz_solver::type_queries::get_conditional_type(self.ctx.types, type_id)
-            .map(|cond| cond.true_type)
+        query::conditional_type(self.ctx.types, type_id).map(|cond| cond.true_type)
     }
 
     /// Get the false branch type from a conditional type.
     ///
     /// Returns the `Y` in `T extends U ? X : Y`, or None if not a conditional.
     pub fn get_conditional_false_type(&self, type_id: TypeId) -> Option<TypeId> {
-        tsz_solver::type_queries::get_conditional_type(self.ctx.types, type_id)
-            .map(|cond| cond.false_type)
+        query::conditional_type(self.ctx.types, type_id).map(|cond| cond.false_type)
     }
 
     // =========================================================================
@@ -65,7 +62,7 @@ impl<'a> CheckerState<'a> {
     /// Distributive conditionals automatically distribute over unions:
     /// `(A | B) extends C ? X : Y` becomes `(A extends C ? X : Y) | (B extends C ? X : Y)`
     pub fn is_distributive_conditional(&self, type_id: TypeId) -> bool {
-        tsz_solver::type_queries::get_conditional_type(self.ctx.types, type_id)
+        query::conditional_type(self.ctx.types, type_id)
             .map(|cond| cond.is_distributive)
             .unwrap_or(false)
     }
@@ -78,7 +75,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns (true_type, false_type) if this is a conditional, or None otherwise.
     pub fn get_conditional_branches(&self, type_id: TypeId) -> Option<(TypeId, TypeId)> {
-        tsz_solver::type_queries::get_conditional_type(self.ctx.types, type_id)
+        query::conditional_type(self.ctx.types, type_id)
             .map(|cond| (cond.true_type, cond.false_type))
     }
 
@@ -86,7 +83,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns (check_type, extends_type) if this is a conditional, or None otherwise.
     pub fn get_conditional_check(&self, type_id: TypeId) -> Option<(TypeId, TypeId)> {
-        tsz_solver::type_queries::get_conditional_type(self.ctx.types, type_id)
+        query::conditional_type(self.ctx.types, type_id)
             .map(|cond| (cond.check_type, cond.extends_type))
     }
 

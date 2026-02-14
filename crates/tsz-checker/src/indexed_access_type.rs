@@ -12,9 +12,9 @@
 //! This module extends CheckerState with utilities for indexed access type
 //! operations, providing cleaner APIs for T[K] type checking.
 
+use crate::query_boundaries::indexed_access_type as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::get_index_access_types;
 
 // =============================================================================
 // Indexed Access Type Utilities
@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for types like `T[K]` (object type with index access).
     pub fn is_indexed_access_type(&self, type_id: TypeId) -> bool {
-        get_index_access_types(self.ctx.types, type_id).is_some()
+        query::index_access_types(self.ctx.types, type_id).is_some()
     }
 
     // =========================================================================
@@ -40,21 +40,21 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the `T` in `T[K]`, or None if not an indexed access type.
     pub fn get_indexed_access_object_type(&self, type_id: TypeId) -> Option<TypeId> {
-        get_index_access_types(self.ctx.types, type_id).map(|(obj, _)| obj)
+        query::index_access_types(self.ctx.types, type_id).map(|(obj, _)| obj)
     }
 
     /// Get the index key type from an indexed access type.
     ///
     /// Returns the `K` in `T[K]`, or None if not an indexed access type.
     pub fn get_indexed_access_key_type(&self, type_id: TypeId) -> Option<TypeId> {
-        get_index_access_types(self.ctx.types, type_id).map(|(_, key)| key)
+        query::index_access_types(self.ctx.types, type_id).map(|(_, key)| key)
     }
 
     /// Get both components from an indexed access type.
     ///
     /// Returns `(object_type, key_type)` for `T[K]`, or None if not an indexed access type.
     pub fn get_indexed_access_components(&self, type_id: TypeId) -> Option<(TypeId, TypeId)> {
-        get_index_access_types(self.ctx.types, type_id)
+        query::index_access_types(self.ctx.types, type_id)
     }
 
     // =========================================================================
