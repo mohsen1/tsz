@@ -471,7 +471,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         };
 
         // Reconstruct obj_type for resolve_array_property
-        let obj_type = self.interner().intern(TypeKey::Array(element_type));
+        let obj_type = self.interner().array(element_type);
         Some(self.resolve_array_property(obj_type, prop_name, prop_atom))
     }
 
@@ -968,9 +968,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Step 2: Create a substitution for just this property
-        let key_literal = self
-            .interner()
-            .intern(TypeKey::Literal(LiteralValue::String(prop_atom)));
+        let key_literal = self.interner().literal_string_atom(prop_atom);
 
         // Handle name remapping if present (e.g., `as` clause in mapped types)
         if let Some(name_type) = mapped.name_type {
@@ -1057,7 +1055,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             .evaluate_type_with_options(mapped_element, self.no_unchecked_indexed_access);
 
         // Create the resulting array type
-        let array_type = self.interner().intern(TypeKey::Array(mapped_element));
+        let array_type = self.interner().array(mapped_element);
 
         // Resolve the property on the array type
         let result = self.resolve_array_property(array_type, prop_name, prop_atom);
