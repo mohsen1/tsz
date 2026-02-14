@@ -78,6 +78,26 @@ resolve_tsz_binary() {
 
 # Build TypeScript runner
 build_runner() {
+    local dist_runner="$SCRIPT_DIR/dist/runner.js"
+    local should_build=0
+
+    if [[ ! -f "$dist_runner" ]]; then
+        should_build=1
+    else
+        if find "$SCRIPT_DIR/src" -type f -name '*.ts' -newer "$dist_runner" | grep -q .; then
+            should_build=1
+        elif [[ -f "$SCRIPT_DIR/package.json" && "$SCRIPT_DIR/package.json" -nt "$dist_runner" ]]; then
+            should_build=1
+        elif [[ -f "$SCRIPT_DIR/package-lock.json" && "$SCRIPT_DIR/package-lock.json" -nt "$dist_runner" ]]; then
+            should_build=1
+        fi
+    fi
+
+    if [[ "$should_build" -eq 0 ]]; then
+        log_success "Runner up to date"
+        return 0
+    fi
+
     log_step "Building emit runner..."
     (
         cd "$SCRIPT_DIR"
