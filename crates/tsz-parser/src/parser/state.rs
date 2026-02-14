@@ -840,6 +840,36 @@ impl ParserState {
             _ => {}
         }
 
+        // In malformed arrow-like declarations such as:
+        //   var f = (x: number, y: string);
+        // TypeScript does not emit TS1435 for `string` in this type-annotation
+        // position; it reports the surrounding missing-token errors instead.
+        let is_type_annotation_keyword = matches!(
+            expression_text.as_str(),
+            "string"
+                | "number"
+                | "boolean"
+                | "symbol"
+                | "bigint"
+                | "object"
+                | "void"
+                | "undefined"
+                | "null"
+                | "never"
+                | "unknown"
+                | "any"
+        );
+        if is_type_annotation_keyword {
+            let source = self.scanner.source_text().as_bytes();
+            let mut i = pos as usize;
+            while i > 0 && source[i - 1].is_ascii_whitespace() {
+                i -= 1;
+            }
+            if i > 0 && source[i - 1] == b':' {
+                return;
+            }
+        }
+
         // Spelling / space suggestion (TS1435).
         if let Some(suggestion) = spelling::suggest_keyword(&expression_text) {
             self.parse_error_at(
