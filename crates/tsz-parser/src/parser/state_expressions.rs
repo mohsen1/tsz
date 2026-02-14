@@ -1050,6 +1050,17 @@ impl ParserState {
         loop {
             match self.token() {
                 SyntaxKind::DotToken => {
+                    if let Some(node) = self.arena.get(expr)
+                        && node.kind
+                            == crate::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                    {
+                        self.parse_error_at(
+                            node.pos,
+                            node.end.saturating_sub(node.pos),
+                            tsz_common::diagnostics::diagnostic_messages::AN_INSTANTIATION_EXPRESSION_CANNOT_BE_FOLLOWED_BY_A_PROPERTY_ACCESS,
+                            tsz_common::diagnostics::diagnostic_codes::AN_INSTANTIATION_EXPRESSION_CANNOT_BE_FOLLOWED_BY_A_PROPERTY_ACCESS,
+                        );
+                    }
                     self.next_token();
                     // Handle both regular identifiers and private identifiers (#name)
                     let name = if self.is_token(SyntaxKind::PrivateIdentifier) {

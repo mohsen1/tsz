@@ -2868,6 +2868,7 @@ impl<'a> CheckerState<'a> {
         // and reports TS2311 instead of await-context diagnostics.
         if !self.ctx.in_async_context()
             && self.ctx.function_depth > 0
+            && !self.ctx.binder.is_external_module()
             && self.await_expression_uses_call_like_syntax(idx)
         {
             use crate::types::diagnostics::{
