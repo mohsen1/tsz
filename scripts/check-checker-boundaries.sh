@@ -69,3 +69,22 @@ if [[ -n "$RAW_INTERN_HITS" ]]; then
 fi
 
 echo "Checker raw interner access guardrail passed."
+
+# Guardrail: solver crate dependency direction freeze.
+#
+# Milestone 0 target is "solver must not import parser/checker crates".
+# Current known legacy exception: crates/tsz-solver/src/lower.rs.
+# This guard prevents architectural drift by failing on any new site.
+SOLVER_DEP_HITS="$(rg -n "\btsz_parser::\b|\btsz_checker::\b" crates/tsz-solver/src \
+  --glob '!**/tests/**' || true)"
+SOLVER_DEP_NEW_HITS="$(printf '%s\n' "$SOLVER_DEP_HITS" | rg -v "^crates/tsz-solver/src/lower.rs:" || true)"
+
+if [[ -n "$SOLVER_DEP_NEW_HITS" ]]; then
+  echo "Architecture guardrail violation: new solver imports parser/checker crates found:"
+  echo "$SOLVER_DEP_NEW_HITS"
+  echo ""
+  echo "Keep parser/checker dependencies quarantined to the legacy lower.rs path while migration is in progress."
+  exit 1
+fi
+
+echo "Solver dependency-direction freeze guardrail passed (legacy lower.rs exception only)."

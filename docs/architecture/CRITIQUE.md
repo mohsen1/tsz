@@ -387,6 +387,17 @@ if __name__ == "__main__":
 
 ---
 
+### Status update (2026-02-14)
+
+* **Status:** In progress
+* **Completed in this iteration (Milestone 0 sub-item):**
+  * Enforced dependency-direction **freeze guardrail** in `scripts/check-checker-boundaries.sh` so CI fails if any new non-test solver source (outside legacy `crates/tsz-solver/src/lower.rs`) imports `tsz_parser::` or `tsz_checker::`.
+  * Added focused architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` that recursively scans non-test solver source files and fails on parser/checker import patterns outside the `lower.rs` legacy quarantine.
+* **Remaining for Milestone 0:**
+  * Complete the `lower.rs` migration so solver has zero parser/checker crate imports.
+  * Add/standardize architecture report generation in CI artifacts.
+  * Keep parity harness skeleton aligned with the roadmap deliverables.
+
 # Milestone 1 — Unify the type system (one `TypeId` world)
 
 ### Objective
