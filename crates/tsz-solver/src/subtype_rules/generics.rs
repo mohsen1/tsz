@@ -629,7 +629,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for key_name in keys {
             let key_literal = self
                 .interner
-                .intern(TypeKey::Literal(LiteralValue::String(key_name)));
+                .literal_string_atom(key_name);
 
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
