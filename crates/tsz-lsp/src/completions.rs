@@ -121,11 +121,11 @@ pub struct CompletionItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub insert_text: Option<String>,
     /// Whether the completion is a snippet (contains tab-stop placeholders).
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_snippet: bool,
     /// Whether selecting this completion triggers an additional action such as
     /// an auto-import (tsserver: `hasAction`).
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub has_action: bool,
     /// Module specifier for auto-import completions (tsserver: `source`).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,12 +166,6 @@ mod deserialize_additional_edits {
         // Skip deserialization and always return None
         Ok(None)
     }
-}
-
-#[allow(clippy::trivially_copy_pass_by_ref)]
-/// Helper for serde `skip_serializing_if`.
-fn is_false(v: &bool) -> bool {
-    !*v
 }
 
 impl CompletionItem {
