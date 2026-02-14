@@ -135,3 +135,5 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 123: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for `parameter_checker`, `state_checking`, and `type_computation` gateway routing.
 - [x] Migration action 124: migrated property initializer and JS export-assignment mismatch checks in `crates/tsz-checker/src/state_checking_members.rs` to `check_assignable_or_report(...)`.
 - [x] Migration action 125: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for `state_checking_members` gateway routing.
+- [x] Migration action 126: migrated `satisfies` expression assignability mismatch checks in `crates/tsz-checker/src/dispatch.rs` to `check_assignable_or_report(...)`.
+- [x] Migration action 127: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for `dispatch` gateway routing.

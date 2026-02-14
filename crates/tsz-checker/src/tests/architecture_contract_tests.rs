@@ -502,6 +502,13 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "type_computation mismatch checks should route through check_assignable_or_report"
     );
 
+    let dispatch_src =
+        fs::read_to_string("src/dispatch.rs").expect("failed to read src/dispatch.rs for guard");
+    assert!(
+        dispatch_src.contains("check_assignable_or_report("),
+        "dispatch mismatch checks should route through check_assignable_or_report"
+    );
+
     let class_checker_src = fs::read_to_string("src/class_checker.rs")
         .expect("failed to read src/class_checker.rs for architecture guard");
     assert!(
