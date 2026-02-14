@@ -161,3 +161,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 149: removed checker evaluation-result cache reads/writes from `crates/tsz-checker/src/state_type_environment.rs` while preserving recursion guards (`application_eval_set`, `mapped_eval_set`).
 - [x] Migration action 150: inlined solver infer-shape query usage in `crates/tsz-checker/src/assignability_checker.rs` cacheability gates and removed residual checker wrapper usage.
 - [x] Migration action 151: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to guard against reintroducing checker application/mapped evaluation result caches.
+- [x] Migration action 152: hardened `scripts/arch_guard.py` checker `TypeKey` guard pattern to catch fully-qualified raw constructor calls (`intern(tsz_solver::TypeKey::...)`) and direct `TypeKey::...` references in non-test checker code.

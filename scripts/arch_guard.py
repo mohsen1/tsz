@@ -24,7 +24,12 @@ CHECKS = [
     (
         "Checker boundary: direct TypeKey import/intern usage",
         ROOT / "crates" / "tsz-checker",
-        re.compile(r"\buse\s+tsz_solver::.*TypeKey|\bintern\(\s*TypeKey::"),
+        re.compile(
+            r"\buse\s+tsz_solver::.*TypeKey"
+            r"|\bintern\(\s*TypeKey::"
+            r"|\bintern\(\s*tsz_solver::TypeKey::"
+            r"|\bTypeKey::"
+        ),
         {"exclude_dirs": {"tests"}},
     ),
     (

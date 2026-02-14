@@ -617,13 +617,15 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
   * Added an explicit raw-interner checker guard in `scripts/check-checker-boundaries.sh` that fails on `.intern(...)` usage in non-test checker code, enforcing solver-constructor-only type construction.
   * Expanded checker architecture contract tests to fail on direct raw interner usage (`.intern(...)`) in checker source files.
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
+  * Hardened `scripts/arch_guard.py` checker-side `TypeKey` leakage detection to also fail on fully-qualified raw constructor usage (`intern(tsz_solver::TypeKey::...)`) and direct `TypeKey::...` construction references in non-test checker code.
+* **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Migrated checker non-test code from solver-internal module paths (`tsz_solver::types::...`) to public solver exports (`tsz_solver::...`) across relation flags, symbol refs, visibility, intrinsic/index helpers, and index signatures.
   * Strengthened architecture contract coverage to fail if non-test checker source imports `tsz_solver::types::...`, preventing new solver-internal module coupling.
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Added a solver-side enforcement rule that direct `.intern(TypeKey::...)` construction is quarantined to `tsz-solver/src/intern.rs`.
   * Added a dedicated solver contract test (`typekey_contract_tests.rs`) to enforce this invariant continuously.
 * **Remaining for Milestone 2:**
-  * Keep tightening guard patterns as solver constructor surface expands (for example, forbid additional raw interner access patterns beyond `TypeKey`).
+  * Keep tightening guard patterns as solver constructor surface expands (for example, extend CI matching beyond direct `.intern(TypeKey::...)` aliases and new raw-construction forms).
 
 ---
 
