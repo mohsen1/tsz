@@ -74,11 +74,9 @@ impl<'a> CheckerState<'a> {
             if let Some(tag) = tag_name {
                 if let Some(intrinsic_elements_type) = self.get_intrinsic_elements_type() {
                     // Create JSX.IntrinsicElements['tagName'] as an IndexAccess type
-                    let tag_literal = self.ctx.types.literal_string(tag);
-                    return self
-                        .ctx
-                        .types
-                        .index_access(intrinsic_elements_type, tag_literal);
+                    let factory = self.ctx.types.factory();
+                    let tag_literal = factory.literal_string(tag);
+                    return factory.index_access(intrinsic_elements_type, tag_literal);
                 }
             }
             // Fall back to ANY if JSX namespace is not available
