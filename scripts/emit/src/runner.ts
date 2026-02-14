@@ -20,6 +20,7 @@ const ROOT_DIR = path.resolve(__dirname, '../../..');
 const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
 const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
+const DTS_DISCOVERY_CACHE = path.join(CACHE_DIR, 'dts-baseline-index.json');
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -67,6 +68,14 @@ interface CacheEntry {
   jsOutput: string;
   dtsOutput: string | null;
 }
+
+interface DtsDiscoveryEntry {
+  mtimeMs: number;
+  size: number;
+  hasDts: boolean;
+}
+
+type DtsDiscoveryCache = Record<string, DtsDiscoveryEntry>;
 
 // ============================================================================
 // Cache Management
@@ -197,7 +206,47 @@ function parseSourceDirectives(source: string): Record<string, unknown> {
   return options;
 }
 
-async function findTestCases(filter: string, maxTests: number): Promise<TestCase[]> {
+function loadDtsDiscoveryCache(): DtsDiscoveryCache {
+  if (!fs.existsSync(DTS_DISCOVERY_CACHE)) return {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(DTS_DISCOVERY_CACHE, 'utf-8'));
+    if (parsed && typeof parsed === 'object') return parsed as DtsDiscoveryCache;
+  } catch {}
+  return {};
+}
+
+function saveDtsDiscoveryCache(cacheData: DtsDiscoveryCache): void {
+  if (!fs.existsSync(CACHE_DIR)) {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+  }
+  fs.writeFileSync(DTS_DISCOVERY_CACHE, JSON.stringify(cacheData));
+}
+
+async function filterToDtsBaselines(jsFiles: string[]): Promise<string[]> {
+  const cached = loadDtsDiscoveryCache();
+  const updated: DtsDiscoveryCache = { ...cached };
+  const statLimit = pLimit(128);
+  const readLimit = pLimit(64);
+
+  const checks = await Promise.all(jsFiles.map(file => statLimit(async () => {
+    const fullPath = path.join(BASELINES_DIR, file);
+    const stat = await fs.promises.stat(fullPath);
+    const entry = cached[file];
+    if (entry && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
+      return { file, hasDts: entry.hasDts };
+    }
+
+    const content = await readLimit(() => fs.promises.readFile(fullPath, 'utf-8'));
+    const hasDts = /\[\s*[^\]]+\.d\.ts\s*]/i.test(content);
+    updated[file] = { mtimeMs: stat.mtimeMs, size: stat.size, hasDts };
+    return { file, hasDts };
+  })));
+
+  saveDtsDiscoveryCache(updated);
+  return checks.filter(c => c.hasDts).map(c => c.file);
+}
+
+async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean): Promise<TestCase[]> {
   if (!fs.existsSync(BASELINES_DIR)) {
     console.error(`Baselines directory not found: ${BASELINES_DIR}`);
     process.exit(1);
@@ -210,6 +259,11 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
   if (filter) {
     const lowerFilter = filter.toLowerCase();
     jsFiles = jsFiles.filter(f => f.toLowerCase().includes(lowerFilter));
+  }
+
+  // For declaration-only mode, avoid parsing baselines that don't emit .d.ts outputs.
+  if (dtsOnly) {
+    jsFiles = await filterToDtsBaselines(jsFiles);
   }
 
   // Cap to maxTests before reading (we may discard some after parsing, so read a bit extra)
@@ -225,6 +279,7 @@ async function findTestCases(filter: string, maxTests: number): Promise<TestCase
     const baseline = parseBaseline(baselineContent);
 
     if (!baseline.source || !baseline.js) return null;
+    if (dtsOnly && !baseline.dts) return null;
 
     const variant = extractVariantFromFilename(baselineFile);
 
@@ -461,7 +516,7 @@ async function main() {
   process.on('SIGTERM', () => { cleanup(); process.exit(143); });
 
   console.log(pc.dim('Discovering test cases...'));
-  const testCases = await findTestCases(config.filter, config.maxTests);
+  const testCases = await findTestCases(config.filter, config.maxTests, config.dtsOnly);
   console.log(pc.dim(`Found ${testCases.length} test cases`));
   console.log('');
 
