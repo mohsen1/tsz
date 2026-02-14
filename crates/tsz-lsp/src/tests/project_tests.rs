@@ -2300,7 +2300,7 @@ fn test_project_code_actions_missing_import_named() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Error),
-        code: Some(tsz_checker::types::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
@@ -2345,7 +2345,7 @@ fn test_project_code_actions_missing_import_default_export() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Error),
-        code: Some(tsz_checker::types::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
@@ -2387,7 +2387,7 @@ fn test_project_code_actions_missing_import_tsx() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Error),
-        code: Some(tsz_checker::types::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
@@ -2436,7 +2436,7 @@ fn test_project_code_actions_missing_import_default_reexport() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Error),
-        code: Some(tsz_checker::types::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
         source: None,
         message: "Cannot find name 'foo'.".to_string(),
         related_information: None,
@@ -2482,7 +2482,7 @@ fn test_project_code_actions_missing_import_reexport() {
     let diag = LspDiagnostic {
         range,
         severity: Some(DiagnosticSeverity::Error),
-        code: Some(tsz_checker::types::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
         source: None,
         message: "Cannot find name 'bar'.".to_string(),
         related_information: None,

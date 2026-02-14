@@ -633,7 +633,9 @@ impl<'a> FlowAnalyzer<'a> {
                     let narrowed_constraint =
                         self.narrow_by_in_operator(constraint, bin, target, is_true_branch);
                     if narrowed_constraint != constraint {
-                        return self.interner.intersection2(type_id, narrowed_constraint);
+                        return self
+                            .interner
+                            .intersection(vec![type_id, narrowed_constraint]);
                     }
                 }
             }
@@ -1246,7 +1248,9 @@ impl<'a> FlowAnalyzer<'a> {
                     narrowing.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
                 };
                 if narrowed_constraint != constraint {
-                    return self.interner.intersection2(type_id, narrowed_constraint);
+                    return self
+                        .interner
+                        .intersection(vec![type_id, narrowed_constraint]);
                 }
             }
         }

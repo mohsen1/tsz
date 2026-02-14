@@ -388,6 +388,41 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
 }
 
 #[test]
+fn test_assignability_checker_routes_relation_queries_through_query_boundaries() {
+    let source = fs::read_to_string("src/assignability_checker.rs")
+        .expect("failed to read src/assignability_checker.rs for architecture guard");
+
+    assert!(
+        !source.contains("query_relation_with_overrides("),
+        "assignability_checker should route compatibility checks through query_boundaries/assignability helpers"
+    );
+    assert!(
+        !source.contains("query_relation_with_resolver("),
+        "assignability_checker should route subtype/redecl checks through query_boundaries/assignability helpers"
+    );
+    assert!(
+        source.contains("is_assignable_with_overrides("),
+        "assignability_checker should use query_boundaries::assignability::is_assignable_with_overrides"
+    );
+    assert!(
+        source.contains("is_assignable_with_resolver("),
+        "assignability_checker should use query_boundaries::assignability::is_assignable_with_resolver"
+    );
+    assert!(
+        source.contains("is_assignable_bivariant_with_resolver("),
+        "assignability_checker should use query_boundaries::assignability::is_assignable_bivariant_with_resolver"
+    );
+    assert!(
+        source.contains("is_subtype_with_resolver("),
+        "assignability_checker should use query_boundaries::assignability::is_subtype_with_resolver"
+    );
+    assert!(
+        source.contains("is_redeclaration_identical_with_resolver("),
+        "assignability_checker should use query_boundaries::assignability::is_redeclaration_identical_with_resolver"
+    );
+}
+
+#[test]
 fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_interning() {
     fn is_rs_source_file(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()) == Some("rs")
@@ -428,6 +463,8 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
             || line.contains("intern(TypeKey::")
             || line.contains("intern(tsz_solver::TypeKey::")
             || line.contains(".intern(")
+            || line.contains(".union2(")
+            || line.contains(".intersection2(")
     }
 
     let src_dir = Path::new("src");
@@ -463,6 +500,19 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
 fn test_checker_legacy_type_arena_surface_is_feature_gated() {
     let lib_src =
         fs::read_to_string("src/lib.rs").expect("failed to read src/lib.rs for architecture guard");
+    assert!(
+        !lib_src.contains("pub mod types;"),
+        "legacy checker type module should be internal-only during migration; use diagnostics facade instead."
+    );
+    assert!(
+        lib_src.contains("mod types;"),
+        "legacy checker type module must remain available internally for transition."
+    );
+    assert!(
+        lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]")
+            && lib_src.contains("pub use types::{"),
+        "legacy type re-exports must remain gated behind `legacy-type-arena`."
+    );
     assert!(
         lib_src.contains("#[cfg(feature = \"legacy-type-arena\")]\npub mod arena;"),
         "legacy checker TypeArena module must be feature-gated behind `legacy-type-arena`"

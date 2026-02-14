@@ -99,9 +99,10 @@ impl<'a> CheckerState<'a> {
                     MemberVisibility::Public
                 };
                 let is_static = self.has_static_modifier(&method.modifiers);
+                let factory = self.ctx.types.factory();
                 use tsz_solver::FunctionShape;
                 let signature = self.call_signature_from_method(method);
-                let method_type = self.ctx.types.function(FunctionShape {
+                let method_type = factory.function(FunctionShape {
                     type_params: signature.type_params,
                     params: signature.params,
                     this_type: signature.this_type,

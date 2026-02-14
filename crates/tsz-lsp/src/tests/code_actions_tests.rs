@@ -1,6 +1,6 @@
 use super::*;
 use tsz_binder::BinderState;
-use tsz_checker::types::diagnostics::diagnostic_codes::{
+use tsz_checker::diagnostics::diagnostic_codes::{
     ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED, ALL_VARIABLES_ARE_UNUSED, CANNOT_FIND_NAME,
     PROPERTY_DOES_NOT_EXIST_ON_TYPE,
 };

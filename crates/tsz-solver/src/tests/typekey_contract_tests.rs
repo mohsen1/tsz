@@ -8,9 +8,8 @@ fn test_direct_typekey_construction_is_quarantined_to_intern() {
     }
 
     fn collect_solver_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
-        let entries = fs::read_dir(dir).unwrap_or_else(|_| {
-            panic!("failed to read solver source directory {}", dir.display())
-        });
+        let entries = fs::read_dir(dir)
+            .unwrap_or_else(|_| panic!("failed to read solver source directory {}", dir.display()));
 
         for entry in entries {
             let entry = entry.expect("failed to read solver source directory entry");
@@ -34,7 +33,10 @@ fn test_direct_typekey_construction_is_quarantined_to_intern() {
         if path.ends_with("src/intern.rs") {
             continue;
         }
-        if path.components().any(|component| component.as_os_str() == "tests") {
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+        {
             continue;
         }
 
@@ -57,4 +59,3 @@ fn test_direct_typekey_construction_is_quarantined_to_intern() {
         violations.join(", ")
     );
 }
-

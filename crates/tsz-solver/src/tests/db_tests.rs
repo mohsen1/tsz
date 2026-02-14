@@ -1,4 +1,7 @@
-use crate::{LiteralValue, QueryCache, QueryDatabase, TypeDatabase, TypeId, TypeInterner, TypeKey};
+use crate::{
+    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryDatabase, TupleElement, TypeDatabase,
+    TypeId, TypeInterner, TypeKey, Visibility,
+};
 
 impl<'a> QueryCache<'a> {
     fn eval_cache_len(&self) -> usize {
@@ -24,6 +27,20 @@ impl<'a> QueryCache<'a> {
 
     fn property_cache_len(&self) -> usize {
         match self.property_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
+    }
+
+    fn element_access_cache_len(&self) -> usize {
+        match self.element_access_cache.read() {
+            Ok(cache) => cache.len(),
+            Err(e) => e.into_inner().len(),
+        }
+    }
+
+    fn object_spread_properties_cache_len(&self) -> usize {
+        match self.object_spread_properties_cache.read() {
             Ok(cache) => cache.len(),
             Err(e) => e.into_inner().len(),
         }
@@ -133,4 +150,78 @@ fn test_is_subtype_vs_is_assignable_any() {
     // Symmetric check
     assert!(db.is_subtype_of(TypeId::NUMBER, TypeId::ANY));
     assert!(db.is_assignable_to(TypeId::NUMBER, TypeId::ANY));
+}
+
+#[test]
+fn query_cache_caches_element_access_type() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let tuple_type = db.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    assert_eq!(db.element_access_cache_len(), 0);
+    let first = db.resolve_element_access_type(tuple_type, interner.literal_number(0.0), Some(0));
+    assert_eq!(first, TypeId::STRING);
+    assert_eq!(db.element_access_cache_len(), 1);
+
+    let second = db.resolve_element_access_type(tuple_type, interner.literal_number(0.0), Some(0));
+    assert_eq!(second, first);
+    assert_eq!(db.element_access_cache_len(), 1);
+}
+
+#[test]
+fn query_cache_caches_object_spread_properties() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let first_obj = db.object(vec![PropertyInfo {
+        name: interner.intern_string("first"),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+    }]);
+
+    let second_obj = db.object_with_flags(
+        vec![PropertyInfo {
+            name: interner.intern_string("second"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        }],
+        ObjectFlags::FRESH_LITERAL,
+    );
+
+    let spread_type = db.intersection(vec![first_obj, second_obj]);
+    assert_eq!(db.object_spread_properties_cache_len(), 0);
+
+    let props = db.collect_object_spread_properties(spread_type);
+    assert_eq!(props.len(), 2);
+    assert!(
+        props
+            .iter()
+            .any(|p| interner.resolve_atom_ref(p.name).as_ref() == "first")
+    );
+    assert!(
+        props
+            .iter()
+            .any(|p| interner.resolve_atom_ref(p.name).as_ref() == "second")
+    );
+    assert_eq!(db.object_spread_properties_cache_len(), 1);
+
+    let props_again = db.collect_object_spread_properties(spread_type);
+    assert_eq!(props_again.len(), 2);
+    assert_eq!(db.object_spread_properties_cache_len(), 1);
 }

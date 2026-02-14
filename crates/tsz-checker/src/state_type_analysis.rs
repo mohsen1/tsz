@@ -614,6 +614,7 @@ impl<'a> CheckerState<'a> {
             .type_arguments
             .as_ref()
             .is_some_and(|args| !args.nodes.is_empty());
+        let factory = self.ctx.types.factory();
 
         let base =
             if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
@@ -632,7 +633,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // For type arguments or when resolved is ANY/ERROR, use TypeQuery
-                let typequery_type = self.ctx.types.type_query(SymbolRef(sym_id));
+                let typequery_type = factory.type_query(SymbolRef(sym_id));
                 trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
                 typequery_type
             } else if self
@@ -698,11 +699,12 @@ impl<'a> CheckerState<'a> {
                 let mut hasher = DefaultHasher::new();
                 name.hash(&mut hasher);
                 let symbol_id = hasher.finish() as u32;
-                self.ctx.types.type_query(SymbolRef(symbol_id))
+                factory.type_query(SymbolRef(symbol_id))
             } else {
                 return TypeId::ERROR; // No name text - propagate error
             };
 
+        let factory = self.ctx.types.factory();
         if let Some(args) = &type_query.type_arguments
             && !args.nodes.is_empty()
         {
@@ -711,7 +713,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|&idx| self.get_type_from_type_node(idx))
                 .collect();
-            return self.ctx.types.application(base, type_args);
+            return factory.application(base, type_args);
         }
 
         base
@@ -821,6 +823,8 @@ impl<'a> CheckerState<'a> {
 
         // First pass: Add all type parameters to scope WITHOUT resolving constraints
         // This allows self-referential constraints like T extends Box<T>
+        let factory = self.ctx.types.factory();
+
         for &param_idx in &list.nodes {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -855,7 +859,7 @@ impl<'a> CheckerState<'a> {
                 default: None,
                 is_const: false,
             };
-            let type_id = self.ctx.types.type_param(info);
+            let type_id = factory.type_param(info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous));
             param_indices.push(param_idx);
@@ -947,7 +951,7 @@ impl<'a> CheckerState<'a> {
             // UPDATE: Create a new TypeParameter with constraints and update the scope
             // This ensures that when function parameters reference these type parameters,
             // they get the constrained version, not the unconstrained placeholder
-            let constrained_type_id = self.ctx.types.type_param(info);
+            let constrained_type_id = factory.type_param(info);
             self.ctx
                 .type_parameter_scope
                 .insert(name.clone(), constrained_type_id);
@@ -1027,6 +1031,7 @@ impl<'a> CheckerState<'a> {
     pub fn get_type_of_symbol(&mut self, sym_id: SymbolId) -> TypeId {
         use tsz_solver::SymbolRef;
 
+        let factory = self.ctx.types.factory();
         self.record_symbol_dependency(sym_id);
 
         // Check cache first
@@ -1070,7 +1075,7 @@ impl<'a> CheckerState<'a> {
                     != 0
                 {
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
-                    let lazy_type = self.ctx.types.lazy(def_id);
+                    let lazy_type = factory.lazy(def_id);
                     // Don't cache the Lazy type - we want to retry when the circular reference is broken
                     return lazy_type;
                 }
@@ -1118,7 +1123,7 @@ impl<'a> CheckerState<'a> {
                 != 0
             {
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
-                self.ctx.types.lazy(def_id)
+                factory.lazy(def_id)
             } else {
                 TypeId::ERROR
             }
@@ -1926,7 +1931,8 @@ impl<'a> CheckerState<'a> {
             return ctor_type;
         };
 
-        self.ctx.types.callable(tsz_solver::CallableShape {
+        let factory = self.ctx.types.factory();
+        factory.callable(tsz_solver::CallableShape {
             call_signatures,
             construct_signatures: shape.construct_signatures.clone(),
             properties: shape.properties.clone(),
@@ -1962,7 +1968,8 @@ impl<'a> CheckerState<'a> {
 
         // Wrap in nominal enum type for identity
         // This ensures E.A is not assignable to E.B (different DefIds)
-        let enum_type = self.ctx.types.enum_type(member_def_id, literal_type);
+        let factory = self.ctx.types.factory();
+        let enum_type = factory.enum_type(member_def_id, literal_type);
         (enum_type, Vec::new())
     }
 
@@ -1976,7 +1983,8 @@ impl<'a> CheckerState<'a> {
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         // Create DefId and use Lazy type
         let def_id = self.ctx.get_or_create_def_id(sym_id);
-        (self.ctx.types.lazy(def_id), Vec::new())
+        let factory = self.ctx.types.factory();
+        (factory.lazy(def_id), Vec::new())
     }
 
     /// Compute type of a symbol (internal, not cached).
@@ -1989,6 +1997,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
+        let factory = self.ctx.types.factory();
         use tsz_solver::TypeLowering;
 
         // Handle cross-file symbol resolution via delegation
@@ -2084,7 +2093,7 @@ impl<'a> CheckerState<'a> {
                             {
                                 let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
                                 let member_enum_type =
-                                    self.ctx.types.enum_type(member_def_id, member_type);
+                                    factory.enum_type(member_def_id, member_type);
                                 self.ctx
                                     .symbol_types
                                     .insert(member_sym_id, member_enum_type);
@@ -2112,7 +2121,7 @@ impl<'a> CheckerState<'a> {
                 member_types[0]
             } else {
                 // Multiple members - create a union
-                self.ctx.types.union(member_types)
+                factory.union(member_types)
             };
 
             // Cache the structural type in type_env for compatibility
@@ -2127,7 +2136,7 @@ impl<'a> CheckerState<'a> {
             // - Enum(def_id, structural_type) preserves both:
             //   1. DefId for nominal identity (E1 != E2)
             //   2. structural_type for assignability to primitives (E1 <: number)
-            let enum_type = self.ctx.types.enum_type(def_id, structural_type);
+            let enum_type = factory.enum_type(def_id, structural_type);
 
             // CRITICAL: Merge namespace exports for enum+namespace merging
             // When an enum and namespace with the same name are merged, the namespace's
@@ -2207,7 +2216,7 @@ impl<'a> CheckerState<'a> {
                     number_index: None,
                     symbol: None,
                 };
-                self.ctx.types.callable(shape)
+                factory.callable(shape)
             } else if !value_decl.is_none() {
                 self.get_type_of_function(value_decl)
             } else if !implementation_decl.is_none() {
@@ -2493,7 +2502,7 @@ impl<'a> CheckerState<'a> {
                             && type_id != TypeId::UNKNOWN
                             && type_id != TypeId::ERROR
                         {
-                            type_id = self.ctx.types.union2(type_id, TypeId::UNDEFINED);
+                            type_id = factory.union(vec![type_id, TypeId::UNDEFINED]);
                         }
                         return (type_id, Vec::new());
                     }
@@ -2587,15 +2596,13 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
 
-                            let namespace_type = self.ctx.types.object(props);
+                            let namespace_type = factory.object(props);
                             if let Some(export_equals_type) = export_equals_type {
                                 if module_is_non_module_entity {
                                     return (export_equals_type, Vec::new());
                                 }
                                 return (
-                                    self.ctx
-                                        .types
-                                        .intersection2(export_equals_type, namespace_type),
+                                    factory.intersection(vec![export_equals_type, namespace_type]),
                                     Vec::new(),
                                 );
                             }
@@ -2726,15 +2733,13 @@ impl<'a> CheckerState<'a> {
                             }
                         }
 
-                        let namespace_type = self.ctx.types.object(props);
+                        let namespace_type = factory.object(props);
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity {
                                 return (export_equals_type, Vec::new());
                             }
                             return (
-                                self.ctx
-                                    .types
-                                    .intersection2(export_equals_type, namespace_type),
+                                factory.intersection(vec![export_equals_type, namespace_type]),
                                 Vec::new(),
                             );
                         }
@@ -2913,7 +2918,7 @@ impl<'a> CheckerState<'a> {
                                         parent_id: None,
                                     });
                                 }
-                                let module_type = self.ctx.types.object(props);
+                                let module_type = factory.object(props);
                                 return (module_type, Vec::new());
                             }
                         }
@@ -3278,6 +3283,7 @@ impl<'a> CheckerState<'a> {
         name_idx: NodeIndex,
         object_type: TypeId,
     ) -> TypeId {
+        let factory = self.ctx.types.factory();
         use tsz_solver::operations_property::PropertyAccessResult;
 
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
@@ -3384,7 +3390,7 @@ impl<'a> CheckerState<'a> {
                                 }
                                 // Return the property type (handle optional and write_type)
                                 let prop_type = if prop.optional {
-                                    self.ctx.types.union(vec![prop.type_id, TypeId::UNDEFINED])
+                                    factory.union(vec![prop.type_id, TypeId::UNDEFINED])
                                 } else {
                                     prop.type_id
                                 };
@@ -3518,7 +3524,7 @@ impl<'a> CheckerState<'a> {
                         if prop.name == prop_atom {
                             // Property found! Return its type
                             return if prop.optional {
-                                self.ctx.types.union(vec![prop.type_id, TypeId::UNDEFINED])
+                                factory.union(vec![prop.type_id, TypeId::UNDEFINED])
                             } else {
                                 prop.type_id
                             };
@@ -3542,7 +3548,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(cause) = nullish_cause {
             if access.question_dot_token {
-                result_type = self.ctx.types.union(vec![result_type, TypeId::UNDEFINED]);
+                result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
             } else {
                 self.report_possibly_nullish_object(access.expression, cause);
             }

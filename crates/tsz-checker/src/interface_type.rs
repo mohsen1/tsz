@@ -66,6 +66,7 @@ impl<'a> CheckerState<'a> {
             CallSignature as SolverCallSignature, CallableShape, IndexSignature, ObjectFlags,
             ObjectShape, PropertyInfo,
         };
+        let factory = self.ctx.types.factory();
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -306,9 +307,9 @@ impl<'a> CheckerState<'a> {
                 number_index,
                 symbol: None,
             };
-            self.ctx.types.callable(shape)
+            factory.callable(shape)
         } else if string_index.is_some() || number_index.is_some() {
-            self.ctx.types.object_with_index(ObjectShape {
+            factory.object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties,
                 string_index,
@@ -316,7 +317,7 @@ impl<'a> CheckerState<'a> {
                 symbol: None,
             })
         } else if !properties.is_empty() {
-            self.ctx.types.object(properties)
+            factory.object(properties)
         } else {
             TypeId::ANY
         };
@@ -547,6 +548,7 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::{CallableShape, ObjectFlags, ObjectShape};
 
         trace!(derived_id = %derived.0, base_id = %base.0, "merge_interface_types called");
+        let factory = self.ctx.types.factory();
 
         if derived == base {
             return derived;
@@ -577,7 +579,7 @@ impl<'a> CheckerState<'a> {
                 construct_signatures.extend(base_shape.construct_signatures.iter().cloned());
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.callable(CallableShape {
+                factory.callable(CallableShape {
                     call_signatures,
                     construct_signatures,
                     properties,
@@ -600,7 +602,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.callable(CallableShape {
+                factory.callable(CallableShape {
                     call_signatures: derived_shape.call_signatures.clone(),
                     construct_signatures: derived_shape.construct_signatures.clone(),
                     properties,
@@ -617,7 +619,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.callable(CallableShape {
+                factory.callable(CallableShape {
                     call_signatures: derived_shape.call_signatures.clone(),
                     construct_signatures: derived_shape.construct_signatures.clone(),
                     properties,
@@ -640,7 +642,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.callable(CallableShape {
+                factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
                     construct_signatures: base_shape.construct_signatures.clone(),
                     properties,
@@ -657,7 +659,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.callable(CallableShape {
+                factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
                     construct_signatures: base_shape.construct_signatures.clone(),
                     properties,
@@ -680,7 +682,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.object(properties)
+                factory.object(properties)
             }
             (
                 InterfaceMergeKind::Object(derived_shape_id),
@@ -697,7 +699,7 @@ impl<'a> CheckerState<'a> {
                 );
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                let result = self.ctx.types.object_with_index(ObjectShape {
+                let result = factory.object_with_index(ObjectShape {
                     flags: ObjectFlags::empty(),
                     properties,
                     string_index: base_shape.string_index.clone(),
@@ -715,7 +717,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.object_with_index(ObjectShape {
+                factory.object_with_index(ObjectShape {
                     flags: ObjectFlags::empty(),
                     properties,
                     string_index: derived_shape.string_index.clone(),
@@ -731,7 +733,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     Self::merge_properties(&derived_shape.properties, &base_shape.properties);
-                self.ctx.types.object_with_index(ObjectShape {
+                factory.object_with_index(ObjectShape {
                     flags: ObjectFlags::empty(),
                     properties,
                     string_index: derived_shape
@@ -746,7 +748,7 @@ impl<'a> CheckerState<'a> {
                 })
             }
             (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => {
-                self.ctx.types.intersection2(derived, base)
+                factory.intersection(vec![derived, base])
             }
             // When the derived interface has no own members (TypeId::ANY), just use the base.
             (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
@@ -1196,6 +1198,7 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::TypeId {
         use tsz_solver::type_queries::{AugmentationTargetKind, classify_for_augmentation};
         use tsz_solver::{CallableShape, ObjectFlags, ObjectShape};
+        let factory = self.ctx.types.factory();
 
         let augmentation_members =
             self.get_module_augmentation_members(module_spec, interface_name);
@@ -1212,13 +1215,13 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(shape_id);
                 let merged_properties =
                     Self::merge_properties(&augmentation_members, &base_shape.properties);
-                self.ctx.types.object(merged_properties)
+                factory.object(merged_properties)
             }
             AugmentationTargetKind::ObjectWithIndex(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);
                 let merged_properties =
                     Self::merge_properties(&augmentation_members, &base_shape.properties);
-                self.ctx.types.object_with_index(ObjectShape {
+                factory.object_with_index(ObjectShape {
                     flags: ObjectFlags::empty(),
                     properties: merged_properties,
                     string_index: base_shape.string_index.clone(),
@@ -1230,7 +1233,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.callable_shape(shape_id);
                 let merged_properties =
                     Self::merge_properties(&augmentation_members, &base_shape.properties);
-                self.ctx.types.callable(CallableShape {
+                factory.callable(CallableShape {
                     call_signatures: base_shape.call_signatures.clone(),
                     construct_signatures: base_shape.construct_signatures.clone(),
                     properties: merged_properties,
@@ -1242,7 +1245,7 @@ impl<'a> CheckerState<'a> {
             AugmentationTargetKind::Other => {
                 // For other types (like ANY), create a new object type with the augmentation members
                 if !augmentation_members.is_empty() {
-                    self.ctx.types.object(augmentation_members)
+                    factory.object(augmentation_members)
                 } else {
                     base_type
                 }

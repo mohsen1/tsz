@@ -40,6 +40,12 @@ CHECKS = [
         {"exclude_dirs": {"tests"}},
     ),
     (
+        "Checker boundary: deprecated two-arg intersection/union constructors",
+        ROOT / "crates" / "tsz-checker",
+        re.compile(r"\.intersection2\s*\(|\.union2\s*\("),
+        {"exclude_dirs": {"tests"}},
+    ),
+    (
         "Solver dependency direction freeze",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\btsz_parser::\b|\btsz_checker::\b"),

@@ -209,7 +209,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn unused_import_quickfix(&self, diag: &LspDiagnostic) -> Option<CodeAction> {
         let code = diag.code?;
-        if code != tsz_checker::types::diagnostics::diagnostic_codes::ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED {
+        if code != tsz_checker::diagnostics::diagnostic_codes::ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED {
             return None;
         }
 
@@ -237,7 +237,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn unused_declaration_quickfix(&self, diag: &LspDiagnostic) -> Option<CodeAction> {
         let code = diag.code?;
-        if code != tsz_checker::types::diagnostics::diagnostic_codes::ALL_VARIABLES_ARE_UNUSED {
+        if code != tsz_checker::diagnostics::diagnostic_codes::ALL_VARIABLES_ARE_UNUSED {
             return None;
         }
 
@@ -399,9 +399,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn missing_property_quickfix(&self, diag: &LspDiagnostic) -> Option<CodeAction> {
         let code = diag.code?;
-        if code
-            != tsz_checker::types::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-        {
+        if code != tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE {
             return None;
         }
 
@@ -475,7 +473,7 @@ impl<'a> CodeActionProvider<'a> {
             Some(code) => code,
             None => return Vec::new(),
         };
-        if code != tsz_checker::types::diagnostics::diagnostic_codes::CANNOT_FIND_NAME {
+        if code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME {
             return Vec::new();
         }
 

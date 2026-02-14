@@ -29,6 +29,7 @@ impl<'a> CheckerState<'a> {
         use rustc_hash::FxHashMap;
         use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape, PropertyInfo};
 
+        let factory = self.ctx.types.factory();
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::ENUM == 0 {
             return None;
@@ -84,7 +85,7 @@ impl<'a> CheckerState<'a> {
                     .copied()
                     .expect("Enum member must have a DefId");
                 let literal_type = self.enum_member_type_from_decl(member_idx);
-                let specific_member_type = self.ctx.types.enum_type(member_def_id, literal_type);
+                let specific_member_type = factory.enum_type(member_def_id, literal_type);
 
                 props.entry(name_atom).or_insert(PropertyInfo {
                     name: name_atom,
@@ -106,7 +107,7 @@ impl<'a> CheckerState<'a> {
                 value_type: TypeId::STRING,
                 readonly: true,
             });
-            return Some(self.ctx.types.object_with_index(ObjectShape {
+            return Some(factory.object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties,
                 string_index: None,
@@ -115,7 +116,7 @@ impl<'a> CheckerState<'a> {
             }));
         }
 
-        Some(self.ctx.types.object(properties))
+        Some(factory.object(properties))
     }
 
     // Note: enum_kind and enum_member_type_from_decl are defined in type_checking.rs
@@ -308,6 +309,7 @@ impl<'a> CheckerState<'a> {
         mapped_id: tsz_solver::MappedTypeId,
     ) -> TypeId {
         use tsz_solver::{PropertyInfo, TypeSubstitution, instantiate_type};
+        let factory = self.ctx.types.factory();
 
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
@@ -397,7 +399,7 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        self.ctx.types.object(properties)
+        factory.object(properties)
     }
 
     /// Evaluate a mapped type constraint with symbol resolution.
@@ -511,6 +513,7 @@ impl<'a> CheckerState<'a> {
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> TypeId {
         use tsz_binder::SymbolId;
+        let factory = self.ctx.types.factory();
 
         if !visited.insert(type_id) {
             return type_id;
@@ -622,7 +625,7 @@ impl<'a> CheckerState<'a> {
 
                 if any_changed {
                     // Create new Application with resolved args
-                    self.ctx.types.application(base, resolved_args)
+                    factory.application(base, resolved_args)
                 } else {
                     // No changes, return original
                     type_id
@@ -652,14 +655,14 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
                     .collect();
-                self.ctx.types.union_preserve_members(resolved_members)
+                factory.union_preserve_members(resolved_members)
             }
             query::PropertyAccessResolutionKind::Intersection(members) => {
                 let resolved_members: Vec<TypeId> = members
                     .iter()
                     .map(|&member| self.resolve_type_for_property_access_inner(member, visited))
                     .collect();
-                self.ctx.types.intersection(resolved_members)
+                factory.intersection(resolved_members)
             }
             query::PropertyAccessResolutionKind::Readonly(inner) => {
                 self.resolve_type_for_property_access_inner(inner, visited)
@@ -703,6 +706,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> TypeId {
+        let factory = self.ctx.types.factory();
         // Prevent infinite loops in circular type aliases
         if !visited.insert(type_id) {
             return type_id;
@@ -754,7 +758,7 @@ impl<'a> CheckerState<'a> {
                 .collect();
             // Only create new union if members changed
             if resolved_members.iter().ne(members.iter()) {
-                return self.ctx.types.union(resolved_members);
+                return factory.union(resolved_members);
             }
         }
 
@@ -765,7 +769,7 @@ impl<'a> CheckerState<'a> {
                 .collect();
             // Only create new intersection if members changed
             if resolved_members.iter().ne(members.iter()) {
-                return self.ctx.types.intersection(resolved_members);
+                return factory.intersection(resolved_members);
             }
         }
 
@@ -897,47 +901,110 @@ impl<'a> CheckerState<'a> {
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> bool {
         let mut fully_resolved = true;
-        visited.extend(collect_referenced_types(self.ctx.types, type_id));
 
-        for def_id in collect_lazy_def_ids(self.ctx.types, type_id) {
-            fully_resolved &= self.resolve_lazy_def_for_type_env(def_id);
-        }
+        // Use a worklist so we resolve dependencies transitively, including
+        // definitions discovered while traversing lazily resolved references.
+        let mut worklist: Vec<TypeId> = vec![type_id];
+        let mut seen_types: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
+        let mut seen_def_ids: rustc_hash::FxHashSet<tsz_solver::DefId> =
+            rustc_hash::FxHashSet::default();
+        let mut resolved_types: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
 
-        for def_id in collect_enum_def_ids(self.ctx.types, type_id) {
-            fully_resolved &= self.resolve_enum_def_for_type_env(def_id);
-        }
-
-        for symbol_ref in collect_type_queries(self.ctx.types, type_id) {
-            let sym_id = SymbolId(symbol_ref.0);
-            if self.ctx.binder.get_symbol(sym_id).is_none() {
+        while let Some(current) = worklist.pop() {
+            if !seen_types.insert(current) {
                 continue;
             }
-            let resolved = self.type_reference_symbol_type(sym_id);
-            fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
+
+            resolved_types.insert(current);
+
+            for next in collect_referenced_types(self.ctx.types, current) {
+                worklist.push(next);
+            }
+
+            for def_id in collect_lazy_def_ids(self.ctx.types, current) {
+                if !seen_def_ids.insert(def_id) {
+                    continue;
+                }
+
+                match self.resolve_lazy_def_for_type_env(def_id) {
+                    Some((inserted, resolved)) => {
+                        fully_resolved &= inserted;
+                        if resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                            worklist.push(resolved);
+                        }
+                    }
+                    None => {
+                        fully_resolved = false;
+                    }
+                }
+            }
+
+            for def_id in collect_enum_def_ids(self.ctx.types, current) {
+                if !seen_def_ids.insert(def_id) {
+                    continue;
+                }
+
+                match self.resolve_enum_def_for_type_env(def_id) {
+                    Some((inserted, resolved)) => {
+                        fully_resolved &= inserted;
+                        if resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                            worklist.push(resolved);
+                        }
+                    }
+                    None => {
+                        fully_resolved = false;
+                    }
+                }
+            }
+
+            for symbol_ref in collect_type_queries(self.ctx.types, current) {
+                let sym_id = SymbolId(symbol_ref.0);
+                if self.ctx.binder.get_symbol(sym_id).is_none() {
+                    continue;
+                }
+                let resolved = self.type_reference_symbol_type(sym_id);
+                let inserted = self.insert_type_env_symbol(sym_id, resolved);
+                fully_resolved &= inserted;
+                if resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                    worklist.push(resolved);
+                }
+            }
+        }
+
+        if fully_resolved {
+            visited.extend(resolved_types);
         }
 
         fully_resolved
     }
 
-    fn resolve_lazy_def_for_type_env(&mut self, def_id: tsz_solver::DefId) -> bool {
+    fn resolve_lazy_def_for_type_env(
+        &mut self,
+        def_id: tsz_solver::DefId,
+    ) -> Option<(bool, TypeId)> {
         if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
             // Use get_type_of_symbol (not type_reference_symbol_type) because
             // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
             // which insert_type_env_symbol rejects as a self-recursive alias.
             // We need the concrete structural type for TypeEnvironment resolution.
             let resolved = self.get_type_of_symbol(sym_id);
-            self.insert_type_env_symbol(sym_id, resolved)
+            let inserted = self.insert_type_env_symbol(sym_id, resolved);
+            Some((inserted, resolved))
         } else {
-            true
+            None
         }
     }
 
-    fn resolve_enum_def_for_type_env(&mut self, def_id: tsz_solver::DefId) -> bool {
+    fn resolve_enum_def_for_type_env(
+        &mut self,
+        def_id: tsz_solver::DefId,
+    ) -> Option<(bool, TypeId)> {
         if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
             let resolved = self.type_reference_symbol_type(sym_id);
-            self.insert_type_env_symbol(sym_id, resolved)
+            let inserted = self.insert_type_env_symbol(sym_id, resolved);
+            Some((inserted, resolved))
         } else {
-            true
+            None
         }
     }
 
@@ -1313,14 +1380,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// Automatically normalizes: flattens nested unions, deduplicates, sorts.
     pub fn get_union_type(&self, types: Vec<TypeId>) -> TypeId {
-        self.ctx.types.union(types)
+        self.ctx.types.factory().union(types)
     }
 
     /// Create an intersection type from multiple types.
     ///
     /// Automatically normalizes: flattens nested intersections, deduplicates, sorts.
     pub fn get_intersection_type(&self, types: Vec<TypeId>) -> TypeId {
-        self.ctx.types.intersection(types)
+        self.ctx.types.factory().intersection(types)
     }
 
     // =========================================================================
@@ -1562,7 +1629,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let elem_type = self.get_type_from_type_node(array_type.element_type);
-                    let result = self.ctx.types.array(elem_type);
+                    let result = self.ctx.types.factory().array(elem_type);
                     self.ctx.node_types.insert(idx.0, result);
                     return result;
                 }

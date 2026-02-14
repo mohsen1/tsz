@@ -1519,7 +1519,7 @@ impl<'a> CheckerState<'a> {
         if result_types.len() == 1 {
             return result_types[0];
         }
-        self.ctx.types.union(result_types)
+        self.ctx.types.factory().union(result_types)
     }
 
     /// Get the symbol for an identifier node.

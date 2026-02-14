@@ -102,6 +102,7 @@ impl<'a> CheckerState<'a> {
         visited_nodes: &mut FxHashSet<NodeIndex>,
     ) -> TypeId {
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let factory = self.ctx.types.factory();
 
         // Try to insert into global class_instance_resolution_set for cross-call-chain cycle detection.
         // If the symbol is already in the set, it means we have a cycle - return ERROR.
@@ -460,7 +461,7 @@ impl<'a> CheckerState<'a> {
             if signatures.is_empty() {
                 continue;
             }
-            let type_id = self.ctx.types.callable(CallableShape {
+            let type_id = factory.callable(CallableShape {
                 call_signatures: signatures,
                 construct_signatures: Vec::new(),
                 properties: Vec::new(),
@@ -913,7 +914,7 @@ impl<'a> CheckerState<'a> {
         // Build the final instance type
         let props: Vec<PropertyInfo> = properties.into_values().collect();
         let mut instance_type = if string_index.is_some() || number_index.is_some() {
-            self.ctx.types.object_with_index(ObjectShape {
+            factory.object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties: props,
                 string_index,
@@ -922,7 +923,7 @@ impl<'a> CheckerState<'a> {
             })
         } else {
             // Use object_with_index even without index signatures to set the symbol for nominal typing
-            self.ctx.types.object_with_index(ObjectShape {
+            factory.object_with_index(ObjectShape {
                 flags: ObjectFlags::empty(),
                 properties: props,
                 string_index: None,
@@ -1046,6 +1047,7 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
+        let factory = self.ctx.types.factory();
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
         let (class_type_params, type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
@@ -1318,7 +1320,7 @@ impl<'a> CheckerState<'a> {
             if signatures.is_empty() {
                 continue;
             }
-            let type_id = self.ctx.types.callable(CallableShape {
+            let type_id = factory.callable(CallableShape {
                 call_signatures: signatures,
                 construct_signatures: Vec::new(),
                 properties: Vec::new(),
@@ -1618,7 +1620,7 @@ impl<'a> CheckerState<'a> {
         // classes with identical structures get different TypeIds
         let class_symbol = self.ctx.binder.get_node_symbol(class_idx);
 
-        let constructor_type = self.ctx.types.callable(CallableShape {
+        let constructor_type = factory.callable(CallableShape {
             call_signatures: Vec::new(),
             construct_signatures,
             properties,
@@ -1652,7 +1654,7 @@ impl<'a> CheckerState<'a> {
         // to T. This makes `T & ConstructorType <: T` succeed via the
         // intersection rule in the subtype checker.
         if let Some(base_tp) = base_type_param {
-            return self.ctx.types.intersection(vec![base_tp, constructor_type]);
+            return factory.intersection(vec![base_tp, constructor_type]);
         }
 
         constructor_type

@@ -1,6 +1,6 @@
 use super::*;
 use crate::TypeInterner;
-use crate::types::Visibility;
+use crate::types::{ObjectFlags, Visibility};
 
 #[test]
 fn test_build_object_type() {
@@ -163,4 +163,29 @@ fn test_extract_properties_from_intersection() {
             .iter()
             .any(|p| db.resolve_atom_ref(p.name) == "y".into())
     );
+}
+
+#[test]
+fn test_collect_spread_properties() {
+    let db = TypeInterner::new();
+    let builder = ObjectLiteralBuilder::new(&db);
+
+    let spread_type = db.object_with_flags(
+        vec![PropertyInfo {
+            name: db.intern_string("spread"),
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+        }],
+        ObjectFlags::FRESH_LITERAL,
+    );
+
+    let props = builder.collect_spread_properties(spread_type);
+    assert_eq!(props.len(), 1);
+    assert_eq!(db.resolve_atom_ref(props[0].name).as_ref(), "spread");
+    assert_eq!(props[0].type_id, TypeId::NUMBER);
 }

@@ -781,6 +781,7 @@ impl<'a> CheckerState<'a> {
     /// lacks the type environment. This method pre-resolves the constraint so the
     /// solver can find construct signatures.
     fn resolve_type_param_for_construct(&mut self, type_id: TypeId) -> TypeId {
+        let factory = self.ctx.types.factory();
         let Some(info) = query::type_parameter_info(self.ctx.types, type_id) else {
             return type_id;
         };
@@ -800,7 +801,7 @@ impl<'a> CheckerState<'a> {
             constraint: Some(resolved_constraint),
             ..info.clone()
         };
-        self.ctx.types.type_param(new_info)
+        factory.type_param(new_info)
     }
 
     /// Get type from a union type node (A | B).
@@ -822,6 +823,7 @@ impl<'a> CheckerState<'a> {
     /// - Objects: Combines properties from all members
     /// - Functions: Union of function signatures
     pub(crate) fn get_type_from_union_type(&mut self, idx: NodeIndex) -> TypeId {
+        let factory = self.ctx.types.factory();
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -841,7 +843,7 @@ impl<'a> CheckerState<'a> {
                 return member_types[0];
             }
 
-            return self.ctx.types.union(member_types);
+            return factory.union(member_types);
         }
 
         TypeId::ERROR // Missing composite type data - propagate error
@@ -852,6 +854,7 @@ impl<'a> CheckerState<'a> {
     /// Uses CheckerState's get_type_from_type_node for each member to ensure
     /// typeof expressions are resolved via binder (same reason as union types).
     pub(crate) fn get_type_from_intersection_type(&mut self, idx: NodeIndex) -> TypeId {
+        let factory = self.ctx.types.factory();
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
@@ -869,7 +872,7 @@ impl<'a> CheckerState<'a> {
                 return member_types[0];
             }
 
-            return self.ctx.types.intersection(member_types);
+            return factory.intersection(member_types);
         }
 
         TypeId::ERROR
@@ -881,6 +884,7 @@ impl<'a> CheckerState<'a> {
     /// - `readonly T[]` - Creates ReadonlyType wrapper
     /// - `unique symbol` - Special marker for unique symbols
     pub(crate) fn get_type_from_type_operator(&mut self, idx: NodeIndex) -> TypeId {
+        let factory = self.ctx.types.factory();
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -894,7 +898,7 @@ impl<'a> CheckerState<'a> {
             // Handle readonly operator
             if operator == SyntaxKind::ReadonlyKeyword as u16 {
                 // Wrap the inner type in ReadonlyType
-                return self.ctx.types.readonly_type(inner_type);
+                return factory.readonly_type(inner_type);
             }
 
             // Handle unique operator
@@ -961,12 +965,13 @@ impl<'a> CheckerState<'a> {
                 if shape.properties.is_empty() {
                     return TypeId::NEVER;
                 }
+                let factory = self.ctx.types.factory();
                 let key_types: Vec<TypeId> = shape
                     .properties
                     .iter()
                     .map(|p| self.ctx.types.literal_string_atom(p.name))
                     .collect();
-                self.ctx.types.union(key_types)
+                factory.union(key_types)
             }
             KeyOfTypeKind::NoKeys => TypeId::NEVER,
         }
@@ -1312,7 +1317,10 @@ impl<'a> CheckerState<'a> {
             let return_type =
                 self.apply_this_substitution_to_call_return(return_type, call.expression);
             return if nullish_cause.is_some() {
-                self.ctx.types.union(vec![return_type, TypeId::UNDEFINED])
+                self.ctx
+                    .types
+                    .factory()
+                    .union(vec![return_type, TypeId::UNDEFINED])
             } else {
                 return_type
             };
@@ -1479,7 +1487,10 @@ impl<'a> CheckerState<'a> {
                 None, // No skipping needed
             );
             return if nullish_cause.is_some() {
-                self.ctx.types.union(vec![TypeId::ANY, TypeId::UNDEFINED])
+                self.ctx
+                    .types
+                    .factory()
+                    .union(vec![TypeId::ANY, TypeId::UNDEFINED])
             } else {
                 TypeId::ANY
             };
@@ -1555,7 +1566,10 @@ impl<'a> CheckerState<'a> {
                 let return_type =
                     self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
                 if is_optional_chain {
-                    self.ctx.types.union(vec![return_type, TypeId::UNDEFINED])
+                    self.ctx
+                        .types
+                        .factory()
+                        .union(vec![return_type, TypeId::UNDEFINED])
                 } else {
                     return_type
                 }
