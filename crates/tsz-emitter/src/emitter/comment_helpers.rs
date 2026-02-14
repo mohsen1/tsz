@@ -162,12 +162,15 @@ impl<'a> Printer<'a> {
             let mut j = end_pos;
             while j < bytes.len() {
                 match bytes[j] {
+                    b' ' | b'\t' => j += 1,
+                    b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'/' => break,
+                    b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => break,
                     b';' | b'}' => {
                         token_end = (j + 1) as u32;
                         break;
                     }
                     b'\n' | b'\r' => break,
-                    _ => j += 1,
+                    _ => break,
                 }
             }
         }
