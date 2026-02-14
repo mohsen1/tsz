@@ -109,7 +109,10 @@ impl<'a> CheckerState<'a> {
             if let Some(func) = self.ctx.arena.get_function(node) {
                 (func.is_async, func.asterisk_token)
             } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                (self.has_async_modifier(&method.modifiers), method.asterisk_token)
+                (
+                    self.has_async_modifier(&method.modifiers),
+                    method.asterisk_token,
+                )
             } else {
                 (false, false)
             };
