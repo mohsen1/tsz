@@ -283,6 +283,10 @@ pub struct Printer<'a> {
     /// Temp variable names that need to be hoisted to the top of the current scope
     /// as `var _a, _b, ...;`. Used for assignment destructuring in ES5 mode.
     pub(super) hoisted_assignment_temps: Vec<String>,
+
+    /// Temp names for ES5 iterator-based for-of lowering that must be emitted
+    /// as top-level `var` declarations (e.g., `e_1, _a, e_2, _b`).
+    pub(super) hoisted_for_of_temps: Vec<String>,
 }
 
 impl<'a> Printer<'a> {
@@ -335,6 +339,7 @@ impl<'a> Printer<'a> {
             declared_namespace_names: FxHashSet::default(),
             pending_class_field_inits: Vec::new(),
             hoisted_assignment_temps: Vec::new(),
+            hoisted_for_of_temps: Vec::new(),
         }
     }
 
@@ -2237,6 +2242,7 @@ impl<'a> Printer<'a> {
         // Save position for hoisted temp var declarations (assignment destructuring).
         // After emitting all statements, we'll insert `var _a, _b, ...;` here if needed.
         self.hoisted_assignment_temps.clear();
+        self.hoisted_for_of_temps.clear();
         let hoisted_var_byte_offset = self.writer.len();
         let hoisted_var_line = self.writer.current_line();
 
@@ -2245,6 +2251,7 @@ impl<'a> Printer<'a> {
         // Between-statement comments are part of the next node's leading trivia.
         // We find each statement's "actual token start" by scanning forward past
         // trivia, then emit all comments before that position.
+        let mut last_erased_stmt_end: Option<u32> = None;
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 // For erased declarations (interface, type alias) in JS emit mode,
@@ -2272,6 +2279,7 @@ impl<'a> Printer<'a> {
                             break;
                         }
                     }
+                    last_erased_stmt_end = Some(stmt_node.end);
                     continue;
                 }
 
@@ -2285,6 +2293,13 @@ impl<'a> Printer<'a> {
                         let c_end = self.all_comments[self.comment_emit_idx].end;
                         let c_trailing =
                             self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                        if let Some(erased_end) = last_erased_stmt_end
+                            && c_end <= erased_end
+                        {
+                            // Comment was part of a recently erased declaration; discard it.
+                            self.comment_emit_idx += 1;
+                            continue;
+                        }
                         // Only emit if this comment ends before the statement's first token
                         // AND hasn't been emitted by a nested expression emitter
                         if c_end <= actual_start {
@@ -2303,6 +2318,7 @@ impl<'a> Printer<'a> {
                         }
                     }
                 }
+                last_erased_stmt_end = None;
             }
 
             let before_len = self.writer.len();
@@ -2341,10 +2357,12 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Insert hoisted temp var declarations for assignment destructuring.
-        // These are generated during emit and need to be inserted at the saved position.
-        if !self.hoisted_assignment_temps.is_empty() {
-            let var_decl = format!("var {};", self.hoisted_assignment_temps.join(", "));
+        // Insert hoisted temp declarations (for-of iterator lowering + assignment destructuring).
+        let mut hoisted_vars = Vec::new();
+        hoisted_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+        hoisted_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        if !hoisted_vars.is_empty() {
+            let var_decl = format!("var {};", hoisted_vars.join(", "));
             self.writer
                 .insert_line_at(hoisted_var_byte_offset, hoisted_var_line, &var_decl);
         }

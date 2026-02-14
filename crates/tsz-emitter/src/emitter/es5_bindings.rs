@@ -1665,13 +1665,11 @@ impl<'a> Printer<'a> {
 
         self.ctx.destructuring_state.for_of_counter += 1;
 
-        // Declare only error container and return temp at the top (NOT catch variable)
-        self.write("var ");
-        self.write(&error_container_name);
-        self.write(", ");
-        self.write(&return_temp_name);
-        self.write(";");
-        self.write_line();
+        // Hoist error container + return temp to the top of the source file scope.
+        // This matches tsc's combined var preamble shape when multiple transformed for-of
+        // loops appear in the same file.
+        self.hoisted_for_of_temps.push(error_container_name.clone());
+        self.hoisted_for_of_temps.push(return_temp_name.clone());
 
         // try block
         self.write("try {");
