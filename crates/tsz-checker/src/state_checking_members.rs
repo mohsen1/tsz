@@ -1576,6 +1576,11 @@ impl<'a> CheckerState<'a> {
                         if let Some(prop_name) = self.get_property_name(prop.name)
                             && prop_name == name
                         {
+                            // Auto-accessors (`accessor x`) behave like accessor members
+                            // for super-property access and should not trigger TS2855.
+                            if self.has_accessor_modifier(&prop.modifiers) {
+                                return Some(true);
+                            }
                             return Some(false);
                         }
                     }
