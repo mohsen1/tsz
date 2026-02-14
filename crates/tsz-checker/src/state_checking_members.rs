@@ -896,6 +896,26 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Extract explicit type annotation info for a class property declaration.
+    fn get_class_property_declared_type_info(
+        &mut self,
+        member_idx: NodeIndex,
+    ) -> Option<(String, NodeIndex, TypeId)> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            return None;
+        }
+
+        let prop = self.ctx.arena.get_property_decl(member_node)?;
+        if prop.type_annotation.is_none() {
+            return None;
+        }
+
+        let name = self.get_member_name_text(prop.name)?;
+        let type_id = self.get_type_from_type_node(prop.type_annotation);
+        Some((name, prop.name, type_id))
+    }
+
     /// Check for duplicate property/method names in class members (TS2300, TS2393).
     /// TypeScript reports:
     /// - TS2300 "Duplicate identifier 'X'." for duplicate properties
@@ -1046,6 +1066,40 @@ impl<'a> CheckerState<'a> {
             // Case 4: Method overloads (signatures + 1 implementation) -> Valid, no error
 
             if property_count > 0 && method_count == 0 {
+                // TS2717: Duplicate class property declarations with incompatible explicit types.
+                // Keep this narrow to explicit type annotations to avoid inference cascades.
+                let first_declared = info
+                    .indices
+                    .first()
+                    .and_then(|&idx| self.get_class_property_declared_type_info(idx));
+
+                if let Some((_first_name, _first_name_node, first_type)) = &first_declared {
+                    if !self.type_contains_error(*first_type) {
+                        let first_type_str = self.format_type(*first_type);
+                        for &idx in info.indices.iter().skip(1) {
+                            let Some((name, name_node, current_type)) =
+                                self.get_class_property_declared_type_info(idx)
+                            else {
+                                continue;
+                            };
+                            if self.type_contains_error(current_type) {
+                                continue;
+                            }
+                            let compatible_both_ways = self
+                                .is_assignable_to(*first_type, current_type)
+                                && self.is_assignable_to(current_type, *first_type);
+                            if !compatible_both_ways {
+                                let current_type_str = self.format_type(current_type);
+                                self.error_at_node_msg(
+                                    name_node,
+                                    diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                                    &[&name, &first_type_str, &current_type_str],
+                                );
+                            }
+                        }
+                    }
+                }
+
                 // All properties: only report subsequent declarations
                 for &idx in info.indices.iter().skip(1) {
                     self.report_duplicate_class_member_ts2300(idx);
