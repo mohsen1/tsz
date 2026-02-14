@@ -1459,7 +1459,7 @@ impl<'a> CheckerState<'a> {
             idx,
             args,
             &arg_types,
-            callee_type,
+            callee_type_for_call,
             is_super_call,
             nullish_cause.is_some(),
         )
