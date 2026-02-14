@@ -12,6 +12,7 @@
 //! This module extends CheckerState with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
+use crate::query_boundaries::type_checking as query;
 use crate::state::{CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, PropertyKey};
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
@@ -1725,12 +1726,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if callee_type_for_call is a union containing Function members
-        if let Some(members_vec) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, callee_type_for_call)
-        {
+        if let Some(members_vec) = query::union_members(self.ctx.types, callee_type_for_call) {
             let members = members_vec;
-            let orig_members =
-                tsz_solver::type_queries::get_union_members(self.ctx.types, callee_type_orig);
+            let orig_members = query::union_members(self.ctx.types, callee_type_orig);
 
             let mut has_function = false;
             let mut new_members = Vec::new();
@@ -1815,7 +1813,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // First check if it directly has construct signatures
-        if tsz_solver::type_queries::has_construct_signatures(self.ctx.types, type_id) {
+        if query::has_construct_signatures(self.ctx.types, type_id) {
             return true;
         }
 
@@ -1828,26 +1826,24 @@ impl<'a> CheckerState<'a> {
         // For type parameters, check if the constraint is a constructor type
         // For intersection types, check if any member is a constructor type
         // For application types, check if the base type is a constructor type
-        use tsz_solver::type_queries::{ConstructorCheckKind, classify_for_constructor_check};
-
-        match classify_for_constructor_check(self.ctx.types, type_id) {
-            ConstructorCheckKind::TypeParameter { constraint } => {
+        match query::classify_for_constructor_check(self.ctx.types, type_id) {
+            query::ConstructorCheckKind::TypeParameter { constraint } => {
                 if let Some(constraint) = constraint {
                     self.is_constructor_type(constraint)
                 } else {
                     false
                 }
             }
-            ConstructorCheckKind::Intersection(members) => {
+            query::ConstructorCheckKind::Intersection(members) => {
                 members.iter().any(|&m| self.is_constructor_type(m))
             }
-            ConstructorCheckKind::Union(members) => {
+            query::ConstructorCheckKind::Union(members) => {
                 // Union types are constructable if ALL members are constructable
                 // This matches TypeScript's behavior where `type A | B` used in extends
                 // requires both A and B to be constructors
                 !members.is_empty() && members.iter().all(|&m| self.is_constructor_type(m))
             }
-            ConstructorCheckKind::Application { base } => {
+            query::ConstructorCheckKind::Application { base } => {
                 // For type applications like Ctor<{}>, check if the base type is a constructor
                 // This handles cases like:
                 //   type Constructor<T> = new (...args: any[]) => T;
@@ -1880,14 +1876,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Also check if base is directly a Callable with construct signatures
-                tsz_solver::type_queries::has_construct_signatures(self.ctx.types, base)
+                query::has_construct_signatures(self.ctx.types, base)
             }
             // Lazy reference (DefId) - check if it's a class or interface
             // This handles cases like:
             // 1. `class C extends MyClass` where MyClass is a class
             // 2. `function f<T>(ctor: T)` then `class B extends ctor` where ctor has a constructor type
             // 3. `class C extends Object` where Object is declared as ObjectConstructor interface
-            ConstructorCheckKind::Lazy(def_id) => {
+            query::ConstructorCheckKind::Lazy(def_id) => {
                 let symbol_id = match self.ctx.def_to_symbol_id(def_id) {
                     Some(id) => id,
                     None => return false,
@@ -1906,10 +1902,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(&cached_type) = self.ctx.symbol_types.get(&symbol_id) {
                             if cached_type != type_id {
                                 // Interface type was already resolved - check if it has construct signatures
-                                if tsz_solver::type_queries::has_construct_signatures(
-                                    self.ctx.types,
-                                    cached_type,
-                                ) {
+                                if query::has_construct_signatures(self.ctx.types, cached_type) {
                                     return true;
                                 }
                             }
@@ -1942,10 +1935,7 @@ impl<'a> CheckerState<'a> {
                             .with_type_param_bindings(type_param_bindings);
                             let interface_type =
                                 lowering.lower_interface_declarations(&symbol.declarations);
-                            if tsz_solver::type_queries::has_construct_signatures(
-                                self.ctx.types,
-                                interface_type,
-                            ) {
+                            if query::has_construct_signatures(self.ctx.types, interface_type) {
                                 return true;
                             }
                         }
@@ -1973,7 +1963,7 @@ impl<'a> CheckerState<'a> {
             //   function f<T extends typeof A>(ctor: T) {
             //     class B extends ctor {}  // ctor: T where T extends typeof A
             //   }
-            ConstructorCheckKind::TypeQuery(symbol_ref) => {
+            query::ConstructorCheckKind::TypeQuery(symbol_ref) => {
                 use tsz_binder::SymbolId;
                 let symbol_id = SymbolId(symbol_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
@@ -1993,7 +1983,7 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
-            ConstructorCheckKind::Other => false,
+            query::ConstructorCheckKind::Other => false,
         }
     }
 
@@ -2077,16 +2067,14 @@ impl<'a> CheckerState<'a> {
     /// new Foo(); // Valid if Foo.prototype exists
     /// ```
     pub(crate) fn type_has_prototype_property(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries;
-
         // Check callable shape for prototype property
-        if let Some(shape) = type_queries::get_callable_shape(self.ctx.types, type_id) {
+        if let Some(shape) = query::callable_shape_for_type(self.ctx.types, type_id) {
             let prototype_atom = self.ctx.types.intern_string("prototype");
             return shape.properties.iter().any(|p| p.name == prototype_atom);
         }
 
         // Function types typically have prototype
-        type_queries::get_function_shape(self.ctx.types, type_id).is_some()
+        query::has_function_shape(self.ctx.types, type_id)
     }
 
     /// Check if a symbol is a class symbol.
