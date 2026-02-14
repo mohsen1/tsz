@@ -2163,18 +2163,19 @@ impl ParserState {
         // If the scanner stopped numeric scanning at an invalid separator and left a recoverable
         // identifier immediately after it (for example `0_b`), emit the missing-name diagnostic
         // expected by TS (TS2304) on that identifier.
-        if let Some(sep_pos) = invalid_separator_pos {
-            if self.is_identifier_or_keyword() && self.token_pos() as usize == sep_pos + 1 {
-                use tsz_common::diagnostics::diagnostic_codes;
-                let missing_name = self.scanner.get_token_text_ref().to_string();
-                if !missing_name.is_empty() {
-                    self.parse_error_at(
-                        self.token_pos(),
-                        self.token_end() - self.token_pos(),
-                        &format!("Cannot find name '{}'.", missing_name),
-                        diagnostic_codes::CANNOT_FIND_NAME,
-                    );
-                }
+        if let Some(sep_pos) = invalid_separator_pos
+            && self.is_identifier_or_keyword()
+            && self.token_pos() as usize == sep_pos + 1
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let missing_name = self.scanner.get_token_text_ref().to_string();
+            if !missing_name.is_empty() {
+                self.parse_error_at(
+                    self.token_pos(),
+                    self.token_end() - self.token_pos(),
+                    &format!("Cannot find name '{}'.", missing_name),
+                    diagnostic_codes::CANNOT_FIND_NAME,
+                );
             }
         }
 
