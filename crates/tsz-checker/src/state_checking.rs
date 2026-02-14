@@ -2874,6 +2874,29 @@ impl<'a> CheckerState<'a> {
         // Get the type of the object being accessed
         let obj_type = self.get_type_of_node(access.expression);
 
+        // TypedArray `length` is readonly in lib declarations. Preserve TS2540 even when
+        // the structural property path is obscured by generic/default type arguments.
+        if prop_name == "length"
+            && let Some(type_name) = self.get_declared_type_name_from_expression(access.expression)
+            && matches!(
+                type_name.as_str(),
+                "Int8Array"
+                    | "Uint8Array"
+                    | "Uint8ClampedArray"
+                    | "Int16Array"
+                    | "Uint16Array"
+                    | "Int32Array"
+                    | "Uint32Array"
+                    | "Float32Array"
+                    | "Float64Array"
+                    | "BigInt64Array"
+                    | "BigUint64Array"
+            )
+        {
+            self.error_readonly_property_at(&prop_name, target_idx);
+            return true;
+        }
+
         // Check if the property is a const export from a namespace/module (TS2540).
         // For `M.x = 1` where `export const x = 0` in namespace M.
         // Check before property existence, similar to enum members.
