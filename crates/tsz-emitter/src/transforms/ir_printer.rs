@@ -388,6 +388,7 @@ impl<'a> IRPrinter<'a> {
                         properties,
                         source_range: None,
                     } = &**e
+                        && Self::is_done_value_object_literal(properties)
                     {
                         self.emit_object_literal_multiline(properties);
                     } else {
@@ -1449,6 +1450,26 @@ impl<'a> IRPrinter<'a> {
         self.indent_level -= 1;
         self.write_indent();
         self.write("}");
+    }
+
+    fn is_done_value_object_literal(properties: &[IRProperty]) -> bool {
+        if properties.len() != 2 {
+            return false;
+        }
+        let mut has_done = false;
+        let mut has_value = false;
+        for prop in properties {
+            match (&prop.key, prop.kind) {
+                (IRPropertyKey::Identifier(name), IRPropertyKind::Init) if name == "done" => {
+                    has_done = true;
+                }
+                (IRPropertyKey::Identifier(name), IRPropertyKind::Init) if name == "value" => {
+                    has_value = true;
+                }
+                _ => return false,
+            }
+        }
+        has_done && has_value
     }
 
     fn emit_parameters(&mut self, params: &[IRParam]) {
