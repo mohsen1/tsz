@@ -1417,11 +1417,14 @@ impl<'a> CheckerState<'a> {
                         (type_idx, None)
                     };
 
-                // Get the interface symbol
-                if let Some(interface_name) = self.heritage_name_text(expr_idx)
-                    && let Some(sym_id) = self.ctx.binder.file_locals.get(&interface_name)
+                // Resolve interface/class symbols through canonical heritage resolution so
+                // qualified names (e.g. `Promise.Thenable`) are handled correctly.
+                if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
+                    let interface_name = self
+                        .heritage_name_text(expr_idx)
+                        .unwrap_or_else(|| symbol.escaped_name.clone());
                     let interface_idx = if !symbol.value_declaration.is_none() {
                         symbol.value_declaration
                     } else if let Some(&decl_idx) = symbol.declarations.first() {
