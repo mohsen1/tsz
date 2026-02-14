@@ -1051,6 +1051,89 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // In parse-recovery inside class bodies, contextual modifier keywords
+        // can appear as pseudo-identifiers (e.g. `static f = 3` in a ctor).
+        // Suppress TS2304 for those to avoid cascades after the primary syntax error.
+        if self.has_parse_errors()
+            && matches!(
+                name,
+                "static"
+                    | "public"
+                    | "private"
+                    | "protected"
+                    | "readonly"
+                    | "abstract"
+                    | "declare"
+                    | "override"
+                    | "accessor"
+            )
+        {
+            let mut current = idx;
+            let mut guard = 0;
+            while !current.is_none() {
+                guard += 1;
+                if guard > 256 {
+                    break;
+                }
+                let Some(node) = self.ctx.arena.get(current) else {
+                    break;
+                };
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return;
+                }
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            }
+        }
+
+        // In parse-error files, identifiers inside class member bodies are often
+        // parser-recovery artifacts (e.g. malformed `static` statements in ctors).
+        // Suppress TS2304 there to avoid cascades from the primary syntax error.
+        if self.has_parse_errors() {
+            let mut current = idx;
+            let mut guard = 0;
+            let mut in_class = false;
+            let mut in_class_member_body = false;
+            while !current.is_none() {
+                guard += 1;
+                if guard > 256 {
+                    break;
+                }
+                let Some(node) = self.ctx.arena.get(current) else {
+                    break;
+                };
+                if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    in_class = true;
+                }
+                if node.kind == syntax_kind_ext::CONSTRUCTOR
+                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
+                    || node.kind == syntax_kind_ext::GET_ACCESSOR
+                    || node.kind == syntax_kind_ext::SET_ACCESSOR
+                {
+                    in_class_member_body = true;
+                }
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            }
+            if in_class && in_class_member_body {
+                return;
+            }
+        }
+
         // Skip TS2304 for nodes/ancestors that have parse errors.
         // This prevents cascading "Cannot find name" errors on malformed AST
         // subtrees while still allowing TS2304 for unrelated valid code.
