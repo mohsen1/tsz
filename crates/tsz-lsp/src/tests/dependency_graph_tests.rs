@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::dependency_graph::DependencyGraph;
 
     #[test]
     fn test_add_dependency() {
