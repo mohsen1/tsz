@@ -1579,6 +1579,30 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
             {
+                // Only apply assignment-based "killing definition" narrowing when
+                // the write itself is compatible. For invalid assignments, TypeScript
+                // reports the assignment error but keeps subsequent reads at the
+                // variable's declared type.
+                if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(bin) = self.arena.get_binary_expr(node)
+                    && bin.operator_token == SyntaxKind::EqualsToken as u16
+                    && self.is_matching_reference(bin.left, target)
+                {
+                    let declared_target_type = self
+                        .binder
+                        .resolve_identifier(self.arena, bin.left)
+                        .and_then(|sym| self.binder.get_symbol(sym))
+                        .map(|sym| sym.value_declaration)
+                        .filter(|decl| !decl.is_none())
+                        .and_then(|decl| node_types.get(&decl.0).copied())
+                        .or_else(|| node_types.get(&bin.left.0).copied());
+
+                    if let Some(lhs_type) = declared_target_type
+                        && !self.interner.is_assignable_to(rhs_type, lhs_type)
+                    {
+                        return None;
+                    }
+                }
                 return Some(rhs_type);
             }
             return None;
