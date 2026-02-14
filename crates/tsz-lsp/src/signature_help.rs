@@ -14,7 +14,7 @@ use tsz_common::position::Position;
 use tsz_parser::parser::node::{CallExprData, NodeAccess};
 use tsz_parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, TypeId, TypeKey, TypePredicateTarget};
+use tsz_solver::{FunctionShape, TypeId, TypePredicateTarget, visitor};
 
 /// Represents a parameter in a signature.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -665,84 +665,63 @@ impl<'a> SignatureHelpProvider<'a> {
         call_kind: CallKind,
         callee_name: &str,
     ) -> Vec<SignatureCandidate> {
-        let key = match self.interner.lookup(type_id) {
-            Some(k) => k,
-            None => return vec![],
-        };
-
-        match key {
-            // Single function signature
-            TypeKey::Function(shape_id) => {
-                let shape = self.interner.function_shape(shape_id);
-                vec![self.signature_candidate(&shape, checker, false, callee_name)]
-            }
-            // Overloaded signatures
-            TypeKey::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                let mut sigs = Vec::new();
-                let include_call =
-                    call_kind == CallKind::Call || call_kind == CallKind::TaggedTemplate;
-                let include_construct = call_kind == CallKind::New;
-
-                if include_call {
-                    // Add call signatures
-                    for sig in &shape.call_signatures {
-                        // Convert CallSignature to FunctionShape for formatting
-                        let func_shape = FunctionShape {
-                            type_params: sig.type_params.clone(),
-                            params: sig.params.clone(),
-                            this_type: sig.this_type,
-                            return_type: sig.return_type,
-                            type_predicate: sig.type_predicate.clone(),
-                            is_constructor: false,
-                            is_method: false,
-                        };
-                        sigs.push(self.signature_candidate(
-                            &func_shape,
-                            checker,
-                            false,
-                            callee_name,
-                        ));
-                    }
-                }
-                if include_construct {
-                    // Add construct signatures
-                    for sig in &shape.construct_signatures {
-                        let func_shape = FunctionShape {
-                            type_params: sig.type_params.clone(),
-                            params: sig.params.clone(),
-                            this_type: sig.this_type,
-                            return_type: sig.return_type,
-                            type_predicate: sig.type_predicate.clone(),
-                            is_constructor: true,
-                            is_method: false,
-                        };
-                        sigs.push(self.signature_candidate(
-                            &func_shape,
-                            checker,
-                            true,
-                            callee_name,
-                        ));
-                    }
-                }
-                sigs
-            }
-            // Union of functions
-            TypeKey::Union(members) => {
-                let members = self.interner.type_list(members);
-                let mut sigs = Vec::new();
-                for &member in members.iter() {
-                    sigs.extend(self.get_signatures_from_type(
-                        member,
-                        checker,
-                        call_kind,
-                        callee_name,
-                    ));
-                }
-                sigs
-            }
-            _ => vec![],
+        if let Some(shape_id) = visitor::function_shape_id(self.interner, type_id) {
+            let shape = self.interner.function_shape(shape_id);
+            return vec![self.signature_candidate(&shape, checker, false, callee_name)];
         }
+
+        if let Some(shape_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let shape = self.interner.callable_shape(shape_id);
+            let mut sigs = Vec::new();
+            let include_call =
+                call_kind == CallKind::Call || call_kind == CallKind::TaggedTemplate;
+            let include_construct = call_kind == CallKind::New;
+
+            if include_call {
+                // Add call signatures
+                for sig in &shape.call_signatures {
+                    // Convert CallSignature to FunctionShape for formatting
+                    let func_shape = FunctionShape {
+                        type_params: sig.type_params.clone(),
+                        params: sig.params.clone(),
+                        this_type: sig.this_type,
+                        return_type: sig.return_type,
+                        type_predicate: sig.type_predicate.clone(),
+                        is_constructor: false,
+                        is_method: false,
+                    };
+                    sigs.push(self.signature_candidate(&func_shape, checker, false, callee_name));
+                }
+            }
+            if include_construct {
+                // Add construct signatures
+                for sig in &shape.construct_signatures {
+                    let func_shape = FunctionShape {
+                        type_params: sig.type_params.clone(),
+                        params: sig.params.clone(),
+                        this_type: sig.this_type,
+                        return_type: sig.return_type,
+                        type_predicate: sig.type_predicate.clone(),
+                        is_constructor: true,
+                        is_method: false,
+                    };
+                    sigs.push(self.signature_candidate(&func_shape, checker, true, callee_name));
+                }
+            }
+            return sigs;
+        }
+
+        // Union of functions
+        if let Some(members) = visitor::union_list_id(self.interner, type_id) {
+            let members = self.interner.type_list(members);
+            let mut sigs = Vec::new();
+            for &member in members.iter() {
+                sigs.extend(self.get_signatures_from_type(member, checker, call_kind, callee_name));
+            }
+            return sigs;
+        }
+
+        vec![]
     }
 
     /// Format a FunctionShape into SignatureInformation
