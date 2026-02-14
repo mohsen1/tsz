@@ -645,10 +645,13 @@ fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
     );
 
     assert!(
-        !context_src.contains("abstract_constructor_types: parent.abstract_constructor_types.clone()")
+        !context_src
+            .contains("abstract_constructor_types: parent.abstract_constructor_types.clone()")
+            && !context_src.contains(
+                "protected_constructor_types: parent.protected_constructor_types.clone()"
+            )
             && !context_src
-                .contains("protected_constructor_types: parent.protected_constructor_types.clone()")
-            && !context_src.contains("private_constructor_types: parent.private_constructor_types.clone()"),
+                .contains("private_constructor_types: parent.private_constructor_types.clone()"),
         "with_parent should keep constructor-access caches context-local"
     );
 
@@ -696,8 +699,8 @@ fn test_direct_assignability_mismatch_decision_usage_is_quarantined() {
         if allowed {
             continue;
         }
-        let src =
-            fs::read_to_string(&path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
         if src.contains("should_report_assignability_mismatch(")
             || src.contains("should_report_assignability_mismatch_bivariant(")
         {

@@ -468,9 +468,7 @@ impl<'a> CheckerState<'a> {
             let declared_type = self.get_type_from_type_node(param.type_annotation);
 
             // Check if the initializer type is assignable to the declared type
-            if declared_type != TypeId::ANY
-                && !self.type_contains_error(declared_type)
-            {
+            if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) {
                 let _ = self.check_assignable_or_report(init_type, declared_type, param_idx);
             }
         }
