@@ -2515,6 +2515,16 @@ impl<'a> CheckerState<'a> {
     pub fn error_type_only_value_at(&mut self, name: &str, idx: NodeIndex) {
         use tsz_binder::lib_loader;
 
+        // Don't emit TS2693 for identifiers used as import equals module references.
+        // `import r = undefined` already gets TS2503 from check_namespace_import.
+        if self.ctx.arena.get_extended(idx).is_some_and(|ext| {
+            self.ctx.arena.get(ext.parent).is_some_and(|p| {
+                p.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            })
+        }) {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             // Check if this is an ES2015+ type that requires specific lib support
             let is_es2015_type = lib_loader::is_es2015_plus_type(name);
