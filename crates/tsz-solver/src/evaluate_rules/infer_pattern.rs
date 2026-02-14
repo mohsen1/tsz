@@ -2827,7 +2827,7 @@ impl<'a> InferSubstitutor<'a> {
                 if new_obj == obj && new_idx == idx {
                     type_id
                 } else {
-                    self.interner.intern(TypeKey::IndexAccess(new_obj, new_idx))
+                    self.interner.index_access(new_obj, new_idx)
                 }
             }
             TypeKey::KeyOf(inner) => {
@@ -2835,7 +2835,7 @@ impl<'a> InferSubstitutor<'a> {
                 if new_inner == inner {
                     type_id
                 } else {
-                    self.interner.intern(TypeKey::KeyOf(new_inner))
+                    self.interner.keyof(new_inner)
                 }
             }
             TypeKey::ReadonlyType(inner) => {
@@ -2843,7 +2843,7 @@ impl<'a> InferSubstitutor<'a> {
                 if new_inner == inner {
                     type_id
                 } else {
-                    self.interner.intern(TypeKey::ReadonlyType(new_inner))
+                    self.interner.readonly_type(new_inner)
                 }
             }
             TypeKey::NoInfer(inner) => {
@@ -2851,7 +2851,7 @@ impl<'a> InferSubstitutor<'a> {
                 if new_inner == inner {
                     type_id
                 } else {
-                    self.interner.intern(TypeKey::NoInfer(new_inner))
+                    self.interner.no_infer(new_inner)
                 }
             }
             TypeKey::TemplateLiteral(spans) => {
