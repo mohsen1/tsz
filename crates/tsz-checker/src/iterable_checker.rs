@@ -542,8 +542,14 @@ impl<'a> CheckerState<'a> {
 
         // TypeScript allows empty array destructuring patterns on any type (including null/undefined)
         // Example: let [] = null; // No error
-        // Skip iterability check if the pattern is empty
+        // Skip iterability check if the pattern is empty.
+        //
+        // Track whether this is an assignment target (`[a] = value`) vs a binding pattern
+        // (`let [a] = value`) so ES5-specific TS2461 can stay scoped to declarations.
+        let mut is_assignment_array_target = false;
         if let Some(pattern_node) = self.ctx.arena.get(pattern_idx) {
+            is_assignment_array_target =
+                pattern_node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION;
             if let Some(binding_pattern) = self.ctx.arena.get_binding_pattern(pattern_node) {
                 if binding_pattern.elements.nodes.is_empty() {
                     return true;
@@ -556,7 +562,7 @@ impl<'a> CheckerState<'a> {
 
         // In ES5 mode (without downlevelIteration), array destructuring requires actual arrays.
         // Emit TS2461 if the type is not an array type.
-        if self.ctx.compiler_options.target.is_es5() {
+        if self.ctx.compiler_options.target.is_es5() && !is_assignment_array_target {
             if self.is_array_or_tuple_type(resolved_type) {
                 return true;
             }
