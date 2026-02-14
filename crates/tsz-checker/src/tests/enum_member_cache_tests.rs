@@ -1,7 +1,7 @@
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::{TypeInterner, TypeKey};
+use tsz_solver::{TypeInterner, type_queries};
 
 #[test]
 fn test_enum_member_types_prefilled_after_enum_resolution() {
@@ -48,8 +48,8 @@ const a = E.A;
             .get(&member_sym_id)
             .expect("enum member type should be prefilled in symbol cache");
         assert!(
-            matches!(types.lookup(member_type), Some(TypeKey::Enum(_, _))),
-            "enum member {member_name} should resolve to TypeKey::Enum"
+            type_queries::get_enum_def_id(&types, member_type).is_some(),
+            "enum member {member_name} should resolve to an enum type"
         );
     }
 }
