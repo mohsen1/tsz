@@ -66,6 +66,12 @@ CHECKS = [
         {"exclude_dirs": {"tests"}},
     ),
     (
+        "Emitter dependency direction freeze",
+        ROOT / "crates" / "tsz-emitter",
+        re.compile(r"\btsz_checker::\b"),
+        {"exclude_dirs": {"tests"}},
+    ),
+    (
         "Solver TypeKey construction must stay in interner",
         ROOT / "crates" / "tsz-solver",
         re.compile(r"\.intern\(TypeKey::"),
