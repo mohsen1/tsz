@@ -1615,6 +1615,18 @@ impl ParserState {
             params.push(param);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                // Recovery: in malformed parameter initializers like
+                // `function* f(a = yield => yield) {}` or
+                // `async function f(a = await => await) {}`
+                // treat `=>` as a missing comma boundary to continue parsing.
+                if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    self.error_comma_expected();
+                    self.next_token(); // consume =>
+                    if self.is_parameter_start() {
+                        continue;
+                    }
+                    break;
+                }
                 // Trailing commas are allowed in parameter lists
                 // Only emit an error if we have another parameter without a comma
                 if !self.is_token(SyntaxKind::CloseParenToken) && self.is_parameter_start() {

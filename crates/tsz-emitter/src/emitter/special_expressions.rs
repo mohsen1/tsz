@@ -58,6 +58,12 @@ impl<'a> Printer<'a> {
             "await"
         };
         self.write(keyword);
+        if unary.expression.is_none() {
+            // Preserve malformed syntax parity for missing await operands:
+            // emit `await ` / `yield ` without synthesizing `void 0`.
+            self.write(" ");
+            return;
+        }
         self.write(" ");
         self.emit_expression(unary.expression);
     }
