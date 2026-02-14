@@ -116,6 +116,14 @@ impl<'a> ObjectLiteralBuilder<'a> {
             .collect()
     }
 
+    /// Collect all properties for object spread and spread-mutation paths.
+    ///
+    /// This is the solver-side public entrypoint used by query APIs for object
+    /// spread property extraction, including `CheckerState::get_type_of_object_literal`.
+    pub fn collect_spread_properties(&self, spread_type: TypeId) -> Vec<PropertyInfo> {
+        self.extract_properties(spread_type)
+    }
+
     /// Extract all properties from a type (for spread operations).
     ///
     /// This handles:
