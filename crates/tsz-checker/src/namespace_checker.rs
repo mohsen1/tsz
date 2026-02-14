@@ -11,6 +11,7 @@
 //! These operations are necessary for TypeScript's declaration merging feature
 //! where a class/function and namespace with the same name can be merged.
 
+use crate::query_boundaries::namespace_checker as query;
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::SymbolId;
@@ -49,7 +50,6 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
     ) -> TypeId {
         use rustc_hash::FxHashMap;
-        use tsz_solver::type_queries::get_callable_shape;
         use tsz_solver::{CallableShape, PropertyInfo};
 
         // Check recursion depth to prevent stack overflow
@@ -65,7 +65,7 @@ impl<'a> CheckerState<'a> {
         let Some(exports) = symbol.exports.as_ref() else {
             return ctor_type;
         };
-        let Some(shape) = get_callable_shape(self.ctx.types, ctor_type) else {
+        let Some(shape) = query::callable_shape_for_type(self.ctx.types, ctor_type) else {
             return ctor_type;
         };
 
@@ -152,7 +152,6 @@ impl<'a> CheckerState<'a> {
         function_type: TypeId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         use rustc_hash::FxHashMap;
-        use tsz_solver::type_queries::get_callable_shape;
         use tsz_solver::{CallableShape, PropertyInfo};
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
@@ -161,7 +160,7 @@ impl<'a> CheckerState<'a> {
         let Some(exports) = symbol.exports.as_ref() else {
             return (function_type, Vec::new());
         };
-        let Some(shape) = get_callable_shape(self.ctx.types, function_type) else {
+        let Some(shape) = query::callable_shape_for_type(self.ctx.types, function_type) else {
             return (function_type, Vec::new());
         };
 

@@ -26,6 +26,9 @@
 //! - Return/throw exits
 
 use crate::FlowAnalyzer;
+use crate::query_boundaries::flow_analysis::{
+    object_shape_for_type, tuple_elements_for_type, union_members_for_type,
+};
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use crate::types::diagnostics::Diagnostic;
 use rustc_hash::FxHashSet;
@@ -1388,9 +1391,7 @@ impl<'a> CheckerState<'a> {
         declared_type: TypeId,
         flow_node: tsz_binder::FlowNodeId,
     ) -> TypeId {
-        use tsz_solver::type_queries::{get_object_shape, get_tuple_elements, get_union_members};
-
-        let Some(source_members) = get_union_members(self.ctx.types, info.source_type) else {
+        let Some(source_members) = union_members_for_type(self.ctx.types, info.source_type) else {
             return declared_type;
         };
 
@@ -1442,7 +1443,7 @@ impl<'a> CheckerState<'a> {
             let is_object = !sib_info.property_name.is_empty();
             remaining_members.retain(|&member| {
                 let member_prop_type = if is_object {
-                    if let Some(shape) = get_object_shape(self.ctx.types, member) {
+                    if let Some(shape) = object_shape_for_type(self.ctx.types, member) {
                         shape
                             .properties
                             .iter()
@@ -1454,7 +1455,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     }
-                } else if let Some(elems) = get_tuple_elements(self.ctx.types, member) {
+                } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, member) {
                     elems
                         .get(sib_info.element_index as usize)
                         .map(|e| e.type_id)
@@ -1489,7 +1490,7 @@ impl<'a> CheckerState<'a> {
         let mut result_types = Vec::new();
         for member in &remaining_members {
             if is_object {
-                if let Some(shape) = get_object_shape(self.ctx.types, *member) {
+                if let Some(shape) = object_shape_for_type(self.ctx.types, *member) {
                     for prop in shape.properties.iter() {
                         if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == info.property_name
                         {
@@ -1498,7 +1499,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-            } else if let Some(elems) = get_tuple_elements(self.ctx.types, *member) {
+            } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, *member) {
                 if let Some(e) = elems.get(info.element_index as usize) {
                     result_types.push(e.type_id);
                 }

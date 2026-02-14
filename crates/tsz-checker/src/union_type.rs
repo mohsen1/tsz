@@ -12,9 +12,9 @@
 //! This module extends CheckerState with utilities for union type
 //! operations, providing cleaner APIs for union type checking.
 
+use crate::query_boundaries::union_type as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries;
 
 // =============================================================================
 // Union Type Utilities
@@ -30,14 +30,14 @@ impl<'a> CheckerState<'a> {
     /// Returns a vector of TypeIds representing all members of the union.
     /// Returns an empty vec if the type is not a union.
     pub fn get_union_members(&self, type_id: TypeId) -> Vec<TypeId> {
-        type_queries::get_union_members(self.ctx.types, type_id).unwrap_or_default()
+        query::union_members(self.ctx.types, type_id).unwrap_or_default()
     }
 
     /// Get the number of members in a union type.
     ///
     /// Returns 0 if the type is not a union.
     pub fn union_member_count(&self, type_id: TypeId) -> usize {
-        type_queries::get_union_members(self.ctx.types, type_id)
+        query::union_members(self.ctx.types, type_id)
             .map(|members| members.len())
             .unwrap_or(0)
     }
@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if all union members are primitive types
     /// (string, number, boolean, null, undefined, etc.).
     pub fn is_primitive_union(&self, type_id: TypeId) -> bool {
-        type_queries::get_union_members(self.ctx.types, type_id)
+        query::union_members(self.ctx.types, type_id)
             .map(|members| members.iter().all(|&m| self.is_primitive_type(m)))
             .unwrap_or(false)
     }
@@ -60,7 +60,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Calls the primary union_contains implementation in type_checking.rs.
     pub fn union_has_type(&self, union_type: TypeId, target: TypeId) -> bool {
-        type_queries::get_union_members(self.ctx.types, union_type)
+        query::union_members(self.ctx.types, union_type)
             .map(|members| members.contains(&target))
             .unwrap_or(false)
     }
@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
     /// Returns a new union type without the specified member.
     /// If the result would be a single type, returns that type.
     pub fn union_remove_member(&self, union_type: TypeId, member_to_remove: TypeId) -> TypeId {
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+        if let Some(members) = query::union_members(self.ctx.types, union_type) {
             let filtered: Vec<TypeId> = members
                 .iter()
                 .filter(|&&m| m != member_to_remove)
@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
     where
         F: Fn(TypeId) -> bool,
     {
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+        if let Some(members) = query::union_members(self.ctx.types, union_type) {
             let filtered: Vec<TypeId> =
                 members.iter().filter(|&&m| predicate(m)).copied().collect();
 
@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if every member of the union can be assigned to the target.
     pub fn union_all_assignable_to(&mut self, union_type: TypeId, target: TypeId) -> bool {
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+        if let Some(members) = query::union_members(self.ctx.types, union_type) {
             members
                 .iter()
                 .all(|&member| self.is_assignable_to(member, target))
@@ -138,7 +138,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if at least one member of the union can be assigned to the target.
     pub fn union_any_assignable_to(&mut self, union_type: TypeId, target: TypeId) -> bool {
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+        if let Some(members) = query::union_members(self.ctx.types, union_type) {
             members
                 .iter()
                 .any(|&member| self.is_assignable_to(member, target))
@@ -153,7 +153,7 @@ impl<'a> CheckerState<'a> {
     /// This returns a type that all members can be assigned to,
     /// preferring more specific types over generic ones.
     pub fn union_common_type(&mut self, union_type: TypeId) -> TypeId {
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+        if let Some(members) = query::union_members(self.ctx.types, union_type) {
             if members.is_empty() {
                 return TypeId::NEVER;
             }
@@ -192,7 +192,7 @@ impl<'a> CheckerState<'a> {
     /// Removes members that are assignable to other members in the union.
     /// For example, `string | "hello"` simplifies to just `string`.
     pub fn simplify_union(&mut self, union_type: TypeId) -> TypeId {
-        if let Some(members) = type_queries::get_union_members(self.ctx.types, union_type) {
+        if let Some(members) = query::union_members(self.ctx.types, union_type) {
             let mut simplified = Vec::new();
 
             for &member in members.iter() {
