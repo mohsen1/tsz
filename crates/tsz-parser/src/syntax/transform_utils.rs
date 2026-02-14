@@ -400,10 +400,10 @@ pub fn contains_arguments_reference(arena: &NodeArena, node_idx: NodeIndex) -> b
     // Check if this node is `arguments` identifier
     if node.kind == SyntaxKind::Identifier as u16 {
         // Check the identifier text to see if it's "arguments"
-        if let Some(identifier) = arena.get_identifier(node) {
-            if identifier.escaped_text == "arguments" {
-                return true;
-            }
+        if let Some(identifier) = arena.get_identifier(node)
+            && identifier.escaped_text == "arguments"
+        {
+            return true;
         }
     }
 

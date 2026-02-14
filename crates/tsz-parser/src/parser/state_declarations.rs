@@ -1977,16 +1977,16 @@ impl ParserState {
         self.check_using_outside_block(then_statement);
 
         // TS1313: Check if the body of the if statement is an empty statement
-        if let Some(node) = self.arena.get(then_statement) {
-            if node.kind == syntax_kind_ext::EMPTY_STATEMENT {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    node.pos,
-                    node.end - node.pos,
-                    "The body of an 'if' statement cannot be the empty statement.",
-                    diagnostic_codes::THE_BODY_OF_AN_IF_STATEMENT_CANNOT_BE_THE_EMPTY_STATEMENT,
-                );
-            }
+        if let Some(node) = self.arena.get(then_statement)
+            && node.kind == syntax_kind_ext::EMPTY_STATEMENT
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                node.pos,
+                node.end - node.pos,
+                "The body of an 'if' statement cannot be the empty statement.",
+                diagnostic_codes::THE_BODY_OF_AN_IF_STATEMENT_CANNOT_BE_THE_EMPTY_STATEMENT,
+            );
         }
 
         let else_statement = if self.parse_optional(SyntaxKind::ElseKeyword) {
@@ -2337,24 +2337,22 @@ impl ParserState {
     ) -> NodeIndex {
         // Check for multiple variable declarations in for-in: for (var a, b in X)
         // TSC emits TS1091 "Only a single variable declaration is allowed in a 'for...in' statement"
-        if let Some(node) = self.arena.get(initializer) {
-            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                if let Some(data) = self.arena.get_variable(node) {
-                    if data.declarations.nodes.len() > 1 {
-                        use tsz_common::diagnostics::diagnostic_codes;
-                        // Report error at the second declaration
-                        if let Some(&second_decl) = data.declarations.nodes.get(1) {
-                            if let Some(second_node) = self.arena.get(second_decl) {
-                                self.parse_error_at(
+        if let Some(node) = self.arena.get(initializer)
+            && node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && let Some(data) = self.arena.get_variable(node)
+            && data.declarations.nodes.len() > 1
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            // Report error at the second declaration
+            if let Some(&second_decl) = data.declarations.nodes.get(1)
+                && let Some(second_node) = self.arena.get(second_decl)
+            {
+                self.parse_error_at(
                                     second_node.pos,
                                     second_node.end - second_node.pos,
                                     "Only a single variable declaration is allowed in a 'for...in' statement.",
                                     diagnostic_codes::ONLY_A_SINGLE_VARIABLE_DECLARATION_IS_ALLOWED_IN_A_FOR_IN_STATEMENT,
                                 );
-                            }
-                        }
-                    }
-                }
             }
         }
         self.parse_expected(SyntaxKind::InKeyword);
@@ -2386,24 +2384,22 @@ impl ParserState {
     ) -> NodeIndex {
         // Check for multiple variable declarations in for-of: for (var a, b of X)
         // TSC emits TS1188 "Only a single variable declaration is allowed in a 'for...of' statement"
-        if let Some(node) = self.arena.get(initializer) {
-            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                if let Some(data) = self.arena.get_variable(node) {
-                    if data.declarations.nodes.len() > 1 {
-                        use tsz_common::diagnostics::diagnostic_codes;
-                        // Report error at the second declaration
-                        if let Some(&second_decl) = data.declarations.nodes.get(1) {
-                            if let Some(second_node) = self.arena.get(second_decl) {
-                                self.parse_error_at(
+        if let Some(node) = self.arena.get(initializer)
+            && node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && let Some(data) = self.arena.get_variable(node)
+            && data.declarations.nodes.len() > 1
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            // Report error at the second declaration
+            if let Some(&second_decl) = data.declarations.nodes.get(1)
+                && let Some(second_node) = self.arena.get(second_decl)
+            {
+                self.parse_error_at(
                                     second_node.pos,
                                     second_node.end - second_node.pos,
                                     "Only a single variable declaration is allowed in a 'for...of' statement.",
                                     diagnostic_codes::ONLY_A_SINGLE_VARIABLE_DECLARATION_IS_ALLOWED_IN_A_FOR_OF_STATEMENT,
                                 );
-                            }
-                        }
-                    }
-                }
             }
         }
         self.parse_expected(SyntaxKind::OfKeyword);

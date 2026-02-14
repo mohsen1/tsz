@@ -732,10 +732,10 @@ impl ParserState {
 
         // Remove the label from the current scope (labels are statement-scoped)
         // This allows sequential labels with the same name: target: stmt1; target: stmt2;
-        if let Some(label_name) = label_name {
-            if let Some(current_scope) = self.label_scopes.last_mut() {
-                current_scope.remove(&label_name);
-            }
+        if let Some(label_name) = label_name
+            && let Some(current_scope) = self.label_scopes.last_mut()
+        {
+            current_scope.remove(&label_name);
         }
 
         let end_pos = self.token_end();
@@ -1060,15 +1060,14 @@ impl ParserState {
         let is_using = (flags & node_flags::USING as u16) != 0;
 
         // Check TS1375: 'using' declarations do not support destructuring patterns
-        if is_using {
-            if self.is_token(SyntaxKind::OpenBraceToken)
-                || self.is_token(SyntaxKind::OpenBracketToken)
-            {
-                self.parse_error_at_current_token(
-                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
-                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
-                );
-            }
+        if is_using
+            && (self.is_token(SyntaxKind::OpenBraceToken)
+                || self.is_token(SyntaxKind::OpenBracketToken))
+        {
+            self.parse_error_at_current_token(
+                diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
+                diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
+            );
         }
 
         // Parse name - can be identifier, keyword as identifier, or binding pattern
@@ -1143,21 +1142,18 @@ impl ParserState {
                 diagnostic_codes::CATCH_CLAUSE_VARIABLE_CANNOT_HAVE_AN_INITIALIZER,
             );
         }
-        if !is_catch_clause && initializer.is_none() {
-            if let Some(name_node) = self.arena.get(name) {
-                use crate::parser::syntax_kind_ext::{
-                    ARRAY_BINDING_PATTERN, OBJECT_BINDING_PATTERN,
-                };
-                if name_node.kind == OBJECT_BINDING_PATTERN
-                    || name_node.kind == ARRAY_BINDING_PATTERN
-                {
-                    self.parse_error_at(
-                        name_node.pos,
-                        name_node.end - name_node.pos,
-                        "A destructuring declaration must have an initializer.",
-                        diagnostic_codes::A_DESTRUCTURING_DECLARATION_MUST_HAVE_AN_INITIALIZER,
-                    );
-                }
+        if !is_catch_clause
+            && initializer.is_none()
+            && let Some(name_node) = self.arena.get(name)
+        {
+            use crate::parser::syntax_kind_ext::{ARRAY_BINDING_PATTERN, OBJECT_BINDING_PATTERN};
+            if name_node.kind == OBJECT_BINDING_PATTERN || name_node.kind == ARRAY_BINDING_PATTERN {
+                self.parse_error_at(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "A destructuring declaration must have an initializer.",
+                    diagnostic_codes::A_DESTRUCTURING_DECLARATION_MUST_HAVE_AN_INITIALIZER,
+                );
             }
         }
 
@@ -3681,19 +3677,17 @@ impl ParserState {
         };
 
         // TS18012: '#constructor' is a reserved word
-        if let Some(name_node) = self.arena.get(name) {
-            if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                if let Some(ident) = self.arena.get_identifier(name_node) {
-                    if ident.escaped_text == "#constructor" {
-                        self.parse_error_at(
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                            "'#constructor' is a reserved word.",
-                            diagnostic_codes::CONSTRUCTOR_IS_A_RESERVED_WORD,
-                        );
-                    }
-                }
-            }
+        if let Some(name_node) = self.arena.get(name)
+            && name_node.kind == SyntaxKind::PrivateIdentifier as u16
+            && let Some(ident) = self.arena.get_identifier(name_node)
+            && ident.escaped_text == "#constructor"
+        {
+            self.parse_error_at(
+                name_node.pos,
+                name_node.end - name_node.pos,
+                "'#constructor' is a reserved word.",
+                diagnostic_codes::CONSTRUCTOR_IS_A_RESERVED_WORD,
+            );
         }
 
         // Parse optional ? or ! after property name
