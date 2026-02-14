@@ -512,6 +512,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         type_computation_complex_src.contains("check_argument_assignable_or_report("),
         "type_computation_complex argument mismatch checks should route through check_argument_assignable_or_report"
     );
+    assert!(
+        type_computation_complex_src.contains("check_assignable_or_report_generic_at("),
+        "type_computation_complex callback constraint mismatch checks should route through check_assignable_or_report_generic_at"
+    );
 
     let dispatch_src =
         fs::read_to_string("src/dispatch.rs").expect("failed to read src/dispatch.rs for guard");
