@@ -351,13 +351,14 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let resolver = IndexSignatureResolver::new(self.interner());
 
         // Reconstruct obj_type from shape_id for index signature checking
-        let obj_type = self
-            .interner()
-            .object_with_flags_and_symbol(
-                self.interner().object_shape(ObjectShapeId(shape_id)).properties.clone(),
-                self.interner().object_shape(ObjectShapeId(shape_id)).flags,
-                self.interner().object_shape(ObjectShapeId(shape_id)).symbol,
-            );
+        let obj_type = self.interner().object_with_flags_and_symbol(
+            self.interner()
+                .object_shape(ObjectShapeId(shape_id))
+                .properties
+                .clone(),
+            self.interner().object_shape(ObjectShapeId(shape_id)).flags,
+            self.interner().object_shape(ObjectShapeId(shape_id)).symbol,
+        );
 
         // Try string index signature first (most common)
         if resolver.has_index_signature(obj_type, IndexKind::String) {
@@ -447,9 +448,12 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         }
 
         // Reconstruct obj_type for PropertyNotFound result
-        let obj_type = self
-            .interner()
-            .object_with_index(self.interner().object_shape(ObjectShapeId(shape_id)).as_ref().clone());
+        let obj_type = self.interner().object_with_index(
+            self.interner()
+                .object_shape(ObjectShapeId(shape_id))
+                .as_ref()
+                .clone(),
+        );
 
         Some(PropertyAccessResult::PropertyNotFound {
             type_id: obj_type,
@@ -601,13 +605,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let resolver = IndexSignatureResolver::new(self.interner());
 
         // Reconstruct obj_type from shape_id for index signature checking
-        let obj_type = self
-            .interner()
-            .object_with_flags_and_symbol(
-                self.interner().object_shape(ObjectShapeId(shape_id)).properties.clone(),
-                self.interner().object_shape(ObjectShapeId(shape_id)).flags,
-                self.interner().object_shape(ObjectShapeId(shape_id)).symbol,
-            );
+        let obj_type = self.interner().object_with_flags_and_symbol(
+            self.interner()
+                .object_shape(ObjectShapeId(shape_id))
+                .properties
+                .clone(),
+            self.interner().object_shape(ObjectShapeId(shape_id)).flags,
+            self.interner().object_shape(ObjectShapeId(shape_id)).symbol,
+        );
 
         // Try string index signature first (most common)
         if resolver.has_index_signature(obj_type, IndexKind::String) {
@@ -763,7 +768,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Reconstruct obj_type for error messages
-        let obj_type = self.interner().union(self.interner().type_list(TypeListId(list_id)).to_vec());
+        let obj_type = self
+            .interner()
+            .union(self.interner().type_list(TypeListId(list_id)).to_vec());
 
         let prop_atom = match prop_atom {
             Some(atom) => atom,

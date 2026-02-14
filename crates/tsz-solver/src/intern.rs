@@ -3128,7 +3128,11 @@ impl TypeInterner {
     }
 
     /// Build a string intrinsic (`Uppercase`, `Lowercase`, etc.) marker.
-    pub fn string_intrinsic(&self, kind: crate::types::StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+    pub fn string_intrinsic(
+        &self,
+        kind: crate::types::StringIntrinsicKind,
+        type_arg: TypeId,
+    ) -> TypeId {
         self.intern(TypeKey::StringIntrinsic { kind, type_arg })
     }
 
