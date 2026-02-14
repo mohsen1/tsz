@@ -2004,5 +2004,5 @@ fn detect_and_apply_param_rename(body: &mut Vec<IRNode>, ns_name: &str) -> Optio
 // =============================================================================
 
 #[cfg(test)]
-#[path = "tests/namespace_es5_ir.rs"]
+#[path = "../../tests/namespace_es5_ir.rs"]
 mod tests;

@@ -424,7 +424,8 @@ pub fn resolve_compiler_options(
         options.resolve_package_json_imports.unwrap_or_else(|| {
             matches!(
                 effective_resolution,
-                ModuleResolutionKind::Node16
+                ModuleResolutionKind::Node
+                    | ModuleResolutionKind::Node16
                     | ModuleResolutionKind::NodeNext
                     | ModuleResolutionKind::Bundler
             )

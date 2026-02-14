@@ -238,5 +238,5 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 }
 
 #[cfg(test)]
-#[path = "tests/objects_tests.rs"]
+#[path = "../tests/objects_tests.rs"]
 mod tests;

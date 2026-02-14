@@ -118,5 +118,5 @@ impl<'a> NamespaceES5Emitter<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/namespace_es5.rs"]
+#[path = "../../tests/namespace_es5.rs"]
 mod tests;

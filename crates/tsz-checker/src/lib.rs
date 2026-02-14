@@ -98,74 +98,69 @@ pub mod union_type;
 
 // Tests that don't depend on root crate's test_fixtures
 #[cfg(test)]
-#[path = "tests/conformance_issues.rs"]
+#[path = "../tests/conformance_issues.rs"]
 mod conformance_issues;
 #[cfg(test)]
-#[path = "tests/control_flow_tests.rs"]
+#[path = "../tests/control_flow_tests.rs"]
 mod control_flow_tests;
 #[cfg(test)]
-#[path = "tests/enum_member_cache_tests.rs"]
+#[path = "../tests/enum_member_cache_tests.rs"]
 mod enum_member_cache_tests;
 #[cfg(test)]
-#[path = "tests/no_filename_based_behavior_tests.rs"]
+#[path = "../tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
-#[path = "tests/rest_parameter_tests.rs"]
+#[path = "../tests/rest_parameter_tests.rs"]
 mod rest_parameter_tests;
 #[cfg(test)]
-#[path = "tests/spread_rest_tests.rs"]
+#[path = "../tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
 #[cfg(test)]
-#[path = "tests/stability_validation_tests.rs"]
+#[path = "../tests/stability_validation_tests.rs"]
 mod stability_validation_tests;
 #[cfg(test)]
-#[path = "tests/string_literal_arithmetic_tests.rs"]
+#[path = "../tests/string_literal_arithmetic_tests.rs"]
 mod string_literal_arithmetic_tests;
 #[cfg(test)]
-#[path = "tests/symbol_resolver_stability_tests.rs"]
+#[path = "../tests/symbol_resolver_stability_tests.rs"]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
-#[path = "tests/ts2322_tests.rs"]
+#[path = "../tests/ts2322_tests.rs"]
 mod ts2322_tests;
 #[cfg(test)]
-#[path = "tests/ts2540_readonly_tests.rs"]
+#[path = "../tests/ts2540_readonly_tests.rs"]
 mod ts2540_readonly_tests;
 #[cfg(test)]
-#[path = "tests/ts6133_unused_type_params_tests.rs"]
+#[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]
-#[path = "tests/value_usage_tests.rs"]
+#[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
-// Tests that don't depend on test_fixtures, moved from root crate:
+// Tests kept in root test harness where shared fixtures live.
 #[cfg(test)]
-#[path = "tests/architecture_contract_tests.rs"]
+#[path = "../tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests;
 #[cfg(test)]
-#[path = "tests/conditional_keyof_test.rs"]
+#[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
-#[path = "tests/enum_nominality_tests.rs"]
+#[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
-#[path = "tests/generic_inference_manual.rs"]
+#[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
-#[path = "tests/generic_tests.rs"]
+#[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
-#[path = "tests/module_resolution_guard_tests.rs"]
+#[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
-#[path = "tests/private_brands.rs"]
+#[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
-#[path = "tests/strict_null_manual.rs"]
+#[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
-// Tests that depend on root crate's test_fixtures are kept in the root crate:
-// contextual_typing_tests, any_propagation_tests, const_assertion_tests,
-// freshness_stripping_tests, function_bivariance, global_type_tests,
-// symbol_resolution_tests, ts2300_tests, ts2304_tests, widening_integration_tests,
-// any_propagation, constructor_accessibility, void_return_exception
 
 // Re-export key types
 #[cfg(feature = "legacy-type-arena")]

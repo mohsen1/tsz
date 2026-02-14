@@ -327,5 +327,5 @@ impl Default for EmitContext {
 }
 
 #[cfg(test)]
-#[path = "tests/emit_context.rs"]
+#[path = "../tests/emit_context.rs"]
 mod tests;

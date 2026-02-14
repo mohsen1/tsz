@@ -636,5 +636,5 @@ impl<'a> SemanticTokensProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/semantic_tokens_tests.rs"]
+#[path = "../tests/semantic_tokens_tests.rs"]
 mod semantic_tokens_tests;

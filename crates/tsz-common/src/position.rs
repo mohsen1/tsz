@@ -163,5 +163,5 @@ impl LineMap {
 }
 
 #[cfg(test)]
-#[path = "tests/position_tests.rs"]
+#[path = "../tests/position_tests.rs"]
 mod tests;

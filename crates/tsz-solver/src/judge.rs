@@ -1071,5 +1071,5 @@ impl<'a> DefaultJudge<'a> {
 // =============================================================================
 
 #[cfg(test)]
-#[path = "tests/judge_tests.rs"]
+#[path = "../tests/judge_tests.rs"]
 mod tests;

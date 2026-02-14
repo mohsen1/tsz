@@ -56,5 +56,5 @@ impl<'a> DocumentSymbols<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/symbols_tests.rs"]
+#[path = "../tests/symbols_tests.rs"]
 mod symbols_tests;

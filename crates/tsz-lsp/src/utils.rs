@@ -188,5 +188,5 @@ fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[path = "tests/utils_tests.rs"]
+#[path = "../tests/utils_tests.rs"]
 mod utils_tests;

@@ -149,5 +149,5 @@ pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool
 }
 
 #[cfg(test)]
-#[path = "tests/triple_slash_validator.rs"]
+#[path = "../tests/triple_slash_validator.rs"]
 mod tests;

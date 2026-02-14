@@ -1580,6 +1580,54 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
+        // In parse-recovery cases like `number[]`, the bracket argument is
+        // missing and TS reports parser error TS1011. The expression before
+        // `[` is still a primitive type keyword used as a value and should
+        // emit TS2693.
+        if access.name_or_argument.is_none() {
+            if let Some(expr_node) = self.ctx.arena.get(access.expression) {
+                let keyword_name = if expr_node.kind == SyntaxKind::Identifier as u16 {
+                    self.ctx.arena.get_identifier(expr_node).and_then(|ident| {
+                        match ident.escaped_text.as_str() {
+                            "number" => Some("number"),
+                            "string" => Some("string"),
+                            "boolean" => Some("boolean"),
+                            "symbol" => Some("symbol"),
+                            "void" => Some("void"),
+                            "undefined" => Some("undefined"),
+                            "null" => Some("null"),
+                            "any" => Some("any"),
+                            "unknown" => Some("unknown"),
+                            "never" => Some("never"),
+                            "object" => Some("object"),
+                            "bigint" => Some("bigint"),
+                            _ => None,
+                        }
+                    })
+                } else {
+                    match expr_node.kind {
+                        k if k == SyntaxKind::NumberKeyword as u16 => Some("number"),
+                        k if k == SyntaxKind::StringKeyword as u16 => Some("string"),
+                        k if k == SyntaxKind::BooleanKeyword as u16 => Some("boolean"),
+                        k if k == SyntaxKind::SymbolKeyword as u16 => Some("symbol"),
+                        k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+                        k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
+                        k if k == SyntaxKind::NullKeyword as u16 => Some("null"),
+                        k if k == SyntaxKind::AnyKeyword as u16 => Some("any"),
+                        k if k == SyntaxKind::UnknownKeyword as u16 => Some("unknown"),
+                        k if k == SyntaxKind::NeverKeyword as u16 => Some("never"),
+                        k if k == SyntaxKind::ObjectKeyword as u16 => Some("object"),
+                        k if k == SyntaxKind::BigIntKeyword as u16 => Some("bigint"),
+                        _ => None,
+                    }
+                };
+                if let Some(keyword_name) = keyword_name {
+                    self.error_type_only_value_at(keyword_name, access.expression);
+                    return TypeId::ERROR;
+                }
+            }
+        }
+
         // Get the type of the object
         let object_type = self.get_type_of_node(access.expression);
         let object_type = self.evaluate_application_type(object_type);
@@ -1946,6 +1994,7 @@ impl<'a> CheckerState<'a> {
 
         if result_type.is_none()
             && let Some(index) = literal_index
+            && !self.is_array_like_type(object_type_for_access)
         {
             let property_name = index.to_string();
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);

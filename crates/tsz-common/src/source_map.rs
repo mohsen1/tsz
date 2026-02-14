@@ -533,5 +533,5 @@ pub fn base64_encode(input: &[u8]) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/source_map.rs"]
+#[path = "../tests/source_map.rs"]
 mod tests;

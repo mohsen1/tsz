@@ -2862,5 +2862,5 @@ impl<'a> AstToIr<'a> {
 // =============================================================================
 
 #[cfg(test)]
-#[path = "tests/class_es5_ir.rs"]
+#[path = "../../tests/class_es5_ir.rs"]
 mod tests;

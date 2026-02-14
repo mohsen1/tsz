@@ -29,22 +29,22 @@ mod state_statements;
 mod state_types;
 
 #[cfg(test)]
-#[path = "tests/parser_improvement_tests.rs"]
+#[path = "../../tests/parser_improvement_tests.rs"]
 mod parser_improvement_tests;
 #[cfg(test)]
-#[path = "tests/tests.rs"]
+#[path = "../../tests/tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "tests/trailing_comma_tests.rs"]
+#[path = "../../tests/trailing_comma_tests.rs"]
 mod trailing_comma_tests;
 
 #[cfg(test)]
-#[path = "tests/spelling_integration_tests.rs"]
+#[path = "../../tests/spelling_integration_tests.rs"]
 mod spelling_integration_tests;
 
 #[cfg(test)]
-#[path = "tests/duplicate_label_tests.rs"]
+#[path = "../../tests/duplicate_label_tests.rs"]
 mod duplicate_label_tests;
 
 // Re-export flags

@@ -139,5 +139,5 @@ pub fn get_nullish_assignment_type(
 }
 
 #[cfg(test)]
-#[path = "tests/nullish.rs"]
+#[path = "../tests/nullish.rs"]
 mod tests;

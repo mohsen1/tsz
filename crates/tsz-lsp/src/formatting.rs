@@ -706,5 +706,5 @@ impl DocumentFormattingProvider {
 }
 
 #[cfg(test)]
-#[path = "tests/formatting_tests.rs"]
+#[path = "../tests/formatting_tests.rs"]
 mod formatting_tests;

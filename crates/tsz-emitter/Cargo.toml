@@ -3,6 +3,7 @@ name = "tsz-emitter"
 description = "TypeScript-to-JavaScript emitter and transforms for the tsz compiler"
 version.workspace = true
 edition.workspace = true
+autotests = false
 repository.workspace = true
 license.workspace = true
 authors.workspace = true

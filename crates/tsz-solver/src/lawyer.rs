@@ -246,5 +246,5 @@ impl TypeScriptQuirks {
 }
 
 #[cfg(test)]
-#[path = "tests/lawyer_tests.rs"]
+#[path = "../tests/lawyer_tests.rs"]
 mod tests;

@@ -1132,5 +1132,5 @@ impl<'a> DocumentHighlightProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/highlighting_tests.rs"]
+#[path = "../tests/highlighting_tests.rs"]
 mod highlighting_tests;

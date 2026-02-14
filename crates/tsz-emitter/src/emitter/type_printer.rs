@@ -605,5 +605,5 @@ impl<'a> TypePrinter<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/type_printer.rs"]
+#[path = "../../tests/type_printer.rs"]
 mod tests;

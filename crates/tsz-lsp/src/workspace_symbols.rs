@@ -168,5 +168,5 @@ impl<'a> WorkspaceSymbolsProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/workspace_symbols_tests.rs"]
+#[path = "../tests/workspace_symbols_tests.rs"]
 mod workspace_symbols_tests;

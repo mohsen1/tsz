@@ -434,5 +434,5 @@ impl<'a> InlayHintsProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/inlay_hints_tests.rs"]
+#[path = "../tests/inlay_hints_tests.rs"]
 mod inlay_hints_tests;

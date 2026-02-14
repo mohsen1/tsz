@@ -198,5 +198,5 @@ pub fn can_be_nullish(types: &dyn TypeDatabase, type_id: SolverTypeId) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests/optional_chain.rs"]
+#[path = "../tests/optional_chain.rs"]
 mod tests;

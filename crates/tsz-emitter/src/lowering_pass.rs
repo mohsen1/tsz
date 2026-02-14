@@ -2834,5 +2834,5 @@ impl<'a> LoweringPass<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/lowering_pass.rs"]
+#[path = "../tests/lowering_pass.rs"]
 mod tests;

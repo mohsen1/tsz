@@ -2446,5 +2446,5 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 }
 
 #[cfg(test)]
-#[path = "tests/declarations.rs"]
+#[path = "../tests/declarations.rs"]
 mod tests;
