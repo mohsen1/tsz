@@ -713,13 +713,30 @@ impl<'a> CheckerState<'a> {
 
         // Check if this is a lazy type
         if let Some(def_id) = lazy_def_id(self.ctx.types, type_id) {
-            // Try to look up the definition's body in the definition store first
+            // First, check the type_env for the resolved type.
+            // This is critical for class types: the type_env's resolve_lazy returns
+            // the instance type (via class_instance_types), while get_type_of_symbol
+            // returns the constructor type. Since Lazy(DefId) in type position should
+            // resolve to the instance type, we must check type_env first.
+            {
+                let env = self.ctx.type_env.borrow();
+                if let Some(resolved) =
+                    tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                {
+                    if resolved != type_id {
+                        drop(env);
+                        return self.resolve_lazy_type_inner(resolved, visited);
+                    }
+                }
+            }
+
+            // Try to look up the definition's body in the definition store
             if let Some(body) = self.ctx.definition_store.get_body(def_id) {
                 // Recursively resolve in case the body is also a lazy type
                 return self.resolve_lazy_type_inner(body, visited);
             }
 
-            // If not in the definition store, try to resolve via symbol lookup
+            // If not in the definition store or type_env, try to resolve via symbol lookup
             // This handles type aliases that are resolved through compute_type_of_symbol
             let sym_id_opt = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
             if let Some(sym_id) = sym_id_opt {
