@@ -150,6 +150,19 @@ fn test_namespace_es5_simple_namespace_output() {
 }
 
 #[test]
+fn test_namespace_es5_enum_emit_lowered() {
+    let output = transform_and_emit("namespace A { export enum Color { Red, Blue } }");
+    assert!(
+        output.contains("Color[Color[\"Red\"] = 0] = \"Red\""),
+        "Should lower enum member assignments inside namespace"
+    );
+    assert!(
+        output.contains("A.Color = Color;"),
+        "Should export enum symbol through namespace assignment"
+    );
+}
+
+#[test]
 fn test_namespace_es5_exported_empty_namespace_skipped() {
     let ir = transform_namespace("export namespace M { }");
     assert!(
