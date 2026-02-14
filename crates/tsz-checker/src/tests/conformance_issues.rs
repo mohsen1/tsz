@@ -261,6 +261,28 @@ interface I extends number {}
 }
 
 #[test]
+fn test_interface_extends_classes_with_private_member_clash_reports_ts2320() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class X {
+    private m: number;
+}
+class Y {
+    private m: string;
+}
+
+interface Z extends X, Y {}
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2320),
+        "Expected TS2320 when interface extends classes with conflicting private members. Actual diagnostics: {:#?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_instance_member_initializer_constructor_param_capture_reports_ts2301() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

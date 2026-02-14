@@ -634,6 +634,8 @@ impl<'a> CheckerState<'a> {
 
         let mut inherited_member_sources: rustc_hash::FxHashMap<String, (String, TypeId)> =
             rustc_hash::FxHashMap::default();
+        let mut inherited_non_public_class_member_sources: rustc_hash::FxHashMap<String, String> =
+            rustc_hash::FxHashMap::default();
 
         // Process each heritage clause (extends)
         for &clause_idx in &heritage_clauses.nodes {
@@ -919,6 +921,45 @@ impl<'a> CheckerState<'a> {
                                             }
                                         }
                                     }
+                                }
+                            }
+
+                            // TS2320: Interface cannot extend two classes that each contribute a
+                            // private/protected member with the same name.
+                            for &class_member_idx in &class_data.members.nodes {
+                                let Some(member_info) =
+                                    self.extract_class_member_info(class_member_idx, false)
+                                else {
+                                    continue;
+                                };
+
+                                if member_info.is_static
+                                    || member_info.visibility == MemberVisibility::Public
+                                {
+                                    continue;
+                                }
+
+                                if derived_member_names.contains(&member_info.name) {
+                                    continue;
+                                }
+
+                                if let Some(prev_base_name) =
+                                    inherited_non_public_class_member_sources.get(&member_info.name)
+                                {
+                                    if prev_base_name != &base_name {
+                                        self.error_at_node(
+                                            iface_data.name,
+                                            &format!(
+                                                "Interface '{}' cannot simultaneously extend types '{}' and '{}'.",
+                                                derived_name, prev_base_name, base_name
+                                            ),
+                                            diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
+                                        );
+                                        return;
+                                    }
+                                } else {
+                                    inherited_non_public_class_member_sources
+                                        .insert(member_info.name, base_name.clone());
                                 }
                             }
                         }
