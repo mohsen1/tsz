@@ -648,6 +648,35 @@ impl<'a> CheckerState<'a> {
                     })
                 })
             }
+            ExcessPropertiesKind::Intersection(members) => {
+                let mut target_shapes = Vec::new();
+
+                for member in members {
+                    let resolved_member = self.resolve_type_for_property_access(member);
+                    let Some(shape) = object_shape_for_type(self.ctx.types, resolved_member) else {
+                        continue;
+                    };
+
+                    if shape.string_index.is_some() || shape.number_index.is_some() {
+                        return false;
+                    }
+
+                    target_shapes.push(shape);
+                }
+
+                if target_shapes.is_empty() {
+                    return false;
+                }
+
+                source_props.iter().any(|source_prop| {
+                    !target_shapes.iter().any(|shape| {
+                        shape
+                            .properties
+                            .iter()
+                            .any(|prop| prop.name == source_prop.name)
+                    })
+                })
+            }
             ExcessPropertiesKind::NotObject => false,
         }
     }
