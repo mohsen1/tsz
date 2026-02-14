@@ -1129,6 +1129,19 @@ impl ParserState {
         // Skip for catch clause bindings (flags bit 3 = CATCH_CLAUSE_BINDING)
         // and for-in/for-of loop variables, which are destructuring without initializers.
         let is_catch_clause = (flags & 0x8) != 0;
+        if is_catch_clause && !initializer.is_none() {
+            let (pos, len) = self
+                .arena
+                .get(initializer)
+                .map(|n| (n.pos, n.end - n.pos))
+                .unwrap_or((start_pos, 0));
+            self.parse_error_at(
+                pos,
+                len,
+                "Catch clause variable cannot have an initializer.",
+                diagnostic_codes::CATCH_CLAUSE_VARIABLE_CANNOT_HAVE_AN_INITIALIZER,
+            );
+        }
         if !is_catch_clause && initializer.is_none() {
             if let Some(name_node) = self.arena.get(name) {
                 use crate::parser::syntax_kind_ext::{
