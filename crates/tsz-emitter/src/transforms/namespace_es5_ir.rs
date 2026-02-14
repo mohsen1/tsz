@@ -1107,7 +1107,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
-            parent_name: Some(parent_ns.to_string()),
+            parent_name: if is_exported {
+                Some(parent_ns.to_string())
+            } else {
+                None
+            },
             param_name,
             skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
         })
@@ -1628,7 +1632,11 @@ impl<'a> NamespaceTransformContext<'a> {
             is_exported,
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
-            parent_name: Some(parent_ns.to_string()),
+            parent_name: if is_exported {
+                Some(parent_ns.to_string())
+            } else {
+                None
+            },
             param_name,
             skip_sequence_indent: true,
         })
