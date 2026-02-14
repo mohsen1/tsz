@@ -1795,9 +1795,16 @@ impl<'a> CheckerState<'a> {
                     i += 1;
                     continue;
                 }
-                let is_declared = self.has_declare_modifier(&func.modifiers);
+                let is_declared = self.is_ambient_declaration(stmt_idx);
                 // Use func.is_async as the parser stores async as a flag, not a modifier
                 let is_async = func.is_async;
+                // TSC reports TS2389/TS2391 at the function name, not the declaration.
+                let name_node = func.name;
+                let error_node = if !name_node.is_none() {
+                    name_node
+                } else {
+                    stmt_idx
+                };
 
                 // TS1040: 'async' modifier cannot be used in an ambient context
                 if is_declared && is_async {
@@ -1811,6 +1818,21 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_declared {
+                    if let Some(name) = self.get_function_name_from_node(stmt_idx) {
+                        let (has_impl, impl_name, impl_idx) =
+                            self.find_function_impl(statements, i + 1, &name);
+                        if has_impl
+                            && impl_name.as_deref() == Some(name.as_str())
+                            && let Some(impl_idx) = impl_idx
+                            && !self.is_ambient_declaration(impl_idx)
+                        {
+                            self.error_at_node(
+                                error_node,
+                                crate::types::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                                crate::types::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                            );
+                        }
+                    }
                     i += 1;
                     continue;
                 }
@@ -1820,39 +1842,43 @@ impl<'a> CheckerState<'a> {
                 }
                 // Function overload signature - check for implementation
                 let func_name = self.get_function_name_from_node(stmt_idx);
-                // TSC reports TS2389/TS2391 at the function name, not the declaration
-                let name_node = func.name;
-                let error_node = if !name_node.is_none() {
-                    name_node
-                } else {
-                    stmt_idx
-                };
                 if let Some(name) = func_name {
-                    let (has_impl, impl_name) = self.find_function_impl(statements, i + 1, &name);
+                    let (has_impl, impl_name, impl_idx) =
+                        self.find_function_impl(statements, i + 1, &name);
                     if !has_impl {
                         self.error_at_node(
                                     error_node,
                                     "Function implementation is missing or not immediately following the declaration.",
                                     diagnostic_codes::FUNCTION_IMPLEMENTATION_IS_MISSING_OR_NOT_IMMEDIATELY_FOLLOWING_THE_DECLARATION
                                 );
-                    } else if let Some(actual_name) = impl_name
-                        && actual_name != name
-                    {
-                        // Implementation has wrong name — report at the impl's name node
-                        let impl_stmt = statements[i + 1];
-                        let impl_error_node = self
-                            .ctx
-                            .arena
-                            .get(impl_stmt)
-                            .and_then(|n| self.ctx.arena.get_function(n))
-                            .map(|f| f.name)
-                            .filter(|n| !n.is_none())
-                            .unwrap_or(impl_stmt);
-                        self.error_at_node(
-                            impl_error_node,
-                            &format!("Function implementation name must be '{}'.", name),
-                            diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
-                        );
+                    } else if let Some(impl_idx) = impl_idx {
+                        if let Some(actual_name) = impl_name
+                            && actual_name != name
+                        {
+                            // Implementation has wrong name — report at the implementation name.
+                            let impl_error_node = self
+                                .ctx
+                                .arena
+                                .get(impl_idx)
+                                .and_then(|n| self.ctx.arena.get_function(n))
+                                .map(|f| f.name)
+                                .filter(|n| !n.is_none())
+                                .unwrap_or(impl_idx);
+                            self.error_at_node(
+                                impl_error_node,
+                                &format!("Function implementation name must be '{}'.", name),
+                                diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
+                            );
+                        } else {
+                            let impl_is_declared = self.is_ambient_declaration(impl_idx);
+                            if is_declared != impl_is_declared {
+                                self.error_at_node(
+                                    error_node,
+                                    crate::types::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                                    crate::types::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                                );
+                            }
+                        }
                     }
                 }
             }
