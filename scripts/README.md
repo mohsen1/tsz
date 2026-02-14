@@ -37,6 +37,7 @@ node scripts/help.mjs
 | `scripts/validate-wasm.mjs` | Validate WASM loads |
 | `scripts/help.mjs` | Show all commands |
 | `scripts/arch_guard.py` | Run architecture boundary checks used by CI |
+| `scripts/arch_guard.py --json-report <path>` | Run architecture checks and emit machine-readable report JSON |
 
 ## Resource Protection
 
