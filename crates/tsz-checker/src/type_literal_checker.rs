@@ -276,13 +276,12 @@ impl<'a> CheckerState<'a> {
                 _ => {}
             }
 
-            if name != "Array" {
-                if let TypeSymbolResolution::ValueOnly(_) =
+            if name != "Array"
+                && let TypeSymbolResolution::ValueOnly(_) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
-                {
-                    self.error_value_only_type_at(name, type_name_idx);
-                    return TypeId::ERROR;
-                }
+            {
+                self.error_value_only_type_at(name, type_name_idx);
+                return TypeId::ERROR;
             }
 
             if let Some(type_param) = self.lookup_type_parameter(name) {

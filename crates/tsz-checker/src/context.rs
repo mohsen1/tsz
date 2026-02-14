@@ -2318,25 +2318,25 @@ impl<'a> CheckerContext<'a> {
 
         // Check lib contexts
         for lib_ctx in &self.lib_contexts {
-            if let Some(sym_id) = lib_ctx.binder.file_locals.get("Promise") {
-                if check_symbol_has_value(sym_id, &lib_ctx.binder) {
-                    return true;
-                }
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get("Promise")
+                && check_symbol_has_value(sym_id, &lib_ctx.binder)
+            {
+                return true;
             }
         }
 
         // Check current scope
-        if let Some(sym_id) = self.binder.current_scope.get("Promise") {
-            if check_symbol_has_value(sym_id, self.binder) {
-                return true;
-            }
+        if let Some(sym_id) = self.binder.current_scope.get("Promise")
+            && check_symbol_has_value(sym_id, self.binder)
+        {
+            return true;
         }
 
         // Check file locals
-        if let Some(sym_id) = self.binder.file_locals.get("Promise") {
-            if check_symbol_has_value(sym_id, self.binder) {
-                return true;
-            }
+        if let Some(sym_id) = self.binder.file_locals.get("Promise")
+            && check_symbol_has_value(sym_id, self.binder)
+        {
+            return true;
         }
 
         false
@@ -2747,15 +2747,15 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
         // Fall back to type_env for types registered via insert_def_with_params
         // (generic lib interfaces like PromiseLike<T>, Map<K,V>, Set<T>, etc.)
-        if let Ok(env) = self.type_env.try_borrow() {
-            if let Some(body) = env.get_def(def_id) {
-                tracing::trace!(
-                    def_id = def_id.0,
-                    type_id = body.0,
-                    "resolve_lazy: found in type_env"
-                );
-                return Some(body);
-            }
+        if let Ok(env) = self.type_env.try_borrow()
+            && let Some(body) = env.get_def(def_id)
+        {
+            tracing::trace!(
+                def_id = def_id.0,
+                type_id = body.0,
+                "resolve_lazy: found in type_env"
+            );
+            return Some(body);
         }
 
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");

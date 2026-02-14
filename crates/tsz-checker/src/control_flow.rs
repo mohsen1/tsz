@@ -280,10 +280,10 @@ impl<'a> FlowAnalyzer<'a> {
         const MAX_ITERATIONS: usize = 5;
 
         // For const symbols, no fixed-point needed - they can't be reassigned
-        if let Some(sym_id) = symbol_id {
-            if self.is_const_symbol(sym_id) {
-                return entry_type;
-            }
+        if let Some(sym_id) = symbol_id
+            && self.is_const_symbol(sym_id)
+        {
+            return entry_type;
         }
 
         // Without a symbol_id we cannot inject cache entries to break the
@@ -401,17 +401,17 @@ impl<'a> FlowAnalyzer<'a> {
             // Loop labels MUST always check cache because analyze_loop_fixed_point
             // injects entries as a recursion guard — skipping the check causes
             // stack overflow when types contain type parameters.
-            if !is_switch_clause && (!initial_has_type_params || is_loop_label_node) {
-                if let Some(sym_id) = symbol_id {
-                    if let Some(cache) = self.flow_cache {
-                        let key = (current_flow, sym_id, initial_type);
-                        if let Some(&cached_type) = cache.borrow().get(&key) {
-                            // Use cached result and skip processing this node
-                            results.insert(current_flow, cached_type);
-                            visited.insert(current_flow);
-                            continue;
-                        }
-                    }
+            if !is_switch_clause
+                && (!initial_has_type_params || is_loop_label_node)
+                && let Some(sym_id) = symbol_id
+                && let Some(cache) = self.flow_cache
+            {
+                let key = (current_flow, sym_id, initial_type);
+                if let Some(&cached_type) = cache.borrow().get(&key) {
+                    // Use cached result and skip processing this node
+                    results.insert(current_flow, cached_type);
+                    visited.insert(current_flow);
+                    continue;
                 }
             }
 
@@ -548,11 +548,12 @@ impl<'a> FlowAnalyzer<'a> {
                 // CRITICAL FIX: Schedule antecedent 0 (switch header) for traversal
                 // Fallthrough cases are handled by the is_merge_point block above,
                 // but single-clause cases need this to continue traversal.
-                if let Some(&ant) = flow.antecedent.first() {
-                    if !in_worklist.contains(&ant) && !visited.contains(&ant) {
-                        worklist.push_back((ant, current_type));
-                        in_worklist.insert(ant);
-                    }
+                if let Some(&ant) = flow.antecedent.first()
+                    && !in_worklist.contains(&ant)
+                    && !visited.contains(&ant)
+                {
+                    worklist.push_back((ant, current_type));
+                    in_worklist.insert(ant);
                 }
 
                 // Switch clause - apply switch-specific narrowing
@@ -820,19 +821,18 @@ impl<'a> FlowAnalyzer<'a> {
             // Store result in global cache for future calls
             // CRITICAL: Only cache if BOTH initial and final types are concrete (no type parameters).
             // This prevents the "Generic Result" bug where narrowing introduces type parameters.
-            if let Some(sym_id) = symbol_id {
-                if let Some(cache) = self.flow_cache {
-                    let final_has_type_params =
-                        tsz_solver::type_queries::contains_type_parameters_db(
-                            self.interner,
-                            final_type,
-                        );
+            if let Some(sym_id) = symbol_id
+                && let Some(cache) = self.flow_cache
+            {
+                let final_has_type_params = tsz_solver::type_queries::contains_type_parameters_db(
+                    self.interner,
+                    final_type,
+                );
 
-                    // Only cache if neither initial nor final types contain type parameters
-                    if !initial_has_type_params && !final_has_type_params {
-                        let key = (current_flow, sym_id, initial_type);
-                        cache.borrow_mut().insert(key, final_type);
-                    }
+                // Only cache if neither initial nor final types contain type parameters
+                if !initial_has_type_params && !final_has_type_params {
+                    let key = (current_flow, sym_id, initial_type);
+                    cache.borrow_mut().insert(key, final_type);
                 }
             }
         }
@@ -1016,25 +1016,19 @@ impl<'a> FlowAnalyzer<'a> {
         // Discriminant narrowing: if the predicate target is a property access on the
         // reference (e.g., assertEqual(animal.type, 'cat') narrows animal from Cat|Dog to Cat),
         // extract the property path and narrow the parent object by discriminant.
-        if let Some(predicate_type) = resolved_predicate.type_id {
-            if let Some((property_path, _is_optional, base)) =
+        if let Some(predicate_type) = resolved_predicate.type_id
+            && let Some((property_path, _is_optional, base)) =
                 self.discriminant_property_info(predicate_target, reference)
-            {
-                if self.is_matching_reference(base, reference) {
-                    let env_borrow;
-                    let narrowing = if let Some(env) = &self.type_environment {
-                        env_borrow = env.borrow();
-                        NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
-                    } else {
-                        NarrowingContext::new(self.interner)
-                    };
-                    return narrowing.narrow_by_discriminant(
-                        pre_type,
-                        &property_path,
-                        predicate_type,
-                    );
-                }
-            }
+            && self.is_matching_reference(base, reference)
+        {
+            let env_borrow;
+            let narrowing = if let Some(env) = &self.type_environment {
+                env_borrow = env.borrow();
+                NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            } else {
+                NarrowingContext::new(self.interner)
+            };
+            return narrowing.narrow_by_discriminant(pre_type, &property_path, predicate_type);
         }
 
         // Condition-based assertion narrowing: for `assert(condition)` where the predicate
@@ -1289,13 +1283,12 @@ impl<'a> FlowAnalyzer<'a> {
                 return false;
             }
             // Check if the parent declaration list is let/var (not const)
-            if let Some(ext) = self.arena.get_extended(node) {
-                if !ext.parent.is_none() {
-                    if let Some(parent_node) = self.arena.get(ext.parent) {
-                        let flags = parent_node.flags as u32;
-                        return (flags & node_flags::CONST) == 0;
-                    }
-                }
+            if let Some(ext) = self.arena.get_extended(node)
+                && !ext.parent.is_none()
+                && let Some(parent_node) = self.arena.get(ext.parent)
+            {
+                let flags = parent_node.flags as u32;
+                return (flags & node_flags::CONST) == 0;
             }
             return false;
         }
@@ -1314,12 +1307,11 @@ impl<'a> FlowAnalyzer<'a> {
                     let Some(decl_node) = self.arena.get(decl_idx) else {
                         continue;
                     };
-                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                        if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                            if decl.type_annotation.is_none() {
-                                return true;
-                            }
-                        }
+                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                        && decl.type_annotation.is_none()
+                    {
+                        return true;
                     }
                 }
             }
@@ -1339,28 +1331,26 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
-        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            if let Some(decl) = self.arena.get_variable_declaration(node_data) {
-                return !decl.type_annotation.is_none();
-            }
+        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(decl) = self.arena.get_variable_declaration(node_data)
+        {
+            return !decl.type_annotation.is_none();
         }
 
         // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT
-        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-            || node_data.kind == syntax_kind_ext::VARIABLE_STATEMENT
+        if (node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || node_data.kind == syntax_kind_ext::VARIABLE_STATEMENT)
+            && let Some(list) = self.arena.get_variable(node_data)
         {
-            if let Some(list) = self.arena.get_variable(node_data) {
-                for &decl_idx in &list.declarations.nodes {
-                    let Some(decl_node) = self.arena.get(decl_idx) else {
-                        continue;
-                    };
-                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                        if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                            if !decl.type_annotation.is_none() {
-                                return true;
-                            }
-                        }
-                    }
+            for &decl_idx in &list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    && !decl.type_annotation.is_none()
+                {
+                    return true;
                 }
             }
         }
@@ -1475,10 +1465,10 @@ impl<'a> FlowAnalyzer<'a> {
                             // For +=: check if RHS is a number literal (common case: x += 1)
                             k if k == SyntaxKind::PlusEqualsToken as u16 => {
                                 // If RHS is a numeric literal, we can safely infer NUMBER
-                                if let Some(literal_type) = self.literal_type_from_node(bin.right) {
-                                    if self.is_number_type(literal_type) {
-                                        return Some(TypeId::NUMBER);
-                                    }
+                                if let Some(literal_type) = self.literal_type_from_node(bin.right)
+                                    && self.is_number_type(literal_type)
+                                {
+                                    return Some(TypeId::NUMBER);
                                 }
                                 // Otherwise, preserve narrowing (could be string concatenation)
                                 None
@@ -1567,14 +1557,12 @@ impl<'a> FlowAnalyzer<'a> {
             //
             // We only apply this for object/array literals. Type assertions like
             // `{} as any` and other expressions should still use the node_types result.
-            if self.is_var_decl_with_type_annotation(assignment_node) {
-                if let Some(rhs_node) = self.arena.get(rhs) {
-                    if rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        || rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                    {
-                        return None;
-                    }
-                }
+            if self.is_var_decl_with_type_annotation(assignment_node)
+                && let Some(rhs_node) = self.arena.get(rhs)
+                && (rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    || rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+            {
+                return None;
             }
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
@@ -1765,12 +1753,12 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Handle default values: when RHS is empty, check for default value in pattern element
-        if rhs.is_none() && self.assignment_targets_reference_internal(pattern, target) {
-            if let Some(binding) = self.arena.get_binding_element_at(pattern) {
-                if !binding.initializer.is_none() {
-                    return Some(binding.initializer);
-                }
-            }
+        if rhs.is_none()
+            && self.assignment_targets_reference_internal(pattern, target)
+            && let Some(binding) = self.arena.get_binding_element_at(pattern)
+            && !binding.initializer.is_none()
+        {
+            return Some(binding.initializer);
         }
 
         let node = self.arena.get(pattern)?;
@@ -2661,15 +2649,13 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
-        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            if let Some(ext) = self.arena.get_extended(decl_idx) {
-                if !ext.parent.is_none() {
-                    if let Some(parent_node) = self.arena.get(ext.parent) {
-                        let flags = parent_node.flags as u32;
-                        return (flags & node_flags::CONST) != 0;
-                    }
-                }
-            }
+        if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(ext) = self.arena.get_extended(decl_idx)
+            && !ext.parent.is_none()
+            && let Some(parent_node) = self.arena.get(ext.parent)
+        {
+            let flags = parent_node.flags as u32;
+            return (flags & node_flags::CONST) != 0;
         }
 
         // For other node types, check the node's own flags

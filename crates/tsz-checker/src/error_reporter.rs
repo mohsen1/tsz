@@ -2421,13 +2421,14 @@ impl<'a> CheckerState<'a> {
 
         // Also suppress TS2304 for identifiers that appear shortly after a parse error.
         // These identifiers are likely artifacts of error recovery.
-        if !force_emit_for_ambiguous_generic && !self.ctx.syntax_parse_error_positions.is_empty() {
-            if let Some(node) = self.ctx.arena.get(idx) {
-                let ident_pos = node.pos;
-                for &err_pos in &self.ctx.syntax_parse_error_positions {
-                    if err_pos <= ident_pos && (ident_pos - err_pos) <= 8 {
-                        return;
-                    }
+        if !force_emit_for_ambiguous_generic
+            && !self.ctx.syntax_parse_error_positions.is_empty()
+            && let Some(node) = self.ctx.arena.get(idx)
+        {
+            let ident_pos = node.pos;
+            for &err_pos in &self.ctx.syntax_parse_error_positions {
+                if err_pos <= ident_pos && (ident_pos - err_pos) <= 8 {
+                    return;
                 }
             }
         }
@@ -2965,11 +2966,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(distance) = Self::levenshtein_with_max(name, candidate, *best_distance - 0.1) {
-            if distance < *best_distance {
-                *best_distance = distance;
-                *best_candidate = Some(candidate.to_string());
-            }
+        if let Some(distance) = Self::levenshtein_with_max(name, candidate, *best_distance - 0.1)
+            && distance < *best_distance
+        {
+            *best_distance = distance;
+            *best_candidate = Some(candidate.to_string());
         }
     }
 
@@ -4014,10 +4015,12 @@ impl<'a> CheckerState<'a> {
             // For arithmetic and bitwise operators, emit specific left/right errors (TS2362, TS2363)
             // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
             let mut emitted_specific_error = emitted_nullish_error;
-            if !left_is_valid_arithmetic && (!left_is_nullish || !emitted_nullish_error) {
-                if let Some(loc) = self.get_source_location(left_idx) {
-                    let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                    self.ctx.diagnostics.push(Diagnostic {
+            if !left_is_valid_arithmetic
+                && (!left_is_nullish || !emitted_nullish_error)
+                && let Some(loc) = self.get_source_location(left_idx)
+            {
+                let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                         category: DiagnosticCategory::Error,
                         message_text: message,
@@ -4026,13 +4029,14 @@ impl<'a> CheckerState<'a> {
                         length: loc.length(),
                         related_information: Vec::new(),
                     });
-                    emitted_specific_error = true;
-                }
+                emitted_specific_error = true;
             }
-            if !right_is_valid_arithmetic && (!right_is_nullish || !emitted_nullish_error) {
-                if let Some(loc) = self.get_source_location(right_idx) {
-                    let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                    self.ctx.diagnostics.push(Diagnostic {
+            if !right_is_valid_arithmetic
+                && (!right_is_nullish || !emitted_nullish_error)
+                && let Some(loc) = self.get_source_location(right_idx)
+            {
+                let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                         category: DiagnosticCategory::Error,
                         message_text: message,
@@ -4041,27 +4045,24 @@ impl<'a> CheckerState<'a> {
                         length: loc.length(),
                         related_information: Vec::new(),
                     });
-                    emitted_specific_error = true;
-                }
+                emitted_specific_error = true;
             }
             // If both operands are valid arithmetic types but the operation still failed
             // (e.g., mixing number and bigint), emit TS2365
-            if !emitted_specific_error {
-                if let Some(loc) = self.get_source_location(node_idx) {
-                    let message = format!(
-                        "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                        op, left_str, right_str
-                    );
-                    self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                        category: DiagnosticCategory::Error,
-                        message_text: message,
-                        file: self.ctx.file_name.clone(),
-                        start: loc.start,
-                        length: loc.length(),
-                        related_information: Vec::new(),
-                    });
-                }
+            if !emitted_specific_error && let Some(loc) = self.get_source_location(node_idx) {
+                let message = format!(
+                    "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                    op, left_str, right_str
+                );
+                self.ctx.diagnostics.push(Diagnostic {
+                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                    category: DiagnosticCategory::Error,
+                    message_text: message,
+                    file: self.ctx.file_name.clone(),
+                    start: loc.start,
+                    length: loc.length(),
+                    related_information: Vec::new(),
+                });
             }
             return;
         }
@@ -4100,10 +4101,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 // For other invalid bitwise operands, emit TS2362/TS2363
                 let mut emitted_specific_error = emitted_nullish_error;
-                if !left_is_valid_arithmetic && (!left_is_nullish || !emitted_nullish_error) {
-                    if let Some(loc) = self.get_source_location(left_idx) {
-                        let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                        self.ctx.diagnostics.push(Diagnostic {
+                if !left_is_valid_arithmetic
+                    && (!left_is_nullish || !emitted_nullish_error)
+                    && let Some(loc) = self.get_source_location(left_idx)
+                {
+                    let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                    self.ctx.diagnostics.push(Diagnostic {
                             code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                             category: DiagnosticCategory::Error,
                             message_text: message,
@@ -4112,13 +4115,14 @@ impl<'a> CheckerState<'a> {
                             length: loc.length(),
                             related_information: Vec::new(),
                         });
-                        emitted_specific_error = true;
-                    }
+                    emitted_specific_error = true;
                 }
-                if !right_is_valid_arithmetic && (!right_is_nullish || !emitted_nullish_error) {
-                    if let Some(loc) = self.get_source_location(right_idx) {
-                        let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                        self.ctx.diagnostics.push(Diagnostic {
+                if !right_is_valid_arithmetic
+                    && (!right_is_nullish || !emitted_nullish_error)
+                    && let Some(loc) = self.get_source_location(right_idx)
+                {
+                    let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                    self.ctx.diagnostics.push(Diagnostic {
                             code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
                             category: DiagnosticCategory::Error,
                             message_text: message,
@@ -4127,25 +4131,22 @@ impl<'a> CheckerState<'a> {
                             length: loc.length(),
                             related_information: Vec::new(),
                         });
-                        emitted_specific_error = true;
-                    }
+                    emitted_specific_error = true;
                 }
-                if !emitted_specific_error {
-                    if let Some(loc) = self.get_source_location(node_idx) {
-                        let message = format!(
-                            "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                            op, left_str, right_str
-                        );
-                        self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                            category: DiagnosticCategory::Error,
-                            message_text: message,
-                            file: self.ctx.file_name.clone(),
-                            start: loc.start,
-                            length: loc.length(),
-                            related_information: Vec::new(),
-                        });
-                    }
+                if !emitted_specific_error && let Some(loc) = self.get_source_location(node_idx) {
+                    let message = format!(
+                        "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                        op, left_str, right_str
+                    );
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
                 }
             }
         }

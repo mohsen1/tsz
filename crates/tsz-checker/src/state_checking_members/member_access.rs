@@ -748,10 +748,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 // Skip private fields (#name) - they are not subject to index signature checks
-                if let Some(name_node) = self.ctx.arena.get(prop.name) {
-                    if name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
-                        continue;
-                    }
+                if let Some(name_node) = self.ctx.arena.get(prop.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                {
+                    continue;
                 }
                 let name = self.get_member_name_text(prop.name).unwrap_or_default();
                 (name, prop.name, prop.type_annotation)
@@ -761,10 +761,10 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 // Skip private methods (#name)
-                if let Some(name_node) = self.ctx.arena.get(method.name) {
-                    if name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
-                        continue;
-                    }
+                if let Some(name_node) = self.ctx.arena.get(method.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                {
+                    continue;
                 }
                 let name = self.get_member_name_text(method.name).unwrap_or_default();
                 (name, method.name, NodeIndex::NONE) // Methods use member_idx for type
@@ -790,32 +790,33 @@ impl<'a> CheckerState<'a> {
             let is_numeric_property = prop_name.parse::<f64>().is_ok();
 
             // Check against number index signature first (for numeric properties)
-            if let Some(ref number_idx) = index_info.number_index {
-                if is_numeric_property && !self.is_assignable_to(prop_type, number_idx.value_type) {
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(number_idx.value_type);
+            if let Some(ref number_idx) = index_info.number_index
+                && is_numeric_property
+                && !self.is_assignable_to(prop_type, number_idx.value_type)
+            {
+                let prop_type_str = self.format_type(prop_type);
+                let index_type_str = self.format_type(number_idx.value_type);
 
-                    self.error_at_node_msg(
-                        name_idx,
-                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &[&prop_name, &prop_type_str, "number", &index_type_str],
-                    );
-                }
+                self.error_at_node_msg(
+                    name_idx,
+                    diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                    &[&prop_name, &prop_type_str, "number", &index_type_str],
+                );
             }
 
             // Check against string index signature
             // Note: ALL properties (including numeric ones) must satisfy string index
-            if let Some(ref string_idx) = index_info.string_index {
-                if !self.is_assignable_to(prop_type, string_idx.value_type) {
-                    let prop_type_str = self.format_type(prop_type);
-                    let index_type_str = self.format_type(string_idx.value_type);
+            if let Some(ref string_idx) = index_info.string_index
+                && !self.is_assignable_to(prop_type, string_idx.value_type)
+            {
+                let prop_type_str = self.format_type(prop_type);
+                let index_type_str = self.format_type(string_idx.value_type);
 
-                    self.error_at_node_msg(
-                        name_idx,
-                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &[&prop_name, &prop_type_str, "string", &index_type_str],
-                    );
-                }
+                self.error_at_node_msg(
+                    name_idx,
+                    diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                    &[&prop_name, &prop_type_str, "string", &index_type_str],
+                );
             }
         }
     }
@@ -1059,40 +1060,40 @@ impl<'a> CheckerState<'a> {
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                     // Track accessors for duplicate detection (getter/setter pairs are allowed,
                     // but duplicate getters or duplicate setters are not)
-                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                        if let Some(name) = self.get_member_name_text(accessor.name) {
-                            let is_static = self.has_static_modifier(&accessor.modifiers);
-                            let kind = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                                "get"
-                            } else {
-                                "set"
-                            };
-                            let key = if is_static {
-                                format!("static:{}:{}", kind, name)
-                            } else {
-                                format!("{}:{}", kind, name)
-                            };
-                            seen_accessors.entry(key).or_default().push(member_idx);
+                    if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
+                        && let Some(name) = self.get_member_name_text(accessor.name)
+                    {
+                        let is_static = self.has_static_modifier(&accessor.modifiers);
+                        let kind = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                            "get"
+                        } else {
+                            "set"
+                        };
+                        let key = if is_static {
+                            format!("static:{}:{}", kind, name)
+                        } else {
+                            format!("{}:{}", kind, name)
+                        };
+                        seen_accessors.entry(key).or_default().push(member_idx);
 
-                            // Also track plain name for cross-checking with properties/methods
-                            let plain_key = if is_static {
-                                format!("static:{}", name)
-                            } else {
-                                name.clone()
-                            };
-                            accessor_plain_names
-                                .entry(plain_key)
-                                .or_default()
-                                .push(member_idx);
-                        }
+                        // Also track plain name for cross-checking with properties/methods
+                        let plain_key = if is_static {
+                            format!("static:{}", name)
+                        } else {
+                            name.clone()
+                        };
+                        accessor_plain_names
+                            .entry(plain_key)
+                            .or_default()
+                            .push(member_idx);
                     }
                     continue;
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
-                    if let Some(constructor) = self.ctx.arena.get_constructor(member_node) {
-                        if !constructor.body.is_none() {
-                            constructor_implementations.push(member_idx);
-                        }
+                    if let Some(constructor) = self.ctx.arena.get_constructor(member_node)
+                        && !constructor.body.is_none()
+                    {
+                        constructor_implementations.push(member_idx);
                     }
                     continue;
                 }
@@ -1153,29 +1154,28 @@ impl<'a> CheckerState<'a> {
                     .first()
                     .and_then(|&idx| self.get_class_property_declared_type_info(idx));
 
-                if let Some((_first_name, _first_name_node, first_type)) = &first_declared {
-                    if !self.type_contains_error(*first_type) {
-                        let first_type_str = self.format_type(*first_type);
-                        for &idx in info.indices.iter().skip(1) {
-                            let Some((name, name_node, current_type)) =
-                                self.get_class_property_declared_type_info(idx)
-                            else {
-                                continue;
-                            };
-                            if self.type_contains_error(current_type) {
-                                continue;
-                            }
-                            let compatible_both_ways = self
-                                .is_assignable_to(*first_type, current_type)
-                                && self.is_assignable_to(current_type, *first_type);
-                            if !compatible_both_ways {
-                                let current_type_str = self.format_type(current_type);
-                                self.error_at_node_msg(
+                if let Some((_first_name, _first_name_node, first_type)) = &first_declared
+                    && !self.type_contains_error(*first_type)
+                {
+                    let first_type_str = self.format_type(*first_type);
+                    for &idx in info.indices.iter().skip(1) {
+                        let Some((name, name_node, current_type)) =
+                            self.get_class_property_declared_type_info(idx)
+                        else {
+                            continue;
+                        };
+                        if self.type_contains_error(current_type) {
+                            continue;
+                        }
+                        let compatible_both_ways = self.is_assignable_to(*first_type, current_type)
+                            && self.is_assignable_to(current_type, *first_type);
+                        if !compatible_both_ways {
+                            let current_type_str = self.format_type(current_type);
+                            self.error_at_node_msg(
                                     name_node,
                                     diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
                                     &[&name, &first_type_str, &current_type_str],
                                 );
-                            }
                         }
                     }
                 }

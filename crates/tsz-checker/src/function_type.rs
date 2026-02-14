@@ -1021,13 +1021,12 @@ impl<'a> CheckerState<'a> {
             if self.body_has_arguments_reference(spread.expression) {
                 return true;
             }
-        } else if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
-            if self.body_has_arguments_reference(cond.condition)
+        } else if let Some(cond) = self.ctx.arena.get_conditional_expr(node)
+            && (self.body_has_arguments_reference(cond.condition)
                 || self.body_has_arguments_reference(cond.when_true)
-                || self.body_has_arguments_reference(cond.when_false)
-            {
-                return true;
-            }
+                || self.body_has_arguments_reference(cond.when_false))
+        {
+            return true;
         }
 
         false
@@ -1223,12 +1222,12 @@ impl<'a> CheckerState<'a> {
             {
                 // TS2450: Check if enum is used before its declaration (TDZ violation).
                 // Only non-const enums are flagged (const enums are always hoisted).
-                if let Some(base_node) = self.ctx.arena.get(access.expression) {
-                    if let Some(base_ident) = self.ctx.arena.get_identifier(base_node) {
-                        let base_name = &base_ident.escaped_text;
-                        if self.check_tdz_violation(base_sym_id, access.expression, base_name) {
-                            return TypeId::ERROR;
-                        }
+                if let Some(base_node) = self.ctx.arena.get(access.expression)
+                    && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
+                {
+                    let base_name = &base_ident.escaped_text;
+                    if self.check_tdz_violation(base_sym_id, access.expression, base_name) {
+                        return TypeId::ERROR;
                     }
                 }
 
@@ -1982,10 +1981,10 @@ impl<'a> CheckerState<'a> {
             .get(&ident.escaped_text)
             .or_else(|| self.resolve_identifier_symbol(object_expr_idx));
 
-        if let Some(sym_id) = sym_id {
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                return (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
-            }
+        if let Some(sym_id) = sym_id
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
         }
 
         false

@@ -246,76 +246,73 @@ impl<'a> CheckerState<'a> {
             let elem_is_spread = elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT;
 
             // Handle spread elements - expand tuple types
-            if elem_is_spread {
-                if let Some(spread_data) = self.ctx.arena.get_spread(elem_node) {
-                    let spread_expr_type = self.get_type_of_node(spread_data.expression);
-                    let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
-                    // Check if spread argument is iterable, emit TS2488 if not.
-                    // Skip this check when the array is a destructuring target
-                    // (e.g., `[...c] = expr`), since the spread element is an assignment
-                    // target, not a value being spread into a new array.
-                    if !self.ctx.in_destructuring_target {
-                        self.check_spread_iterability(spread_expr_type, spread_data.expression);
-                    }
+            if elem_is_spread && let Some(spread_data) = self.ctx.arena.get_spread(elem_node) {
+                let spread_expr_type = self.get_type_of_node(spread_data.expression);
+                let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
+                // Check if spread argument is iterable, emit TS2488 if not.
+                // Skip this check when the array is a destructuring target
+                // (e.g., `[...c] = expr`), since the spread element is an assignment
+                // target, not a value being spread into a new array.
+                if !self.ctx.in_destructuring_target {
+                    self.check_spread_iterability(spread_expr_type, spread_data.expression);
+                }
 
-                    // If it's a tuple type, expand its elements
-                    if let Some(elems) = tsz_solver::type_queries::get_tuple_elements(
-                        self.ctx.types,
-                        spread_expr_type,
-                    ) {
-                        if let Some(ref _expected) = tuple_context {
-                            // For tuple context, add each element with spread flag
-                            for elem in elems.iter() {
-                                let (name, optional) =
-                                    match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
-                                        Some(el) => (el.name, el.optional),
-                                        None => (None, false),
-                                    };
-                                tuple_elements.push(TupleElement {
-                                    type_id: elem.type_id,
-                                    name,
-                                    optional,
-                                    rest: false, // Individual tuple elements are not spreads
-                                });
-                                // Don't increment index here - each tuple element maps to position
-                            }
-                        } else {
-                            // For array context, add element types
-                            for elem in elems.iter() {
-                                element_types.push(elem.type_id);
-                            }
-                        }
-                        self.ctx.contextual_type = prev_context;
-                        continue;
-                    }
-
-                    // For non-tuple spreads in array context, use element type
-                    // For tuple context, use the spread type itself
-                    let elem_type = if tuple_context.is_some() {
-                        spread_expr_type
-                    } else {
-                        self.for_of_element_type(spread_expr_type)
-                    };
-
-                    self.ctx.contextual_type = prev_context;
-
+                // If it's a tuple type, expand its elements
+                if let Some(elems) =
+                    tsz_solver::type_queries::get_tuple_elements(self.ctx.types, spread_expr_type)
+                {
                     if let Some(ref _expected) = tuple_context {
-                        let (name, optional) =
-                            match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
-                                Some(el) => (el.name, el.optional),
-                                None => (None, false),
-                            };
-                        tuple_elements.push(TupleElement {
-                            type_id: elem_type,
-                            name,
-                            optional,
-                            rest: true, // Mark as spread for non-tuple spreads in tuple context
-                        });
+                        // For tuple context, add each element with spread flag
+                        for elem in elems.iter() {
+                            let (name, optional) =
+                                match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
+                                    Some(el) => (el.name, el.optional),
+                                    None => (None, false),
+                                };
+                            tuple_elements.push(TupleElement {
+                                type_id: elem.type_id,
+                                name,
+                                optional,
+                                rest: false, // Individual tuple elements are not spreads
+                            });
+                            // Don't increment index here - each tuple element maps to position
+                        }
                     } else {
-                        element_types.push(elem_type);
+                        // For array context, add element types
+                        for elem in elems.iter() {
+                            element_types.push(elem.type_id);
+                        }
                     }
+                    self.ctx.contextual_type = prev_context;
                     continue;
                 }
+
+                // For non-tuple spreads in array context, use element type
+                // For tuple context, use the spread type itself
+                let elem_type = if tuple_context.is_some() {
+                    spread_expr_type
+                } else {
+                    self.for_of_element_type(spread_expr_type)
+                };
+
+                self.ctx.contextual_type = prev_context;
+
+                if let Some(ref _expected) = tuple_context {
+                    let (name, optional) = match tuple_context.as_ref().and_then(|tc| tc.get(index))
+                    {
+                        Some(el) => (el.name, el.optional),
+                        None => (None, false),
+                    };
+                    tuple_elements.push(TupleElement {
+                        type_id: elem_type,
+                        name,
+                        optional,
+                        rest: true, // Mark as spread for non-tuple spreads in tuple context
+                    });
+                } else {
+                    element_types.push(elem_type);
+                }
+                continue;
             }
 
             // Regular (non-spread) element
@@ -726,18 +723,17 @@ impl<'a> CheckerState<'a> {
                 if let Some(ident) = self.ctx.arena.get_identifier(node) {
                     if ident.escaped_text == "arguments" && self.is_in_regular_function_body(idx) {
                         // Check if the declaration is local to the current function
-                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            if !symbol.declarations.is_empty() {
-                                let decl_node = symbol.declarations[0];
-                                if let Some(current_fn) = self.find_enclosing_function(idx) {
-                                    if let Some(decl_fn) = self.find_enclosing_function(decl_node) {
-                                        if current_fn == decl_fn {
-                                            // Local "arguments" declaration - use it
-                                            let declared_type = self.get_type_of_symbol(sym_id);
-                                            return declared_type;
-                                        }
-                                    }
-                                }
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                            && !symbol.declarations.is_empty()
+                        {
+                            let decl_node = symbol.declarations[0];
+                            if let Some(current_fn) = self.find_enclosing_function(idx)
+                                && let Some(decl_fn) = self.find_enclosing_function(decl_node)
+                                && current_fn == decl_fn
+                            {
+                                // Local "arguments" declaration - use it
+                                let declared_type = self.get_type_of_symbol(sym_id);
+                                return declared_type;
                             }
                         }
                         // Symbol found but not local - fall through to IArguments check below
@@ -755,18 +751,19 @@ impl<'a> CheckerState<'a> {
 
             // Inside a regular function body, `arguments` is the implicit IArguments object,
             // overriding any outer `arguments` declaration (but not local ones, checked above).
-            if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                if ident.escaped_text == "arguments" && self.is_in_regular_function_body(idx) {
-                    let lib_binders = self.get_lib_binders();
-                    if let Some(sym_id) = self
-                        .ctx
-                        .binder
-                        .get_global_type_with_libs("IArguments", &lib_binders)
-                    {
-                        return self.type_reference_symbol_type(sym_id);
-                    }
-                    return TypeId::ANY;
+            if let Some(ident) = self.ctx.arena.get_identifier(node)
+                && ident.escaped_text == "arguments"
+                && self.is_in_regular_function_body(idx)
+            {
+                let lib_binders = self.get_lib_binders();
+                if let Some(sym_id) = self
+                    .ctx
+                    .binder
+                    .get_global_type_with_libs("IArguments", &lib_binders)
+                {
+                    return self.type_reference_symbol_type(sym_id);
                 }
+                return TypeId::ANY;
             }
         }
 
@@ -1274,27 +1271,26 @@ impl<'a> CheckerState<'a> {
             // `-x ** y` is ambiguous, so TSC forbids it. The parser produces
             // Binary(PrefixUnary(-, x), **, y), so check if left_idx is a unary.
             if op_kind == SyntaxKind::AsteriskAsteriskToken as u16 {
-                if let Some(left_node) = self.ctx.arena.get(left_idx) {
-                    if left_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
-                        if let Some(left_unary) = self.ctx.arena.get_unary_expr(left_node) {
-                            let op_name = match left_unary.operator {
-                                k if k == SyntaxKind::MinusToken as u16 => Some("-"),
-                                k if k == SyntaxKind::PlusToken as u16 => Some("+"),
-                                k if k == SyntaxKind::TildeToken as u16 => Some("~"),
-                                k if k == SyntaxKind::ExclamationToken as u16 => Some("!"),
-                                k if k == SyntaxKind::TypeOfKeyword as u16 => Some("typeof"),
-                                k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
-                                k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
-                                _ => None,
-                            };
-                            if let Some(op_name) = op_name {
-                                self.error_at_node_msg(
+                if let Some(left_node) = self.ctx.arena.get(left_idx)
+                    && left_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                    && let Some(left_unary) = self.ctx.arena.get_unary_expr(left_node)
+                {
+                    let op_name = match left_unary.operator {
+                        k if k == SyntaxKind::MinusToken as u16 => Some("-"),
+                        k if k == SyntaxKind::PlusToken as u16 => Some("+"),
+                        k if k == SyntaxKind::TildeToken as u16 => Some("~"),
+                        k if k == SyntaxKind::ExclamationToken as u16 => Some("!"),
+                        k if k == SyntaxKind::TypeOfKeyword as u16 => Some("typeof"),
+                        k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+                        k if k == SyntaxKind::DeleteKeyword as u16 => Some("delete"),
+                        _ => None,
+                    };
+                    if let Some(op_name) = op_name {
+                        self.error_at_node_msg(
                                     left_idx,
                                     crate::diagnostics::diagnostic_codes::AN_UNARY_EXPRESSION_WITH_THE_OPERATOR_IS_NOT_ALLOWED_IN_THE_LEFT_HAND_SIDE_OF_AN,
                                     &[op_name],
                                 );
-                            }
-                        }
                     }
                 }
 
@@ -1444,27 +1440,23 @@ impl<'a> CheckerState<'a> {
                     } else {
                         // TS2362/TS2363: Left/right hand side must be number/bigint/enum
                         // Emit separate errors for left and right operands
-                        if left_is_boxed {
-                            if let Some(node) = self.ctx.arena.get(left_idx) {
-                                let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                                self.ctx.error(
-                                    node.pos,
-                                    node.end - node.pos,
-                                    message,
-                                    2362, // TS2362
-                                );
-                            }
+                        if left_is_boxed && let Some(node) = self.ctx.arena.get(left_idx) {
+                            let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                message,
+                                2362, // TS2362
+                            );
                         }
-                        if right_is_boxed {
-                            if let Some(node) = self.ctx.arena.get(right_idx) {
-                                let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                                self.ctx.error(
-                                    node.pos,
-                                    node.end - node.pos,
-                                    message,
-                                    2363, // TS2363
-                                );
-                            }
+                        if right_is_boxed && let Some(node) = self.ctx.arena.get(right_idx) {
+                            let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
+                            self.ctx.error(
+                                node.pos,
+                                node.end - node.pos,
+                                message,
+                                2363, // TS2363
+                            );
                         }
                     }
                     type_stack.push(TypeId::UNKNOWN);
@@ -1575,47 +1567,47 @@ impl<'a> CheckerState<'a> {
         // missing and TS reports parser error TS1011. The expression before
         // `[` is still a primitive type keyword used as a value and should
         // emit TS2693.
-        if access.name_or_argument.is_none() {
-            if let Some(expr_node) = self.ctx.arena.get(access.expression) {
-                let keyword_name = if expr_node.kind == SyntaxKind::Identifier as u16 {
-                    self.ctx.arena.get_identifier(expr_node).and_then(|ident| {
-                        match ident.escaped_text.as_str() {
-                            "number" => Some("number"),
-                            "string" => Some("string"),
-                            "boolean" => Some("boolean"),
-                            "symbol" => Some("symbol"),
-                            "void" => Some("void"),
-                            "undefined" => Some("undefined"),
-                            "null" => Some("null"),
-                            "any" => Some("any"),
-                            "unknown" => Some("unknown"),
-                            "never" => Some("never"),
-                            "object" => Some("object"),
-                            "bigint" => Some("bigint"),
-                            _ => None,
-                        }
-                    })
-                } else {
-                    match expr_node.kind {
-                        k if k == SyntaxKind::NumberKeyword as u16 => Some("number"),
-                        k if k == SyntaxKind::StringKeyword as u16 => Some("string"),
-                        k if k == SyntaxKind::BooleanKeyword as u16 => Some("boolean"),
-                        k if k == SyntaxKind::SymbolKeyword as u16 => Some("symbol"),
-                        k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
-                        k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
-                        k if k == SyntaxKind::NullKeyword as u16 => Some("null"),
-                        k if k == SyntaxKind::AnyKeyword as u16 => Some("any"),
-                        k if k == SyntaxKind::UnknownKeyword as u16 => Some("unknown"),
-                        k if k == SyntaxKind::NeverKeyword as u16 => Some("never"),
-                        k if k == SyntaxKind::ObjectKeyword as u16 => Some("object"),
-                        k if k == SyntaxKind::BigIntKeyword as u16 => Some("bigint"),
+        if access.name_or_argument.is_none()
+            && let Some(expr_node) = self.ctx.arena.get(access.expression)
+        {
+            let keyword_name = if expr_node.kind == SyntaxKind::Identifier as u16 {
+                self.ctx.arena.get_identifier(expr_node).and_then(|ident| {
+                    match ident.escaped_text.as_str() {
+                        "number" => Some("number"),
+                        "string" => Some("string"),
+                        "boolean" => Some("boolean"),
+                        "symbol" => Some("symbol"),
+                        "void" => Some("void"),
+                        "undefined" => Some("undefined"),
+                        "null" => Some("null"),
+                        "any" => Some("any"),
+                        "unknown" => Some("unknown"),
+                        "never" => Some("never"),
+                        "object" => Some("object"),
+                        "bigint" => Some("bigint"),
                         _ => None,
                     }
-                };
-                if let Some(keyword_name) = keyword_name {
-                    self.error_type_only_value_at(keyword_name, access.expression);
-                    return TypeId::ERROR;
+                })
+            } else {
+                match expr_node.kind {
+                    k if k == SyntaxKind::NumberKeyword as u16 => Some("number"),
+                    k if k == SyntaxKind::StringKeyword as u16 => Some("string"),
+                    k if k == SyntaxKind::BooleanKeyword as u16 => Some("boolean"),
+                    k if k == SyntaxKind::SymbolKeyword as u16 => Some("symbol"),
+                    k if k == SyntaxKind::VoidKeyword as u16 => Some("void"),
+                    k if k == SyntaxKind::UndefinedKeyword as u16 => Some("undefined"),
+                    k if k == SyntaxKind::NullKeyword as u16 => Some("null"),
+                    k if k == SyntaxKind::AnyKeyword as u16 => Some("any"),
+                    k if k == SyntaxKind::UnknownKeyword as u16 => Some("unknown"),
+                    k if k == SyntaxKind::NeverKeyword as u16 => Some("never"),
+                    k if k == SyntaxKind::ObjectKeyword as u16 => Some("object"),
+                    k if k == SyntaxKind::BigIntKeyword as u16 => Some("bigint"),
+                    _ => None,
                 }
+            };
+            if let Some(keyword_name) = keyword_name {
+                self.error_type_only_value_at(keyword_name, access.expression);
+                return TypeId::ERROR;
             }
         }
 
@@ -1665,41 +1657,39 @@ impl<'a> CheckerState<'a> {
 
         // TS18013: Check for private identifier access outside of class
         // Private identifiers (#foo) can only be accessed from within the class that declares them
-        if let Some(name_node) = self.ctx.arena.get(access.name_or_argument) {
-            if name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16 {
-                // Get the property name
-                let prop_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    &ident.escaped_text
-                } else {
-                    "#"
-                };
+        if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+            && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+        {
+            // Get the property name
+            let prop_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                &ident.escaped_text
+            } else {
+                "#"
+            };
 
-                // Check if we're inside the class that declares this private identifier
-                let (symbols, _saw_class_scope) =
-                    self.resolve_private_identifier_symbols(access.name_or_argument);
+            // Check if we're inside the class that declares this private identifier
+            let (symbols, _saw_class_scope) =
+                self.resolve_private_identifier_symbols(access.name_or_argument);
 
-                // If we didn't find the symbol, it's being accessed outside the class that declares it
-                if symbols.is_empty() {
-                    use crate::diagnostics::{
-                        diagnostic_codes, diagnostic_messages, format_message,
-                    };
+            // If we didn't find the symbol, it's being accessed outside the class that declares it
+            if symbols.is_empty() {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-                    // Try to get the class name from the type
-                    let class_name = self
-                        .get_class_name_from_type(object_type)
-                        .unwrap_or_else(|| "the class".to_string());
+                // Try to get the class name from the type
+                let class_name = self
+                    .get_class_name_from_type(object_type)
+                    .unwrap_or_else(|| "the class".to_string());
 
-                    let message = format_message(
+                let message = format_message(
                         diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
                         &[prop_name, &class_name],
                     );
-                    self.error_at_node(
+                self.error_at_node(
                         access.name_or_argument,
                         &message,
                         diagnostic_codes::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
                     );
-                    return TypeId::ERROR;
-                }
+                return TypeId::ERROR;
             }
         }
 
@@ -1746,10 +1736,10 @@ impl<'a> CheckerState<'a> {
 
         // Type is possibly nullish (e.g., Foo | undefined) - emit TS18048/TS2532
         // unless optional chaining is used
-        if let Some(cause) = nullish_cause {
-            if !access.question_dot_token {
-                self.report_nullish_object(access.expression, cause, false);
-            }
+        if let Some(cause) = nullish_cause
+            && !access.question_dot_token
+        {
+            self.report_nullish_object(access.expression, cause, false);
         }
 
         let index_type = self.get_type_of_node(access.name_or_argument);

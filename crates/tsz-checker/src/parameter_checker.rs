@@ -84,12 +84,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // Deferred function/class evaluation does not trigger TS2373.
-        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+        if (node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::ARROW_FUNCTION)
+            && !self.is_immediately_invoked_function_like(node_idx)
         {
-            if !self.is_immediately_invoked_function_like(node_idx) {
-                return;
-            }
+            return;
         }
 
         // For class expressions:

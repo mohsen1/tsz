@@ -638,10 +638,10 @@ impl StatementChecker {
         }
 
         // Check if it's a labeled statement wrapping an iteration (recursively)
-        if stmt_node.kind == syntax_kind_ext::LABELED_STATEMENT {
-            if let Some(labeled) = arena.get_labeled_statement(stmt_node) {
-                return Self::is_iteration_or_nested_iteration(arena, labeled.statement);
-            }
+        if stmt_node.kind == syntax_kind_ext::LABELED_STATEMENT
+            && let Some(labeled) = arena.get_labeled_statement(stmt_node)
+        {
+            return Self::is_iteration_or_nested_iteration(arena, labeled.statement);
         }
 
         false

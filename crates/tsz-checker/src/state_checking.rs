@@ -319,10 +319,10 @@ impl<'a> CheckerState<'a> {
 
             // Export declarations may wrap other declarations
             syntax_kind_ext::EXPORT_DECLARATION => {
-                if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx) {
-                    if !export_decl.export_clause.is_none() {
-                        self.check_js_grammar_statement(export_decl.export_clause);
-                    }
+                if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx)
+                    && !export_decl.export_clause.is_none()
+                {
+                    self.check_js_grammar_statement(export_decl.export_clause);
                 }
             }
 
@@ -383,15 +383,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS8004: Type parameter declarations
-        if let Some(ref type_params) = func.type_parameters {
-            if !type_params.nodes.is_empty() {
-                // Point error at the first type parameter
-                self.error_at_node(
+        if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            // Point error at the first type parameter
+            self.error_at_node(
                     type_params.nodes[0],
                     diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                 );
-            }
         }
 
         // TS8010: Return type annotation
@@ -429,31 +429,31 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS8004: Type parameter declarations on class
-        if let Some(ref type_params) = class.type_parameters {
-            if !type_params.nodes.is_empty() {
-                self.error_at_node(
+        if let Some(ref type_params) = class.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.error_at_node(
                     type_params.nodes[0],
                     diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                 );
-            }
         }
 
         // TS8005: 'implements' clause
         if let Some(ref heritage_clauses) = class.heritage_clauses {
             for &clause_idx in &heritage_clauses.nodes {
-                if let Some(clause_node) = self.ctx.arena.get(clause_idx) {
-                    if clause_node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
-                        // Check if this is an 'implements' clause (token = ImplementsKeyword)
-                        if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) {
-                            if heritage.token == SyntaxKind::ImplementsKeyword as u16 {
-                                self.error_at_node(
+                if let Some(clause_node) = self.ctx.arena.get(clause_idx)
+                    && clause_node.kind == syntax_kind_ext::HERITAGE_CLAUSE
+                {
+                    // Check if this is an 'implements' clause (token = ImplementsKeyword)
+                    if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node)
+                        && heritage.token == SyntaxKind::ImplementsKeyword as u16
+                    {
+                        self.error_at_node(
                                     clause_idx,
                                     diagnostic_messages::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                     diagnostic_codes::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                 );
-                            }
-                        }
                     }
                 }
             }
@@ -557,14 +557,14 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // TS8004: Type parameters on methods
-                    if let Some(ref type_params) = method.type_parameters {
-                        if !type_params.nodes.is_empty() {
-                            self.error_at_node(
+                    if let Some(ref type_params) = method.type_parameters
+                        && !type_params.nodes.is_empty()
+                    {
+                        self.error_at_node(
                                 type_params.nodes[0],
                                 diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                 diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                             );
-                        }
                     }
 
                     // TS8010: Return type annotation
@@ -820,22 +820,20 @@ impl<'a> CheckerState<'a> {
         // Check variable declarations for type annotations
         // VariableStatement.declarations contains VariableDeclarationList nodes
         for &list_idx in &var.declarations.nodes {
-            if let Some(list_node) = self.ctx.arena.get(list_idx) {
-                if let Some(list) = self.ctx.arena.get_variable(list_node) {
-                    for &decl_idx in &list.declarations.nodes {
-                        if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                            if let Some(var_decl) =
-                                self.ctx.arena.get_variable_declaration(decl_node)
-                            {
-                                // TS8010: Type annotation on variable
-                                if !var_decl.type_annotation.is_none() {
-                                    self.error_at_node(
+            if let Some(list_node) = self.ctx.arena.get(list_idx)
+                && let Some(list) = self.ctx.arena.get_variable(list_node)
+            {
+                for &decl_idx in &list.declarations.nodes {
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                        && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                    {
+                        // TS8010: Type annotation on variable
+                        if !var_decl.type_annotation.is_none() {
+                            self.error_at_node(
                                         var_decl.type_annotation,
                                         diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                         diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                                     );
-                                }
-                            }
                         }
                     }
                 }
@@ -851,10 +849,10 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
-                    if mod_node.kind == kind {
-                        return Some(mod_idx);
-                    }
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == kind
+                {
+                    return Some(mod_idx);
                 }
             }
         }
@@ -1422,42 +1420,42 @@ impl<'a> CheckerState<'a> {
         // Skip check for ambient declarations (e.g., declare const x;)
         if !self.is_ambient_declaration(decl_idx) {
             // Get the parent node (VARIABLE_DECLARATION_LIST) to check flags
-            if let Some(ext) = self.ctx.arena.get_extended(decl_idx) {
-                if let Some(parent_node) = self.ctx.arena.get(ext.parent) {
-                    use tsz_parser::parser::node_flags;
-                    let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
+            if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            {
+                use tsz_parser::parser::node_flags;
+                let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
 
-                    if is_const && var_decl.initializer.is_none() {
-                        // Skip for destructuring patterns - they get TS1182 from the parser
-                        let is_binding_pattern =
-                            if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
-                                name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                if is_const && var_decl.initializer.is_none() {
+                    // Skip for destructuring patterns - they get TS1182 from the parser
+                    let is_binding_pattern =
+                        if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
+                            name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        } else {
+                            false
+                        };
+
+                    // Check if this is in a for-in or for-of loop (allowed)
+                    let is_in_for_loop =
+                        if let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) {
+                            if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
+                                gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+                                    || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                             } else {
                                 false
-                            };
+                            }
+                        } else {
+                            false
+                        };
 
-                        // Check if this is in a for-in or for-of loop (allowed)
-                        let is_in_for_loop =
-                            if let Some(parent_ext) = self.ctx.arena.get_extended(ext.parent) {
-                                if let Some(gp_node) = self.ctx.arena.get(parent_ext.parent) {
-                                    gp_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                                        || gp_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            };
-
-                        if !is_in_for_loop && !is_binding_pattern {
-                            self.ctx.error(
-                                node.pos,
-                                node.end - node.pos,
-                                "'const' declarations must be initialized.".to_string(),
-                                1155,
-                            );
-                        }
+                    if !is_in_for_loop && !is_binding_pattern {
+                        self.ctx.error(
+                            node.pos,
+                            node.end - node.pos,
+                            "'const' declarations must be initialized.".to_string(),
+                            1155,
+                        );
                     }
                 }
             }
@@ -1486,17 +1484,16 @@ impl<'a> CheckerState<'a> {
 
         // TS1100: Invalid use of 'arguments'/'eval' in strict mode
         // Applies regardless of target when alwaysStrict is enabled
-        if self.ctx.compiler_options.always_strict {
-            if let Some(ref name) = var_name {
-                if name == "arguments" || name == "eval" {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
-                        var_decl.name,
-                        diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                        &[name],
-                    );
-                }
-            }
+        if self.ctx.compiler_options.always_strict
+            && let Some(ref name) = var_name
+            && (name == "arguments" || name == "eval")
+        {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                var_decl.name,
+                diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                &[name],
+            );
         }
 
         // TS1210: 'arguments'/'eval' as variable name inside class body (implicit strict mode)
@@ -1505,18 +1502,18 @@ impl<'a> CheckerState<'a> {
             self.ctx.enclosing_class.is_some(),
             var_name
         );
-        if self.ctx.enclosing_class.is_some() {
-            if let Some(ref name) = var_name {
-                tracing::trace!("TS1210 check: name='{}', in_class=true", name);
-                if name == "arguments" || name == "eval" {
-                    tracing::trace!("TS1210: Emitting error for '{}'", name);
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
+        if self.ctx.enclosing_class.is_some()
+            && let Some(ref name) = var_name
+        {
+            tracing::trace!("TS1210 check: name='{}', in_class=true", name);
+            if name == "arguments" || name == "eval" {
+                tracing::trace!("TS1210: Emitting error for '{}'", name);
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
                         var_decl.name,
                         diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
                         &[name],
                     );
-                }
             }
         }
 
@@ -1666,13 +1663,13 @@ impl<'a> CheckerState<'a> {
                 // During build_type_environment, closures are typed without contextual info
                 // and TS7006 is deferred. Now that we're in the checking phase, re-evaluate
                 // so TS7006 can fire for closures that truly lack contextual types.
-                if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer) {
-                    if matches!(
+                if let Some(init_node) = checker.ctx.arena.get(var_decl.initializer)
+                    && matches!(
                         init_node.kind,
                         syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
-                    ) {
-                        checker.clear_type_cache_recursive(var_decl.initializer);
-                    }
+                    )
+                {
+                    checker.clear_type_cache_recursive(var_decl.initializer);
                 }
                 let init_type = checker.get_type_of_node(var_decl.initializer);
 
@@ -1700,12 +1697,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 // For for-in/for-of loop variables, the element type has already been cached
                 // by assign_for_in_of_initializer_types. Use that instead of defaulting to any.
-                if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx) {
-                    if let Some(&cached) = checker.ctx.symbol_types.get(&sym_id) {
-                        if cached != TypeId::ANY && cached != TypeId::ERROR {
-                            return cached;
-                        }
-                    }
+                if let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
+                    && let Some(&cached) = checker.ctx.symbol_types.get(&sym_id)
+                    && cached != TypeId::ANY
+                    && cached != TypeId::ERROR
+                {
+                    return cached;
                 }
                 declared_type
             }
@@ -2155,10 +2152,10 @@ impl<'a> CheckerState<'a> {
                         elem_types.push(elem_type);
                     } else if let Some(elem) = query::array_element_type(self.ctx.types, member) {
                         elem_types.push(elem);
-                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
-                        if let Some(e) = elems.get(element_index) {
-                            elem_types.push(e.type_id);
-                        }
+                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, member)
+                        && let Some(e) = elems.get(element_index)
+                    {
+                        elem_types.push(e.type_id);
                     }
                 }
                 return if elem_types.is_empty() {
@@ -2640,11 +2637,11 @@ impl<'a> CheckerState<'a> {
     /// Example: `({ a: 1 })` -> `{ a: 1 }` (OBJECT_LITERAL_EXPRESSION)
     fn skip_parentheses(&self, mut node_idx: NodeIndex) -> NodeIndex {
         while let Some(node) = self.ctx.arena.get(node_idx) {
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    node_idx = paren.expression;
-                    continue;
-                }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                node_idx = paren.expression;
+                continue;
             }
             break;
         }
@@ -2990,13 +2987,12 @@ impl<'a> CheckerState<'a> {
 
         // If CONST flag not directly on node, check parent (VariableDeclarationList)
         use tsz_parser::parser::flags::node_flags;
-        if (decl_flags & node_flags::CONST) == 0 {
-            if let Some(ext) = self.ctx.arena.get_extended(value_decl)
-                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-            {
-                decl_flags |= parent_node.flags as u32;
-            }
+        if (decl_flags & node_flags::CONST) == 0
+            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+        {
+            decl_flags |= parent_node.flags as u32;
         }
 
         Some(decl_flags & node_flags::CONST != 0)
@@ -3127,38 +3123,34 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check property declarations
-            if let Some(prop_decl) = self.ctx.arena.get_property_decl(member_node) {
-                if let Some(name_node) = self.ctx.arena.get(prop_decl.name) {
-                    if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                        if ident.escaped_text == prop_name {
-                            return true;
-                        }
-                    }
-                }
+            if let Some(prop_decl) = self.ctx.arena.get_property_decl(member_node)
+                && let Some(name_node) = self.ctx.arena.get(prop_decl.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == prop_name
+            {
+                return true;
             }
 
             // Check parameter properties (constructor parameters with readonly/private/etc)
             // Find the constructor kind
-            if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
-                if let Some(ctor) = self.ctx.arena.get_constructor(member_node) {
-                    for &param_idx in &ctor.parameters.nodes {
-                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                            continue;
-                        };
+            if member_node.kind == syntax_kind_ext::CONSTRUCTOR
+                && let Some(ctor) = self.ctx.arena.get_constructor(member_node)
+            {
+                for &param_idx in &ctor.parameters.nodes {
+                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                        continue;
+                    };
 
-                        // Check if it's a parameter property
-                        if let Some(param_decl) = self.ctx.arena.get_parameter(param_node) {
-                            // Parameter properties have modifiers and a name but no type annotation is required
-                            // They're identified by having modifiers (readonly, private, public, protected)
-                            if param_decl.modifiers.is_some() {
-                                if let Some(name_node) = self.ctx.arena.get(param_decl.name) {
-                                    if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                                        if ident.escaped_text == prop_name {
-                                            return true;
-                                        }
-                                    }
-                                }
-                            }
+                    // Check if it's a parameter property
+                    if let Some(param_decl) = self.ctx.arena.get_parameter(param_node) {
+                        // Parameter properties have modifiers and a name but no type annotation is required
+                        // They're identified by having modifiers (readonly, private, public, protected)
+                        if param_decl.modifiers.is_some()
+                            && let Some(name_node) = self.ctx.arena.get(param_decl.name)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                            && ident.escaped_text == prop_name
+                        {
+                            return true;
                         }
                     }
                 }
@@ -3211,12 +3203,12 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
     ) -> Option<String> {
         // First check for literal string/number properties that are readonly
-        if let Some(name) = self.get_literal_string_from_node(index_expr) {
-            if self.is_property_readonly(object_type, &name) {
-                return Some(name);
-            }
-            // Don't return yet - the literal might access a readonly index signature
+        if let Some(name) = self.get_literal_string_from_node(index_expr)
+            && self.is_property_readonly(object_type, &name)
+        {
+            return Some(name);
         }
+        // Don't return yet - the literal might access a readonly index signature
 
         if let Some(index) = self.get_literal_index_from_node(index_expr) {
             let name = index.to_string();
@@ -4041,14 +4033,14 @@ impl<'a> CheckerState<'a> {
                 if parent.is_none() {
                     break;
                 }
-                if let Some(parent_node) = self.ctx.arena.get(parent) {
-                    if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION {
-                        // Check if this class is ambient
-                        if self.is_ambient_class_declaration(parent) {
-                            return;
-                        }
-                        break; // Found the containing class, no need to check further
+                if let Some(parent_node) = self.ctx.arena.get(parent)
+                    && parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                {
+                    // Check if this class is ambient
+                    if self.is_ambient_class_declaration(parent) {
+                        return;
                     }
+                    break; // Found the containing class, no need to check further
                 }
                 current = parent;
             }
@@ -4397,15 +4389,15 @@ impl<'a> CheckerState<'a> {
     ) {
         // TS8004: Type parameters on class expression in JS files
         if self.is_js_file() {
-            if let Some(ref type_params) = class.type_parameters {
-                if !type_params.nodes.is_empty() {
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    self.error_at_node(
+            if let Some(ref type_params) = class.type_parameters
+                && !type_params.nodes.is_empty()
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
                         type_params.nodes[0],
                         diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                         diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     );
-                }
             }
 
             // Also check members for JS grammar errors
@@ -4994,10 +4986,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Find the actual directive on the line to get accurate position
-                if let Some(line) = source_text.lines().nth(line_num) {
-                    if let Some(directive_start) = line.find("///") {
-                        pos += directive_start as u32;
-                    }
+                if let Some(line) = source_text.lines().nth(line_num)
+                    && let Some(directive_start) = line.find("///")
+                {
+                    pos += directive_start as u32;
                 }
 
                 let length = source_text
@@ -5043,10 +5035,10 @@ impl<'a> CheckerState<'a> {
             }
 
             // Find the actual directive on the line to get accurate position
-            if let Some(line) = source_text.lines().nth(*line_num) {
-                if let Some(directive_start) = line.find("///") {
-                    pos += directive_start as u32;
-                }
+            if let Some(line) = source_text.lines().nth(*line_num)
+                && let Some(directive_start) = line.find("///")
+            {
+                pos += directive_start as u32;
             }
 
             let length = source_text

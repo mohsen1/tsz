@@ -59,11 +59,11 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     let mut lib_files = Vec::new();
 
     for lib_path in &lib_paths {
-        if lib_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(lib_path) {
-                let lib_file = LibFile::from_source("lib.es5.d.ts".to_string(), content);
-                lib_files.push(Arc::new(lib_file));
-            }
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(lib_path)
+        {
+            let lib_file = LibFile::from_source("lib.es5.d.ts".to_string(), content);
+            lib_files.push(Arc::new(lib_file));
         }
     }
 

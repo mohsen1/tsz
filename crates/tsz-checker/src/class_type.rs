@@ -67,10 +67,8 @@ impl<'a> CheckerState<'a> {
         // another class (class_instance_resolution_set tracks active resolutions).
         // During active resolution, cached types may be incomplete due to circular refs.
         let can_use_cache = self.ctx.class_instance_resolution_set.is_empty();
-        if can_use_cache {
-            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
-                return cached;
-            }
+        if can_use_cache && let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
+            return cached;
         }
 
         let mut visited = FxHashSet::default();
@@ -121,21 +119,19 @@ impl<'a> CheckerState<'a> {
 
         // Check for cycles using both symbol ID (for same-file cycles)
         // and node index (for cross-file cycles with @Filename annotations)
-        if let Some(sym_id) = current_sym {
-            if !visited.insert(sym_id) {
-                // Cleanup global set before returning (only if we inserted it)
-                if did_insert_into_global_set {
-                    self.ctx.class_instance_resolution_set.remove(&sym_id);
-                }
-                return TypeId::ERROR; // Circular reference detected via symbol
+        if let Some(sym_id) = current_sym
+            && !visited.insert(sym_id)
+        {
+            // Cleanup global set before returning (only if we inserted it)
+            if did_insert_into_global_set {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
             }
+            return TypeId::ERROR; // Circular reference detected via symbol
         }
         if !visited_nodes.insert(class_idx) {
             // Cleanup global set before returning (only if we inserted it)
-            if did_insert_into_global_set {
-                if let Some(sym_id) = current_sym {
-                    self.ctx.class_instance_resolution_set.remove(&sym_id);
-                }
+            if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
             }
             return TypeId::ERROR; // Circular reference detected via node index
         }
@@ -143,10 +139,8 @@ impl<'a> CheckerState<'a> {
         // Check fuel to prevent timeout on pathological inheritance hierarchies
         if !self.ctx.consume_fuel() {
             // Cleanup global set before returning (only if we inserted it)
-            if did_insert_into_global_set {
-                if let Some(sym_id) = current_sym {
-                    self.ctx.class_instance_resolution_set.remove(&sym_id);
-                }
+            if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                self.ctx.class_instance_resolution_set.remove(&sym_id);
             }
             return TypeId::ERROR; // Fuel exhausted - prevent infinite loop
         }
@@ -1023,10 +1017,8 @@ impl<'a> CheckerState<'a> {
 
         // Check fuel to prevent timeout on pathological inheritance hierarchies
         if !self.ctx.consume_fuel() {
-            if did_insert {
-                if let Some(sym_id) = current_sym {
-                    self.ctx.class_constructor_resolution_set.remove(&sym_id);
-                }
+            if did_insert && let Some(sym_id) = current_sym {
+                self.ctx.class_constructor_resolution_set.remove(&sym_id);
             }
             return TypeId::ERROR;
         }
@@ -1034,10 +1026,8 @@ impl<'a> CheckerState<'a> {
         let result = self.get_class_constructor_type_inner(class_idx, class);
 
         // Cleanup: remove from resolution set
-        if did_insert {
-            if let Some(sym_id) = current_sym {
-                self.ctx.class_constructor_resolution_set.remove(&sym_id);
-            }
+        if did_insert && let Some(sym_id) = current_sym {
+            self.ctx.class_constructor_resolution_set.remove(&sym_id);
         }
 
         result
@@ -1424,10 +1414,10 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Check for self-referential class BEFORE processing
-                if let Some(sym_id) = current_sym {
-                    if base_sym_id == sym_id {
-                        break;
-                    }
+                if let Some(sym_id) = current_sym
+                    && base_sym_id == sym_id
+                {
+                    break;
                 }
                 // Check resolution set to prevent infinite recursion through circular extends
                 if self

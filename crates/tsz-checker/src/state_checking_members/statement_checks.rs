@@ -61,14 +61,14 @@ impl<'a> CheckerState<'a> {
                 _ => None,
             };
 
-            if let Some(mods) = modifiers {
-                if let Some(declare_mod) = self.get_declare_modifier(mods) {
-                    self.error_at_node(
+            if let Some(mods) = modifiers
+                && let Some(declare_mod) = self.get_declare_modifier(mods)
+            {
+                self.error_at_node(
                         declare_mod,
                         "A 'declare' modifier cannot be used in an already ambient context.",
                         diagnostic_codes::A_DECLARE_MODIFIER_CANNOT_BE_USED_IN_AN_ALREADY_AMBIENT_CONTEXT,
                     );
-                }
             }
         }
     }
@@ -121,42 +121,42 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check variable statements for initializers
-            if var_stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                if let Some(var_stmt) = self.ctx.arena.get_variable(var_stmt_node) {
-                    // var_stmt.declarations.nodes contains VariableDeclarationList nodes
-                    // We need to get each list and then iterate its declarations
-                    for &list_idx in &var_stmt.declarations.nodes {
-                        if let Some(list_node) = self.ctx.arena.get(list_idx)
-                            && let Some(decl_list) = self.ctx.arena.get_variable(list_node)
-                        {
-                            use tsz_parser::parser::node_flags;
-                            let is_const = (list_node.flags & node_flags::CONST as u16) != 0;
+            if var_stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.ctx.arena.get_variable(var_stmt_node)
+            {
+                // var_stmt.declarations.nodes contains VariableDeclarationList nodes
+                // We need to get each list and then iterate its declarations
+                for &list_idx in &var_stmt.declarations.nodes {
+                    if let Some(list_node) = self.ctx.arena.get(list_idx)
+                        && let Some(decl_list) = self.ctx.arena.get_variable(list_node)
+                    {
+                        use tsz_parser::parser::node_flags;
+                        let is_const = (list_node.flags & node_flags::CONST as u16) != 0;
 
-                            for &decl_idx in &decl_list.declarations.nodes {
-                                if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                                    && let Some(var_decl) =
-                                        self.ctx.arena.get_variable_declaration(decl_node)
-                                    && !var_decl.initializer.is_none()
-                                {
-                                    if is_const && var_decl.type_annotation.is_none() {
-                                        // const without type annotation: only string/numeric literals allowed
-                                        // TS1254 if initializer is not a valid literal
-                                        if !self.is_valid_const_initializer(var_decl.initializer) {
-                                            self.error_at_node(
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                                && let Some(var_decl) =
+                                    self.ctx.arena.get_variable_declaration(decl_node)
+                                && !var_decl.initializer.is_none()
+                            {
+                                if is_const && var_decl.type_annotation.is_none() {
+                                    // const without type annotation: only string/numeric literals allowed
+                                    // TS1254 if initializer is not a valid literal
+                                    if !self.is_valid_const_initializer(var_decl.initializer) {
+                                        self.error_at_node(
                                                 var_decl.initializer,
                                                 diagnostic_messages::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
                                                 diagnostic_codes::A_CONST_INITIALIZER_IN_AN_AMBIENT_CONTEXT_MUST_BE_A_STRING_OR_NUMERIC_LITERAL_OR,
                                             );
-                                        }
-                                        // else: valid literal initializer, no error
-                                    } else {
-                                        // Non-const or const with type annotation: TS1039
-                                        self.error_at_node(
+                                    }
+                                    // else: valid literal initializer, no error
+                                } else {
+                                    // Non-const or const with type annotation: TS1039
+                                    self.error_at_node(
                                             var_decl.initializer,
                                             diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
                                             diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
                                         );
-                                    }
                                 }
                             }
                         }
@@ -165,12 +165,11 @@ impl<'a> CheckerState<'a> {
             }
 
             // Recursively check nested modules/namespaces
-            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                if let Some(module) = self.ctx.arena.get_module(stmt_node) {
-                    if !module.body.is_none() {
-                        self.check_initializers_in_ambient_body(module.body);
-                    }
-                }
+            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.ctx.arena.get_module(stmt_node)
+                && !module.body.is_none()
+            {
+                self.check_initializers_in_ambient_body(module.body);
             }
         }
     }

@@ -289,8 +289,30 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(&tsz_binder::Symbol, &tsz_parser::parser::node::NodeArena)> {
         let name_hint = name_hint.map(str::trim).filter(|name| !name.is_empty());
 
-        if let Some(symbol) = self.ctx.binder.symbols.get(sym_id) {
-            if name_hint.is_none_or(|name| symbol.escaped_name == name) {
+        if let Some(symbol) = self.ctx.binder.symbols.get(sym_id)
+            && name_hint.is_none_or(|name| symbol.escaped_name == name)
+        {
+            let arena = self
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&sym_id)
+                .map(|arena| arena.as_ref())
+                .unwrap_or(self.ctx.arena);
+            return Some((symbol, arena));
+        }
+
+        if let Some(name) = name_hint {
+            for lib_ctx in &self.ctx.lib_contexts {
+                if let Some(symbol) = lib_ctx.binder.symbols.get(sym_id)
+                    && symbol.escaped_name == name
+                {
+                    return Some((symbol, lib_ctx.arena.as_ref()));
+                }
+            }
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.escaped_name == name
+            {
                 let arena = self
                     .ctx
                     .binder
@@ -299,28 +321,6 @@ impl<'a> CheckerState<'a> {
                     .map(|arena| arena.as_ref())
                     .unwrap_or(self.ctx.arena);
                 return Some((symbol, arena));
-            }
-        }
-
-        if let Some(name) = name_hint {
-            for lib_ctx in &self.ctx.lib_contexts {
-                if let Some(symbol) = lib_ctx.binder.symbols.get(sym_id) {
-                    if symbol.escaped_name == name {
-                        return Some((symbol, lib_ctx.arena.as_ref()));
-                    }
-                }
-            }
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                if symbol.escaped_name == name {
-                    let arena = self
-                        .ctx
-                        .binder
-                        .symbol_arenas
-                        .get(&sym_id)
-                        .map(|arena| arena.as_ref())
-                        .unwrap_or(self.ctx.arena);
-                    return Some((symbol, arena));
-                }
             }
             return None;
         }
@@ -1645,14 +1645,12 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| {
                     if let Some((module_specifier, member_name)) =
                         Self::parse_jsdoc_import_type(type_expr)
-                    {
-                        if let Some(sym_id) =
+                        && let Some(sym_id) =
                             self.resolve_cross_file_export(&module_specifier, &member_name)
-                        {
-                            let resolved = self.type_reference_symbol_type(sym_id);
-                            if resolved != TypeId::ERROR {
-                                return Some(resolved);
-                            }
+                    {
+                        let resolved = self.type_reference_symbol_type(sym_id);
+                        if resolved != TypeId::ERROR {
+                            return Some(resolved);
                         }
                     }
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
@@ -1880,10 +1878,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if let Some((name, prop_type)) = Self::parse_jsdoc_property_type(line) {
-                if current_name.is_some() {
-                    current_info.properties.push((name, prop_type));
-                }
+            if let Some((name, prop_type)) = Self::parse_jsdoc_property_type(line)
+                && current_name.is_some()
+            {
+                current_info.properties.push((name, prop_type));
             }
         }
 
@@ -2023,10 +2021,9 @@ impl<'a> CheckerState<'a> {
         if let Some(comment) = comments
             .iter()
             .find(|c| c.pos <= func_node.pos && func_node.pos < c.end)
+            && is_jsdoc_comment(comment, source_text)
         {
-            if is_jsdoc_comment(comment, source_text) {
-                return Some(get_jsdoc_content(comment, source_text));
-            }
+            return Some(get_jsdoc_content(comment, source_text));
         }
 
         // Try leading comments before the function node
@@ -2203,25 +2200,24 @@ impl<'a> CheckerState<'a> {
         for line in jsdoc.lines() {
             let trimmed = line.trim();
             // @param {type} name
-            if let Some(rest) = trimmed.strip_prefix("@param") {
-                if rest.trim().starts_with('{') {
-                    return true;
-                }
+            if let Some(rest) = trimmed.strip_prefix("@param")
+                && rest.trim().starts_with('{')
+            {
+                return true;
             }
             // @returns {type} or @return {type}
             if let Some(rest) = trimmed
                 .strip_prefix("@returns")
                 .or_else(|| trimmed.strip_prefix("@return"))
+                && rest.trim().starts_with('{')
             {
-                if rest.trim().starts_with('{') {
-                    return true;
-                }
+                return true;
             }
             // @type {type}
-            if let Some(rest) = trimmed.strip_prefix("@type") {
-                if rest.trim().starts_with('{') {
-                    return true;
-                }
+            if let Some(rest) = trimmed.strip_prefix("@type")
+                && rest.trim().starts_with('{')
+            {
+                return true;
             }
             // @template T
             if trimmed.starts_with("@template") {

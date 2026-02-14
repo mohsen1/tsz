@@ -186,21 +186,19 @@ impl<'a> CheckerState<'a> {
             // different arena. In that case, check the declaration directly to avoid
             // false positives.
             let has_type_params_in_decl = self.symbol_declaration_has_type_parameters(sym_id);
-            if !has_type_params_in_decl {
-                if let Some(&arg_idx) = type_args_list.nodes.first() {
-                    let lib_binders = self.get_lib_binders();
-                    let name = self
-                        .ctx
-                        .binder
-                        .get_symbol_with_libs(sym_id, &lib_binders)
-                        .map(|s| s.escaped_name.clone())
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    self.error_at_node_msg(
-                        arg_idx,
-                        crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
-                        &[name.as_str()],
-                    );
-                }
+            if !has_type_params_in_decl && let Some(&arg_idx) = type_args_list.nodes.first() {
+                let lib_binders = self.get_lib_binders();
+                let name = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .map(|s| s.escaped_name.clone())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                self.error_at_node_msg(
+                    arg_idx,
+                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                    &[name.as_str()],
+                );
             }
             return;
         }
@@ -380,50 +378,50 @@ impl<'a> CheckerState<'a> {
             }
 
             // Try cross-arena (lib files)
-            if let Some(decl_arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
-                if let Some(node) = decl_arena.get(decl_idx) {
-                    if let Some(ta) = decl_arena.get_type_alias(node) {
-                        if ta.type_parameters.is_some() {
-                            return true;
-                        }
-                        continue;
+            if let Some(decl_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
+                && let Some(node) = decl_arena.get(decl_idx)
+            {
+                if let Some(ta) = decl_arena.get_type_alias(node) {
+                    if ta.type_parameters.is_some() {
+                        return true;
                     }
-                    if let Some(iface) = decl_arena.get_interface(node) {
-                        if iface.type_parameters.is_some() {
-                            return true;
-                        }
-                        continue;
+                    continue;
+                }
+                if let Some(iface) = decl_arena.get_interface(node) {
+                    if iface.type_parameters.is_some() {
+                        return true;
                     }
-                    if let Some(class) = decl_arena.get_class(node) {
-                        if class.type_parameters.is_some() {
-                            return true;
-                        }
-                        continue;
+                    continue;
+                }
+                if let Some(class) = decl_arena.get_class(node) {
+                    if class.type_parameters.is_some() {
+                        return true;
                     }
+                    continue;
                 }
             }
 
             // Try declaration_arenas
-            if let Some(decl_arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                if let Some(node) = decl_arena.get(decl_idx) {
-                    if let Some(ta) = decl_arena.get_type_alias(node) {
-                        if ta.type_parameters.is_some() {
-                            return true;
-                        }
-                        continue;
+            if let Some(decl_arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                && let Some(node) = decl_arena.get(decl_idx)
+            {
+                if let Some(ta) = decl_arena.get_type_alias(node) {
+                    if ta.type_parameters.is_some() {
+                        return true;
                     }
-                    if let Some(iface) = decl_arena.get_interface(node) {
-                        if iface.type_parameters.is_some() {
-                            return true;
-                        }
-                        continue;
+                    continue;
+                }
+                if let Some(iface) = decl_arena.get_interface(node) {
+                    if iface.type_parameters.is_some() {
+                        return true;
                     }
-                    if let Some(class) = decl_arena.get_class(node) {
-                        if class.type_parameters.is_some() {
-                            return true;
-                        }
-                        continue;
+                    continue;
+                }
+                if let Some(class) = decl_arena.get_class(node) {
+                    if class.type_parameters.is_some() {
+                        return true;
                     }
+                    continue;
                 }
             }
         }

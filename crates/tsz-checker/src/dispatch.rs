@@ -688,21 +688,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     }
 
                                     // Decompose source union: any member assignable in either direction?
-                                    if !have_overlap {
-                                        if let Some(members) =
+                                    if !have_overlap
+                                        && let Some(members) =
                                             query::union_members(self.checker.ctx.types, expr_type)
-                                        {
-                                            for member in members {
-                                                if self
+                                    {
+                                        for member in members {
+                                            if self.checker.is_assignable_to(member, asserted_type)
+                                                || self
                                                     .checker
-                                                    .is_assignable_to(member, asserted_type)
-                                                    || self
-                                                        .checker
-                                                        .is_assignable_to(asserted_type, member)
-                                                {
-                                                    have_overlap = true;
-                                                    break;
-                                                }
+                                                    .is_assignable_to(asserted_type, member)
+                                            {
+                                                have_overlap = true;
+                                                break;
                                             }
                                         }
                                     }

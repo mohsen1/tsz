@@ -89,13 +89,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 // Check if it's an array literal spread
-                if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
-                    if let Some(expr_node) = self.ctx.arena.get(spread_data.expression) {
-                        if let Some(literal) = self.ctx.arena.get_literal_expr(expr_node) {
-                            expanded_count += literal.elements.nodes.len();
-                            continue;
-                        }
-                    }
+                if array_element_type_for_type(self.ctx.types, spread_type).is_some()
+                    && let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
+                    && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
+                {
+                    expanded_count += literal.elements.nodes.len();
+                    continue;
                 }
             }
             expanded_count += 1;
@@ -108,12 +107,13 @@ impl<'a> CheckerState<'a> {
             // Skip sensitive arguments in Round 1 of two-pass generic inference.
             // Push a Function-typed placeholder so the solver's is_contextually_sensitive
             // recognizes it and skips inference for this slot.
-            if let Some(skip_mask) = skip_sensitive_indices {
-                if i < skip_mask.len() && skip_mask[i] {
-                    arg_types.push(sensitive_placeholder.unwrap());
-                    effective_index += 1;
-                    continue;
-                }
+            if let Some(skip_mask) = skip_sensitive_indices
+                && i < skip_mask.len()
+                && skip_mask[i]
+            {
+                arg_types.push(sensitive_placeholder.unwrap());
+                effective_index += 1;
+                continue;
             }
 
             if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
@@ -142,34 +142,33 @@ impl<'a> CheckerState<'a> {
                     // For non-literal arrays, treat as variadic (check element type against remaining params)
                     if array_element_type_for_type(self.ctx.types, spread_type).is_some() {
                         // Check if the spread expression is an array literal
-                        if let Some(expr_node) = self.ctx.arena.get(spread_data.expression) {
-                            if let Some(literal) = self.ctx.arena.get_literal_expr(expr_node) {
-                                // It's an array literal - get each element's type individually
-                                for &elem_idx in literal.elements.nodes.iter() {
-                                    if elem_idx.is_none() {
-                                        continue;
-                                    }
-                                    // Skip spread elements within the spread (unlikely but handle it)
-                                    if let Some(elem_node) = self.ctx.arena.get(elem_idx) {
-                                        if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
-                                            // For nested spreads in array literals, use the element type
-                                            if let Some(elem_type) = array_element_type_for_type(
-                                                self.ctx.types,
-                                                spread_type,
-                                            ) {
-                                                arg_types.push(elem_type);
-                                                effective_index += 1;
-                                            }
-                                            continue;
-                                        }
-                                    }
-                                    // Get the type of this specific element
-                                    let elem_type = self.get_type_of_node(elem_idx);
-                                    arg_types.push(elem_type);
-                                    effective_index += 1;
+                        if let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
+                            && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
+                        {
+                            // It's an array literal - get each element's type individually
+                            for &elem_idx in literal.elements.nodes.iter() {
+                                if elem_idx.is_none() {
+                                    continue;
                                 }
-                                continue;
+                                // Skip spread elements within the spread (unlikely but handle it)
+                                if let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                                    && elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                                {
+                                    // For nested spreads in array literals, use the element type
+                                    if let Some(elem_type) =
+                                        array_element_type_for_type(self.ctx.types, spread_type)
+                                    {
+                                        arg_types.push(elem_type);
+                                        effective_index += 1;
+                                    }
+                                    continue;
+                                }
+                                // Get the type of this specific element
+                                let elem_type = self.get_type_of_node(elem_idx);
+                                arg_types.push(elem_type);
+                                effective_index += 1;
                             }
+                            continue;
                         }
 
                         // Not an array literal - treat as variadic (element type applies to all remaining params)

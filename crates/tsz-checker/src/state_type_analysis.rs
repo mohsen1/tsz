@@ -289,20 +289,19 @@ impl<'a> CheckerState<'a> {
         lib_binders: &[std::sync::Arc<tsz_binder::BinderState>],
     ) -> Option<tsz_binder::SymbolId> {
         // Try direct exports first
-        if let Some(ref exports) = symbol.exports {
-            if let Some(member_id) = exports.get(member_name) {
-                return Some(member_id);
-            }
+        if let Some(ref exports) = symbol.exports
+            && let Some(member_id) = exports.get(member_name)
+        {
+            return Some(member_id);
         }
 
         // For classes, also check members (for static members in type queries)
         // This handles `typeof C.staticMember` where C is a class
-        if symbol.flags & symbol_flags::CLASS != 0 {
-            if let Some(ref members) = symbol.members {
-                if let Some(member_id) = members.get(member_name) {
-                    return Some(member_id);
-                }
-            }
+        if symbol.flags & symbol_flags::CLASS != 0
+            && let Some(ref members) = symbol.members
+            && let Some(member_id) = members.get(member_name)
+        {
+            return Some(member_id);
         }
 
         if symbol.flags & symbol_flags::MODULE != 0 {
@@ -503,12 +502,11 @@ impl<'a> CheckerState<'a> {
                                 let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
                                     continue;
                                 };
-                                if ident.escaped_text == member_name {
-                                    if let Some(&sym_id) =
+                                if ident.escaped_text == member_name
+                                    && let Some(&sym_id) =
                                         self.ctx.binder.node_symbols.get(&decl_idx.0)
-                                    {
-                                        return Some(sym_id);
-                                    }
+                                {
+                                    return Some(sym_id);
                                 }
                             }
                         }
@@ -1244,16 +1242,16 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Register enum parent relationships for Task #17 (Enum Type Resolution)
-                if let Some(def_id) = def_id {
-                    if let Some(symbol) = self.ctx.binder.symbols.get(sym_id) {
-                        use tsz_binder::symbol_flags;
-                        if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
-                            let parent_sym_id = symbol.parent;
-                            if let Some(&parent_def_id) =
-                                self.ctx.symbol_to_def.borrow().get(&parent_sym_id)
-                            {
-                                env.register_enum_parent(def_id, parent_def_id);
-                            }
+                if let Some(def_id) = def_id
+                    && let Some(symbol) = self.ctx.binder.symbols.get(sym_id)
+                {
+                    use tsz_binder::symbol_flags;
+                    if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+                        let parent_sym_id = symbol.parent;
+                        if let Some(&parent_def_id) =
+                            self.ctx.symbol_to_def.borrow().get(&parent_sym_id)
+                        {
+                            env.register_enum_parent(def_id, parent_def_id);
                         }
                     }
                 }
@@ -1385,12 +1383,11 @@ impl<'a> CheckerState<'a> {
             .borrow()
             .get(&sym_id)
             .copied();
-        if let Some(file_idx) = file_idx {
-            if let Some(binder) = self.ctx.get_binder_for_file(file_idx) {
-                if let Some(sym) = binder.get_symbol(sym_id) {
-                    return Some(sym);
-                }
-            }
+        if let Some(file_idx) = file_idx
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(sym) = binder.get_symbol(sym_id)
+        {
+            return Some(sym);
         }
         // Fall back to global search
         self.get_symbol_globally(sym_id)
@@ -1476,13 +1473,11 @@ impl<'a> CheckerState<'a> {
             .borrow()
             .contains_key(&sym_id);
 
-        if !is_known_cross_file {
-            if let Some(symbol) = self.get_symbol_globally(sym_id)
-                && (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                    != 0
-            {
-                return None;
-            }
+        if !is_known_cross_file
+            && let Some(symbol) = self.get_symbol_globally(sym_id)
+            && (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+        {
+            return None;
         }
 
         let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
@@ -1774,10 +1769,10 @@ impl<'a> CheckerState<'a> {
 
         // Check if the SymbolId maps to the expected name in the current binder.
         // If it does, this is a local symbol and no cross-file tracking needed.
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            if symbol.escaped_name.as_str() == expected_name {
-                return;
-            }
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.escaped_name.as_str() == expected_name
+        {
+            return;
         }
 
         // The SymbolId doesn't match in the current binder — it's cross-file.
@@ -1793,14 +1788,14 @@ impl<'a> CheckerState<'a> {
         // Fallback: search all binders for one where this SymbolId has the expected name.
         if let Some(binders) = &self.ctx.all_binders {
             for (idx, binder) in binders.iter().enumerate() {
-                if let Some(symbol) = binder.get_symbol(sym_id) {
-                    if symbol.escaped_name.as_str() == expected_name {
-                        self.ctx
-                            .cross_file_symbol_targets
-                            .borrow_mut()
-                            .insert(sym_id, idx);
-                        return;
-                    }
+                if let Some(symbol) = binder.get_symbol(sym_id)
+                    && symbol.escaped_name.as_str() == expected_name
+                {
+                    self.ctx
+                        .cross_file_symbol_targets
+                        .borrow_mut()
+                        .insert(sym_id, idx);
+                    return;
                 }
             }
         }
@@ -2069,42 +2064,41 @@ impl<'a> CheckerState<'a> {
             // can hit `ctx.symbol_types` directly instead of running full symbol
             // resolution for each distinct member.
             let mut member_types = Vec::new();
-            if !decl_idx.is_none() {
-                if let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) {
-                    let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
-                    member_types.reserve(enum_decl.members.nodes.len());
-                    for &member_idx in &enum_decl.members.nodes {
-                        if let Some(member) = self.ctx.arena.get_enum_member_at(member_idx) {
-                            let member_type = self.enum_member_type_from_decl(member_idx);
-                            if member_type != TypeId::ERROR {
-                                member_types.push(member_type);
-                            }
+            if !decl_idx.is_none()
+                && let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx)
+            {
+                let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
+                member_types.reserve(enum_decl.members.nodes.len());
+                for &member_idx in &enum_decl.members.nodes {
+                    if let Some(member) = self.ctx.arena.get_enum_member_at(member_idx) {
+                        let member_type = self.enum_member_type_from_decl(member_idx);
+                        if member_type != TypeId::ERROR {
+                            member_types.push(member_type);
+                        }
 
-                            // Pre-cache member symbol types.
-                            // This avoids per-member `get_type_of_symbol` overhead in
-                            // hot paths such as large enum property-access switches.
-                            if let Some(member_name) = self.get_property_name(member.name)
-                                && let Some(member_sym_id) = self
-                                    .ctx
-                                    .binder
-                                    .get_symbol(sym_id)
-                                    .and_then(|enum_symbol| enum_symbol.exports.as_ref())
-                                    .and_then(|exports| exports.get(&member_name))
-                            {
-                                let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
-                                let member_enum_type =
-                                    factory.enum_type(member_def_id, member_type);
-                                self.ctx
-                                    .symbol_types
-                                    .insert(member_sym_id, member_enum_type);
-                                if let Some(env) = maybe_env.as_mut() {
-                                    env.insert(
-                                        tsz_solver::SymbolRef(member_sym_id.0),
-                                        member_enum_type,
-                                    );
-                                    if member_def_id != tsz_solver::DefId::INVALID {
-                                        env.insert_def(member_def_id, member_enum_type);
-                                    }
+                        // Pre-cache member symbol types.
+                        // This avoids per-member `get_type_of_symbol` overhead in
+                        // hot paths such as large enum property-access switches.
+                        if let Some(member_name) = self.get_property_name(member.name)
+                            && let Some(member_sym_id) = self
+                                .ctx
+                                .binder
+                                .get_symbol(sym_id)
+                                .and_then(|enum_symbol| enum_symbol.exports.as_ref())
+                                .and_then(|exports| exports.get(&member_name))
+                        {
+                            let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
+                            let member_enum_type = factory.enum_type(member_def_id, member_type);
+                            self.ctx
+                                .symbol_types
+                                .insert(member_sym_id, member_enum_type);
+                            if let Some(env) = maybe_env.as_mut() {
+                                env.insert(
+                                    tsz_solver::SymbolRef(member_sym_id.0),
+                                    member_enum_type,
+                                );
+                                if member_def_id != tsz_solver::DefId::INVALID {
+                                    env.insert_def(member_def_id, member_enum_type);
                                 }
                             }
                         }
@@ -2525,47 +2519,62 @@ impl<'a> CheckerState<'a> {
         if flags & symbol_flags::ALIAS != 0 {
             if !value_decl.is_none()
                 && let Some(node) = self.ctx.arena.get(value_decl)
+                && node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import) = self.ctx.arena.get_import_decl(node)
             {
-                if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                    && let Some(import) = self.ctx.arena.get_import_decl(node)
+                // Check for require() call FIRST — `import A = require('M')` must
+                // resolve through module_exports, not qualified symbol resolution.
+                // The qualified symbol path is for `import x = ns.member` patterns.
+                if let Some(module_specifier) =
+                    self.get_require_module_specifier(import.module_specifier)
                 {
-                    // Check for require() call FIRST — `import A = require('M')` must
-                    // resolve through module_exports, not qualified symbol resolution.
-                    // The qualified symbol path is for `import x = ns.member` patterns.
-                    if let Some(module_specifier) =
-                        self.get_require_module_specifier(import.module_specifier)
-                    {
-                        // Resolve the canonical export surface (module-specifier variants,
-                        // cross-file tables, and export= member merging).
-                        let exports_table =
-                            self.resolve_effective_module_exports(&module_specifier);
+                    // Resolve the canonical export surface (module-specifier variants,
+                    // cross-file tables, and export= member merging).
+                    let exports_table = self.resolve_effective_module_exports(&module_specifier);
 
-                        if let Some(exports_table) = exports_table {
-                            // Create an object type with all the module's exports
-                            use tsz_solver::PropertyInfo;
-                            let module_is_non_module_entity = self
-                                .ctx
-                                .module_resolves_to_non_module_entity(&module_specifier);
-                            let export_equals_type =
-                                exports_table.get("export=").map(|export_equals_sym| {
-                                    self.get_type_of_symbol(export_equals_sym)
-                                });
-                            let mut props: Vec<PropertyInfo> = Vec::new();
-                            for (name, &sym_id) in exports_table.iter() {
-                                if name == "export=" {
+                    if let Some(exports_table) = exports_table {
+                        // Create an object type with all the module's exports
+                        use tsz_solver::PropertyInfo;
+                        let module_is_non_module_entity = self
+                            .ctx
+                            .module_resolves_to_non_module_entity(&module_specifier);
+                        let export_equals_type = exports_table
+                            .get("export=")
+                            .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
+                        let mut props: Vec<PropertyInfo> = Vec::new();
+                        for (name, &sym_id) in exports_table.iter() {
+                            if name == "export=" {
+                                continue;
+                            }
+                            let mut prop_type = self.get_type_of_symbol(sym_id);
+                            prop_type =
+                                self.apply_module_augmentations(&module_specifier, name, prop_type);
+                            let name_atom = self.ctx.types.intern_string(name);
+                            props.push(PropertyInfo {
+                                name: name_atom,
+                                type_id: prop_type,
+                                write_type: prop_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            });
+                        }
+
+                        if !module_is_non_module_entity
+                            && let Some(augmentations) =
+                                self.ctx.binder.module_augmentations.get(&module_specifier)
+                        {
+                            for aug in augmentations {
+                                let name_atom = self.ctx.types.intern_string(&aug.name);
+                                if props.iter().any(|p| p.name == name_atom) {
                                     continue;
                                 }
-                                let mut prop_type = self.get_type_of_symbol(sym_id);
-                                prop_type = self.apply_module_augmentations(
-                                    &module_specifier,
-                                    name,
-                                    prop_type,
-                                );
-                                let name_atom = self.ctx.types.intern_string(name);
                                 props.push(PropertyInfo {
                                     name: name_atom,
-                                    type_id: prop_type,
-                                    write_type: prop_type,
+                                    type_id: TypeId::ANY,
+                                    write_type: TypeId::ANY,
                                     optional: false,
                                     readonly: false,
                                     is_method: false,
@@ -2573,81 +2582,57 @@ impl<'a> CheckerState<'a> {
                                     parent_id: None,
                                 });
                             }
-
-                            if !module_is_non_module_entity
-                                && let Some(augmentations) =
-                                    self.ctx.binder.module_augmentations.get(&module_specifier)
-                            {
-                                for aug in augmentations {
-                                    let name_atom = self.ctx.types.intern_string(&aug.name);
-                                    if props.iter().any(|p| p.name == name_atom) {
-                                        continue;
-                                    }
-                                    props.push(PropertyInfo {
-                                        name: name_atom,
-                                        type_id: TypeId::ANY,
-                                        write_type: TypeId::ANY,
-                                        optional: false,
-                                        readonly: false,
-                                        is_method: false,
-                                        visibility: Visibility::Public,
-                                        parent_id: None,
-                                    });
-                                }
-                            }
-
-                            let namespace_type = factory.object(props);
-                            if let Some(export_equals_type) = export_equals_type {
-                                if module_is_non_module_entity {
-                                    return (export_equals_type, Vec::new());
-                                }
-                                return (
-                                    factory.intersection(vec![export_equals_type, namespace_type]),
-                                    Vec::new(),
-                                );
-                            }
-
-                            return (namespace_type, Vec::new());
                         }
-                        // Module not found - emit TS2307 error and return ANY
-                        // TypeScript treats unresolved imports as `any` to avoid cascading errors
-                        self.emit_module_not_found_error(&module_specifier, value_decl);
-                        return (TypeId::ANY, Vec::new());
-                    }
-                    // Not a require() call — try qualified symbol resolution
-                    // for `import x = ns.member` patterns.
-                    if let Some(target_sym) = self.resolve_qualified_symbol(import.module_specifier)
-                    {
-                        return (self.get_type_of_symbol(target_sym), Vec::new());
-                    }
-                    // Namespace import failed to resolve
-                    // Check for TS2694 (Namespace has no exported member) or TS2304 (Cannot find name)
-                    // This happens when: import Alias = NS.NotExported (where NotExported is not exported)
 
-                    // 1. Check for TS2694 (Namespace has no exported member)
-                    if self.report_type_query_missing_member(import.module_specifier) {
-                        return (TypeId::ERROR, Vec::new());
-                    }
-
-                    // 2. Check for TS2304 (Cannot find name) for the left-most part
-                    if let Some(missing_idx) = self.missing_type_query_left(import.module_specifier)
-                    {
-                        // Suppress if it's an unresolved import (TS2307 already emitted)
-                        if !self.is_unresolved_import_symbol(missing_idx) {
-                            if let Some(name) = self.entity_name_text(missing_idx) {
-                                self.error_cannot_find_name_at(&name, missing_idx);
+                        let namespace_type = factory.object(props);
+                        if let Some(export_equals_type) = export_equals_type {
+                            if module_is_non_module_entity {
+                                return (export_equals_type, Vec::new());
                             }
+                            return (
+                                factory.intersection(vec![export_equals_type, namespace_type]),
+                                Vec::new(),
+                            );
                         }
-                        return (TypeId::ERROR, Vec::new());
-                    }
 
-                    // Return ERROR for other cases to prevent cascading errors
+                        return (namespace_type, Vec::new());
+                    }
+                    // Module not found - emit TS2307 error and return ANY
+                    // TypeScript treats unresolved imports as `any` to avoid cascading errors
+                    self.emit_module_not_found_error(&module_specifier, value_decl);
+                    return (TypeId::ANY, Vec::new());
+                }
+                // Not a require() call — try qualified symbol resolution
+                // for `import x = ns.member` patterns.
+                if let Some(target_sym) = self.resolve_qualified_symbol(import.module_specifier) {
+                    return (self.get_type_of_symbol(target_sym), Vec::new());
+                }
+                // Namespace import failed to resolve
+                // Check for TS2694 (Namespace has no exported member) or TS2304 (Cannot find name)
+                // This happens when: import Alias = NS.NotExported (where NotExported is not exported)
+
+                // 1. Check for TS2694 (Namespace has no exported member)
+                if self.report_type_query_missing_member(import.module_specifier) {
                     return (TypeId::ERROR, Vec::new());
                 }
-                // Handle ES6 named imports (import { X } from './module')
-                // Use the import_module field to resolve to the actual export
-                // Check if this symbol has import tracking metadata
+
+                // 2. Check for TS2304 (Cannot find name) for the left-most part
+                if let Some(missing_idx) = self.missing_type_query_left(import.module_specifier) {
+                    // Suppress if it's an unresolved import (TS2307 already emitted)
+                    if !self.is_unresolved_import_symbol(missing_idx)
+                        && let Some(name) = self.entity_name_text(missing_idx)
+                    {
+                        self.error_cannot_find_name_at(&name, missing_idx);
+                    }
+                    return (TypeId::ERROR, Vec::new());
+                }
+
+                // Return ERROR for other cases to prevent cascading errors
+                return (TypeId::ERROR, Vec::new());
             }
+            // Handle ES6 named imports (import { X } from './module')
+            // Use the import_module field to resolve to the actual export
+            // Check if this symbol has import tracking metadata
 
             // For ES6 imports with import_module set, resolve using module_exports
             if let Some(ref module_name) = import_module {
@@ -3183,11 +3168,11 @@ impl<'a> CheckerState<'a> {
             tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
         {
             // Map DefId back to SymbolId
-            if let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id) {
-                if target_sym_id == sym_id {
-                    // It's a self-reference - check if it's direct (no structural wrapping)
-                    return self.is_simple_type_reference(type_node);
-                }
+            if let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
+                && target_sym_id == sym_id
+            {
+                // It's a self-reference - check if it's direct (no structural wrapping)
+                return self.is_simple_type_reference(type_node);
             }
         }
 
