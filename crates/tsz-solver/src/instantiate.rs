@@ -201,7 +201,7 @@ impl<'a> TypeInstantiator<'a> {
             // Without this, instantiate_inner returns cached results before
             // instantiate_key gets to check is_shadowed.
             for tp in &sig.type_params {
-                let tp_id = self.interner.intern(TypeKey::TypeParameter(tp.clone()));
+                let tp_id = self.interner.type_param(tp.clone());
                 self.visiting.remove(&tp_id);
             }
             Some(saved)
@@ -429,7 +429,7 @@ impl<'a> TypeInstantiator<'a> {
                     // instantiate_inner returns the cached result before
                     // instantiate_key gets to check is_shadowed.
                     for tp in &shape.type_params {
-                        let tp_id = self.interner.intern(TypeKey::TypeParameter(tp.clone()));
+                        let tp_id = self.interner.type_param(tp.clone());
                         self.visiting.remove(&tp_id);
                     }
                     Some(saved)
@@ -613,9 +613,7 @@ impl<'a> TypeInstantiator<'a> {
                 let mapped = self.interner.mapped_type(*mapped_id);
                 let shadowed_len = self.shadowed.len();
                 let saved = self.visiting.clone();
-                let tp_id = self
-                    .interner
-                    .intern(TypeKey::TypeParameter(mapped.type_param.clone()));
+                    let tp_id = self.interner.type_param(mapped.type_param.clone());
                 self.visiting.remove(&tp_id);
                 let saved_visiting = Some(saved);
                 self.shadowed.push(mapped.type_param.name);
@@ -679,9 +677,7 @@ impl<'a> TypeInstantiator<'a> {
                 if crate::visitor::contains_type_parameters(self.interner, inst_obj)
                     || crate::visitor::contains_type_parameters(self.interner, inst_idx)
                 {
-                    return self
-                        .interner
-                        .intern(TypeKey::IndexAccess(inst_obj, inst_idx));
+                    return self.interner.index_access(inst_obj, inst_idx);
                 }
                 // Evaluate immediately to achieve O(1) equality
                 crate::evaluate::evaluate_index_access(self.interner, inst_obj, inst_idx)
@@ -698,7 +694,7 @@ impl<'a> TypeInstantiator<'a> {
                 // Without this, mapped types like `{ [P in keyof T]: ... }` collapse to `{}`
                 // because `keyof object` = `never`.
                 if crate::visitor::contains_type_parameters(self.interner, inst_operand) {
-                    return self.interner.intern(TypeKey::KeyOf(inst_operand));
+                    return self.interner.keyof(inst_operand);
                 }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
                 crate::evaluate::evaluate_keyof(self.interner, inst_operand)
@@ -707,13 +703,13 @@ impl<'a> TypeInstantiator<'a> {
             // ReadonlyType: instantiate the operand
             TypeKey::ReadonlyType(operand) => {
                 let inst_operand = self.instantiate(*operand);
-                self.interner.intern(TypeKey::ReadonlyType(inst_operand))
+                self.interner.readonly_type(inst_operand)
             }
 
             // NoInfer: preserve wrapper, instantiate inner
             TypeKey::NoInfer(inner) => {
                 let inst_inner = self.instantiate(*inner);
-                self.interner.intern(TypeKey::NoInfer(inst_inner))
+                self.interner.no_infer(inst_inner)
             }
 
             // Template literal: instantiate embedded types
