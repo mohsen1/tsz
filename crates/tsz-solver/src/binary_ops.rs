@@ -70,7 +70,6 @@ macro_rules! primitive_visitor {
         impl<'a> TypeVisitor for $name<'a> {
             type Output = bool;
             fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> bool { kind == $ik }
-            #[allow(unreachable_patterns)]
             fn visit_literal(&mut self, value: &LiteralValue) -> bool {
                 match value { $lit_pat => $lit_result, _ => false }
             }
@@ -129,10 +128,34 @@ primitive_visitor!(BigIntLikeVisitor, IntrinsicKind::Bigint,
 primitive_visitor!(BooleanLikeVisitor, IntrinsicKind::Boolean,
     LiteralValue::Boolean(_) => true);
 
-primitive_visitor!(SymbolLikeVisitor, IntrinsicKind::Symbol,
-    _ => false,
-    match_unique_symbol
-);
+struct SymbolLikeVisitor<'a> {
+    _db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for SymbolLikeVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> bool {
+        kind == IntrinsicKind::Symbol
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> bool {
+        let _ = value;
+        false
+    }
+
+    fn visit_ref(&mut self, _symbol_ref: u32) -> bool {
+        true
+    }
+
+    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> bool {
+        true
+    }
+
+    fn default_output() -> bool {
+        false
+    }
+}
 
 /// Visitor to extract primitive class from a type.
 struct PrimitiveClassVisitor;

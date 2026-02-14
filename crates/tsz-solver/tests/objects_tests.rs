@@ -14,7 +14,6 @@ impl TypeResolver for MockResolver {
         None
     }
 
-    #[allow(deprecated)]
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None
     }

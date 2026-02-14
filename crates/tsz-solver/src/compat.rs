@@ -117,8 +117,7 @@ impl<'a, R: TypeResolver> TypeVisitor for ShapeExtractor<'a, R> {
         if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
             return self.visit_lazy(def_id.0);
         }
-        #[allow(deprecated)]
-        if let Some(resolved) = self.resolver.resolve_ref(symbol_ref, self.db) {
+        if let Some(resolved) = self.resolver.resolve_symbol_ref(symbol_ref, self.db) {
             return self.extract(resolved);
         }
         None
@@ -321,9 +320,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Propagates to the internal SubtypeChecker.
     #[allow(unsafe_code)]
     pub fn set_inheritance_graph(&mut self, graph: Option<&crate::inheritance::InheritanceGraph>) {
-        // Need to transmute the lifetime because the SubtypeChecker expects &'a but we only have &.
-        // This is safe because the InheritanceGraph is owned by CheckerContext which outlives the CompatChecker.
         self.subtype.inheritance_graph = graph.map(|g| unsafe {
+            // SAFETY: The caller is responsible for ensuring the `InheritanceGraph` outlives
+            // the checker/compat context. This mirrors the CheckerContext ownership model.
             std::mem::transmute::<
                 &crate::inheritance::InheritanceGraph,
                 &'a crate::inheritance::InheritanceGraph,

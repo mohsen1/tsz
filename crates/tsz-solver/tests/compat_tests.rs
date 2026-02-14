@@ -4466,7 +4466,6 @@ fn test_private_brand_lazy_self_resolution_does_not_recurse() {
     }
 
     impl TypeResolver for SelfReferentialLazyResolver {
-        #[allow(deprecated)]
         fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
             None
         }

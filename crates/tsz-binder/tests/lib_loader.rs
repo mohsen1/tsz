@@ -14,7 +14,6 @@ declare class Array<T> { length: number; }
 
 #[test]
 fn test_merge_lib_symbols() {
-    let mut target = SymbolTable::new();
     let mut arena = SymbolArena::new();
     let object_id = arena.alloc(symbol_flags::VALUE, "Object".to_string());
     let function_id = arena.alloc(symbol_flags::VALUE, "Function".to_string());
@@ -34,14 +33,19 @@ fn test_merge_lib_symbols() {
 
     let mut user_arena = SymbolArena::new();
     let user_object_id = user_arena.alloc(symbol_flags::VALUE, "Object".to_string());
-    target.set("Object".to_string(), user_object_id);
+    let mut user_file_locals = SymbolTable::new();
+    user_file_locals.set("Object".to_string(), user_object_id);
+    let mut user_binder =
+        BinderState::from_bound_state(user_arena, user_file_locals, Default::default());
 
-    #[allow(deprecated)]
-    merge_lib_symbols(&mut target, &[lib]);
+    user_binder.merge_lib_symbols(&[lib]);
 
-    assert_eq!(target.get("Object"), Some(user_object_id));
-    assert_eq!(target.get("Function"), Some(function_id));
-    assert_eq!(target.get("console"), Some(console_id));
+    assert_eq!(user_binder.file_locals.get("Object"), Some(user_object_id));
+    assert!(user_binder.file_locals.has("Function"));
+    assert!(user_binder.file_locals.has("console"));
+
+    assert_ne!(user_binder.file_locals.get("Function"), Some(function_id));
+    assert_ne!(user_binder.file_locals.get("console"), Some(console_id));
 }
 
 #[test]

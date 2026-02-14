@@ -110,10 +110,19 @@ pub trait TypeResolver {
     ///
     /// **Phase 3.4**: Deprecated - use `resolve_lazy` with DefId instead.
     /// This method is being phased out as part of the migration to DefId-based type identity.
-    #[deprecated(
-        note = "Use resolve_lazy with DefId instead. This method is being phased out as part of Issue #12."
-    )]
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId>;
+
+    /// Resolve a symbol reference to a structural type, preferring DefId-based lazy paths.
+    ///
+    /// This helper keeps compatibility with legacy `Ref`-based flows while ensuring all
+    /// migration-capable resolvers use `resolve_lazy` when a corresponding DefId exists.
+    fn resolve_symbol_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        if let Some(def_id) = self.symbol_to_def_id(symbol) {
+            self.resolve_lazy(def_id, interner)
+        } else {
+            self.resolve_ref(symbol, interner)
+        }
+    }
 
     /// Resolve a DefId reference to its structural type.
     ///
@@ -966,14 +975,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         }
     }
 
-    #[allow(deprecated)]
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
-        // Resolve the legacy Ref(SymbolRef) type using the resolver
-        #[allow(deprecated)]
         let resolved = self
             .checker
             .resolver
-            .resolve_ref(SymbolRef(symbol_ref), self.checker.interner)
+            .resolve_symbol_ref(SymbolRef(symbol_ref), self.checker.interner)
             .unwrap_or(self.source);
 
         // If resolution succeeded and changed the type, restart the check
@@ -1251,17 +1257,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
 
         // Attempt to resolve the symbol to its structural type.
         // Prioritize DefId-based resolution (Lazy) over legacy SymbolRef (Ref).
-        let resolved = if let Some(def_id) = self.checker.resolver.symbol_to_def_id(sym) {
-            self.checker
-                .resolver
-                .resolve_lazy(def_id, self.checker.interner)
-        } else {
-            #[allow(deprecated)]
-            self.checker
-                .resolver
-                .resolve_ref(sym, self.checker.interner)
-        }
-        .unwrap_or(self.source);
+        let resolved = self
+            .checker
+            .resolver
+            .resolve_symbol_ref(sym, self.checker.interner)
+            .unwrap_or(self.source);
 
         // If resolution succeeded and gave us a different type, restart the check.
         // This recursion is critical for coinductive cycle detection.
@@ -1624,16 +1624,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Handle legacy SymbolRef-based types (old API)
         if let Some(symbol) = ref_symbol(self.interner, type_id) {
-            if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
-                self.resolver
-                    .resolve_lazy(def_id, self.interner)
-                    .unwrap_or(type_id)
-            } else {
-                #[allow(deprecated)]
-                self.resolver
-                    .resolve_ref(symbol, self.interner)
-                    .unwrap_or(type_id)
-            }
+            self.resolver
+                .resolve_symbol_ref(symbol, self.interner)
+                .unwrap_or(type_id)
         } else {
             type_id
         }

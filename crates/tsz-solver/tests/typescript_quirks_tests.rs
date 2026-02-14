@@ -138,6 +138,7 @@ fn test_function_parameter_contravariance_strict_mode() {
     // Because Animal is a wider type (superset) than Cat
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
+    let _ = fn_type2(&interner, TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN);
     checker.strict_function_types = true; // Strict mode
 
     // Create Animal and Cat types (Cat <: Animal)
