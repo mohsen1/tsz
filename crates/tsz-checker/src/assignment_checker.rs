@@ -357,6 +357,7 @@ impl<'a> CheckerState<'a> {
             if should_check_iterability {
                 self.check_destructuring_iterability(left_idx, right_type, NodeIndex::NONE);
             }
+            self.check_tuple_destructuring_bounds(left_idx, right_type);
         }
 
         let is_readonly = if !is_const {
@@ -430,6 +431,53 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
         );
         true
+    }
+
+    fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {
+        let rhs = tsz_solver::type_queries::unwrap_readonly(self.ctx.types, right_type);
+        let Some(tuple_elements) =
+            tsz_solver::type_queries::get_tuple_elements(self.ctx.types, rhs)
+        else {
+            return;
+        };
+
+        let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
+        if has_rest_tail {
+            return;
+        }
+
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return;
+        };
+        let Some(array_lit) = self.ctx.arena.get_literal_expr(left_node) else {
+            return;
+        };
+
+        for (index, &element_idx) in array_lit.elements.nodes.iter().enumerate() {
+            if index < tuple_elements.len() || element_idx.is_none() {
+                continue;
+            }
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                return;
+            }
+
+            self.error_at_node(
+                element_idx,
+                &format!(
+                    "Tuple type of length '{}' has no element at index '{}'.",
+                    tuple_elements.len(),
+                    index
+                ),
+                diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+            );
+            return;
+        }
     }
 
     // =========================================================================

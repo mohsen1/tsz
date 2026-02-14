@@ -1459,6 +1459,11 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
         use tsz_parser::parser::node_flags;
 
+        // Declarations inside .d.ts files are ambient by definition.
+        if self.ctx.file_name.ends_with(".d.ts") {
+            return true;
+        }
+
         let mut current = var_idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current) {
