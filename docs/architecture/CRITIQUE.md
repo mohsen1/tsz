@@ -2,6 +2,16 @@
 
 Here are the highest‑leverage changes that would make TSZ **fundamentally** better (not just “cleaner”), given the North Star doc’s stated principles.
 
+## Current operating status (step mode)
+
+This document is intended to be driven from highest impact to lowest impact:
+
+1) lock boundaries (must happen first, no exceptions),
+2) collapse the dual-type-world risk,
+3) centralize assignability/explainability and then build query/incremental scaffolding.
+
+To keep this actionable, treat each major heading below as a checkpoint you can close only when its “Definition of done” is fully met and architecture guardrail tests pass for that milestone.
+
 ## 1) Make “Solver-first” real by eliminating the second type system
 
 Right now the checker crate still ships a **full parallel type representation** (`TypeArena`, its own `TypeId`, and a big `Type` enum + flags) that sits beside the solver’s `TypeId/TypeKey` world. That’s a structural violation of “single source of truth” and a long‑term maintenance trap because it guarantees drift, duplicate bugs, and confusion about which `TypeId` you’re holding. 
