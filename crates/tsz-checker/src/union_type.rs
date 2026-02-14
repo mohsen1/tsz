@@ -75,6 +75,7 @@ impl<'a> CheckerState<'a> {
     /// If the result would be a single type, returns that type.
     pub fn union_remove_member(&self, union_type: TypeId, member_to_remove: TypeId) -> TypeId {
         if let Some(members) = query::union_members(self.ctx.types, union_type) {
+            let factory = self.ctx.types.factory();
             let filtered: Vec<TypeId> = members
                 .iter()
                 .filter(|&&m| m != member_to_remove)
@@ -86,7 +87,7 @@ impl<'a> CheckerState<'a> {
             } else if filtered.len() == 1 {
                 filtered[0]
             } else {
-                self.ctx.types.union(filtered)
+                factory.union(filtered)
             }
         } else {
             union_type
@@ -101,6 +102,7 @@ impl<'a> CheckerState<'a> {
         F: Fn(TypeId) -> bool,
     {
         if let Some(members) = query::union_members(self.ctx.types, union_type) {
+            let factory = self.ctx.types.factory();
             let filtered: Vec<TypeId> =
                 members.iter().filter(|&&m| predicate(m)).copied().collect();
 
@@ -109,7 +111,7 @@ impl<'a> CheckerState<'a> {
             } else if filtered.len() == 1 {
                 filtered[0]
             } else {
-                self.ctx.types.union(filtered)
+                factory.union(filtered)
             }
         } else {
             union_type
@@ -211,7 +213,8 @@ impl<'a> CheckerState<'a> {
             } else if simplified.len() == 1 {
                 simplified[0]
             } else {
-                self.ctx.types.union(simplified)
+                let factory = self.ctx.types.factory();
+                factory.union(simplified)
             }
         } else {
             union_type
