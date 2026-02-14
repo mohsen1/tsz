@@ -3620,56 +3620,23 @@ impl<'a> CheckerState<'a> {
             // Check if this is an ES2015+ type that requires specific lib support
             let is_es2015_type = lib_loader::is_es2015_plus_type(name);
 
-            let primitive_keyword_name = matches!(
-                name,
-                "number"
-                    | "string"
-                    | "boolean"
-                    | "symbol"
-                    | "void"
-                    | "undefined"
-                    | "null"
-                    | "any"
-                    | "unknown"
-                    | "never"
-                    | "object"
-                    | "bigint"
-            );
-
             // In syntax-error files, TS2693 often cascades from parser recovery and
             // diverges from tsc's primary-diagnostic set. Keep TS2585 behavior intact.
-            //
-            // Exception: malformed value expressions like `new number[]` recover through
-            // ARRAY_TYPE around a primitive keyword where tsc still reports TS2693.
-            let primitive_array_recovery = self.ctx.arena.get_extended(idx).is_some_and(|ext| {
-                self.ctx
-                    .arena
-                    .get(ext.parent)
-                    .is_some_and(|p| p.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_TYPE)
-            });
-            let primitive_parameter_type_recovery =
-                self.ctx.arena.get_extended(idx).is_some_and(|ext| {
-                    self.ctx.arena.get(ext.parent).is_some_and(|p| {
-                        if p.kind != tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE {
-                            return false;
-                        }
-                        self.ctx
-                            .arena
-                            .get_extended(ext.parent)
-                            .is_some_and(|parent_ext| {
-                                self.ctx.arena.get(parent_ext.parent).is_some_and(|gp| {
-                                    gp.kind == tsz_parser::parser::syntax_kind_ext::PARAMETER
-                                })
-                            })
-                    })
-                });
-            if primitive_keyword_name
-                && primitive_parameter_type_recovery
-                && !primitive_array_recovery
-            {
-                return;
-            }
-            if self.has_parse_errors() && !is_es2015_type && !primitive_array_recovery {
+            // Exception: recovered primitive array type literals in value position
+            // (`number[]` in expression context) should still emit TS2693.
+            let allow_keyword_array_recovery = self
+                .ctx
+                .arena
+                .source_files
+                .first()
+                .and_then(|sf| {
+                    let start = usize::try_from(loc.start).ok()?;
+                    let src = sf.text.as_ref();
+                    let pattern = format!("{name}[]");
+                    src.get(start..).map(|tail| tail.starts_with(&pattern))
+                })
+                .unwrap_or(false);
+            if self.has_parse_errors() && !is_es2015_type && !allow_keyword_array_recovery {
                 return;
             }
 
