@@ -4322,5 +4322,5 @@ pub fn get_async_iterable_element_type(
 // more maintainable by separating concerns.
 
 #[cfg(test)]
-#[path = "tests/operations_tests.rs"]
+#[path = "../tests/operations_tests.rs"]
 mod tests;

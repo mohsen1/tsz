@@ -227,5 +227,5 @@ impl<'a> ClassES5Emitter<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/class_es5.rs"]
+#[path = "../../tests/class_es5.rs"]
 mod tests;

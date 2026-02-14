@@ -184,5 +184,5 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
 }
 
 #[cfg(test)]
-#[path = "tests/application_tests.rs"]
+#[path = "../tests/application_tests.rs"]
 mod tests;

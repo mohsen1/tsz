@@ -362,5 +362,5 @@ impl SoundModeConfig {
 // =============================================================================
 
 #[cfg(test)]
-#[path = "tests/sound_tests.rs"]
+#[path = "../tests/sound_tests.rs"]
 mod tests;

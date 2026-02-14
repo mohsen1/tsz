@@ -3,6 +3,7 @@ name = "tsz-checker"
 description = "TypeScript type checker for the tsz compiler"
 version.workspace = true
 edition.workspace = true
+autotests = false
 repository.workspace = true
 license.workspace = true
 authors.workspace = true

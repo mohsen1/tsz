@@ -855,5 +855,5 @@ fn append_modifier(result: &mut String, modifier: &str) {
 }
 
 #[cfg(test)]
-#[path = "tests/document_symbols_tests.rs"]
+#[path = "../tests/document_symbols_tests.rs"]
 mod document_symbols_tests;

@@ -1009,5 +1009,5 @@ impl<'a> FindReferences<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/references_tests.rs"]
+#[path = "../tests/references_tests.rs"]
 mod references_tests;

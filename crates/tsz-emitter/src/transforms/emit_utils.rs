@@ -1,3 +1,3 @@
 #[cfg(test)]
-#[path = "tests/emit_utils.rs"]
+#[path = "../../tests/emit_utils.rs"]
 mod tests;

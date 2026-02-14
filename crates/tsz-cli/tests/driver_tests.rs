@@ -8,8 +8,11 @@ use clap::Parser;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tsz_common::diagnostics::diagnostic_codes;
+
+static TEMP_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct TempDir {
     path: PathBuf,
@@ -22,10 +25,12 @@ impl TempDir {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let seq = TEMP_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         path.push(format!(
-            "tsz_cli_driver_test_{}_{}",
+            "tsz_cli_driver_test_{}_{}_{}",
             std::process::id(),
-            nanos
+            nanos,
+            seq
         ));
         std::fs::create_dir_all(&path)?;
         Ok(Self { path })
@@ -123,7 +128,9 @@ fn compile_with_tsconfig_emits_outputs() {
     write_file(&base.join("src/index.ts"), "export const value = 1;");
 
     let args = default_args();
-    let result = compile(&args, base).expect("compile should succeed");
+    let result = with_types_versions_env(Some("5.9"), || {
+        compile(&args, base).expect("compile should succeed")
+    });
 
     assert!(result.diagnostics.is_empty());
     assert!(base.join("dist/src/index.js").is_file());
@@ -148,7 +155,7 @@ fn compile_with_source_map_emits_map_outputs() {
     write_file(&base.join("src/index.ts"), "export const value = 1;");
 
     let args = default_args();
-    let result = compile(&args, base).expect("compile should succeed");
+    let result = with_types_versions_env(None, || compile(&args, base).expect("compile should succeed"));
 
     assert!(result.diagnostics.is_empty());
     let js_path = base.join("dist/src/index.js");
@@ -207,7 +214,7 @@ fn compile_with_declaration_map_emits_map_outputs() {
     write_file(&base.join("src/index.ts"), "export const value = 1;");
 
     let args = default_args();
-    let result = compile(&args, base).expect("compile should succeed");
+    let result = with_types_versions_env(None, || compile(&args, base).expect("compile should succeed"));
 
     assert!(result.diagnostics.is_empty());
     let dts_path = base.join("dist/src/index.d.ts");
@@ -360,7 +367,7 @@ fn compile_with_jsx_preserve_emits_jsx_extension() {
     );
 
     let args = default_args();
-    let result = compile(&args, base).expect("compile should succeed");
+    let result = with_types_versions_env(None, || compile(&args, base).expect("compile should succeed"));
 
     assert!(result.diagnostics.is_empty());
     assert!(base.join("dist/src/view.jsx").is_file());
@@ -754,7 +761,9 @@ fn compile_resolves_node_modules_types_versions_prefers_specific_range() {
     );
 
     let args = default_args();
-    let result = compile(&args, base).expect("compile should succeed");
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
 
     assert!(!result.diagnostics.is_empty());
     assert!(result.diagnostics.iter().any(|diag| {
@@ -2146,7 +2155,8 @@ fn invalidate_paths_with_dependents_symbols_handles_import_equals() {
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "outDir": "dist"
+            "outDir": "dist",
+            "module": "commonjs"
           },
           "files": ["src/index.ts"]
         }"#,

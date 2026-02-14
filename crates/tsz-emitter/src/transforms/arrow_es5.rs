@@ -81,5 +81,5 @@ impl ArrowTransformContext {
 }
 
 #[cfg(test)]
-#[path = "tests/arrow_es5.rs"]
+#[path = "../../tests/arrow_es5.rs"]
 mod tests;

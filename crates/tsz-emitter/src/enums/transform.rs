@@ -483,5 +483,5 @@ impl<'a> ConstEnumInliner<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/transform.rs"]
+#[path = "../../tests/transform.rs"]
 mod tests;

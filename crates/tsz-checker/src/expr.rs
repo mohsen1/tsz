@@ -288,5 +288,5 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
 }
 
 #[cfg(test)]
-#[path = "tests/expr.rs"]
+#[path = "../tests/expr.rs"]
 mod tests;

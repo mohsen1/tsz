@@ -655,5 +655,5 @@ impl Default for StatementChecker {
 }
 
 #[cfg(test)]
-#[path = "tests/statements.rs"]
+#[path = "../tests/statements.rs"]
 mod tests;

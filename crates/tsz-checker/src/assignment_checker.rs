@@ -459,6 +459,9 @@ impl<'a> CheckerState<'a> {
         if !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, object_type) {
             return false;
         }
+        if self.index_expression_constrained_to_object_keys(object_type, access.name_or_argument) {
+            return false;
+        }
 
         let object_type_str = self.format_type(object_type);
         let message = format_message(
@@ -471,6 +474,33 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::TYPE_IS_GENERIC_AND_CAN_ONLY_BE_INDEXED_FOR_READING,
         );
         true
+    }
+
+    fn index_expression_constrained_to_object_keys(
+        &mut self,
+        object_type: TypeId,
+        index_expr: NodeIndex,
+    ) -> bool {
+        use tsz_solver::type_queries::{get_keyof_type, get_type_parameter_constraint};
+
+        let index_type = self.get_type_of_node(index_expr);
+        if index_type == TypeId::ERROR {
+            return false;
+        }
+
+        let Some(index_constraint) = get_type_parameter_constraint(self.ctx.types, index_type)
+        else {
+            return false;
+        };
+
+        let Some(constraint_source) = get_keyof_type(self.ctx.types, index_constraint) else {
+            return false;
+        };
+
+        // Allow indexed writes when the constraint is `keyof <source>` and
+        // the source type is compatible with the generic object being written to.
+        self.is_subtype_of(constraint_source, object_type)
+            || self.is_subtype_of(object_type, constraint_source)
     }
 
     fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {

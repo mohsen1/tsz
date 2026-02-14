@@ -350,5 +350,5 @@ impl<'a> EnumChecker<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/checker.rs"]
+#[path = "../../tests/checker.rs"]
 mod tests;

@@ -454,5 +454,5 @@ pub fn sanitize_module_name(module_spec: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/module_commonjs_tests.rs"]
+#[path = "../../tests/module_commonjs_tests.rs"]
 mod tests;

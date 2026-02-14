@@ -166,5 +166,5 @@ impl DependencyGraph {
 }
 
 #[cfg(test)]
-#[path = "tests/dependency_graph_tests.rs"]
+#[path = "../tests/dependency_graph_tests.rs"]
 mod dependency_graph_tests;

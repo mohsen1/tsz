@@ -15,5 +15,5 @@ pub(crate) fn call_signatures_for_type(
 }
 
 #[cfg(test)]
-#[path = "tests/state_type_analysis.rs"]
+#[path = "../../tests/state_type_analysis.rs"]
 mod tests;

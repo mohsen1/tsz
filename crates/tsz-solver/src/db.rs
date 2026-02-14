@@ -1955,5 +1955,5 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
 }
 
 #[cfg(test)]
-#[path = "tests/db_tests.rs"]
+#[path = "../tests/db_tests.rs"]
 mod tests;

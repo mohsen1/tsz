@@ -137,5 +137,5 @@ impl<'a> LinkedEditingProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/linked_editing_tests.rs"]
+#[path = "../tests/linked_editing_tests.rs"]
 mod linked_editing_tests;

@@ -703,5 +703,5 @@ impl<'a> CallHierarchyProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/call_hierarchy_tests.rs"]
+#[path = "../tests/call_hierarchy_tests.rs"]
 mod call_hierarchy_tests;

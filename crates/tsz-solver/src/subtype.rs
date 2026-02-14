@@ -4529,33 +4529,33 @@ pub fn is_subtype_of_with_resolver_and_db<R: TypeResolver>(
 
 // Re-enabled subtype tests - verifying API compatibility
 #[cfg(test)]
-#[path = "tests/subtype_tests.rs"]
+#[path = "../tests/subtype_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "tests/index_signature_tests.rs"]
+#[path = "../tests/index_signature_tests.rs"]
 mod index_signature_tests;
 
 #[cfg(test)]
-#[path = "tests/generics_rules_tests.rs"]
+#[path = "../tests/generics_rules_tests.rs"]
 mod generics_rules_tests;
 
 #[cfg(test)]
-#[path = "tests/callable_tests.rs"]
+#[path = "../tests/callable_tests.rs"]
 mod callable_tests;
 
 #[cfg(test)]
-#[path = "tests/union_tests.rs"]
+#[path = "../tests/union_tests.rs"]
 mod union_tests;
 
 #[cfg(test)]
-#[path = "tests/typescript_quirks_tests.rs"]
+#[path = "../tests/typescript_quirks_tests.rs"]
 mod typescript_quirks_tests;
 
 #[cfg(test)]
-#[path = "tests/type_predicate_tests.rs"]
+#[path = "../tests/type_predicate_tests.rs"]
 mod type_predicate_tests;
 
 #[cfg(test)]
-#[path = "tests/overlap_tests.rs"]
+#[path = "../tests/overlap_tests.rs"]
 mod overlap_tests;

@@ -956,5 +956,5 @@ fn is_non_renamable_builtin(name: &str) -> bool {
 // ===========================================================================
 
 #[cfg(test)]
-#[path = "tests/rename_tests.rs"]
+#[path = "../tests/rename_tests.rs"]
 mod rename_tests;

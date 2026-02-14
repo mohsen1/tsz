@@ -1400,5 +1400,5 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 }
 
 #[cfg(test)]
-#[path = "tests/type_node.rs"]
+#[path = "../tests/type_node.rs"]
 mod tests;

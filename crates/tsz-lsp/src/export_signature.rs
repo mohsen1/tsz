@@ -143,5 +143,5 @@ impl ExportSignature {
 }
 
 #[cfg(test)]
-#[path = "tests/export_signature_tests.rs"]
+#[path = "../tests/export_signature_tests.rs"]
 mod export_signature_tests;

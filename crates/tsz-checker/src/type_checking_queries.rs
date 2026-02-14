@@ -1066,10 +1066,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// # Arguments
     /// * `idx` - The node index of the expression
-    pub(crate) fn report_never_type_usage(&mut self, _idx: NodeIndex) {
-        // `never` often appears as a cascading intermediate type in unresolved/error paths.
-        // Emitting TS18050 here creates false positives in conformance cases where tsc
-        // reports no additional diagnostic.
+    pub(crate) fn report_never_type_usage(&mut self, idx: NodeIndex) {
+        self.error_value_cannot_be_used_here_at("never", idx);
     }
 
     // =========================================================================

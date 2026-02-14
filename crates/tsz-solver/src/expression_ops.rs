@@ -361,5 +361,5 @@ fn is_definitely_falsy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests/expression_ops_tests.rs"]
+#[path = "../tests/expression_ops_tests.rs"]
 mod tests;

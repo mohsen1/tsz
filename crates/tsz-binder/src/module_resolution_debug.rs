@@ -350,5 +350,5 @@ pub fn flags_to_string(flags: u32) -> String {
 }
 
 #[cfg(test)]
-#[path = "tests/module_resolution_debug.rs"]
+#[path = "../tests/module_resolution_debug.rs"]
 mod tests;

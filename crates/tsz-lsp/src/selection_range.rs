@@ -142,5 +142,5 @@ impl<'a> SelectionRangeProvider<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/selection_range_tests.rs"]
+#[path = "../tests/selection_range_tests.rs"]
 mod selection_range_tests;

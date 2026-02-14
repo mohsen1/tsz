@@ -435,5 +435,5 @@ impl<'a> EnumEvaluator<'a> {
 }
 
 #[cfg(test)]
-#[path = "tests/evaluator.rs"]
+#[path = "../../tests/evaluator.rs"]
 mod tests;
