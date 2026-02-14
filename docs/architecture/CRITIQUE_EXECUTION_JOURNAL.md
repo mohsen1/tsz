@@ -197,3 +197,4 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 185: added emitter dependency-direction freeze guardrail in `scripts/arch_guard.py` to fail on non-test `tsz-emitter` imports of `tsz_checker::...`.
 - [x] Migration action 186: removed direct checker crate dependency from `crates/tsz-emitter/Cargo.toml` after emitter migration to `TypeCacheView`.
 - [x] Migration action 187: added manifest-level dependency freeze guardrails in `scripts/arch_guard.py` for `tsz-emitter` (`tsz-checker` forbidden) and `tsz-binder` (`tsz-solver` forbidden).
+- [x] Migration action 188: replaced remaining emitter-side `TypeKey::ModuleNamespace` pattern match in `crates/tsz-emitter/src/declaration_emitter/usage_analyzer.rs` with solver visitor helper `module_namespace_symbol_ref(...)` added in `crates/tsz-solver/src/visitor.rs`.

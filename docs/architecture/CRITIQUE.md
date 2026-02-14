@@ -1136,7 +1136,7 @@ If you want the fastest path to momentum, do these in order:
 - [x] PR 2: Add solver TypeFactory module (thin wrapper over intern for now)
 - [x] PR 3: Migrate 1–2 checker modules off `TypeKey`
 - [ ] PR 4: Make `TypeKey` crate-private and fix fallout
-- [ ] PR 5: Replace recursive checker traversal with solver visitor collection
+- [x] PR 5: Replace recursive checker traversal with solver visitor collection
 
 After those five, the rest of the roadmap becomes dramatically easier because the codebase is no longer allowed to regress.
 
