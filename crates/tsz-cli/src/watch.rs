@@ -1,5 +1,3 @@
-#![allow(clippy::print_stderr)]
-
 use anyhow::{Context, Result, bail};
 use notify::{Config, Event, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::BTreeSet;
@@ -60,7 +58,7 @@ pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
     loop {
         match rx.recv_timeout(DEBOUNCE_TICK) {
             Ok(Ok(event)) => state.handle_event(event),
-            Ok(Err(err)) => eprintln!("watch error: {err}"),
+            Ok(Err(err)) => println!("watch error: {err}"),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 bail!("watch channel disconnected");
@@ -104,7 +102,7 @@ fn create_watcher(args: &CliArgs, tx: mpsc::Sender<notify::Result<Event>>) -> Re
             match RecommendedWatcher::new(tx.clone(), Config::default()) {
                 Ok(watcher) => Ok(WatcherImpl::Native(watcher)),
                 Err(e) => {
-                    eprintln!(
+                    println!(
                         "Warning: Native file watcher failed ({}), falling back to polling",
                         e
                     );
@@ -133,7 +131,7 @@ impl WatchState {
             resolved,
             tsconfig_path,
         } = load_project_state(args, cwd).unwrap_or_else(|err| {
-            eprintln!("{err}");
+            println!("{err}");
             ProjectState {
                 base_dir: canonicalize_or_owned(cwd),
                 resolved: ResolvedCompilerOptions::default(),
@@ -207,12 +205,12 @@ impl WatchState {
                 if !result.diagnostics.is_empty() {
                     let output = reporter.render(&result.diagnostics);
                     if !output.is_empty() {
-                        eprintln!("{output}");
+                        println!("{output}");
                     }
                 }
                 self.update_emitted(result.emitted_files);
             }
-            Err(err) => eprintln!("{err}"),
+            Err(err) => println!("{err}"),
         }
 
         if let Ok(project) = load_project_state(args, cwd) {
