@@ -583,7 +583,7 @@ Checker modules import `TypeKey` and intern types directly (example: array type 
   * Strengthened architecture contract coverage to fail if non-test checker source imports `tsz_solver::types::...`, preventing new solver-internal module coupling.
 * **Completed in this iteration (Milestone 2 sub-item, follow-up):**
   * Added a solver-side enforcement rule that direct `.intern(TypeKey::...)` construction is quarantined to `tsz-solver/src/intern.rs`.
-  * Added an architecture contract test in checker coverage to enforce the same invariant continuously.
+  * Added a dedicated solver contract test (`typekey_contract_tests.rs`) to enforce this invariant continuously.
 * **Remaining for Milestone 2:**
   * Keep tightening guard patterns as solver constructor surface expands (for example, forbid additional raw interner access patterns beyond `TypeKey`).
 
