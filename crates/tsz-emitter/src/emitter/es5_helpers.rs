@@ -305,7 +305,11 @@ impl<'a> Printer<'a> {
     ///
     /// Mixed computed and spread:
     /// - { [k]: v, ...a } → __assign((_a = {}, _a[k] = v, _a), a)
-    pub(super) fn emit_object_literal_es5(&mut self, elements: &[NodeIndex]) {
+    pub(super) fn emit_object_literal_es5(
+        &mut self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) {
         if elements.is_empty() {
             self.write("{}");
             return;
@@ -316,16 +320,20 @@ impl<'a> Printer<'a> {
 
         if !has_spread {
             // No spread - use the old computed property logic
-            self.emit_object_literal_without_spread_es5(elements);
+            self.emit_object_literal_without_spread_es5(elements, source_range);
             return;
         }
 
         // Has spread - use __assign pattern
-        self.emit_object_literal_with_spread_es5(elements);
+        self.emit_object_literal_with_spread_es5(elements, source_range);
     }
 
     /// Emit object literal without spread (computed properties only)
-    fn emit_object_literal_without_spread_es5(&mut self, elements: &[NodeIndex]) {
+    fn emit_object_literal_without_spread_es5(
+        &mut self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) {
         let first_computed_idx = elements
             .iter()
             .position(|&idx| self.is_computed_property_member(idx))
@@ -339,9 +347,24 @@ impl<'a> Printer<'a> {
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
 
-        self.write("(");
-        self.write(&temp_var);
-        self.write(" = ");
+        let source_is_multiline = source_range.is_some_and(|(pos, end)| {
+            self.source_text.is_some_and(|text| {
+                let start = pos as usize;
+                let end = end as usize;
+                start < end && end <= text.len() && text[start..end].contains('\n')
+            })
+        });
+        let single_computed_only = first_computed_idx == 0 && elements.len() == 1;
+        if single_computed_only && source_is_multiline {
+            self.write("(");
+            self.increase_indent();
+            self.write(&temp_var);
+            self.write(" = ");
+        } else {
+            self.write("(");
+            self.write(&temp_var);
+            self.write(" = ");
+        }
 
         // Emit initial non-computed properties as the object literal
         if first_computed_idx > 0 {
@@ -353,18 +376,35 @@ impl<'a> Printer<'a> {
         // Emit remaining properties as assignments
         for i in first_computed_idx..elements.len() {
             let prop_idx = elements[i];
-            self.write(", ");
+            if single_computed_only && source_is_multiline {
+                self.write(",");
+                self.write_line();
+            } else {
+                self.write(", ");
+            }
             self.emit_property_assignment_es5(prop_idx, &temp_var);
         }
 
         // Return the temp variable
-        self.write(", ");
-        self.write(&temp_var);
-        self.write(")");
+        if single_computed_only && source_is_multiline {
+            self.write(",");
+            self.write_line();
+            self.write(&temp_var);
+            self.decrease_indent();
+            self.write(")");
+        } else {
+            self.write(", ");
+            self.write(&temp_var);
+            self.write(")");
+        }
     }
 
     /// Emit object literal with spread using __assign pattern
-    fn emit_object_literal_with_spread_es5(&mut self, elements: &[NodeIndex]) {
+    fn emit_object_literal_with_spread_es5(
+        &mut self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) {
         // Split into segments
         let mut segments: Vec<ObjectSegment> = Vec::new();
         let mut current_start = 0;
@@ -399,7 +439,7 @@ impl<'a> Printer<'a> {
                     .iter()
                     .any(|&idx| self.is_computed_property_member(idx));
                 if has_computed {
-                    self.emit_object_literal_without_spread_es5(elems);
+                    self.emit_object_literal_without_spread_es5(elems, source_range);
                 } else {
                     self.emit_object_literal_entries_es5(elems);
                 }
