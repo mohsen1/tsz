@@ -379,7 +379,7 @@ impl<'a> CheckerState<'a> {
             self.check_parameter_initializers(&parameters.nodes);
 
             // Check async function requirements (needed before TS7010 check)
-            let (is_async, is_generator, _async_node_idx): (bool, bool, NodeIndex) =
+            let (is_async, is_generator, async_node_idx): (bool, bool, NodeIndex) =
                 if let Some(func) = self.ctx.arena.get_function(node) {
                     (func.is_async, func.asterisk_token, func.name)
                 } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
@@ -440,23 +440,28 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // TS2697: Check if async function has access to Promise type
-            // DISABLED: Causes too many false positives (313x extra errors)
-            // The is_promise_global_available check doesn't correctly detect Promise in lib files
-            // TODO: Investigate lib loading for Promise detection
-            // if is_async && !is_generator && !self.is_promise_global_available() {
-            //     use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
-            //     let diagnostic_node = if async_node_idx.is_none() {
-            //         idx
-            //     } else {
-            //         async_node_idx
-            //     };
-            //     self.error_at_node(
-            //         diagnostic_node,
-            //         diagnostic_messages::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-            //         diagnostic_codes::ASYNC_FUNCTION_MUST_RETURN_PROMISE,
-            //     );
-            // }
+            // TS2705: Async function in ES5/ES3 requires the Promise constructor.
+            // Only emit when targeting ES5/ES3 and Promise is not available globally.
+            if is_async && !is_generator {
+                use crate::context::ScriptTarget;
+                let is_es5_or_lower = matches!(
+                    self.ctx.compiler_options.target,
+                    ScriptTarget::ES3 | ScriptTarget::ES5
+                );
+                if is_es5_or_lower && !self.ctx.has_promise_constructor_in_scope() {
+                    use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    let diagnostic_node = if async_node_idx.is_none() {
+                        idx
+                    } else {
+                        async_node_idx
+                    };
+                    self.error_at_node(
+                        diagnostic_node,
+                        diagnostic_messages::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
+                        diagnostic_codes::AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5_REQUIRES_THE_PROMISE_CONSTRUCTOR_MAKE_SURE_YO,
+                    );
+                }
+            }
 
             // TS2705: Async function must return Promise
             // Check ALL async functions (not just arrow functions and function expressions)
