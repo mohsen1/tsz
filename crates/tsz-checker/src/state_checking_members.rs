@@ -2756,6 +2756,8 @@ impl<'a> CheckerState<'a> {
             .map(|c| c.is_declared)
             .unwrap_or(false)
             && self.has_private_modifier(&method.modifiers);
+        // Get method-level JSDoc for @param type checking
+        let method_jsdoc = self.get_jsdoc_for_function(member_idx);
         for &param_idx in &method.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -2764,7 +2766,13 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_parameter_properties(param.type_annotation);
                 }
                 if !skip_implicit_any {
-                    let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx);
+                    let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx)
+                        || if let Some(ref jsdoc) = method_jsdoc {
+                            let pname = self.parameter_name_for_error(param.name);
+                            Self::jsdoc_has_param_type(jsdoc, &pname)
+                        } else {
+                            false
+                        };
                     self.maybe_report_implicit_any_parameter(param, has_jsdoc);
                 }
             }
@@ -2959,6 +2967,8 @@ impl<'a> CheckerState<'a> {
             .map(|c| c.is_declared)
             .unwrap_or(false)
             && self.has_private_modifier(&ctor.modifiers);
+        // Get constructor-level JSDoc for @param type checking
+        let ctor_jsdoc = self.get_jsdoc_for_function(member_idx);
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -2967,7 +2977,13 @@ impl<'a> CheckerState<'a> {
                     self.check_type_for_parameter_properties(param.type_annotation);
                 }
                 if !skip_implicit_any_ctor {
-                    let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx);
+                    let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx)
+                        || if let Some(ref jsdoc) = ctor_jsdoc {
+                            let pname = self.parameter_name_for_error(param.name);
+                            Self::jsdoc_has_param_type(jsdoc, &pname)
+                        } else {
+                            false
+                        };
                     self.maybe_report_implicit_any_parameter(param, has_jsdoc);
                 }
             }
