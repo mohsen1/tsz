@@ -1637,6 +1637,15 @@ impl<'a> CheckerState<'a> {
                 // Return ERROR to prevent fallthrough to normal resolution which would emit TS2304
                 return TypeId::ERROR;
             }
+            if is_es5_or_lower && self.is_arguments_in_async_non_arrow_function(idx) {
+                use crate::types::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    idx,
+                    diagnostic_messages::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
+                    diagnostic_codes::THE_ARGUMENTS_OBJECT_CANNOT_BE_REFERENCED_IN_AN_ASYNC_FUNCTION_OR_METHOD_IN_ES5,
+                );
+                return TypeId::ERROR;
+            }
 
             // Inside a regular (non-arrow) function body, `arguments` is the implicit
             // IArguments object, overriding any outer `arguments` declaration.
