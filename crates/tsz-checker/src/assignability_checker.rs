@@ -405,6 +405,21 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         source_idx: NodeIndex,
     ) -> bool {
+        self.check_assignable_or_report_at(source, target, source_idx, source_idx)
+    }
+
+    /// Check assignability and emit TS2322/TS2345-style diagnostics with independent
+    /// source and diagnostic anchors.
+    ///
+    /// `source_idx` is used for weak-union/excess-property prioritization.
+    /// `diag_idx` is where the assignability diagnostic is anchored.
+    pub(crate) fn check_assignable_or_report_at(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
         }
@@ -413,7 +428,7 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        self.error_type_not_assignable_with_reason_at(source, target, source_idx);
+        self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
     }
 
@@ -431,6 +446,23 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         !self.is_assignable_to(source, target)
+            && !self.should_skip_weak_union_error(source, target, source_idx)
+    }
+
+    /// Returns true when a bivariant-assignability mismatch should produce a diagnostic.
+    ///
+    /// Mirrors `should_report_assignability_mismatch` but uses the bivariant relation
+    /// entrypoint for method-compatibility scenarios.
+    pub(crate) fn should_report_assignability_mismatch_bivariant(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> bool {
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return false;
+        }
+        !self.is_assignable_to_bivariant(source, target)
             && !self.should_skip_weak_union_error(source, target, source_idx)
     }
 
@@ -590,6 +622,13 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Keep subtype preconditions aligned with assignability to avoid
+        // caching relation answers before lazy/application refs are prepared.
+        self.ensure_refs_resolved(source);
+        self.ensure_refs_resolved(target);
+        self.ensure_application_symbols_resolved(source);
+        self.ensure_application_symbols_resolved(target);
+
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
         let is_cacheable =
@@ -605,13 +644,6 @@ impl<'a> CheckerState<'a> {
                 return cached;
             }
         }
-
-        // CRITICAL: Before checking subtypes, ensure all Ref types in source and target
-        // are resolved and in the type environment. This fixes intersection type
-        // assignability where `type AB = A & B` needs A and B in type_env before
-        // we can check if a type is assignable to the intersection.
-        self.ensure_refs_resolved(source);
-        self.ensure_refs_resolved(target);
 
         let env = self.ctx.type_env.borrow();
         let binder = self.ctx.binder;
@@ -667,6 +699,8 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Before checking subtypes, ensure all Ref types are resolved
         self.ensure_refs_resolved(source);
         self.ensure_refs_resolved(target);
+        self.ensure_application_symbols_resolved(source);
+        self.ensure_application_symbols_resolved(target);
 
         // Helper to check if a symbol is a class (for nominal subtyping)
         let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {

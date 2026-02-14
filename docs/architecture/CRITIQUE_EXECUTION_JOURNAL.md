@@ -117,3 +117,15 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Added `TypeInterner` helpers (`no_infer`, `unique_symbol`, `infer`, `string_intrinsic`) and migrated the remaining direct `TypeKey` constructions in `tsz-solver/src/lower.rs` to constructor APIs.
 - [x] Added migration-state evidence in `docs/architecture/CRITIQUE.md` marking hard boundary step A as live and exposing the remaining B-blocker to prevent false-positive completion.
 - [x] Gate-checked checker legacy type API exposure (`Type`/`TypeId` re-exports behind `legacy-type-arena`) and shifted diagnostics consumers to `tsz_checker::diagnostics`.
+- [x] Migration action 108: aligned `is_subtype_of` preconditions with assignability by resolving refs/application symbols before subtype relation cache lookup in `crates/tsz-checker/src/assignability_checker.rs`.
+- [x] Migration action 109: added architecture contract coverage to enforce subtype-precondition ordering and `is_subtype_of_with_env` application-symbol preconditions in `crates/tsz-checker/src/tests/architecture_contract_tests.rs`.
+- [x] Migration action 110: added `check_assignable_or_report_at(...)` in `crates/tsz-checker/src/assignability_checker.rs` to centralize assignability mismatch/suppression policy with separate source/diagnostic anchors.
+- [x] Migration action 111: migrated assignment compatibility diagnostics in `crates/tsz-checker/src/assignment_checker.rs` to route through `check_assignable_or_report_at(...)`.
+- [x] Migration action 112: migrated binding default-value assignability diagnostics in `crates/tsz-checker/src/type_checking.rs` to route through `check_assignable_or_report(...)` and added gateway contract assertions in `crates/tsz-checker/src/tests/architecture_contract_tests.rs`.
+- [x] Migration action 113: removed persistent `TypeCache` fields for checker algorithm-evaluation caches (`application_eval_*`, `mapped_eval_*`) in `crates/tsz-checker/src/context.rs`.
+- [x] Migration action 114: updated checker cache restore paths (`with_cache`, `with_cache_and_options`) to initialize evaluation caches as context-local ephemeral state instead of loading from persisted cache.
+- [x] Migration action 115: added architecture contract coverage asserting `TypeCache` no longer exposes application/mapped evaluation cache fields.
+- [x] Migration action 116: added `should_report_assignability_mismatch_bivariant(...)` to `crates/tsz-checker/src/assignability_checker.rs` for centralized bivariant mismatch policy decisions.
+- [x] Migration action 117: migrated class-member compatibility mismatch gating in `crates/tsz-checker/src/class_checker.rs` to use centralized mismatch helper entrypoints.
+- [x] Migration action 118: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for class-member compatibility gateway routing.
+- [x] Migration action 119: updated child checker context construction (`with_parent`) to keep application/mapped evaluation caches context-local instead of sharing parent algorithm-evaluation cache state.

@@ -101,19 +101,6 @@ pub struct TypeCache {
     /// Populated by CheckerContext during type checking, consumed by UsageAnalyzer.
     pub def_to_symbol: FxHashMap<tsz_solver::DefId, SymbolId>,
 
-    // === Specialized Caches (moved from CheckerContext) ===
-    /// Cache for evaluated application types to avoid repeated expansion.
-    pub application_eval_cache: FxHashMap<TypeId, TypeId>,
-
-    /// Recursion guard for application evaluation.
-    pub application_eval_set: FxHashSet<TypeId>,
-
-    /// Cache for evaluated mapped types with symbol resolution.
-    pub mapped_eval_cache: FxHashMap<TypeId, TypeId>,
-
-    /// Recursion guard for mapped type evaluation with resolution.
-    pub mapped_eval_set: FxHashSet<TypeId>,
-
     /// Cache for control flow analysis results.
     /// Key: (FlowNodeId, SymbolId, InitialTypeId) -> NarrowedTypeId
     pub flow_analysis_cache:
@@ -988,11 +975,11 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            // Use specialized caches from TypeCache to fix Cache Isolation Bug
-            application_eval_cache: cache.application_eval_cache,
-            application_eval_set: cache.application_eval_set,
-            mapped_eval_cache: cache.mapped_eval_cache,
-            mapped_eval_set: cache.mapped_eval_set,
+            // Keep solver-algorithm evaluation caches ephemeral to this checker context.
+            application_eval_cache: FxHashMap::default(),
+            application_eval_set: FxHashSet::default(),
+            mapped_eval_cache: FxHashMap::default(),
+            mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
@@ -1102,11 +1089,11 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            // Use specialized caches from TypeCache to fix Cache Isolation Bug
-            application_eval_cache: cache.application_eval_cache,
-            application_eval_set: cache.application_eval_set,
-            mapped_eval_cache: cache.mapped_eval_cache,
-            mapped_eval_set: cache.mapped_eval_set,
+            // Keep solver-algorithm evaluation caches ephemeral to this checker context.
+            application_eval_cache: FxHashMap::default(),
+            application_eval_set: FxHashSet::default(),
+            mapped_eval_cache: FxHashMap::default(),
+            mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
@@ -1232,11 +1219,11 @@ impl<'a> CheckerContext<'a> {
             // incorrectly map to a class declaration with the same node index).
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            // Share specialized caches from parent
-            application_eval_cache: parent.application_eval_cache.clone(),
-            application_eval_set: parent.application_eval_set.clone(),
-            mapped_eval_cache: parent.mapped_eval_cache.clone(),
-            mapped_eval_set: parent.mapped_eval_set.clone(),
+            // Keep solver-algorithm evaluation caches context-local.
+            application_eval_cache: FxHashMap::default(),
+            application_eval_set: FxHashSet::default(),
+            mapped_eval_cache: FxHashMap::default(),
+            mapped_eval_set: FxHashSet::default(),
             // FlowNodeId/SymbolId are binder-local; isolate flow cache per context.
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
@@ -1926,11 +1913,6 @@ impl<'a> CheckerContext<'a> {
             protected_constructor_types: self.protected_constructor_types,
             private_constructor_types: self.private_constructor_types,
             def_to_symbol: self.def_to_symbol.into_inner(),
-            // Specialized caches
-            application_eval_cache: self.application_eval_cache,
-            application_eval_set: self.application_eval_set,
-            mapped_eval_cache: self.mapped_eval_cache,
-            mapped_eval_set: self.mapped_eval_set,
             flow_analysis_cache: self.flow_analysis_cache.into_inner(),
             class_instance_type_to_decl: self.class_instance_type_to_decl,
             class_instance_type_cache: self.class_instance_type_cache,

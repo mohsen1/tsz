@@ -648,18 +648,11 @@ impl<'a> CheckerState<'a> {
         // Check if there's a default value (initializer)
         if !element_data.initializer.is_none() && element_type != TypeId::ANY {
             let default_value_type = self.get_type_of_node(element_data.initializer);
-
-            if self.should_report_assignability_mismatch(
+            let _ = self.check_assignable_or_report(
                 default_value_type,
                 element_type,
                 element_data.initializer,
-            ) {
-                self.error_type_not_assignable_with_reason_at(
-                    default_value_type,
-                    element_type,
-                    element_data.initializer,
-                );
-            }
+            );
         }
 
         // If the name is a nested binding pattern, recursively check it

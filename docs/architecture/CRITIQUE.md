@@ -723,6 +723,10 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
   * Migrated `ensure_application_symbols_resolved_inner` lazy/enum loops to call these helpers instead of duplicating `DefId -> SymbolId -> resolve -> insert` orchestration inline.
   * Added focused regression tests:
     * checker architecture contract assertions that `state_type_environment` keeps using the dedicated lazy/enum DefId helper path.
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Aligned subtype relation preconditions with assignability in `assignability_checker` by resolving both lazy refs and application symbols before subtype cache lookup.
+  * Moved subtype cache access to occur after preconditions are established, reducing stale-cache risk from precondition-dependent relation answers.
+  * Added focused architecture contract coverage to lock this ordering and enforce application-symbol preconditions in `is_subtype_of` and `is_subtype_of_with_env`.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
 
@@ -778,6 +782,19 @@ Make all assignment/call/return/property-write checks call these.
 
 * Differential testing becomes dramatically easier because behavior becomes consistent.
 * LSP hover/code actions can reuse structured reasons.
+
+### Status update (2026-02-14)
+
+* **Status:** In progress
+* **Completed in this iteration (Milestone 4 sub-item):**
+  * Extended the central assignability gateway in `assignability_checker` with `check_assignable_or_report_at(...)` to decouple weak-union source location from diagnostic anchor location while preserving one mismatch/suppression policy.
+  * Migrated assignment compatibility diagnostics in `assignment_checker` to route through `check_assignable_or_report_at(...)` instead of open-coded `is_assignable_to + weak-union + direct error` logic.
+  * Migrated binding default-value assignability diagnostics in `type_checking` to route through `check_assignable_or_report(...)` instead of open-coded mismatch checks.
+  * Added architecture contract coverage to lock these gateway routes.
+* **Completed in this iteration (Milestone 4 sub-item, follow-up):**
+  * Added centralized bivariant mismatch decision helper `should_report_assignability_mismatch_bivariant(...)` in `assignability_checker`.
+  * Migrated class-member compatibility checks (`TS2416`/`TS2417` decision path) in `class_checker` to use centralized mismatch helper entrypoints for both regular and bivariant relation modes.
+  * Extended architecture contract coverage to lock class-member compatibility onto centralized mismatch helpers.
 
 ---
 
@@ -857,6 +874,16 @@ Checker maintains relation caches keyed by solver types and flags, does inferenc
 ### Unlocks
 
 * Incremental query graph becomes straightforward (next milestone).
+
+### Status update (2026-02-14)
+
+* **Status:** In progress
+* **Completed in this iteration (Milestone 6 sub-item):**
+  * Removed checker algorithm-evaluation cache fields (`application_eval_*`, `mapped_eval_*`) from persistent `TypeCache` in `crates/tsz-checker/src/context.rs`.
+  * Updated `with_cache` / `with_cache_and_options` to initialize those evaluation caches as context-local ephemeral state instead of restoring them from persisted cache blobs.
+  * Updated `with_parent` context construction to initialize evaluation caches as context-local state instead of sharing parent algorithm-evaluation cache state across checker contexts.
+  * Kept live `CheckerContext` behavior intact (evaluation caches still available intra-context), while shrinking persisted cache ownership toward AST/symbol/flow concerns.
+  * Added architecture contract coverage to enforce that `TypeCache` no longer exposes application/mapped evaluation cache fields.
 
 ---
 
