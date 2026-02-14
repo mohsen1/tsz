@@ -14,7 +14,7 @@
 
 use crate::query_boundaries::array_type as query;
 use crate::state::CheckerState;
-use tsz_solver::{TypeId, TypeKey};
+use tsz_solver::TypeId;
 
 // =============================================================================
 // Array Type Utilities
@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
 
     /// Create an array type from an element type.
     pub fn create_array_type(&self, element_type: TypeId) -> TypeId {
-        self.ctx.types.intern(TypeKey::Array(element_type))
+        self.ctx.types.array(element_type)
     }
 
     // =========================================================================

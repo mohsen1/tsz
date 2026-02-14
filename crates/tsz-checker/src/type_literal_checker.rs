@@ -76,8 +76,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_type_from_type_reference_in_type_literal(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_solver::TypeKey;
-
         // Phase 4.3: Migration to TypeKey::Lazy(DefId) is complete for this file.
         // Type references now use create_lazy_type_ref() instead of TypeKey::Ref(SymbolRef).
 
@@ -172,7 +170,7 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(TypeId::UNKNOWN);
                     let array_type = self.ctx.types.array(elem_type);
                     if name == "ReadonlyArray" {
-                        return self.ctx.types.intern(TypeKey::ReadonlyType(array_type));
+                        return self.ctx.types.readonly_type(array_type);
                     }
                     return array_type;
                 }
@@ -255,7 +253,7 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(TypeId::UNKNOWN);
                 let array_type = self.ctx.types.array(elem_type);
                 if name == "ReadonlyArray" {
-                    return self.ctx.types.intern(TypeKey::ReadonlyType(array_type));
+                    return self.ctx.types.readonly_type(array_type);
                 }
                 return array_type;
             }
