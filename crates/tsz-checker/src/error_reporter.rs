@@ -1580,8 +1580,21 @@ impl<'a> CheckerState<'a> {
     fn class_extends_any_base(&mut self, type_id: TypeId) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
+        use tsz_solver::visitor::{callable_shape_id, object_shape_id, object_with_index_shape_id};
 
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
+        let sym_id = self
+            .ctx
+            .resolve_type_to_symbol_id(type_id)
+            .or_else(|| {
+                object_shape_id(self.ctx.types, type_id)
+                    .or_else(|| object_with_index_shape_id(self.ctx.types, type_id))
+                    .and_then(|shape_id| self.ctx.types.object_shape(shape_id).symbol)
+            })
+            .or_else(|| {
+                callable_shape_id(self.ctx.types, type_id)
+                    .and_then(|shape_id| self.ctx.types.callable_shape(shape_id).symbol)
+            });
+        let Some(sym_id) = sym_id else {
             return false;
         };
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
