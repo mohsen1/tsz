@@ -4,7 +4,8 @@ use std::path::Path;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::{
-    CompatChecker, FunctionShape, ParamInfo, RelationCacheKey, TypeId, TypeInterner, Visibility,
+    CallSignature, CallableShape, CompatChecker, FunctionShape, ParamInfo, PropertyInfo,
+    RelationCacheKey, TypeId, TypeInterner, Visibility,
 };
 
 fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
@@ -326,6 +327,17 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         !type_computation_complex_src.contains("intern(tsz_solver::TypeKey::TypeParameter("),
         "type_computation_complex should use solver type_param constructor API, not direct TypeKey::TypeParameter interning"
     );
+
+    let diagnostics_boundary_src = fs::read_to_string("src/query_boundaries/diagnostics.rs")
+        .expect("failed to read src/query_boundaries/diagnostics.rs for architecture guard");
+    assert!(
+        !diagnostics_boundary_src.contains("TypeTraversalKind::"),
+        "query_boundaries/diagnostics should not branch on TypeTraversalKind directly"
+    );
+    assert!(
+        !diagnostics_boundary_src.contains("classify_for_traversal("),
+        "query_boundaries/diagnostics should use solver classify_property_traversal API"
+    );
 }
 
 #[test]
@@ -396,4 +408,50 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
         "checker source files must not import TypeKey or intern TypeKey directly; violations: {}",
         violations.join(", ")
     );
+}
+
+#[test]
+fn test_diagnostics_property_traversal_uses_solver_classification_results() {
+    let interner = TypeInterner::new();
+
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
+    let callable = interner.callable(CallableShape {
+        symbol: None,
+        call_signatures: vec![CallSignature {
+            type_params: Vec::new(),
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+    });
+    let members = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    assert!(matches!(
+        crate::query_boundaries::diagnostics::classify_property_traversal(&interner, object),
+        crate::query_boundaries::diagnostics::PropertyTraversal::Object(_)
+    ));
+    assert!(matches!(
+        crate::query_boundaries::diagnostics::classify_property_traversal(&interner, callable),
+        crate::query_boundaries::diagnostics::PropertyTraversal::Callable(_)
+    ));
+    assert!(matches!(
+        crate::query_boundaries::diagnostics::classify_property_traversal(&interner, members),
+        crate::query_boundaries::diagnostics::PropertyTraversal::Members(_)
+    ));
+    assert!(matches!(
+        crate::query_boundaries::diagnostics::classify_property_traversal(
+            &interner,
+            TypeId::BOOLEAN
+        ),
+        crate::query_boundaries::diagnostics::PropertyTraversal::Other
+    ));
 }

@@ -2223,6 +2223,35 @@ pub fn get_lazy_if_def(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
     }
 }
 
+/// High-level property traversal classification for diagnostics/reporting.
+///
+/// This keeps traversal-shape branching inside solver queries so checker code
+/// can remain thin orchestration.
+#[derive(Debug, Clone)]
+pub enum PropertyTraversalKind {
+    Object(std::sync::Arc<crate::types::ObjectShape>),
+    Callable(std::sync::Arc<crate::types::CallableShape>),
+    Members(Vec<TypeId>),
+    Other,
+}
+
+/// Classify a type into a property traversal shape for checker diagnostics.
+pub fn classify_property_traversal(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> PropertyTraversalKind {
+    match classify_for_traversal(db, type_id) {
+        TypeTraversalKind::Object(_) => get_object_shape(db, type_id)
+            .map_or(PropertyTraversalKind::Other, PropertyTraversalKind::Object),
+        TypeTraversalKind::Callable(_) => get_callable_shape(db, type_id).map_or(
+            PropertyTraversalKind::Other,
+            PropertyTraversalKind::Callable,
+        ),
+        TypeTraversalKind::Members(members) => PropertyTraversalKind::Members(members),
+        _ => PropertyTraversalKind::Other,
+    }
+}
+
 // =============================================================================
 // Interface Merge Type Classification
 // =============================================================================
