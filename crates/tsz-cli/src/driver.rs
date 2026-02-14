@@ -121,6 +121,35 @@ struct BindCacheEntry {
 }
 
 impl CompilationCache {
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.type_caches.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bind_len(&self) -> usize {
+        self.bind_cache.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn diagnostics_len(&self) -> usize {
+        self.diagnostics.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn symbol_cache_len(&self, path: &Path) -> Option<usize> {
+        self.type_caches
+            .get(path)
+            .map(|type_cache| type_cache.symbol_types.len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn node_cache_len(&self, path: &Path) -> Option<usize> {
+        self.type_caches
+            .get(path)
+            .map(|type_cache| type_cache.node_types.len())
+    }
+
     pub(crate) fn invalidate_paths_with_dependents_symbols<I>(&mut self, paths: I)
     where
         I: IntoIterator<Item = PathBuf>,
@@ -174,6 +203,16 @@ impl CompilationCache {
                 cache.invalidate_symbols(&roots);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_paths_with_dependents<I>(&mut self, paths: I)
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        let changed: FxHashSet<PathBuf> = paths.into_iter().collect();
+        let affected = self.collect_dependents(changed.iter().cloned());
+        self.invalidate_paths(affected);
     }
 
     pub(crate) fn invalidate_paths<I>(&mut self, paths: I)
@@ -507,6 +546,49 @@ pub fn compile_project(
     config_path: &Path,
 ) -> Result<CompilationResult> {
     compile_inner(args, cwd, None, None, None, Some(config_path))
+}
+
+#[cfg(test)]
+pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
+    for line in source.lines().take(32) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let is_comment =
+            trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
+        if !is_comment {
+            break;
+        }
+
+        let lower = trimmed.to_ascii_lowercase();
+        let Some(pos) = lower.find("@notypesandsymbols") else {
+            continue;
+        };
+        let after_key = &lower[pos + "@notypesandsymbols".len()..];
+        let Some(colon_pos) = after_key.find(':') else {
+            continue;
+        };
+
+        let value = after_key[colon_pos + 1..].trim();
+        let value_clean = if let Some(comma_pos) = value.find(',') {
+            &value[..comma_pos]
+        } else if let Some(semicolon_pos) = value.find(';') {
+            &value[..semicolon_pos]
+        } else {
+            value
+        }
+        .trim();
+
+        match value_clean {
+            "true" => return true,
+            "false" => return false,
+            _ => continue,
+        }
+    }
+
+    false
 }
 
 pub(crate) fn compile_with_cache(
@@ -2534,7 +2616,7 @@ fn first_required_helper(file: &BoundFile) -> Option<(&'static str, u32, u32)> {
 
         if node.kind == syntax_kind_ext::CLASS_DECLARATION
             && let Some(class_data) = file.arena.get_class(node)
-            && !class_data.heritage_clauses.is_none()
+            && class_data.heritage_clauses.is_some()
         {
             return Some(("__extends", node.pos, node.end.saturating_sub(node.pos)));
         }
