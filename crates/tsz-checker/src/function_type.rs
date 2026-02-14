@@ -1143,11 +1143,11 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(false);
 
                 if is_enum_member {
-                    // CRITICAL FIX: Enum members should have the enum type, not the member type.
-                    // When accessing `Direction.Up`, it should have type `Direction`, not type `Up`.
-                    // This allows enum members to be used where the enum type is expected.
-                    let enum_type = self.get_type_of_symbol(base_sym_id);
-                    return self.apply_flow_narrowing(idx, enum_type);
+                    // Enum member property access should produce the member type (`E.A`),
+                    // not the enum namespace type (`E`). Member types remain assignable to
+                    // their parent enum via solver compatibility rules.
+                    let member_type = self.get_type_of_symbol(member_sym_id);
+                    return self.apply_flow_narrowing(idx, member_type);
                 } else {
                     // Namespace exports (functions, variables, etc.) - use their actual type
                     let member_type = self.get_type_of_symbol(member_sym_id);
