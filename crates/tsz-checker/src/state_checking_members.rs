@@ -2923,32 +2923,12 @@ impl<'a> CheckerState<'a> {
             && !self.property_assigned_in_enclosing_class_constructor(prop.name)
             && let Some(member_name) = self.get_property_name(prop.name)
         {
-            // TS class field inference: suppress TS7008 when the property is definitely
-            // assigned via `this.<prop> = ...` in the constructor body.
-            let assigned_in_constructor = (|| {
-                let class_idx = self.ctx.enclosing_class.as_ref()?.class_idx;
-                let class_node = self.ctx.arena.get(class_idx)?;
-                let class = self.ctx.arena.get_class(class_node)?;
-                let key = self.property_key_from_name(prop.name)?;
-                let mut tracked = rustc_hash::FxHashSet::default();
-                tracked.insert(key.clone());
-                let body_idx = self.find_constructor_body(&class.members)?;
-                let assigned = self.analyze_constructor_assignments(
-                    body_idx,
-                    &tracked,
-                    self.class_has_base(class),
-                );
-                Some(assigned.contains(&key))
-            })()
-            .unwrap_or(false);
-            if !assigned_in_constructor {
-                use crate::types::diagnostics::diagnostic_codes;
-                self.error_at_node_msg(
-                    prop.name,
-                    diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
-                    &[&member_name, "any"],
-                );
-            }
+            use crate::types::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                prop.name,
+                diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
+                &[&member_name, "any"],
+            );
         }
 
         // Cache the inferred type for the property node so DeclarationEmitter can use it
