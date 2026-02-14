@@ -4930,9 +4930,38 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             if !export_decl.module_specifier.is_none() {
                 self.check_export_module_specifier(export_idx);
             }
+
             // Check the wrapped declaration
             if !export_decl.export_clause.is_none() {
-                self.check_statement(export_decl.export_clause);
+                let clause_idx = export_decl.export_clause;
+                self.check_statement(clause_idx);
+
+                if self.ctx.is_js_file()
+                    && let Some(expected_type) = self.jsdoc_type_annotation_for_node(export_idx)
+                {
+                    let source_type = self.get_type_of_node(clause_idx);
+                    if self.object_literal_has_excess_properties(
+                        source_type,
+                        expected_type,
+                        clause_idx,
+                    ) {
+                        self.check_object_literal_excess_properties(
+                            source_type,
+                            expected_type,
+                            clause_idx,
+                        );
+                    } else if self.should_report_assignability_mismatch(
+                        source_type,
+                        expected_type,
+                        clause_idx,
+                    ) {
+                        self.error_type_not_assignable_with_reason_at(
+                            source_type,
+                            expected_type,
+                            clause_idx,
+                        );
+                    }
+                }
             }
         }
     }
