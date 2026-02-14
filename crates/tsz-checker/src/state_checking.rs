@@ -1835,6 +1835,14 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
 
+            if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+                self.check_destructuring_object_literal_computed_excess_properties(
+                    var_decl.name,
+                    var_decl.initializer,
+                    pattern_type,
+                );
+            }
+
             // TS2488: Check array destructuring for iterability before assigning types
             if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
                 self.check_destructuring_iterability(
@@ -2614,6 +2622,74 @@ impl<'a> CheckerState<'a> {
             break;
         }
         node_idx
+    }
+
+    /// TS2353 guard for object destructuring from object literals with computed keys.
+    ///
+    /// TypeScript reports excess-property errors for computed properties in object
+    /// literal initializers when the binding pattern contains only explicit keys.
+    fn check_destructuring_object_literal_computed_excess_properties(
+        &mut self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+        target_type: TypeId,
+    ) {
+        if initializer_idx.is_none() || target_type == TypeId::ANY || target_type == TypeId::ERROR {
+            return;
+        }
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return;
+        }
+        let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        // Keep this narrow: if the pattern has rest or computed names, leave behavior to
+        // the general relation path.
+        for &element_idx in &pattern.elements.nodes {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            let Some(element) = self.ctx.arena.get_binding_element(element_node) else {
+                continue;
+            };
+            if element.dot_dot_dot_token {
+                return;
+            }
+            if !element.property_name.is_none()
+                && let Some(prop_name_node) = self.ctx.arena.get(element.property_name)
+                && prop_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            {
+                return;
+            }
+        }
+
+        let effective_init = self.skip_parentheses(initializer_idx);
+        let Some(init_node) = self.ctx.arena.get(effective_init) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(init_lit) = self.ctx.arena.get_literal_expr(init_node) else {
+            return;
+        };
+
+        for &elem_idx in &init_lit.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node)
+                && let Some(prop_name_node) = self.ctx.arena.get(prop.name)
+                && prop_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            {
+                self.error_excess_property_at("[computed]", target_type, prop.name);
+            }
+        }
     }
 
     /// Resolve property access using TypeEnvironment (includes lib.d.ts types).
