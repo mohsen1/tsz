@@ -2063,7 +2063,7 @@ impl<'a> CheckerState<'a> {
                                 .or_else(|| elems.last())
                                 .map(|e| e.type_id)
                                 .unwrap_or(TypeId::ANY);
-                            self.ctx.types.array(rest_elem)
+                            self.rest_binding_array_type(rest_elem)
                         } else {
                             continue;
                         };
@@ -2104,7 +2104,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         TypeId::ANY
                     };
-                return self.ctx.types.array(elem_type);
+                return self.rest_binding_array_type(elem_type);
             }
 
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
@@ -2271,6 +2271,18 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             TypeId::ANY
+        }
+    }
+
+    /// Rest bindings from tuple members should produce an array type.
+    /// Variadic tuple members can already carry array types (`...T[]`), so avoid
+    /// wrapping those into nested arrays.
+    fn rest_binding_array_type(&mut self, tuple_member_type: TypeId) -> TypeId {
+        let tuple_member_type = query::unwrap_readonly_deep(self.ctx.types, tuple_member_type);
+        if query::array_element_type(self.ctx.types, tuple_member_type).is_some() {
+            tuple_member_type
+        } else {
+            self.ctx.types.array(tuple_member_type)
         }
     }
 

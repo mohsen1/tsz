@@ -495,7 +495,7 @@ impl<'a> Printer<'a> {
                 if param.dot_dot_dot_token {
                     self.write("...");
                 }
-                self.emit(param.name);
+                self.emit_parameter_name_js(param.name);
                 // Skip type annotations and defaults for JS emit
                 if !param.initializer.is_none() {
                     self.write(" = ");
@@ -537,7 +537,7 @@ impl<'a> Printer<'a> {
             self.write("...");
         }
 
-        self.emit(param.name);
+        self.emit_parameter_name_js(param.name);
 
         if param.question_token {
             self.write("?");
@@ -552,5 +552,38 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.emit_expression(param.initializer);
         }
+    }
+
+    fn emit_parameter_name_js(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return;
+        };
+        let kind = name_node.kind;
+        let is_normal_binding_name = kind == tsz_scanner::SyntaxKind::Identifier as u16
+            || kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+            || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+
+        if is_normal_binding_name {
+            self.emit(name_idx);
+            return;
+        }
+
+        // Recovery path: malformed parameter names like `yield`/`await`
+        // can be parsed as expressions. Preserve original text for JS parity.
+        if let Some(source) = self.source_text {
+            let text = crate::printer::safe_slice::slice(
+                source,
+                name_node.pos as usize,
+                name_node.end as usize,
+            )
+            .trim();
+            if !text.is_empty() {
+                self.write(text);
+                return;
+            }
+        }
+
+        self.emit(name_idx);
     }
 }

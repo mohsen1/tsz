@@ -44,6 +44,67 @@ pub struct IRPrinter<'a> {
 }
 
 impl<'a> IRPrinter<'a> {
+    fn enum_with_matching_namespace_export<'b>(
+        first: &'b IRNode,
+        second: &'b IRNode,
+    ) -> Option<(&'b str, &'b Vec<EnumMember>, &'b str)> {
+        let IRNode::EnumIIFE { name, members } = first else {
+            return None;
+        };
+        let IRNode::NamespaceExport {
+            namespace,
+            name: export_name,
+            value,
+        } = second
+        else {
+            return None;
+        };
+        let IRNode::Identifier(identifier_name) = &**value else {
+            return None;
+        };
+        if export_name == name && identifier_name == name {
+            Some((name.as_str(), members, namespace.as_str()))
+        } else {
+            None
+        }
+    }
+
+    fn emit_namespace_bound_enum_iife(
+        &mut self,
+        enum_name: &str,
+        members: &[EnumMember],
+        namespace: &str,
+    ) {
+        self.write("var ");
+        self.write(enum_name);
+        self.write(";");
+        self.write_line();
+        self.write_indent();
+        self.write("(function (");
+        self.write(enum_name);
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+        for member in members {
+            self.write_indent();
+            self.emit_enum_member(enum_name, member);
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write_indent();
+        self.write("})(");
+        self.write(enum_name);
+        self.write(" = ");
+        self.write(namespace);
+        self.write(".");
+        self.write(enum_name);
+        self.write(" || (");
+        self.write(namespace);
+        self.write(".");
+        self.write(enum_name);
+        self.write(" = {}));");
+    }
+
     fn extract_trailing_comment_from_function(&self, function: &IRNode) -> Option<String> {
         let source_text = self.source_text?;
         let (body_start, body_end) = match function {
@@ -157,20 +218,30 @@ impl<'a> IRPrinter<'a> {
     pub fn emit(&mut self, node: &IRNode) -> &str {
         // For top-level Sequences, add newlines between statements
         if let IRNode::Sequence(nodes) = node {
-            for (i, child) in nodes.iter().enumerate() {
+            let mut i = 0;
+            while i < nodes.len() {
                 if i > 0 {
                     self.write_line();
-                    if Self::should_indent_sequence_child(child) {
+                    if Self::should_indent_sequence_child(&nodes[i]) {
                         self.write_indent();
                     }
                 }
+                if i + 1 < nodes.len()
+                    && let Some((enum_name, members, namespace)) =
+                        Self::enum_with_matching_namespace_export(&nodes[i], &nodes[i + 1])
+                {
+                    self.emit_namespace_bound_enum_iife(enum_name, members, namespace);
+                    i += 2;
+                    continue;
+                }
                 let suppress_for_this_node = i + 1 < nodes.len()
-                    && matches!(child, IRNode::FunctionDecl { .. })
+                    && matches!(&nodes[i], IRNode::FunctionDecl { .. })
                     && matches!(&nodes[i + 1], IRNode::TrailingComment(_));
                 let prev_suppress = self.suppress_function_trailing_extraction;
                 self.suppress_function_trailing_extraction = suppress_for_this_node;
-                self.emit_node(child);
+                self.emit_node(&nodes[i]);
                 self.suppress_function_trailing_extraction = prev_suppress;
+                i += 1;
             }
         } else {
             self.emit_node(node);
@@ -927,6 +998,20 @@ impl<'a> IRPrinter<'a> {
                         i += 1;
                         continue;
                     }
+                    if i + 1 < nodes.len()
+                        && let Some((enum_name, members, namespace)) =
+                            Self::enum_with_matching_namespace_export(&nodes[i], &nodes[i + 1])
+                    {
+                        self.emit_namespace_bound_enum_iife(enum_name, members, namespace);
+                        i += 2;
+                        if i < nodes.len() {
+                            self.write_line();
+                            if Self::should_indent_sequence_child(&nodes[i]) {
+                                self.write_indent();
+                            }
+                        }
+                        continue;
+                    }
 
                     let suppress_for_this_node = i + 1 < nodes.len()
                         && matches!(&nodes[i], IRNode::FunctionDecl { .. })
@@ -1158,6 +1243,7 @@ impl<'a> IRPrinter<'a> {
 
                 // Emit members
                 for member in members {
+                    self.write_indent();
                     self.emit_enum_member(name, member);
                     self.write_line();
                 }

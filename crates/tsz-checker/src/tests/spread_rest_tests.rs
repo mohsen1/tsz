@@ -199,6 +199,47 @@ const [s, n, ...rest] = t;
 }
 
 #[test]
+fn test_discriminated_tuple_rest_destructuring_no_false_ts2345() {
+    let source = r#"
+type Expression = BooleanLogicExpression | 'true' | 'false';
+type BooleanLogicExpression = ['and', ...Expression[]] | ['not', Expression];
+
+function evaluate(expression: Expression): boolean {
+  if (Array.isArray(expression)) {
+    const [operator, ...operands] = expression;
+    switch (operator) {
+      case 'and': {
+        return operands.every((child) => evaluate(child));
+      }
+      case 'not': {
+        return !evaluate(operands[0]);
+      }
+      default: {
+        throw new Error(`${operator} is not a supported operator`);
+      }
+    }
+  } else {
+    return expression === 'true';
+  }
+}
+"#;
+
+    let diagnostics = check_source(source);
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345_count,
+        0,
+        "Expected no TS2345 from discriminated tuple rest destructuring, got {} errors: {:?}",
+        ts2345_count,
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2345)
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_tuple_assignment_destructuring_no_false_ts2322() {
     // Tuple assignment destructuring should not produce false TS2322 errors.
     // tsc checks each element individually, not the whole tuple against an inferred array type.
