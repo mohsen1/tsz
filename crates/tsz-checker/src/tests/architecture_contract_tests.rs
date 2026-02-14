@@ -341,7 +341,7 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
 }
 
 #[test]
-fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
+fn test_checker_sources_forbid_direct_typekey_usage_patterns_and_raw_interning() {
     fn is_rs_source_file(path: &Path) -> bool {
         path.extension().and_then(|ext| ext.to_str()) == Some("rs")
     }
@@ -369,7 +369,7 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
         }
     }
 
-    fn has_forbidden_typekey_pattern(line: &str) -> bool {
+    fn has_forbidden_checker_type_construction_pattern(line: &str) -> bool {
         let trimmed = line.trim_start();
         if trimmed.starts_with("//") {
             return false;
@@ -379,6 +379,7 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
             || line.contains("use ") && line.contains("TypeKey")
             || line.contains("intern(TypeKey::")
             || line.contains("intern(tsz_solver::TypeKey::")
+            || line.contains(".intern(")
     }
 
     let src_dir = Path::new("src");
@@ -397,7 +398,7 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
         for (line_index, line) in source.lines().enumerate() {
-            if has_forbidden_typekey_pattern(line) {
+            if has_forbidden_checker_type_construction_pattern(line) {
                 violations.push(format!("{}:{}", path.display(), line_index + 1));
             }
         }
@@ -405,7 +406,7 @@ fn test_checker_sources_forbid_direct_typekey_usage_patterns() {
 
     assert!(
         violations.is_empty(),
-        "checker source files must not import TypeKey or intern TypeKey directly; violations: {}",
+        "checker source files must not import TypeKey or call raw interner APIs directly; violations: {}",
         violations.join(", ")
     );
 }

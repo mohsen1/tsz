@@ -43,8 +43,7 @@ echo "Checker TypeKey inspection guardrail passed."
 # This enforces Milestone 2 boundary sealing at the script/CI level rather than
 # relying only on crate-local tests.
 TYPEKEY_LEAK_HITS="$(rg -n "(use\\s+tsz_solver::.*TypeKey|intern\\(TypeKey::|intern\\(tsz_solver::TypeKey::)" crates/tsz-checker/src \
-  --glob '!**/tests/**' \
-  --glob '!**/query_boundaries/**' || true)"
+  --glob '!**/tests/**' || true)"
 
 if [[ -n "$TYPEKEY_LEAK_HITS" ]]; then
   echo "Checker boundary guardrail violation: direct TypeKey import/intern usage found:"
@@ -55,3 +54,18 @@ if [[ -n "$TYPEKEY_LEAK_HITS" ]]; then
 fi
 
 echo "Checker TypeKey import/intern guardrail passed."
+
+# Guardrail: checker must construct semantic types through solver constructor APIs,
+# not by calling the raw interner directly.
+RAW_INTERN_HITS="$(rg -n "\\.intern\\(" crates/tsz-checker/src \
+  --glob '!**/tests/**' || true)"
+
+if [[ -n "$RAW_INTERN_HITS" ]]; then
+  echo "Checker boundary guardrail violation: raw interner access found in checker code:"
+  echo "$RAW_INTERN_HITS"
+  echo ""
+  echo "Use solver constructor APIs (types.array/union/intersection/lazy/etc.) instead of .intern(...)."
+  exit 1
+fi
+
+echo "Checker raw interner access guardrail passed."
