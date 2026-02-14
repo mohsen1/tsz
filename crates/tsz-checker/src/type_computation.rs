@@ -142,7 +142,10 @@ impl<'a> CheckerState<'a> {
         // the union is checked against the contextual type.
         let prev_context = self.ctx.contextual_type;
 
-        // Compute branch types with contextual type for inference
+        // Compute branch types with the outer contextual type for inference.
+        // Branch typing may mutate contextual state while recursing, so restore
+        // it explicitly before each branch.
+        self.ctx.contextual_type = prev_context;
         let when_true = self.get_type_of_node(cond.when_true);
 
         self.ctx.contextual_type = prev_context;

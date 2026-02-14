@@ -104,6 +104,15 @@ impl<'a> CheckerState<'a> {
                 return return_with_cleanup!(TypeId::ERROR); // Missing function/method/accessor data - propagate error
             };
 
+        let (function_is_async, function_is_generator) =
+            if let Some(func) = self.ctx.arena.get_function(node) {
+                (func.is_async, func.asterisk_token)
+            } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                (self.has_async_modifier(&method.modifiers), method.asterisk_token)
+            } else {
+                (false, false)
+            };
+
         // Function declarations don't report implicit any for parameters (handled by check_statement)
         let is_function_declaration = node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
         let is_method_or_constructor = matches!(
@@ -747,11 +756,19 @@ impl<'a> CheckerState<'a> {
         // Promise<T>, Array<T>, etc. as Application types. This preserves type identity
         // for await unwrapping and generic type parameter extraction.
         // For inferred return types (no annotation), use the inferred type as-is.
+        let final_return_type = if !has_type_annotation && function_is_generator {
+            // Unannotated generators should remain permissive until full
+            // Generator<Y, R, N>/AsyncGenerator<Y, R, N> inference is implemented.
+            TypeId::ANY
+        } else {
+            annotated_return_type.unwrap_or(return_type)
+        };
+
         let shape = FunctionShape {
             type_params,
             params,
             this_type,
-            return_type: annotated_return_type.unwrap_or(return_type),
+            return_type: final_return_type,
             type_predicate,
             is_constructor: false,
             is_method: false,
