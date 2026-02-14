@@ -24,7 +24,11 @@ impl<'a> Printer<'a> {
 
         self.write("yield");
         if unary.asterisk_token {
-            self.write("*");
+            if self.ctx.flags.in_generator {
+                self.write("*");
+            } else {
+                self.write(" *");
+            }
         }
         if !unary.expression.is_none() {
             self.write(" ");
