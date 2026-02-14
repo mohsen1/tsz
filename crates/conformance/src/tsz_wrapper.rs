@@ -146,8 +146,12 @@ pub fn prepare_test_dir(
     };
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options);
-        if allow_js {
-            if let serde_json::Value::Object(ref mut map) = compiler_options {
+        if let serde_json::Value::Object(ref mut map) = compiler_options {
+            if check_js {
+                // checkJs implies allowJs in tsc test harness behavior, even when
+                // @allowJs:false is present.
+                map.insert("allowJs".to_string(), serde_json::Value::Bool(true));
+            } else if allow_js {
                 map.entry("allowJs")
                     .or_insert(serde_json::Value::Bool(true));
             }
