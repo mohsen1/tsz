@@ -1621,6 +1621,11 @@ impl ParserState {
     }
 
     /// Look ahead to see if ( starts a function type: () => T or (x: T) => U
+    /// Determines if `(` starts a function type like `(x: T) => U`.
+    /// Matches tsc's `isUnambiguouslyStartOfFunctionType` — only returns true
+    /// when the first token(s) after `(` clearly indicate parameter syntax.
+    /// This avoids treating parenthesized types like `(() => T)` as function types
+    /// when followed by `=>` from an enclosing arrow function.
     pub(crate) fn look_ahead_is_function_type(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -1637,55 +1642,97 @@ impl ParserState {
             return is_arrow;
         }
 
-        // Check for parameter-like syntax: identifier or keyword followed by : or )
-        // If we see just a type (like `string`), it could be parenthesized type
-        // Function type params have: `name:` or `modifier name` where modifier is public/private/protected/readonly
-        if self.is_identifier_or_keyword() {
+        // Rest parameter: (...) =>
+        if self.is_token(SyntaxKind::DotDotDotToken) {
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            return true;
+        }
+
+        // Skip parameter modifier keywords (public, private, protected, readonly)
+        // before checking for parameter name. E.g., (public x: T) => U
+        if matches!(
+            self.token(),
+            SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::ReadonlyKeyword
+        ) {
             self.next_token();
-            // If followed by : it's definitely a function type parameter
-            if self.is_token(SyntaxKind::ColonToken) {
+        }
+
+        // Try to skip a parameter start (identifier/keyword or `this`)
+        // and check if it's followed by parameter-like tokens (: , ?)
+        if self.is_identifier_or_keyword() || self.is_token(SyntaxKind::ThisKeyword) {
+            self.next_token();
+            if matches!(
+                self.token(),
+                SyntaxKind::ColonToken | SyntaxKind::CommaToken | SyntaxKind::QuestionToken
+            ) {
                 self.scanner.restore_state(snapshot);
                 self.current_token = current;
                 return true;
             }
-            // If followed by a parameter modifier (public, private, protected, readonly), it's a parameter
-            // But NOT if followed by 'extends' - that's a conditional type!
-            let is_param_modifier = matches!(
-                self.token(),
-                SyntaxKind::PublicKeyword
-                    | SyntaxKind::PrivateKeyword
-                    | SyntaxKind::ProtectedKeyword
-                    | SyntaxKind::ReadonlyKeyword
-            );
-            if is_param_modifier {
-                self.scanner.restore_state(snapshot);
-                self.current_token = current;
-                return true;
+            // Single param followed by ) then => : (x) =>
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                self.next_token();
+                if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current;
+                    return true;
+                }
             }
         }
 
-        // For other cases, skip to matching ) to check for =>
-        // First restore, then scan again
+        // Array/object destructuring patterns as parameters: ([a, b]) => or ({a}) =>
+        if self.is_token(SyntaxKind::OpenBracketToken) || self.is_token(SyntaxKind::OpenBraceToken)
+        {
+            // Skip to matching bracket
+            let open = self.token();
+            let close = if open == SyntaxKind::OpenBracketToken {
+                SyntaxKind::CloseBracketToken
+            } else {
+                SyntaxKind::CloseBraceToken
+            };
+            let mut depth = 1;
+            self.next_token();
+            while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+                if self.token() == open {
+                    depth += 1;
+                } else if self.token() == close {
+                    depth -= 1;
+                }
+                if depth > 0 {
+                    self.next_token();
+                }
+            }
+            if depth == 0 {
+                self.next_token(); // skip closing bracket
+                // After destructuring, check for : , ?
+                if matches!(
+                    self.token(),
+                    SyntaxKind::ColonToken | SyntaxKind::CommaToken | SyntaxKind::QuestionToken
+                ) {
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current;
+                    return true;
+                }
+                // Single destructured param: ([a]) =>
+                if self.is_token(SyntaxKind::CloseParenToken) {
+                    self.next_token();
+                    if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = current;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Not unambiguously a function type — treat as parenthesized type
         self.scanner.restore_state(snapshot);
         self.current_token = current;
-
-        let snapshot2 = self.scanner.save_state();
-        self.next_token(); // Skip (
-
-        let mut depth = 1;
-        while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-            if self.is_token(SyntaxKind::OpenParenToken) {
-                depth += 1;
-            } else if self.is_token(SyntaxKind::CloseParenToken) {
-                depth -= 1;
-            }
-            self.next_token();
-        }
-
-        let is_arrow = self.is_token(SyntaxKind::EqualsGreaterThanToken);
-        self.scanner.restore_state(snapshot2);
-        self.current_token = current;
-        is_arrow
+        false
     }
 
     /// Parse function type: (x: T, y: U) => V
