@@ -28,6 +28,15 @@ fn relative_display(path: &Path, base: &Path) -> String {
         .unwrap_or_else(|_| path.display().to_string())
 }
 
+fn sanitize_artifact_name(path: &str) -> String {
+    path.chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => ch,
+        })
+        .collect()
+}
+
 /// Collects paths of crashed and timed-out tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
@@ -110,6 +119,8 @@ impl Runner {
         let timeout_secs = self.args.timeout;
         let compare_fingerprints = self.args.compare_fingerprints;
         let print_fingerprints = self.args.print_fingerprints;
+        let write_diff_artifacts = self.args.write_diff_artifacts;
+        let diff_artifacts_dir = PathBuf::from(&self.args.diff_artifacts_dir);
         let test_dir: PathBuf = PathBuf::from(&self.args.test_dir);
 
         stream::iter(test_files)
@@ -127,6 +138,8 @@ impl Runner {
                 let test_dir = test_dir.clone();
                 let compare_fingerprints = compare_fingerprints;
                 let print_fingerprints = print_fingerprints;
+                let write_diff_artifacts = write_diff_artifacts;
+                let diff_artifacts_dir = diff_artifacts_dir.clone();
 
                 async move {
                     let _permit = permit.acquire().await.unwrap();
@@ -217,17 +230,48 @@ impl Runner {
                                     }
 
                                     // Record error frequencies
-                                    for code in missing {
-                                        error_freq.record_missing(code);
+                                    for code in &missing {
+                                        error_freq.record_missing(*code);
                                     }
-                                    for code in extra {
-                                        error_freq.record_extra(code);
+                                    for code in &extra {
+                                        error_freq.record_extra(*code);
                                     }
-                                    for fingerprint in missing_fingerprints {
-                                        error_freq.record_missing_fingerprint(fingerprint);
+                                    for fingerprint in &missing_fingerprints {
+                                        error_freq
+                                            .record_missing_fingerprint(fingerprint.clone());
                                     }
-                                    for fingerprint in extra_fingerprints {
-                                        error_freq.record_extra_fingerprint(fingerprint);
+                                    for fingerprint in &extra_fingerprints {
+                                        error_freq.record_extra_fingerprint(fingerprint.clone());
+                                    }
+
+                                    if write_diff_artifacts {
+                                        let artifact_name =
+                                            format!("{}.json", sanitize_artifact_name(&rel_path));
+                                        let artifact_path = diff_artifacts_dir.join(artifact_name);
+                                        if let Some(parent) = artifact_path.parent() {
+                                            let _ = std::fs::create_dir_all(parent);
+                                        }
+                                        let payload = serde_json::json!({
+                                            "test": rel_path,
+                                            "expected_codes": expected,
+                                            "actual_codes": actual,
+                                            "missing_codes": missing,
+                                            "extra_codes": extra,
+                                            "missing_fingerprints": missing_fingerprints
+                                                .iter()
+                                                .map(|f| f.display_key())
+                                                .collect::<Vec<_>>(),
+                                            "extra_fingerprints": extra_fingerprints
+                                                .iter()
+                                                .map(|f| f.display_key())
+                                                .collect::<Vec<_>>(),
+                                            "options": options,
+                                        });
+                                        let _ = std::fs::write(
+                                            &artifact_path,
+                                            serde_json::to_string_pretty(&payload)
+                                                .unwrap_or_else(|_| "{}".to_string()),
+                                        );
                                     }
                                 }
                                 TestResult::Skipped(reason) => {
