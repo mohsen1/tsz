@@ -184,6 +184,29 @@ impl<'a> ES5ClassTransformer<'a> {
         None
     }
 
+    /// Extract trailing comment on the same line as a class method declaration.
+    fn extract_trailing_comment_for_method(&self, body_idx: NodeIndex) -> Option<String> {
+        let source_text = self.source_text?;
+        let body_node = self.arena.get(body_idx)?;
+        let bytes = source_text.as_bytes();
+        let start = body_node.pos as usize;
+        let end = (body_node.end as usize).min(bytes.len());
+        if start >= end {
+            return None;
+        }
+        let mut trailing = None;
+        for i in start..end {
+            if bytes[i] == b'}'
+                && let Some(comment) =
+                    crate::emitter::get_trailing_comment_ranges(source_text, i + 1).first()
+            {
+                trailing =
+                    Some(source_text[comment.pos as usize..comment.end as usize].to_string());
+            }
+        }
+        trailing
+    }
+
     /// Convert an AST statement to IR (avoids ASTRef when possible)
     fn convert_statement(&self, idx: NodeIndex) -> IRNode {
         let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
@@ -1181,6 +1204,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // Extract leading JSDoc comment
                 let leading_comment = self.extract_leading_comment(member_node);
+                let trailing_comment = self.extract_trailing_comment_for_method(method_data.body);
 
                 // ClassName.prototype.methodName = function () { body };
                 body.push(IRNode::PrototypeMethod {
@@ -1194,6 +1218,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         body_source_range,
                     }),
                     leading_comment,
+                    trailing_comment,
                 });
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
@@ -1390,6 +1415,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                 // Extract leading JSDoc comment
                 let leading_comment = self.extract_leading_comment(member_node);
+                let trailing_comment = self.extract_trailing_comment_for_method(method_data.body);
 
                 // ClassName.methodName = function () { body };
                 body.push(IRNode::StaticMethod {
@@ -1403,6 +1429,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         body_source_range,
                     }),
                     leading_comment,
+                    trailing_comment,
                 });
             } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                 let Some(prop_data) = self.arena.get_property_decl(member_node) else {

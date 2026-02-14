@@ -40,6 +40,34 @@ pub struct IRPrinter<'a> {
 }
 
 impl<'a> IRPrinter<'a> {
+    fn extract_trailing_comment_from_function(&self, function: &IRNode) -> Option<String> {
+        let source_text = self.source_text?;
+        let IRNode::FunctionExpr {
+            body_source_range: Some((body_start, body_end)),
+            ..
+        } = function
+        else {
+            return None;
+        };
+        let bytes = source_text.as_bytes();
+        let start = *body_start as usize;
+        let end = (*body_end as usize).min(bytes.len());
+        if start >= end {
+            return None;
+        }
+        let mut trailing = None;
+        for i in start..end {
+            if bytes[i] == b'}'
+                && let Some(comment) =
+                    crate::emitter::get_trailing_comment_ranges(source_text, i + 1).first()
+            {
+                trailing =
+                    Some(source_text[comment.pos as usize..comment.end as usize].to_string());
+            }
+        }
+        trailing
+    }
+
     fn should_indent_sequence_child(node: &IRNode) -> bool {
         match node {
             IRNode::NamespaceIIFE {
@@ -591,6 +619,7 @@ impl<'a> IRPrinter<'a> {
                 method_name,
                 function,
                 leading_comment,
+                trailing_comment,
             } => {
                 // Emit leading JSDoc comment if present
                 if let Some(comment) = leading_comment {
@@ -604,12 +633,20 @@ impl<'a> IRPrinter<'a> {
                 self.write(" = ");
                 self.emit_node(function);
                 self.write(";");
+                if let Some(comment) = trailing_comment
+                    .clone()
+                    .or_else(|| self.extract_trailing_comment_from_function(function))
+                {
+                    self.write(" ");
+                    self.write(&comment);
+                }
             }
             IRNode::StaticMethod {
                 class_name,
                 method_name,
                 function,
                 leading_comment,
+                trailing_comment,
             } => {
                 // Emit leading JSDoc comment if present
                 if let Some(comment) = leading_comment {
@@ -622,6 +659,13 @@ impl<'a> IRPrinter<'a> {
                 self.write(" = ");
                 self.emit_node(function);
                 self.write(";");
+                if let Some(comment) = trailing_comment
+                    .clone()
+                    .or_else(|| self.extract_trailing_comment_from_function(function))
+                {
+                    self.write(" ");
+                    self.write(&comment);
+                }
             }
             IRNode::DefineProperty {
                 target,

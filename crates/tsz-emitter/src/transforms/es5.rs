@@ -456,6 +456,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     method_name,
                     function: Box::new(func),
                     leading_comment: None,
+                    trailing_comment: None,
                 });
             }
         }
@@ -500,6 +501,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     method_name,
                     function: Box::new(func),
                     leading_comment: None,
+                    trailing_comment: None,
                 });
             } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                 let Some(prop_data) = self.arena.get_property_decl(member_node) else {

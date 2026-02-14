@@ -12,7 +12,8 @@ use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    NarrowingContext, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget, TypeofKind,
+    NarrowingContext, ParamInfo, SymbolRef, TypeGuard, TypeId, TypeKey, TypePredicate,
+    TypePredicateTarget, TypeofKind,
     type_queries::{
         ConstructorInstanceKind, LiteralValueKind, NonObjectKind, PredicateSignatureKind,
         PropertyPresenceKind, TypeParameterConstraintKind, UnionMembersKind,
@@ -2238,10 +2239,27 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let arg = call.arguments.as_ref()?.nodes.first().copied()?;
-        let node_types = self.node_types?;
-        let callee_type = *node_types.get(&call.expression.0)?;
-        let signature = self.predicate_signature_for_type(callee_type)?;
-        let type_id = signature.predicate.type_id?;
+        let callee_idx = self.skip_parens_and_assertions(call.expression);
+        let mut type_id = None;
+
+        if let Some(callee_type) = self
+            .node_types
+            .and_then(|types| types.get(&callee_idx.0).copied())
+        {
+            type_id = self
+                .predicate_signature_for_type(callee_type)
+                .and_then(|signature| signature.predicate.type_id);
+        }
+
+        if type_id.is_none()
+            && let Some(sym_id) = self.binder.get_global_type("ArrayBufferView")
+        {
+            if let Some(def_id) = self.interner.symbol_to_def_id(SymbolRef(sym_id.0)) {
+                type_id = Some(self.interner.intern(TypeKey::Lazy(def_id)));
+            }
+        }
+
+        let type_id = type_id?;
 
         Some((
             TypeGuard::Predicate {
