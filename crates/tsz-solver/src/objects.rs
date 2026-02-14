@@ -172,10 +172,112 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             Some(TypeData::Intrinsic(IntrinsicKind::Any)) => {
                 self.found_any = true;
             }
+            // Type parameter: collect properties from its constraint
+            Some(TypeData::TypeParameter(info)) => {
+                if let Some(constraint) = info.constraint {
+                    self.collect(constraint);
+                }
+            }
+            // Union: collect common properties (present in ALL members)
+            Some(TypeData::Union(members_id)) => {
+                self.collect_union_common(members_id);
+            }
             // Never in intersection makes the whole thing Never
             // This is handled by the caller, not here
             _ => {
                 // Not an object or intersection - ignore (call signatures, primitives, etc.)
+            }
+        }
+    }
+
+    /// Collect common properties from all union members.
+    /// Only properties present in ALL members are included.
+    /// Property types become the union of the individual types.
+    fn collect_union_common(&mut self, members_id: TypeListId) {
+        let member_list = self.interner.type_list(members_id);
+        if member_list.is_empty() {
+            return;
+        }
+
+        // Collect properties from each union member using sub-collectors
+        let mut member_props: Vec<PropertyCollectionResult> = Vec::new();
+        for &member in member_list.iter() {
+            let result = collect_properties(member, self.interner, self.resolver);
+            member_props.push(result);
+        }
+
+        // If any member is Any, the whole union is Any
+        if member_props
+            .iter()
+            .any(|r| matches!(r, PropertyCollectionResult::Any))
+        {
+            self.found_any = true;
+            return;
+        }
+
+        // Collect property names present in ALL members
+        // Start with first member's property names, intersect with rest
+        let first = match &member_props[0] {
+            PropertyCollectionResult::Properties { properties, .. } => properties,
+            _ => return, // First member has no properties
+        };
+
+        // For each property in the first member, check if it's in all others
+        for prop in first {
+            let mut present_in_all = true;
+            let mut type_ids = vec![prop.type_id];
+            let mut all_optional = prop.optional;
+            let mut any_readonly = prop.readonly;
+
+            for member_result in member_props.iter().skip(1) {
+                match member_result {
+                    PropertyCollectionResult::Properties { properties, .. } => {
+                        if let Some(other_prop) = properties.iter().find(|p| p.name == prop.name) {
+                            type_ids.push(other_prop.type_id);
+                            all_optional = all_optional && other_prop.optional;
+                            any_readonly = any_readonly || other_prop.readonly;
+                        } else {
+                            present_in_all = false;
+                            break;
+                        }
+                    }
+                    _ => {
+                        present_in_all = false;
+                        break;
+                    }
+                }
+            }
+
+            if present_in_all {
+                // Create union type for the property
+                let union_type = if type_ids.len() == 1 {
+                    type_ids[0]
+                } else {
+                    self.interner.union(type_ids)
+                };
+
+                // Merge into our properties
+                if let Some(&idx) = self.prop_index.get(&prop.name) {
+                    let existing = &mut self.properties[idx];
+                    existing.type_id = self
+                        .interner
+                        .intersect_types_raw2(existing.type_id, union_type);
+                    existing.optional = existing.optional && all_optional;
+                    existing.readonly = existing.readonly || any_readonly;
+                } else {
+                    let new_idx = self.properties.len();
+                    self.prop_index.insert(prop.name, new_idx);
+                    self.properties.push(PropertyInfo {
+                        name: prop.name,
+                        type_id: union_type,
+                        write_type: union_type,
+                        optional: all_optional,
+                        readonly: any_readonly,
+                        visibility: prop.visibility,
+                        is_method: prop.is_method,
+                        parent_id: prop.parent_id,
+                    });
+                }
             }
         }
     }
