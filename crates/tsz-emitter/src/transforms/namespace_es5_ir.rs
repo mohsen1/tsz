@@ -790,6 +790,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 self.transform_enum_in_namespace(ns_name, member_idx)
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.transform_import_equals_in_namespace(ns_name, member_idx)
+            }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => None,
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => None,
             _ => Some(IRNode::ASTRef(member_idx)),
@@ -820,8 +823,51 @@ impl<'a> NamespaceES5Transformer<'a> {
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.transform_nested_namespace_exported(ns_name, decl_idx)
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.transform_import_equals_exported(ns_name, decl_idx)
+            }
             _ => None,
         }
+    }
+
+    fn transform_import_equals_in_namespace(
+        &self,
+        ns_name: &str,
+        import_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        let import = self.arena.get_import_decl_at(import_idx)?;
+        let alias = get_identifier_text(self.arena, import.import_clause)?;
+        let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
+        let is_exported = has_export_modifier(self.arena, &import.modifiers);
+
+        if is_exported {
+            Some(IRNode::NamespaceExport {
+                namespace: ns_name.to_string(),
+                name: alias,
+                value: Box::new(target_expr),
+            })
+        } else {
+            Some(IRNode::VarDecl {
+                name: alias,
+                initializer: Some(Box::new(target_expr)),
+            })
+        }
+    }
+
+    fn transform_import_equals_exported(
+        &self,
+        ns_name: &str,
+        import_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        let import = self.arena.get_import_decl_at(import_idx)?;
+        let alias = get_identifier_text(self.arena, import.import_clause)?;
+        let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
+
+        Some(IRNode::NamespaceExport {
+            namespace: ns_name.to_string(),
+            name: alias,
+            value: Box::new(target_expr),
+        })
     }
 
     /// Transform a function in namespace

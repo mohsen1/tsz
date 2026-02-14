@@ -42,9 +42,12 @@ interface TestCase {
   baselineFile: string;
   testPath: string | null;
   sourceFileName: string | null;
+  sourceFiles: Array<{ name: string; content: string }>;
   source: string;
   expectedJs: string | null;
+  expectedJsFileName: string | null;
   expectedDts: string | null;
+  expectedDtsFileName: string | null;
   target: number;
   module: number;
   alwaysStrict: boolean;
@@ -104,8 +107,7 @@ function hashString(str: string): string {
 }
 
 function getCacheKey(
-  source: string,
-  sourceFileName: string | null,
+  sourceKey: string,
   target: number,
   module: number,
   alwaysStrict: boolean,
@@ -124,7 +126,7 @@ function getCacheKey(
       engineSalt = tszBin;
     }
   }
-  return hashString(`${source}:${sourceFileName ?? ''}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${downlevelIteration}:${noEmitHelpers}:${engineSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${downlevelIteration}:${noEmitHelpers}:${engineSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -143,6 +145,10 @@ function loadCache(): void {
       cache = new Map();
     }
   }
+}
+
+function buildSourceKey(sourceFiles: Array<{ name: string; content: string }>): string {
+  return sourceFiles.map(f => `${f.name}\n${f.content}`).join('\n////\n');
 }
 
 function saveCache(): void {
@@ -351,9 +357,12 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       baselineFile,
       testPath: baseline.testPath,
       sourceFileName: baseline.sourceFileName,
+      sourceFiles: baseline.sourceFiles,
       source: baseline.source,
       expectedJs: baseline.js,
+      expectedJsFileName: baseline.jsFileName,
       expectedDts: baseline.dts,
+      expectedDtsFileName: baseline.dtsFileName,
       target,
       module,
       alwaysStrict,
@@ -384,9 +393,9 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
   try {
     loadCache();
     const emitDeclarations = !config.jsOnly && testCase.expectedDts !== null;
+    const sourceKey = buildSourceKey(testCase.sourceFiles);
     const cacheKey = getCacheKey(
-      testCase.source,
-      testCase.sourceFileName,
+      sourceKey,
       testCase.target,
       testCase.module,
       testCase.alwaysStrict,
@@ -399,7 +408,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
     let tszDts: string | null = null;
 
     const cached = cache.get(cacheKey);
-    const sourceHash = hashString(testCase.source);
+    const sourceHash = hashString(sourceKey);
 
     if (cached && cached.hash === sourceHash) {
       tszJs = cached.jsOutput;
@@ -412,6 +421,9 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         sourceMap: testCase.sourceMap,
         downlevelIteration: testCase.downlevelIteration,
         noEmitHelpers: testCase.noEmitHelpers,
+        sourceFiles: testCase.sourceFiles,
+        expectedJsFileName: testCase.expectedJsFileName ?? undefined,
+        expectedDtsFileName: testCase.expectedDtsFileName ?? undefined,
       });
       tszJs = transpileResult.js;
       tszDts = transpileResult.dts || null;

@@ -17,11 +17,11 @@ use tsz::binder::BinderState;
 use tsz::binder::{SymbolId, SymbolTable, symbol_flags};
 use tsz::checker::TypeCache;
 use tsz::checker::context::LibContext;
-use tsz::checker::state::CheckerState;
-use tsz_checker::diagnostics::{
+use tsz::checker::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
 };
+use tsz::checker::state::CheckerState;
 use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
@@ -243,41 +243,6 @@ impl CompilationCache {
         }
 
         affected
-    }
-
-    #[cfg(test)]
-    pub(crate) fn invalidate_paths_with_dependents<I>(&mut self, paths: I)
-    where
-        I: IntoIterator<Item = PathBuf>,
-    {
-        let changed: FxHashSet<PathBuf> = paths.into_iter().collect();
-        let affected = self.collect_dependents(changed.into_iter());
-        self.invalidate_paths(affected.into_iter());
-    }
-
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.type_caches.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn bind_len(&self) -> usize {
-        self.bind_cache.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn diagnostics_len(&self) -> usize {
-        self.diagnostics.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn symbol_cache_len(&self, path: &Path) -> Option<usize> {
-        self.type_caches.get(path).map(|cache| cache.symbol_types.len())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn node_cache_len(&self, path: &Path) -> Option<usize> {
-        self.type_caches.get(path).map(|cache| cache.node_types.len())
     }
 }
 
@@ -1484,29 +1449,6 @@ fn has_no_default_lib_directive(source: &str) -> bool {
         if let Some(true) = parse_reference_no_default_lib_value(trimmed) {
             return true;
         }
-    }
-    false
-}
-
-pub(crate) fn has_no_types_and_symbols_directive(source: &str) -> bool {
-    for (i, line) in source.lines().enumerate() {
-        if i >= 32 {
-            break;
-        }
-        let trimmed = line.trim();
-        if !trimmed.starts_with("//") {
-            continue;
-        }
-        let lower = trimmed.to_ascii_lowercase();
-        let Some(idx) = lower.find("@notypesandsymbols:") else {
-            continue;
-        };
-        let mut value = trimmed[idx + "@noTypesAndSymbols:".len()..].trim();
-        if let Some((first, _)) = value.split_once(',') {
-            value = first.trim();
-        }
-        value = value.trim_end_matches(';').trim();
-        return value.eq_ignore_ascii_case("true");
     }
     false
 }

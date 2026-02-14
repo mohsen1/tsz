@@ -26,10 +26,16 @@ export interface BaselineContent {
   source: string | null;
   /** Source file name */
   sourceFileName: string | null;
+  /** All source files in this baseline (in declaration order) */
+  sourceFiles: Array<{ name: string; content: string }>;
   /** Expected JavaScript output */
   js: string | null;
+  /** Expected JavaScript output file name */
+  jsFileName: string | null;
   /** Expected declaration output */
   dts: string | null;
+  /** Expected declaration output file name */
+  dtsFileName: string | null;
   /** All files in the baseline */
   files: Map<string, string>;
 }
@@ -42,8 +48,11 @@ export function parseBaseline(content: string): BaselineContent {
     testPath: null,
     source: null,
     sourceFileName: null,
+    sourceFiles: [],
     js: null,
+    jsFileName: null,
     dts: null,
+    dtsFileName: null,
     files: new Map(),
   };
 
@@ -83,6 +92,7 @@ export function parseBaseline(content: string): BaselineContent {
     if (name.startsWith('tests/cases/')) {
       result.testPath = name;
     } else if (isSourceLike(name)) {
+      result.sourceFiles.push({ name, content: fileContent });
       // Source TypeScript file
       if (!result.source) {
         result.source = fileContent;
@@ -92,13 +102,25 @@ export function parseBaseline(content: string): BaselineContent {
       // JavaScript output
       if (!result.js) {
         result.js = fileContent;
+        result.jsFileName = name;
       }
     } else if (name.endsWith('.d.ts')) {
       // Declaration output
       if (!result.dts) {
         result.dts = fileContent;
+        result.dtsFileName = name;
       }
     }
+  }
+
+  // Prefer bundled outputs when present in multifile baselines.
+  if (result.files.has('out.js')) {
+    result.js = result.files.get('out.js') ?? result.js;
+    result.jsFileName = 'out.js';
+  }
+  if (result.files.has('out.d.ts')) {
+    result.dts = result.files.get('out.d.ts') ?? result.dts;
+    result.dtsFileName = 'out.d.ts';
   }
 
   // Refine JS/DTS selection by preferring files that match the source basename.
@@ -112,23 +134,27 @@ export function parseBaseline(content: string): BaselineContent {
     const preferredJsName = `${sourceBase}.${preferredJsExt}`;
     const preferredDtsName = `${sourceBase}.d.ts`;
 
-    if (result.files.has(preferredJsName)) {
+    if (!result.js && result.files.has(preferredJsName)) {
       result.js = result.files.get(preferredJsName) ?? result.js;
+      result.jsFileName = preferredJsName;
     } else if (!result.js) {
       for (const [name, fileContent] of result.files) {
         if (isJsLikeOutput(name)) {
           result.js = fileContent;
+          result.jsFileName = name;
           break;
         }
       }
     }
 
-    if (result.files.has(preferredDtsName)) {
+    if (!result.dts && result.files.has(preferredDtsName)) {
       result.dts = result.files.get(preferredDtsName) ?? result.dts;
+      result.dtsFileName = preferredDtsName;
     } else if (!result.dts) {
       for (const [name, fileContent] of result.files) {
         if (name.endsWith('.d.ts')) {
           result.dts = fileContent;
+          result.dtsFileName = name;
           break;
         }
       }

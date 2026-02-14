@@ -3,9 +3,7 @@ use rustc_hash::FxHashMap;
 use std::path::Path;
 
 use crate::locale;
-use tsz_checker::diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation,
-};
+use tsz::checker::diagnostics::{Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation};
 use tsz::lsp::position::LineMap;
 
 pub struct Reporter {
