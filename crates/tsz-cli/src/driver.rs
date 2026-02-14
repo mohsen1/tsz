@@ -138,12 +138,16 @@ impl CompilationCache {
 
     #[cfg(test)]
     pub(crate) fn symbol_cache_len(&self, path: &Path) -> Option<usize> {
-        self.type_caches.get(path).map(|cache| cache.symbol_types.len())
+        self.type_caches
+            .get(path)
+            .map(|cache| cache.symbol_types.len())
     }
 
     #[cfg(test)]
     pub(crate) fn node_cache_len(&self, path: &Path) -> Option<usize> {
-        self.type_caches.get(path).map(|cache| cache.node_types.len())
+        self.type_caches
+            .get(path)
+            .map(|cache| cache.node_types.len())
     }
 
     #[cfg(test)]
@@ -983,7 +987,7 @@ fn compile_inner(
                 existing.extend(forced.iter().cloned());
             }
             None => {
-                dirty_paths = Some(forced.iter().cloned().collect());
+                dirty_paths = Some(forced.clone());
             }
         }
     }

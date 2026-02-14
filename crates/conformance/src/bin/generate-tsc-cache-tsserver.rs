@@ -590,11 +590,17 @@ fn process_test_file(
                     return Ok(None);
                 }
 
-                (content, parsed.directives.filenames, parsed.directives.options)
+                (
+                    content,
+                    parsed.directives.filenames,
+                    parsed.directives.options,
+                )
             }
-            tsz_conformance::text_decode::DecodedSourceText::Binary(bytes) => {
-                (String::from_utf8_lossy(&bytes).into_owned(), Vec::new(), HashMap::new())
-            }
+            tsz_conformance::text_decode::DecodedSourceText::Binary(bytes) => (
+                String::from_utf8_lossy(&bytes).into_owned(),
+                Vec::new(),
+                HashMap::new(),
+            ),
         };
 
     // Get file metadata

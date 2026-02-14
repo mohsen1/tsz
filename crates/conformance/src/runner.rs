@@ -518,7 +518,11 @@ impl Runner {
                         let variant_clone = variant.clone();
 
                         let prepared = tokio::task::spawn_blocking(move || {
-                            tsz_wrapper::prepare_test_dir(&content_clone, &filenames, &variant_clone)
+                            tsz_wrapper::prepare_test_dir(
+                                &content_clone,
+                                &filenames,
+                                &variant_clone,
+                            )
                         })
                         .await??;
 
@@ -549,8 +553,11 @@ impl Runner {
                             child.wait_with_output().await?
                         };
 
-                        let compile_result =
-                            tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), variant);
+                        let compile_result = tsz_wrapper::parse_tsz_output(
+                            &output,
+                            prepared.temp_dir.path(),
+                            variant,
+                        );
                         if compile_result.crashed {
                             return Ok(TestResult::Crashed);
                         }
@@ -759,11 +766,8 @@ impl Runner {
                         child.wait_with_output().await?
                     };
 
-                    let compile_result = tsz_wrapper::parse_tsz_output(
-                        &output,
-                        prepared.temp_dir.path(),
-                        options,
-                    );
+                    let compile_result =
+                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options);
                     if compile_result.crashed {
                         return Ok(TestResult::Crashed);
                     }
@@ -783,7 +787,8 @@ impl Runner {
                             .iter()
                             .cloned()
                             .collect();
-                    let use_fingerprint_compare = compare_fingerprints && !tsc_fingerprints.is_empty();
+                    let use_fingerprint_compare =
+                        compare_fingerprints && !tsc_fingerprints.is_empty();
                     let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
                         if use_fingerprint_compare {
                             tsc_fingerprints
@@ -824,8 +829,7 @@ impl Runner {
                     if missing.is_empty()
                         && extra.is_empty()
                         && (!use_fingerprint_compare
-                            || (missing_fingerprints.is_empty()
-                                && extra_fingerprints.is_empty()))
+                            || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
                     {
                         Ok(TestResult::Pass)
                     } else {
