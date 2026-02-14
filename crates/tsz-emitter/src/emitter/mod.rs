@@ -2272,8 +2272,21 @@ impl<'a> Printer<'a> {
         // We find each statement's "actual token start" by scanning forward past
         // trivia, then emit all comments before that position.
         let mut last_erased_stmt_end: Option<u32> = None;
+        let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                if self.ctx.is_commonjs()
+                    && stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    && self
+                        .arena
+                        .get_export_assignment(stmt_node)
+                        .is_some_and(|ea| ea.is_export_equals)
+                {
+                    deferred_commonjs_export_equals.push(stmt_idx);
+                    last_erased_stmt_end = None;
+                    continue;
+                }
+
                 // For erased declarations (interface, type alias) in JS emit mode,
                 // skip their leading comments entirely - they should not appear in output.
                 let is_erased = !self.ctx.flags.in_declaration_emit
@@ -2362,6 +2375,16 @@ impl<'a> Printer<'a> {
             // have positions that are BEFORE the next top-level statement's actual
             // start, so they won't be emitted at the wrong level. They'll be
             // naturally consumed when we encounter the statement that contains them.
+        }
+
+        // TypeScript emits CommonJS `export =` assignments after declaration output,
+        // even when they appear earlier in source.
+        for stmt_idx in deferred_commonjs_export_equals {
+            let before_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+                self.write_line();
+            }
         }
 
         // Emit remaining trailing comments at the end of file
