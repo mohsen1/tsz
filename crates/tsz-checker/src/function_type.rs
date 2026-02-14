@@ -15,11 +15,12 @@
 
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use crate::types::diagnostics::format_message;
+use rustc_hash::FxHashMap;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ContextualTypeContext, TypeId, TypeParamInfo};
+use tsz_solver::{ContextualTypeContext, TypeId, TypeKey, TypeParamInfo};
 
 // =============================================================================
 // Function Type Resolution
@@ -212,6 +213,35 @@ impl<'a> CheckerState<'a> {
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
         let func_jsdoc = self.get_jsdoc_for_function(idx);
+        let mut jsdoc_type_param_types: FxHashMap<String, TypeId> = FxHashMap::default();
+
+        // In JS/checkJs, support minimal generic JSDoc function typing:
+        //   @template T
+        //   @returns {T}
+        // This enables return assignability checks for expression-bodied arrows.
+        if self.is_js_file() && type_params.is_empty() && let Some(ref jsdoc) = func_jsdoc {
+            let template_names = Self::jsdoc_template_type_params(jsdoc);
+            if !template_names.is_empty() {
+                let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
+                for name in template_names {
+                    let atom = self.ctx.types.intern_string(&name);
+                    let info = TypeParamInfo {
+                        name: atom,
+                        constraint: None,
+                        default: None,
+                        is_const: false,
+                    };
+                    let ty = self.ctx.types.intern(TypeKey::TypeParameter(info.clone()));
+                    jsdoc_type_param_types.insert(name, ty);
+                    jsdoc_type_params.push(info);
+                }
+                type_params = jsdoc_type_params;
+            }
+        }
+        let jsdoc_return_context = func_jsdoc
+            .as_ref()
+            .and_then(|j| Self::jsdoc_returns_type_name(j))
+            .and_then(|name| jsdoc_type_param_types.get(&name).copied());
 
         let mut contextual_index = 0;
         for &param_idx in parameters.nodes.iter() {
@@ -429,13 +459,13 @@ impl<'a> CheckerState<'a> {
 
             let mut has_contextual_return = false;
             if !has_type_annotation {
-                let return_context = ctx_helper
-                    .as_ref()
-                    .and_then(|helper| helper.get_return_type());
+                let return_context = jsdoc_return_context
+                    .or_else(|| ctx_helper.as_ref().and_then(|helper| helper.get_return_type()));
                 // TS7010/TS7011: Only count as contextual return if it's not UNKNOWN
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
-                return_type = self.infer_return_type_from_body(body, return_context);
+                let inferred = self.infer_return_type_from_body(body, return_context);
+                return_type = jsdoc_return_context.unwrap_or(inferred);
             }
 
             // TS7010/TS7011 (implicit any return) is emitted for functions without
@@ -681,6 +711,13 @@ impl<'a> CheckerState<'a> {
             };
 
             self.push_return_type(body_return_type);
+            if let Some(jsdoc_expected_return) = jsdoc_return_context
+                && let Some(body_node) = self.ctx.arena.get(body)
+                && body_node.kind != syntax_kind_ext::BLOCK
+            {
+                let actual_return = self.get_type_of_node(body);
+                self.check_assignable_or_report(actual_return, jsdoc_expected_return, body);
+            }
             // Skip body statement checking for function declarations.
             // Function declarations are checked via check_function_declaration (in
             // state_checking_members.rs) which correctly maintains the full type
