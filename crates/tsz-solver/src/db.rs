@@ -3,14 +3,14 @@
 //! This trait isolates solver logic from concrete storage so we can
 //! swap in a query system (e.g., Salsa) without touching core logic.
 
+use crate::ObjectLiteralBuilder;
 use crate::def::DefId;
 use crate::element_access::{ElementAccessEvaluator, ElementAccessResult};
-use crate::ObjectLiteralBuilder;
 use crate::intern::TypeInterner;
 use crate::narrowing;
-use crate::type_factory::TypeFactory;
 use crate::operations_property::PropertyAccessResult;
 use crate::subtype::TypeResolver;
+use crate::type_factory::TypeFactory;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
@@ -943,10 +943,7 @@ impl<'a> QueryCache<'a> {
         }
     }
 
-    fn check_element_access_cache(
-        &self,
-        key: ElementAccessTypeCacheKey,
-    ) -> Option<TypeId> {
+    fn check_element_access_cache(&self, key: ElementAccessTypeCacheKey) -> Option<TypeId> {
         match self.element_access_cache.read() {
             Ok(cache) => cache.get(&key).copied(),
             Err(e) => e.into_inner().get(&key).copied(),
@@ -964,10 +961,7 @@ impl<'a> QueryCache<'a> {
         }
     }
 
-    fn check_object_spread_properties_cache(
-        &self,
-        key: TypeId,
-    ) -> Option<Vec<PropertyInfo>> {
+    fn check_object_spread_properties_cache(&self, key: TypeId) -> Option<Vec<PropertyInfo>> {
         match self.object_spread_properties_cache.read() {
             Ok(cache) => cache.get(&key).cloned(),
             Err(e) => e.into_inner().get(&key).cloned(),
@@ -990,7 +984,8 @@ impl<'a> QueryCache<'a> {
         spread_type: TypeId,
         visited: &mut FxHashSet<TypeId>,
     ) -> Vec<PropertyInfo> {
-        let normalized = self.evaluate_type_with_options(spread_type, self.no_unchecked_indexed_access());
+        let normalized =
+            self.evaluate_type_with_options(spread_type, self.no_unchecked_indexed_access());
 
         if !visited.insert(normalized) {
             return Vec::new();
@@ -1560,7 +1555,12 @@ impl QueryDatabase for QueryCache<'_> {
         index_type: TypeId,
         literal_index: Option<usize>,
     ) -> TypeId {
-        let key = (object_type, index_type, literal_index.map(|idx| idx as u32), self.no_unchecked_indexed_access());
+        let key = (
+            object_type,
+            index_type,
+            literal_index.map(|idx| idx as u32),
+            self.no_unchecked_indexed_access(),
+        );
         if let Some(result) = self.check_element_access_cache(key) {
             return result;
         }
