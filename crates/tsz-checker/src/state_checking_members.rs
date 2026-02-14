@@ -13,6 +13,47 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
 impl<'a> CheckerState<'a> {
+    fn property_assigned_in_enclosing_class_constructor(
+        &mut self,
+        prop_name: NodeIndex,
+    ) -> bool {
+        let Some(key) = self.property_key_from_name(prop_name) else {
+            return false;
+        };
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+
+        let class_idx = class_info.class_idx;
+        let member_nodes = class_info.member_nodes.clone();
+        let requires_super = self
+            .ctx
+            .arena
+            .get(class_idx)
+            .and_then(|n| self.ctx.arena.get_class(n))
+            .is_some_and(|class| self.class_has_base(class));
+
+        let mut tracked = rustc_hash::FxHashSet::default();
+        tracked.insert(key.clone());
+
+        member_nodes.into_iter().any(|member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                return false;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                return false;
+            };
+            if ctor.body.is_none() {
+                return false;
+            }
+            self.analyze_constructor_assignments(ctor.body, &tracked, requires_super)
+                .contains(&key)
+        })
+    }
+
     fn enclosing_class_constructor_param_names(&self) -> rustc_hash::FxHashSet<String> {
         let mut names = rustc_hash::FxHashSet::default();
 
@@ -2879,6 +2920,7 @@ impl<'a> CheckerState<'a> {
             && prop.type_annotation.is_none()
             && prop.initializer.is_none()
             && !is_private_in_ambient
+            && !self.property_assigned_in_enclosing_class_constructor(prop.name)
             && let Some(member_name) = self.get_property_name(prop.name)
         {
             // TS class field inference: suppress TS7008 when the property is definitely
