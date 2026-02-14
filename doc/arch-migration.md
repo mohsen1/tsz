@@ -538,5 +538,8 @@ If a change computes `WHERE` to report or which AST node triggered it, it belong
    1. `scripts/check-checker-boundaries.sh`,
    2. pre-commit integration (`scripts/githooks/pre-commit`),
    3. CI lint integration (`.github/workflows/ci.yml`).
-3. Checker direct `lookup()` usage outside query boundaries/tests is now zero by guardrail.
-4. Baseline parity slice (`offset=0`, `max=500`) re-verified stable after refactors.
+3. Guardrail tightened:
+   1. direct checker `lookup()` blocked outside query boundaries/tests,
+   2. direct checker `TypeKey` pattern matching blocked outside query boundaries/tests.
+4. Checker direct `lookup()` usage outside query boundaries/tests is now zero by guardrail.
+5. Baseline parity slice (`offset=0`, `max=500`) re-verified stable after refactors.
