@@ -2793,6 +2793,46 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_function_subtype(&s_fn, &t_fn);
         }
 
+        // Compatibility bridge: function-like values are assignable to interfaces
+        // that only require Function members like `call`/`apply`.
+        // This aligns with tsc behavior for:
+        //   interface Callable { call(blah: any): any }
+        //   const x: Callable = () => {}
+        let source_function_like = function_shape_id(self.interner, source).is_some()
+            || callable_shape_id(self.interner, source).is_some_and(|sid| {
+                let shape = self.interner.callable_shape(sid);
+                !shape.call_signatures.is_empty()
+            })
+            || source == TypeId::FUNCTION;
+        if source_function_like {
+            if let Some(t_callable_id) = callable_shape_id(self.interner, target) {
+                let t_shape = self.interner.callable_shape(t_callable_id);
+                if t_shape.call_signatures.is_empty() && t_shape.construct_signatures.is_empty() {
+                    let required_props: Vec<_> =
+                        t_shape.properties.iter().filter(|p| !p.optional).collect();
+                    if required_props.len() == 1 {
+                        let name = self.interner.resolve_atom(required_props[0].name);
+                        if name == "call" || name == "apply" {
+                            return SubtypeResult::True;
+                        }
+                    }
+                }
+            }
+            if let Some(t_shape_id) = object_shape_id(self.interner, target)
+                .or_else(|| object_with_index_shape_id(self.interner, target))
+            {
+                let t_shape = self.interner.object_shape(t_shape_id);
+                let required_props: Vec<_> =
+                    t_shape.properties.iter().filter(|p| !p.optional).collect();
+                if required_props.len() == 1 {
+                    let name = self.interner.resolve_atom(required_props[0].name);
+                    if name == "call" || name == "apply" {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+        }
+
         if let (Some(s_callable_id), Some(t_callable_id)) = (
             callable_shape_id(self.interner, source),
             callable_shape_id(self.interner, target),

@@ -453,13 +453,13 @@ impl<'a> TypeFormatter<'a> {
                 .take(3)
                 .map(|p| self.format_property(p))
                 .collect();
-            return format!("{{ {}; ... }}", first_three.join("; "));
+            return format!("{{ {}; ...; }}", first_three.join("; "));
         }
         let formatted: Vec<String> = sorted_props
             .iter()
             .map(|p| self.format_property(p))
             .collect();
-        format!("{{ {} }}", formatted.join("; "))
+        format!("{{ {}; }}", formatted.join("; "))
     }
 
     fn format_property(&mut self, prop: &PropertyInfo) -> String {
@@ -561,7 +561,7 @@ impl<'a> TypeFormatter<'a> {
             parts.push(self.format_property(prop));
         }
 
-        format!("{{ {} }}", parts.join("; "))
+        format!("{{ {}; }}", parts.join("; "))
     }
 
     fn format_union(&mut self, members: &[TypeId]) -> String {
@@ -670,7 +670,7 @@ impl<'a> TypeFormatter<'a> {
             return "{}".to_string();
         }
 
-        format!("{{ {} }}", parts.join("; "))
+        format!("{{ {}; }}", parts.join("; "))
     }
 
     fn format_call_signature(&mut self, sig: &CallSignature, is_construct: bool) -> String {

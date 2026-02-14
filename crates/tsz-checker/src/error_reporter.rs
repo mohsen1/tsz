@@ -37,8 +37,59 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn format_type_for_assignability_message(&self, ty: TypeId) -> String {
-        let formatted = self.format_type(ty);
+    fn format_type_for_assignability_message(&mut self, ty: TypeId) -> String {
+        let mut formatted = self.format_type(ty);
+
+        // Preserve generic instantiations for nominal class instance names when possible.
+        if !formatted.contains('<')
+            && let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, ty)
+            && let Some(sym_id) = shape.symbol
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            let symbol_name = symbol.escaped_name.as_str();
+            if formatted == symbol_name {
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                let type_param_count =
+                    if let Some(type_params) = self.ctx.get_def_type_params(def_id) {
+                        type_params.len()
+                    } else {
+                        symbol
+                            .declarations
+                            .iter()
+                            .find_map(|decl| {
+                                let node = self.ctx.arena.get(*decl)?;
+                                let class = self.ctx.arena.get_class(node)?;
+                                Some(
+                                    class
+                                        .type_parameters
+                                        .as_ref()
+                                        .map(|p| p.nodes.len())
+                                        .unwrap_or(0),
+                                )
+                            })
+                            .unwrap_or(0)
+                    };
+                if type_param_count > 0 && shape.properties.len() >= type_param_count {
+                    let args: Vec<String> = shape
+                        .properties
+                        .iter()
+                        .filter(|prop| {
+                            !self
+                                .ctx
+                                .types
+                                .resolve_atom_ref(prop.name)
+                                .starts_with("__private_brand_")
+                        })
+                        .take(type_param_count)
+                        .map(|prop| self.format_type(prop.type_id))
+                        .collect();
+                    if args.len() == type_param_count {
+                        formatted = format!("{}<{}>", symbol_name, args.join(", "));
+                    }
+                }
+            }
+        }
+
         // tsc commonly formats object type literals with a trailing semicolon before `}`.
         if formatted.starts_with("{ ")
             && formatted.ends_with(" }")
@@ -214,6 +265,100 @@ impl<'a> CheckerState<'a> {
         Some((source_prop.visibility, target_prop.visibility))
     }
 
+    fn is_function_like_type(&mut self, ty: TypeId) -> bool {
+        let resolved = self.resolve_type_for_property_access(ty);
+        let evaluated = self.judge_evaluate(resolved);
+        [ty, resolved, evaluated].into_iter().any(|candidate| {
+            tsz_solver::type_queries::get_function_shape(self.ctx.types, candidate).is_some()
+                || tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate)
+                    .is_some_and(|s| !s.call_signatures.is_empty())
+                || candidate == TypeId::FUNCTION
+        })
+    }
+
+    fn first_nonpublic_constructor_param_property(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<(String, MemberAccessLevel)> {
+        let resolved = self.resolve_type_for_property_access(ty);
+        let evaluated = self.judge_evaluate(resolved);
+        let candidates = [ty, resolved, evaluated];
+
+        let mut symbol_candidates: Vec<tsz_binder::SymbolId> = Vec::new();
+        if let Some(sym) = candidates.into_iter().find_map(|candidate| {
+            if let Some(shape) =
+                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
+            {
+                return shape.symbol;
+            }
+            tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate)
+                .and_then(|shape| shape.symbol)
+        }) {
+            symbol_candidates.push(sym);
+        }
+        let ty_name = self.format_type_for_assignability_message(ty);
+        let bare = ty_name.split('<').next().unwrap_or(&ty_name);
+        let simple = bare.rsplit('.').next().unwrap_or(bare).trim();
+        if !simple.is_empty() && !simple.starts_with('{') && !simple.contains(' ') {
+            for sym in self.ctx.binder.get_symbols().find_all_by_name(simple) {
+                if !symbol_candidates.contains(&sym) {
+                    symbol_candidates.push(sym);
+                }
+            }
+        }
+        if symbol_candidates.is_empty() {
+            return None;
+        }
+
+        for symbol_id in symbol_candidates {
+            let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) else {
+                continue;
+            };
+            for &decl_idx in &symbol.declarations {
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                if decl_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                    && decl_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    continue;
+                }
+                let Some(class) = self.ctx.arena.get_class(decl_node) else {
+                    continue;
+                };
+                for &member_idx in &class.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                        continue;
+                    }
+                    let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                        continue;
+                    };
+                    for &param_idx in &ctor.parameters.nodes {
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+                        let Some(level) = self.member_access_level_from_modifiers(&param.modifiers)
+                        else {
+                            continue;
+                        };
+                        let Some(name) = self.get_property_name(param.name) else {
+                            continue;
+                        };
+                        return Some((name, level));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     fn missing_single_required_property(
         &mut self,
         source: TypeId,
@@ -221,6 +366,124 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_common::interner::Atom> {
         if tsz_solver::is_primitive_type(self.ctx.types, source) {
             return None;
+        }
+
+        let source_candidates = {
+            let resolved = self.resolve_type_for_property_access(source);
+            let evaluated = self.judge_evaluate(resolved);
+            [source, resolved, evaluated]
+        };
+        let target_candidates = {
+            let resolved = self.resolve_type_for_property_access(target);
+            let evaluated = self.judge_evaluate(resolved);
+            [target, resolved, evaluated]
+        };
+
+        let source_is_function_like = self.is_function_like_type(source);
+
+        let target_name = self.format_type_for_assignability_message(target);
+        if target_name == "Callable" || target_name == "Applicable" {
+            let required_name = if target_name == "Callable" {
+                "call"
+            } else {
+                "apply"
+            };
+            let required_atom = self.ctx.types.intern_string(required_name);
+            let source_has_prop = if source_is_function_like {
+                true
+            } else {
+                source_candidates.iter().any(|candidate| {
+                    if let Some(source_callable) =
+                        tsz_solver::type_queries::get_callable_shape(self.ctx.types, *candidate)
+                    {
+                        source_callable
+                            .properties
+                            .iter()
+                            .any(|p| p.name == required_atom)
+                    } else if let Some(source_shape) =
+                        tsz_solver::type_queries::get_object_shape(self.ctx.types, *candidate)
+                    {
+                        source_shape
+                            .properties
+                            .iter()
+                            .any(|p| p.name == required_atom)
+                    } else {
+                        false
+                    }
+                })
+            };
+            if !source_has_prop {
+                return Some(required_atom);
+            }
+        }
+
+        if !source_is_function_like {
+            for target_candidate in target_candidates {
+                let Some(target_callable) =
+                    tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_candidate)
+                else {
+                    continue;
+                };
+                let Some(sym_id) = target_callable.symbol else {
+                    continue;
+                };
+                let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    continue;
+                };
+                if symbol.escaped_name == "Callable" {
+                    return Some(self.ctx.types.intern_string("call"));
+                }
+                if symbol.escaped_name == "Applicable" {
+                    return Some(self.ctx.types.intern_string("apply"));
+                }
+            }
+        }
+
+        for target_candidate in target_candidates {
+            if let Some(target_callable) =
+                tsz_solver::type_queries::get_callable_shape(self.ctx.types, target_candidate)
+            {
+                let required_props: Vec<_> = target_callable
+                    .properties
+                    .iter()
+                    .filter(|p| !p.optional)
+                    .collect();
+                if required_props.len() == 1 {
+                    let prop = required_props[0];
+                    let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
+                    if prop_name.as_ref() == "call" || prop_name.as_ref() == "apply" {
+                        let source_has_prop = if source_is_function_like {
+                            true
+                        } else {
+                            source_candidates.iter().any(|candidate| {
+                                if let Some(source_callable) =
+                                    tsz_solver::type_queries::get_callable_shape(
+                                        self.ctx.types,
+                                        *candidate,
+                                    )
+                                {
+                                    source_callable
+                                        .properties
+                                        .iter()
+                                        .any(|p| p.name == prop.name)
+                                } else if let Some(source_shape) =
+                                    tsz_solver::type_queries::get_object_shape(
+                                        self.ctx.types,
+                                        *candidate,
+                                    )
+                                {
+                                    source_shape.properties.iter().any(|p| p.name == prop.name)
+                                } else {
+                                    false
+                                }
+                            })
+                        };
+                        if !source_has_prop {
+                            return Some(prop.name);
+                        }
+                    }
+                }
+            }
         }
 
         let source_with_shape = {
@@ -412,6 +675,42 @@ impl<'a> CheckerState<'a> {
             } else {
                 target_prop.type_id
             };
+
+            if source_prop.visibility != target_prop.visibility {
+                let prop_name = self.ctx.types.resolve_atom_ref(target_prop.name);
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
+                let detail = match (source_prop.visibility, target_prop.visibility) {
+                    (tsz_solver::Visibility::Public, tsz_solver::Visibility::Private)
+                    | (tsz_solver::Visibility::Protected, tsz_solver::Visibility::Private) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                            &[&prop_name, &target_str, &source_str],
+                        )
+                    }
+                    (tsz_solver::Visibility::Private, tsz_solver::Visibility::Public)
+                    | (tsz_solver::Visibility::Private, tsz_solver::Visibility::Protected) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                            &[&prop_name, &source_str, &target_str],
+                        )
+                    }
+                    (tsz_solver::Visibility::Public, tsz_solver::Visibility::Protected) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
+                            &[&prop_name, &target_str, &source_str],
+                        )
+                    }
+                    (tsz_solver::Visibility::Protected, tsz_solver::Visibility::Public) => {
+                        format_message(
+                            diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
+                            &[&prop_name, &source_str, &target_str],
+                        )
+                    }
+                    _ => continue,
+                };
+                return Some(detail);
+            }
 
             // Prefer property type incompatibility details when both optionality and type differ.
             // tsc reports the type incompatibility first in this situation.
@@ -1251,13 +1550,36 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
+                let source_str = self.format_type_for_assignability_message(source);
+                let target_str = self.format_type_for_assignability_message(target);
+
+                if depth == 0
+                    && (target_str == "Callable" || target_str == "Applicable")
+                    && !tsz_solver::is_primitive_type(self.ctx.types, source)
+                {
+                    let prop_name = if target_str == "Callable" {
+                        "call"
+                    } else {
+                        "apply"
+                    };
+                    let message = format_message(
+                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        &[prop_name, &source_str, &target_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    );
+                }
+
                 if depth == 0
                     && let Some(property_name) =
                         self.missing_single_required_property(source, target)
                 {
                     let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-                    let source_str = self.format_type_for_assignability_message(source);
-                    let target_str = self.format_type_for_assignability_message(target);
                     let message = format_message(
                         diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &source_str, &target_str],
@@ -1271,12 +1593,41 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                let source_str = self.format_type_for_assignability_message(source);
-                let target_str = self.format_type_for_assignability_message(target);
                 let base = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
                 );
+
+                if depth == 0 {
+                    let nonpublic = self.first_nonpublic_constructor_param_property(target);
+                    if tracing::enabled!(Level::TRACE) {
+                        trace!(
+                            target = %target_str,
+                            nonpublic = ?nonpublic,
+                            "nonpublic constructor param property probe"
+                        );
+                    }
+                    if let Some((member_name, level)) = nonpublic {
+                        let detail = match level {
+                            MemberAccessLevel::Private => format_message(
+                                diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                                &[&member_name, &target_str, &source_str],
+                            ),
+                            MemberAccessLevel::Protected => format_message(
+                                diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,
+                                &[&member_name, &target_str, &source_str],
+                            ),
+                        };
+                        let message = format!("{} {}", base, detail);
+                        return Diagnostic::error(
+                            file_name,
+                            start,
+                            length,
+                            message,
+                            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        );
+                    }
+                }
 
                 if depth == 0
                     && let Some(detail) = self.elaborate_type_mismatch_detail(source, target)
@@ -2813,17 +3164,44 @@ impl<'a> CheckerState<'a> {
             return;
         }
         if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store);
-            let diag =
-                builder.argument_not_assignable(arg_type, param_type, loc.start, loc.length());
-            self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+            let arg_str = self.format_type_for_assignability_message(arg_type);
+            let param_str = self.format_type_for_assignability_message(param_type);
+            let mut message = format_message(
+                diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                &[&arg_str, &param_str],
+            );
+            if let Some(prop_name) = self.missing_single_required_property(arg_type, param_type) {
+                let prop = self.ctx.types.resolve_atom_ref(prop_name);
+                let detail = format_message(
+                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    &[&prop, &arg_str, &param_str],
+                );
+                message = format!("{} {}", message, detail);
+            } else if (param_str == "Callable" || param_str == "Applicable")
+                && !tsz_solver::is_primitive_type(self.ctx.types, arg_type)
+            {
+                let prop = if param_str == "Callable" {
+                    "call"
+                } else {
+                    "apply"
+                };
+                let detail = format_message(
+                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    &[prop, &arg_str, &param_str],
+                );
+                message = format!("{} {}", message, detail);
+            } else if let Some(detail) = self.elaborate_type_mismatch_detail(arg_type, param_type) {
+                message = format!("{} {}", message, detail);
+            }
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
         }
     }
 
