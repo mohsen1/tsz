@@ -4,6 +4,11 @@ bypass_approvals_and_sandbox: true
 sleep_seconds: 2
 workdir: /Users/mohsenazimi/code/tsz
 default_mode: conformance
+# Parallel conformance sharding controls (used with --session)
+# Split failures into this many shards (quarters by default).
+conformance_quarters: 4
+# Estimated total failing conformance tests to shard across sessions.
+conformance_total_failures: 3101
 prompt_file_conformance: scripts/codex-loop.prompt.conformance.txt
 prompt_file_emit: scripts/codex-loop.prompt.emit.txt
 prompt_file_lsp: scripts/codex-loop.prompt.lsp.txt
