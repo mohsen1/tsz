@@ -42,16 +42,20 @@ pub struct IRPrinter<'a> {
 impl<'a> IRPrinter<'a> {
     fn extract_trailing_comment_from_function(&self, function: &IRNode) -> Option<String> {
         let source_text = self.source_text?;
-        let IRNode::FunctionExpr {
-            body_source_range: Some((body_start, body_end)),
-            ..
-        } = function
-        else {
-            return None;
+        let (body_start, body_end) = match function {
+            IRNode::FunctionExpr {
+                body_source_range: Some((body_start, body_end)),
+                ..
+            } => (*body_start, *body_end),
+            IRNode::FunctionDecl {
+                body_source_range: Some((body_start, body_end)),
+                ..
+            } => (*body_start, *body_end),
+            _ => return None,
         };
         let bytes = source_text.as_bytes();
-        let start = *body_start as usize;
-        let end = (*body_end as usize).min(bytes.len());
+        let start = body_start as usize;
+        let end = (body_end as usize).min(bytes.len());
         if start >= end {
             return None;
         }
@@ -558,6 +562,10 @@ impl<'a> IRPrinter<'a> {
                 self.emit_parameters(parameters);
                 self.write(") ");
                 self.emit_function_body_with_defaults(parameters, body, *body_source_range);
+                if let Some(comment) = self.extract_trailing_comment_from_function(node) {
+                    self.write(" ");
+                    self.write(&comment);
+                }
             }
 
             // ES5 Class Transform Specific
