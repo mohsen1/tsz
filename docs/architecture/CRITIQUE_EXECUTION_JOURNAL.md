@@ -144,3 +144,6 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 132: migrated destructuring generic mismatch routing in `crates/tsz-checker/src/state_checking.rs` to `check_assignable_or_report_generic_at(...)`.
 - [x] Migration action 133: migrated call/new argument mismatch routing in `crates/tsz-checker/src/type_computation_complex.rs` to `check_argument_assignable_or_report(...)`.
 - [x] Migration action 134: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for `state_checking` generic routing and `type_computation_complex` argument routing.
+- [x] Migration action 135: migrated non-`yield*` bare `yield` mismatch reporting in `crates/tsz-checker/src/dispatch.rs` to `check_assignable_or_report(...)`.
+- [x] Migration action 136: updated child checker context construction (`with_parent`) in `crates/tsz-checker/src/context.rs` to keep constructor-access caches context-local instead of inheriting parent algorithm cache state.
+- [x] Migration action 137: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` for constructor-access cache locality in `with_parent`.

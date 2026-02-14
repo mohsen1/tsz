@@ -802,6 +802,7 @@ Make all assignment/call/return/property-write checks call these.
     * `'in'` expression RHS object-compatibility checks in `type_computation` now route via `check_assignable_or_report(...)`
     * class-member and JS export-assignment style checks in `state_checking_members` now route via `check_assignable_or_report(...)`
     * `satisfies` expression assignability checks in `dispatch` now route via `check_assignable_or_report(...)`
+    * non-`yield*` bare `yield` mismatch reporting in `dispatch` now routes via `check_assignable_or_report(...)`
     * call/new argument mismatch checks in `type_computation_complex` now route through `check_argument_assignable_or_report(...)`
     * destructuring generic mismatch checks in `state_checking` now route through `check_assignable_or_report_generic_at(...)`
   * Extended architecture contract coverage to lock these modules onto centralized assignability gateway entrypoints.
@@ -894,6 +895,7 @@ Checker maintains relation caches keyed by solver types and flags, does inferenc
   * Updated `with_parent` context construction to initialize evaluation caches as context-local state instead of sharing parent algorithm-evaluation cache state across checker contexts.
   * Removed constructor-access algorithm cache fields (`abstract/protected/private constructor type` sets) from persistent `TypeCache`.
   * Updated cache-restore paths to initialize constructor-access caches as context-local state instead of restoring them from persisted cache blobs.
+  * Updated `with_parent` context construction to keep constructor-access caches context-local instead of inheriting parent constructor-access cache state.
   * Kept live `CheckerContext` behavior intact (evaluation caches still available intra-context), while shrinking persisted cache ownership toward AST/symbol/flow concerns.
   * Added architecture contract coverage to enforce that `TypeCache` no longer exposes persisted eval or constructor-access algorithm cache fields.
 

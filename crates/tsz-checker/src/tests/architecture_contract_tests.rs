@@ -553,6 +553,14 @@ fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
             && !type_cache_src.contains("private_constructor_types"),
         "TypeCache should not persist checker algorithm caches (eval/constructor-access)"
     );
+
+    assert!(
+        !context_src.contains("abstract_constructor_types: parent.abstract_constructor_types.clone()")
+            && !context_src
+                .contains("protected_constructor_types: parent.protected_constructor_types.clone()")
+            && !context_src.contains("private_constructor_types: parent.private_constructor_types.clone()"),
+        "with_parent should keep constructor-access caches context-local"
+    );
 }
 
 #[test]
