@@ -3494,7 +3494,7 @@ impl<'a> DeclarationEmitter<'a> {
         // If we have a binder, use it to get top-level symbols
         if let Some(binder) = self.binder {
             // Get the root scope (scopes is a Vec, not a HashMap)
-            if let Some(root_scope) = binder.scopes.get(0) {
+            if let Some(root_scope) = binder.scopes.first() {
                 // Iterate through all symbols in root scope table
                 for (name, _sym_id) in root_scope.table.iter() {
                     self.reserved_names.insert(name.clone());
