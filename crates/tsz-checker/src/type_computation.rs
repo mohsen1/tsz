@@ -834,6 +834,14 @@ impl<'a> CheckerState<'a> {
         let result_type = match self.resolve_property_access_with_env(object_type, property_name) {
             PropertyAccessResult::Success { type_id, .. } => type_id,
             PropertyAccessResult::PropertyNotFound { .. } => {
+                if property_name == "exports"
+                    && (self.ctx.file_name.ends_with(".js") || self.ctx.file_name.ends_with(".jsx"))
+                    && let Some(obj_node) = self.ctx.arena.get(access.expression)
+                    && let Some(ident) = self.ctx.arena.get_identifier(obj_node)
+                    && ident.escaped_text == "module"
+                {
+                    return TypeId::ANY;
+                }
                 // JavaScript files allow dynamic property assignment on 'this' without errors.
                 // In JS files, accessing a property on 'this' that doesn't exist should not error
                 // and should return 'any' type, matching TypeScript's behavior.
