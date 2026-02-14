@@ -4932,15 +4932,39 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 let clause_idx = export_decl.export_clause;
                 self.check_statement(clause_idx);
 
-                if self.ctx.is_js_file()
+                let is_inline_object_literal = self
+                    .ctx
+                    .arena
+                    .get(clause_idx)
+                    .is_some_and(|clause_node| {
+                        if clause_node.kind == syntax_kind_ext::OBJECT_LITERAL {
+                            return true;
+                        }
+                        if clause_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                            if let Some(paren) = self.ctx.arena.get_parenthesized(clause_node) {
+                                return self
+                                    .ctx
+                                    .arena
+                                    .get(paren.expression)
+                                    .is_some_and(|expr_node| {
+                                        expr_node.kind == syntax_kind_ext::OBJECT_LITERAL
+                                    });
+                            }
+                        }
+                        false
+                    });
+
+                if self.is_js_file()
                     && let Some(expected_type) = self.jsdoc_type_annotation_for_node(export_idx)
                 {
                     let source_type = self.get_type_of_node(clause_idx);
-                    if self.object_literal_has_excess_properties(
-                        source_type,
-                        expected_type,
-                        clause_idx,
-                    ) {
+                    if is_inline_object_literal
+                        && self.object_literal_has_excess_properties(
+                            source_type,
+                            expected_type,
+                            clause_idx,
+                        )
+                    {
                         self.check_object_literal_excess_properties(
                             source_type,
                             expected_type,

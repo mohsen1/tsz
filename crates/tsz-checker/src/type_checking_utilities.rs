@@ -10,7 +10,14 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeId, TypeKey};
+use tsz_solver::{PropertyInfo, TypeId, TypeKey, Visibility};
+use rustc_hash::{FxHashMap, FxHashSet};
+
+#[derive(Clone)]
+struct JsdocTypedefInfo {
+    base_type: Option<String>,
+    properties: Vec<(String, String)>,
+}
 
 impl<'a> CheckerState<'a> {
     // ============================================================================
@@ -1621,63 +1628,324 @@ impl<'a> CheckerState<'a> {
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
 
-        // Common primitive/simple JSDoc forms.
-        match type_expr {
-            "string" => return Some(TypeId::STRING),
-            "number" => return Some(TypeId::NUMBER),
-            "boolean" => return Some(TypeId::BOOLEAN),
-            "object" => return Some(TypeId::OBJECT),
-            "any" => return Some(TypeId::ANY),
-            "unknown" => return Some(TypeId::UNKNOWN),
-            "undefined" => return Some(TypeId::UNDEFINED),
-            "null" => return Some(TypeId::NULL),
-            "void" => return Some(TypeId::VOID),
-            "never" => return Some(TypeId::NEVER),
-            _ => {}
-        }
-
-        if let Some(tp) = self.ctx.type_parameter_scope.get(type_expr) {
-            return Some(*tp);
-        }
-
-        // Narrow support for conformance-critical pattern:
-        //   @type {keyof typeof <identifier>}
-        if let Some(rest) = type_expr.strip_prefix("keyof") {
-            let rest = rest.trim_start();
-            if let Some(name) = rest.strip_prefix("typeof") {
-                let name = name.trim();
-                if !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                {
-                    let symbols = self.ctx.binder.get_symbols();
-                    let candidates = symbols.find_all_by_name(name);
-                    for sym_id in candidates {
-                        let Some(sym) = symbols.get(sym_id) else {
-                            continue;
-                        };
-                        // Resolve value-like symbols only.
-                        let value_mask = symbol_flags::FUNCTION_SCOPED_VARIABLE
-                            | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::FUNCTION
-                            | symbol_flags::CLASS
-                            | symbol_flags::ENUM
-                            | symbol_flags::VALUE_MODULE;
-                        if (sym.flags & value_mask) == 0 {
-                            continue;
+        self.jsdoc_type_from_expression(type_expr).or_else(|| {
+            self.resolve_jsdoc_typedef_type(type_expr, node.pos, comments, source_text)
+                .or_else(|| {
+                    if let Some((module_specifier, member_name)) = Self::parse_jsdoc_import_type(type_expr)
+                    {
+                        if let Some(sym_id) =
+                            self.resolve_cross_file_export(&module_specifier, &member_name)
+                        {
+                            let resolved = self.type_reference_symbol_type(sym_id);
+                            if resolved != TypeId::ERROR {
+                                return Some(resolved);
+                            }
                         }
-                        let operand = self.get_type_of_symbol(sym_id);
-                        if operand == TypeId::ERROR {
-                            continue;
-                        }
-                        let keyof = self.ctx.types.intern(TypeKey::KeyOf(operand));
-                        return Some(self.judge_evaluate(keyof));
                     }
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
+                        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                            return None;
+                        };
+                        if (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
+                            || (symbol.flags & symbol_flags::CLASS) != 0
+                            || (symbol.flags & symbol_flags::INTERFACE) != 0
+                            || (symbol.flags & symbol_flags::ENUM) != 0
+                        {
+                            let resolved = self.type_reference_symbol_type(sym_id);
+                            if resolved != TypeId::ERROR {
+                                return Some(resolved);
+                            }
+                        }
+                    }
+                    None
+                })
+        })
+    }
+
+    fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, String)> {
+        let expr = type_expr.trim();
+        let Some(rest) = expr.strip_prefix("import(") else {
+            return None;
+        };
+        let mut rest = rest.trim_start();
+        let quote = rest.chars().next()?;
+        if quote != '"' && quote != '\'' && quote != '`' {
+            return None;
+        }
+
+        rest = &rest[quote.len_utf8()..];
+        let close_quote = rest.find(quote)?;
+        let module_specifier = rest[..close_quote].trim().to_string();
+        let after_quote = rest[close_quote + quote.len_utf8()..].trim_start();
+        let after_quote = after_quote.strip_prefix(')')?;
+        let after_dot = after_quote.trim_start().strip_prefix('.')?;
+        let after_dot = after_dot.trim_start();
+
+        let mut end = 0usize;
+        for (idx, ch) in after_dot.char_indices() {
+            if idx == 0 {
+                if !ch.is_ascii_alphabetic() && ch != '_' && ch != '$' {
+                    return None;
+                }
+            } else if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$' {
+                break;
+            }
+            end = idx + ch.len_utf8();
+        }
+        if end == 0 {
+            return None;
+        }
+
+        Some((module_specifier, after_dot[..end].to_string()))
+    }
+
+    /// Parse a JSDoc-style `@type` expression into a concrete type.
+    ///
+    /// Supports a constrained subset needed for conformance tests:
+    /// primitives, type parameters, `keyof typeof`, type references,
+    /// and fallback symbol resolution.
+    fn jsdoc_type_from_expression(&mut self, type_expr: &str) -> Option<TypeId> {
+        let type_expr = type_expr.trim();
+
+        match type_expr {
+            "string" => Some(TypeId::STRING),
+            "number" => Some(TypeId::NUMBER),
+            "boolean" => Some(TypeId::BOOLEAN),
+            "object" => Some(TypeId::OBJECT),
+            "any" => Some(TypeId::ANY),
+            "unknown" => Some(TypeId::UNKNOWN),
+            "undefined" => Some(TypeId::UNDEFINED),
+            "null" => Some(TypeId::NULL),
+            "void" => Some(TypeId::VOID),
+            "never" => Some(TypeId::NEVER),
+            _ => {
+                if let Some(tp) = self.ctx.type_parameter_scope.get(type_expr) {
+                    return Some(*tp);
+                }
+
+                // Narrow support for conformance-critical pattern:
+                //   @type {keyof typeof <identifier>}
+                if let Some(rest) = type_expr.strip_prefix("keyof") {
+                    let rest = rest.trim_start();
+                    if let Some(name) = rest.strip_prefix("typeof") {
+                        let name = name.trim();
+                        if !name.is_empty()
+                            && name.chars().all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                        {
+                            let symbols = self.ctx.binder.get_symbols();
+                            let candidates = symbols.find_all_by_name(name);
+                            for sym_id in candidates {
+                                let Some(sym) = symbols.get(sym_id) else {
+                                    continue;
+                                };
+                                let value_mask = symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                    | symbol_flags::BLOCK_SCOPED_VARIABLE
+                                    | symbol_flags::FUNCTION
+                                    | symbol_flags::CLASS
+                                    | symbol_flags::ENUM
+                                    | symbol_flags::VALUE_MODULE;
+                                if (sym.flags & value_mask) == 0 {
+                                    continue;
+                                }
+                                let operand = self.get_type_of_symbol(sym_id);
+                                if operand == TypeId::ERROR {
+                                    continue;
+                                }
+                                let keyof = self.ctx.types.intern(TypeKey::KeyOf(operand));
+                                return Some(self.judge_evaluate(keyof));
+                            }
+                        }
+                    }
+                }
+
+                None
+            }
+        }
+    }
+
+    /// Resolve a typedef referenced by a JSDoc type annotation (e.g., `Foo`) from
+    /// preceding `@typedef` declarations in the same file.
+    fn resolve_jsdoc_typedef_type(
+        &mut self,
+        type_expr: &str,
+        anchor_pos: u32,
+        comments: &[tsz_common::comments::CommentRange],
+        source_text: &str,
+    ) -> Option<TypeId> {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        let mut best_def: Option<(u32, JsdocTypedefInfo)> = None;
+
+        for comment in comments {
+            if comment.end > anchor_pos {
+                continue;
+            }
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+
+            let content = get_jsdoc_content(comment, source_text);
+            for (name, typedef_info) in Self::parse_jsdoc_typedefs(content) {
+                if name != type_expr {
+                    continue;
+                }
+                best_def = Some((comment.pos, typedef_info));
+            }
+        }
+
+        let Some((_, typedef_info)) = best_def else {
+            return None;
+        };
+        self.type_from_jsdoc_typedef(typedef_info)
+    }
+
+    fn type_from_jsdoc_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
+        let mut prop_infos = Vec::with_capacity(info.properties.len());
+
+        for (name, prop_type_expr) in info.properties {
+            let prop_type = if prop_type_expr.trim().is_empty() {
+                TypeId::ANY
+            } else {
+                self.jsdoc_type_from_expression(&prop_type_expr)
+                    .unwrap_or(TypeId::ANY)
+            };
+            let name_atom = self.ctx.types.intern_string(&name);
+            prop_infos.push(PropertyInfo {
+                name: name_atom,
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+            });
+        }
+
+        if !prop_infos.is_empty() {
+            return Some(self.ctx.types.object(prop_infos));
+        }
+
+        if let Some(base_type_expr) = info.base_type {
+            self.jsdoc_type_from_expression(&base_type_expr)
+        } else {
+            None
+        }
+    }
+
+    fn parse_jsdoc_typedefs(jsdoc: &str) -> Vec<(String, JsdocTypedefInfo)> {
+        let mut typedefs = Vec::new();
+        let mut current_name: Option<String> = None;
+        let mut current_info = JsdocTypedefInfo {
+            base_type: None,
+            properties: Vec::new(),
+        };
+
+        for raw_line in jsdoc.lines() {
+            let line = raw_line.trim_start_matches('*').trim();
+            if line.is_empty() || !line.starts_with('@') {
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("@typedef") {
+                if let Some((name, base_type)) = Self::parse_jsdoc_typedef_definition(rest) {
+                    if let Some(previous_name) = current_name.take() {
+                        typedefs.push((previous_name, current_info));
+                        current_info = JsdocTypedefInfo {
+                            base_type: None,
+                            properties: Vec::new(),
+                        };
+                    }
+                    current_name = Some(name);
+                    current_info.base_type = base_type;
+                    current_info.properties.clear();
+                }
+                continue;
+            }
+
+            if let Some((name, prop_type)) = Self::parse_jsdoc_property_type(line) {
+                if current_name.is_some() {
+                    current_info.properties.push((name, prop_type));
                 }
             }
         }
 
+        if let Some(previous_name) = current_name.take() {
+            typedefs.push((previous_name, current_info));
+        }
+        typedefs
+    }
+
+    fn parse_jsdoc_typedef_definition(line: &str) -> Option<(String, Option<String>)> {
+        let mut rest = line.trim();
+        if rest.is_empty() {
+            return None;
+        }
+
+        let base_type = if rest.starts_with('{') {
+            let (expr, after_expr) = Self::parse_jsdoc_curly_type_expr(rest)?;
+            rest = after_expr.trim();
+            Some(expr.trim().to_string())
+        } else {
+            None
+        };
+
+        let name = rest.split_whitespace().next()?;
+        Some((name.to_string(), base_type))
+    }
+
+    fn parse_jsdoc_property_type(line: &str) -> Option<(String, String)> {
+        let mut rest = line.trim();
+        if !rest.starts_with("@property") {
+            return None;
+        }
+        rest = &rest["@property".len()..];
+        rest = rest.trim();
+
+        let prop_type = if rest.starts_with('{') {
+            let (expr, after_expr) = Self::parse_jsdoc_curly_type_expr(rest)?;
+            rest = after_expr.trim();
+            expr.trim().to_string()
+        } else {
+            "any".to_string()
+        };
+
+        let name = rest
+            .split_whitespace()
+            .next()
+            .map(|name| {
+                name.trim_end_matches(',')
+                    .trim()
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .split('=')
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
+            .filter(|name| !name.is_empty())?;
+
+        Some((name, prop_type))
+    }
+
+    fn parse_jsdoc_curly_type_expr(line: &str) -> Option<(&str, &str)> {
+        if !line.starts_with('{') {
+            return None;
+        }
+        let mut depth = 0usize;
+        for (idx, ch) in line.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return Some((&line[1..idx], &line[idx + 1..]));
+                    }
+                }
+                _ => {}
+            }
+        }
         None
     }
 
