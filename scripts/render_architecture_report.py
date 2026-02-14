@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +65,9 @@ def render_markdown(payload: dict) -> str:
     lines: list[str] = []
     lines.append("# Architecture Guard Report")
     lines.append("")
+    generated_at = datetime.now(timezone.utc).isoformat()
+    lines.append(f"- Generated at (UTC): `{generated_at}`")
+    lines.append(f"- Source JSON: `{INPUT_JSON.relative_to(ROOT).as_posix()}`")
     lines.append(f"- Status: **{status}**")
     lines.append(f"- Total guard hits: **{total_hits}**")
     lines.append(f"- Failure groups: **{len(failures)}**")
