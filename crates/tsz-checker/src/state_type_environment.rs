@@ -192,15 +192,6 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        // Check cache first (don't clear - the cache key is the TypeId which is stable)
-        if let Some(&cached) = self.ctx.application_eval_cache.get(&type_id) {
-            return cached;
-        }
-
-        // Safety: Don't cache types containing inference variables since their
-        // evaluation can change as inference progresses
-        let is_cacheable = !self.contains_infer_types_cached(type_id);
-
         if !self.ctx.application_eval_set.insert(type_id) {
             // Recursion guard for self-referential mapped types.
             return type_id;
@@ -217,10 +208,6 @@ impl<'a> CheckerState<'a> {
         *self.ctx.instantiation_depth.borrow_mut() -= 1;
         self.ctx.application_eval_set.remove(&type_id);
 
-        // Only cache if the type doesn't contain inference variables
-        if is_cacheable {
-            self.ctx.application_eval_cache.insert(type_id, result);
-        }
         result
     }
 
@@ -281,10 +268,6 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
-        if let Some(&cached) = self.ctx.mapped_eval_cache.get(&type_id) {
-            return cached;
-        }
-
         if !self.ctx.mapped_eval_set.insert(type_id) {
             return type_id;
         }
@@ -299,7 +282,6 @@ impl<'a> CheckerState<'a> {
 
         *self.ctx.instantiation_depth.borrow_mut() -= 1;
         self.ctx.mapped_eval_set.remove(&type_id);
-        self.ctx.mapped_eval_cache.insert(type_id, result);
         result
     }
 

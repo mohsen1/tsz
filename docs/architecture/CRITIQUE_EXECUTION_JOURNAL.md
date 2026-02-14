@@ -157,3 +157,7 @@ This file records the implementation commits for the CRITIQUE execution plan.
 - [x] Migration action 145: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to prevent reintroduction of local generic-constraint ref-resolution traversal.
 - [x] Migration action 146: migrated `CallResult::TypeParameterConstraintViolation` TS2322 reporting in `crates/tsz-checker/src/type_computation_complex.rs` to centralized gateway helper `check_assignable_or_report_generic_at(...)`.
 - [x] Migration action 147: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to lock `type_computation_complex` callback constraint mismatch routing onto generic assignability gateway helpers.
+- [x] Migration action 148: removed checker-local evaluation result cache fields (`application_eval_cache`, `mapped_eval_cache`) from `crates/tsz-checker/src/context.rs`.
+- [x] Migration action 149: removed checker evaluation-result cache reads/writes from `crates/tsz-checker/src/state_type_environment.rs` while preserving recursion guards (`application_eval_set`, `mapped_eval_set`).
+- [x] Migration action 150: inlined solver infer-shape query usage in `crates/tsz-checker/src/assignability_checker.rs` cacheability gates and removed residual checker wrapper usage.
+- [x] Migration action 151: extended architecture contract coverage in `crates/tsz-checker/src/tests/architecture_contract_tests.rs` to guard against reintroducing checker application/mapped evaluation result caches.

@@ -583,6 +583,11 @@ fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
             && !context_src.contains("contains_infer_types_false:"),
         "CheckerContext should not retain contains_infer_types memo caches; infer-shape queries should stay solver-owned"
     );
+    assert!(
+        !context_src.contains("application_eval_cache:")
+            && !context_src.contains("mapped_eval_cache:"),
+        "CheckerContext should not retain application/mapped evaluation result caches; evaluation memoization should stay solver-owned"
+    );
 }
 
 #[test]

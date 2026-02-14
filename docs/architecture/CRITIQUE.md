@@ -903,9 +903,12 @@ Checker maintains relation caches keyed by solver types and flags, does inferenc
   * Updated `with_parent` context construction to keep constructor-access caches context-local instead of inheriting parent constructor-access cache state.
   * Removed checker-owned `contains_infer_types` memo cache state (`contains_infer_types_true`, `contains_infer_types_false`) from `CheckerContext` and switched `assignability_checker` to query solver visitor APIs directly for infer-shape detection.
   * Removed per-file resets for checker infer-shape memo state in `state_checking` because infer-shape cache ownership now lives in solver queries only.
-  * Kept live `CheckerContext` behavior intact (evaluation caches still available intra-context), while shrinking persisted cache ownership toward AST/symbol/flow concerns.
+  * Removed checker-local evaluation result caches from `CheckerContext` (`application_eval_cache`, `mapped_eval_cache`) and corresponding read/write paths in `state_type_environment`, keeping only recursion guards (`*_eval_set`) on checker side.
+  * Inlined infer-shape solver query usage in assignability/subtype cacheability checks and removed checker-local wrapper helpers.
+  * Continued shrinking checker cache ownership toward AST/symbol/flow concerns while moving algorithm memoization ownership to solver query APIs.
   * Added architecture contract coverage to enforce that `TypeCache` no longer exposes persisted eval or constructor-access algorithm cache fields.
   * Added architecture contract coverage to enforce that `CheckerContext` does not reintroduce checker-owned infer-shape memo caches.
+  * Added architecture contract coverage to enforce that `CheckerContext` does not reintroduce application/mapped evaluation result caches.
 
 ---
 

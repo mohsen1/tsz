@@ -234,14 +234,8 @@ pub struct CheckerContext<'a> {
     /// Cached type environment for resolving Ref types during assignability checks.
     pub type_environment: Rc<RefCell<TypeEnvironment>>,
 
-    /// Cache for evaluated application types to avoid repeated expansion.
-    pub application_eval_cache: FxHashMap<TypeId, TypeId>,
-
     /// Recursion guard for application evaluation.
     pub application_eval_set: FxHashSet<TypeId>,
-
-    /// Cache for evaluated mapped types with symbol resolution.
-    pub mapped_eval_cache: FxHashMap<TypeId, TypeId>,
 
     /// Recursion guard for mapped type evaluation with resolution.
     pub mapped_eval_set: FxHashSet<TypeId>,
@@ -602,9 +596,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
-            mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
@@ -721,9 +713,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
-            mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
@@ -831,9 +821,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
-            mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
@@ -943,10 +931,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            // Keep solver-algorithm evaluation caches ephemeral to this checker context.
-            application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
-            mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
             application_symbols_resolved: FxHashSet::default(),
@@ -1055,10 +1040,7 @@ impl<'a> CheckerContext<'a> {
             var_decl_types: FxHashMap::default(),
             node_types: cache.node_types,
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            // Keep solver-algorithm evaluation caches ephemeral to this checker context.
-            application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
-            mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
             application_symbols_resolved: FxHashSet::default(),
@@ -1183,10 +1165,7 @@ impl<'a> CheckerContext<'a> {
             // incorrectly map to a class declaration with the same node index).
             node_types: FxHashMap::default(),
             type_environment: Rc::new(RefCell::new(TypeEnvironment::new())),
-            // Keep solver-algorithm evaluation caches context-local.
-            application_eval_cache: FxHashMap::default(),
             application_eval_set: FxHashSet::default(),
-            mapped_eval_cache: FxHashMap::default(),
             mapped_eval_set: FxHashSet::default(),
             // FlowNodeId/SymbolId are binder-local; isolate flow cache per context.
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
