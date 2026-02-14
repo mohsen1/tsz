@@ -1077,11 +1077,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // TS1147: Import declarations in a namespace cannot reference a module
-        // TS2303: Circular definition of import alias
-        // Check if this import = require("module") appears inside a namespace or ambient module
-        if let Some(ref_node) = self.ctx.arena.get(import.module_specifier) {
-            if ref_node.kind == SyntaxKind::StringLiteral as u16 {
+        // TS1147/TS2439/TS2303 checks for import = require("...") forms.
+        // Use get_require_module_specifier so both StringLiteral and recovered require-call
+        // representations are handled consistently.
+        let require_module_specifier = self.get_require_module_specifier(import.module_specifier);
+        if require_module_specifier.is_some() {
+            if self.ctx.arena.get(import.module_specifier).is_some() {
                 // This is an external module reference (require("..."))
                 // Check if we're inside a MODULE_DECLARATION (namespace/module)
                 let mut current = stmt_idx;
@@ -1140,8 +1141,7 @@ impl<'a> CheckerState<'a> {
 
                 // TS2439: Ambient modules cannot use relative imports
                 if containing_module_name.is_some() {
-                    if let Some(literal) = self.ctx.arena.get_literal(ref_node) {
-                        let imported_module = &literal.text;
+                    if let Some(imported_module) = require_module_specifier.as_deref() {
                         // Check if this is a relative import (starts with ./ or ../)
                         if imported_module.starts_with("./") || imported_module.starts_with("../") {
                             self.error_at_node(
@@ -1156,8 +1156,7 @@ impl<'a> CheckerState<'a> {
 
                 // TS2303: Check for circular import in ambient modules
                 if let Some(ref ambient_module_name) = containing_module_name {
-                    if let Some(literal) = self.ctx.arena.get_literal(ref_node) {
-                        let imported_module = &literal.text;
+                    if let Some(imported_module) = require_module_specifier.as_deref() {
                         // Check if the imported module matches the containing module
                         if ambient_module_name == imported_module {
                             // Emit TS2303: Circular definition of import alias
@@ -1366,7 +1365,7 @@ impl<'a> CheckerState<'a> {
 
         // Handle namespace imports: import x = Namespace or import x = Namespace.Member
         // These need to emit TS2503 ("Cannot find namespace") if not found
-        if ref_node.kind != SyntaxKind::StringLiteral as u16 {
+        if require_module_specifier.is_none() {
             self.check_namespace_import(stmt_idx, module_specifier_idx);
             return;
         }
@@ -1385,10 +1384,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let Some(literal) = self.ctx.arena.get_literal(ref_node) else {
+        let Some(module_name) = require_module_specifier.as_deref() else {
             return;
         };
-        let module_name = &literal.text;
 
         if let Some(ref resolved) = self.ctx.resolved_modules
             && resolved.contains(module_name)
