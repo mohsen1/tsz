@@ -104,10 +104,7 @@ impl<'a> Printer<'a> {
             "var"
         };
         self.write(keyword);
-        // Only write space if there are declarations to emit
-        if !decl_list.declarations.nodes.is_empty() {
-            self.write(" ");
-        }
+        self.write(" ");
 
         self.emit_comma_separated(&decl_list.declarations.nodes);
     }

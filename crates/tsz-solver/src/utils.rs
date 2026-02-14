@@ -151,7 +151,7 @@ pub trait TypeIdExt {
     ///
     /// This is useful for filter_map chains where you want to skip NEVER results.
     fn non_never(self) -> Option<Self>
-        where
+    where
         Self: Sized;
 }
 
