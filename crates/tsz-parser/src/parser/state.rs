@@ -857,12 +857,14 @@ impl ParserState {
         }
 
         // Fallback (TS1434).
-        self.parse_error_at(
-            pos,
-            len,
-            "Unexpected keyword or identifier.",
-            diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-        );
+        if self.should_report_error() {
+            self.parse_error_at(
+                pos,
+                len,
+                "Unexpected keyword or identifier.",
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+            );
+        }
     }
 
     /// Check if we can parse a semicolon (ASI rules)
