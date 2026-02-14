@@ -732,6 +732,12 @@ Checker does deep type traversal itself to resolve `Lazy(DefId)` and other refer
 * **Completed in this iteration (Milestone 3 sub-item, follow-up):**
   * Removed redundant checker-local precondition traversal from generic-constraint validation in `crates/tsz-checker/src/generic_checker.rs` (`ensure_refs_resolved(type_arg/instantiated_constraint)`), relying on centralized `is_assignable_to(...)` precondition orchestration.
   * Added architecture contract coverage to guard generic constraint checks against reintroducing local ref-resolution traversal preconditions.
+* **Completed in this iteration (Milestone 3 sub-item, follow-up):**
+  * Added centralized relation precondition helpers in `crates/tsz-checker/src/assignability_checker.rs`:
+    * `ensure_relation_input_ready(...)`
+    * `ensure_relation_inputs_ready(...)`
+  * Migrated call-resolution precondition setup in `crates/tsz-checker/src/call_checker.rs` and `crates/tsz-checker/src/type_computation_complex.rs` to use these helpers instead of open-coded `ensure_refs_resolved + ensure_application_symbols_resolved` loops.
+  * Added architecture contract coverage to lock call-resolution modules onto the centralized relation precondition helper path.
 * **Remaining for Milestone 3:**
   * Migrate other checker precondition traversal paths to solver visitors (beyond `ensure_refs_resolved`).
 

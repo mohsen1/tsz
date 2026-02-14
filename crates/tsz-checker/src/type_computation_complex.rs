@@ -1498,11 +1498,9 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Ensure all Ref types in callee/args are resolved into type_env for assignability.
-        self.ensure_refs_resolved(callee_type_for_call);
-        for &arg_type in &arg_types {
-            self.ensure_refs_resolved(arg_type);
-        }
+        // Ensure relation preconditions (lazy refs + application symbols) for callee/args.
+        self.ensure_relation_input_ready(callee_type_for_call);
+        self.ensure_relation_inputs_ready(&arg_types);
 
         let result = {
             let env = self.ctx.type_env.borrow();
