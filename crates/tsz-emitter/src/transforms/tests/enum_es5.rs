@@ -1,4 +1,3 @@
-
 use super::*;
 use tsz_parser::parser::ParserState;
 

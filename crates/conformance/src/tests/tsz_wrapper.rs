@@ -402,8 +402,14 @@ fn test_parse_diagnostics_from_text_extracts_error_codes() {
 
     let diagnostics = parse_diagnostics_from_text(output);
     assert_eq!(extract_error_codes(&diagnostics), vec![2322, 2304]);
-    assert_eq!(diagnostics[0].message, output.lines().next().unwrap().to_string());
-    assert_eq!(diagnostics[1].message, output.lines().nth(1).unwrap().to_string());
+    assert_eq!(
+        diagnostics[0].message,
+        output.lines().next().unwrap().to_string()
+    );
+    assert_eq!(
+        diagnostics[1].message,
+        output.lines().nth(1).unwrap().to_string()
+    );
 }
 
 #[test]
