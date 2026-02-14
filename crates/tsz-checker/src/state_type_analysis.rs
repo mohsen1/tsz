@@ -2192,8 +2192,10 @@ impl<'a> CheckerState<'a> {
             return self.compute_enum_member_symbol_type(sym_id, value_decl);
         }
 
-        // Function - build function type or callable overload set
-        if flags & symbol_flags::FUNCTION != 0 {
+        // Function - build function type or callable overload set.
+        // For symbols merged as interface+function, prefer the interface path below
+        // when computing the symbol's semantic type (type-position behavior).
+        if flags & symbol_flags::FUNCTION != 0 && flags & symbol_flags::INTERFACE == 0 {
             use tsz_solver::CallableShape;
 
             let mut overloads = Vec::new();

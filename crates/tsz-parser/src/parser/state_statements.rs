@@ -2,7 +2,8 @@
 
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR,
-    CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_PARAMETER_DEFAULT,
+    CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
 };
 use crate::parser::{NodeIndex, NodeList, node::*, parse_rules::*, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -1790,6 +1791,15 @@ impl ParserState {
         // Check for illegal binding identifiers (e.g., 'await' in async contexts, 'yield' in generator contexts)
         // This must be called BEFORE parsing the parameter name to catch reserved words
         self.check_illegal_binding_identifier();
+        if (self.context_flags & CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS) != 0
+            && self.is_token(SyntaxKind::StaticKeyword)
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+            );
+        }
 
         // TS18009: Check for private identifiers used as parameters (check before parsing)
         if self.is_token(SyntaxKind::PrivateIdentifier) {
@@ -3200,7 +3210,10 @@ impl ParserState {
         };
 
         self.parse_expected(SyntaxKind::OpenParenToken);
+        let saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS;
         let parameters = self.parse_parameter_list();
+        self.context_flags = saved_flags;
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         // Recovery: Handle return type annotation on constructor (invalid but users write it)

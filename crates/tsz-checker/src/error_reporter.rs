@@ -4014,7 +4014,12 @@ impl<'a> CheckerState<'a> {
                     src.get(start..).map(|tail| tail.starts_with(&pattern))
                 })
                 .unwrap_or(false);
-            if self.has_parse_errors() && !is_es2015_type && !allow_keyword_array_recovery {
+            let allow_any_in_parse_recovery = name == "any";
+            if self.has_parse_errors()
+                && !is_es2015_type
+                && !allow_keyword_array_recovery
+                && !allow_any_in_parse_recovery
+            {
                 return;
             }
 

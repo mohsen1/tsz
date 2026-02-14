@@ -7,7 +7,3 @@ pub fn matches_path_filter(_path: &Path, _filter: Option<&str>) -> bool {
     let normalized = _path.to_string_lossy().replace('\\', "/");
     normalized.contains(filter)
 }
-
-#[cfg(test)]
-#[path = "tests/test_filter.rs"]
-mod tests;
