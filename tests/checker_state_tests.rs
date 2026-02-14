@@ -17866,11 +17866,12 @@ const fromString: Color = Color.fromHex("#FF0000");
 
     let error_count = checker.ctx.diagnostics.len();
 
-    // Currently expects 3 errors: namespace value access not merged with interface
-    // Once namespace-interface value merging works, change to expect 0 errors
+    // Now expects 0 errors: both interface member access (myColor.r, etc.) and
+    // namespace value access (Color.RED, Color.fromHex) work correctly after
+    // fixing interface+namespace merge type resolution.
     assert_eq!(
-        error_count, 3,
-        "Expected 3 errors for namespace-interface value access: {:?}",
+        error_count, 0,
+        "Expected 0 errors for namespace-interface merging: {:?}",
         checker.ctx.diagnostics
     );
 }

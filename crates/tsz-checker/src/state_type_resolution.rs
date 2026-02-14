@@ -890,8 +890,22 @@ impl<'a> CheckerState<'a> {
                     // 2. create_lazy_type_ref() returns TypeData::Lazy(DefId) for error formatting
                     // 3. resolve_lazy() returns the cached structural type for actual type checking
 
-                    // Step 1: Ensure the structural type is computed and cached
-                    let structural_type = self.get_type_of_symbol(sym_id);
+                    // Step 1: Ensure the structural type is computed and cached.
+                    // For merged interface+namespace symbols, get_type_of_symbol returns the
+                    // namespace type (from compute_type_of_symbol's namespace branch). We need
+                    // the interface type for type-position usage, so compute it directly from
+                    // the interface declarations.
+                    let is_merged_with_namespace = symbol.flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                        != 0;
+
+                    let structural_type = if is_merged_with_namespace {
+                        // Compute the interface type directly, bypassing get_type_of_symbol
+                        // which would return the namespace type for merged symbols.
+                        self.compute_interface_type_from_declarations(sym_id)
+                    } else {
+                        self.get_type_of_symbol(sym_id)
+                    };
 
                     // Step 1.5: Cache type parameters for generic interfaces (Promise<T>, Map<K,V>, etc.)
                     // This enables the Solver to expand Application(Lazy(DefId), Args) by providing
@@ -918,11 +932,16 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    // FIX: For interfaces with index signatures (ObjectWithIndex), return the structural
-                    // type directly instead of Lazy wrapper. The Lazy type causes issues with flow
-                    // analysis - it returns ANY instead of the proper type. For regular interfaces
-                    // (Object without index signatures), return Lazy to preserve error formatting.
-                    if query::is_object_with_index_type(self.ctx.types, structural_type) {
+                    // For merged interface+namespace symbols, return the structural type
+                    // directly instead of Lazy wrapper. The Lazy wrapper causes property
+                    // access to incorrectly classify the type as a namespace value,
+                    // blocking interface member resolution.
+                    //
+                    // Also return structural type for interfaces with index signatures
+                    // (ObjectWithIndex) — Lazy causes issues with flow analysis there.
+                    if is_merged_with_namespace
+                        || query::is_object_with_index_type(self.ctx.types, structural_type)
+                    {
                         self.ctx.leave_recursion();
                         return structural_type;
                     } else {
@@ -986,6 +1005,63 @@ impl<'a> CheckerState<'a> {
         let result = self.get_type_of_symbol(sym_id);
         self.ctx.leave_recursion();
         result
+    }
+
+    /// Compute the interface structural type from declarations, bypassing `get_type_of_symbol`.
+    ///
+    /// For merged interface+namespace symbols, `get_type_of_symbol` returns the namespace
+    /// type (via the MODULE branch in `compute_type_of_symbol`). This helper computes the
+    /// interface type directly from the interface declarations, which is needed when the
+    /// symbol is used in type position (e.g., `var f: Foo` where Foo is interface+namespace).
+    fn compute_interface_type_from_declarations(&mut self, sym_id: SymbolId) -> TypeId {
+        use tsz_lowering::TypeLowering;
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return TypeId::ERROR;
+        };
+        let declarations = symbol.declarations.clone();
+
+        if declarations.is_empty() {
+            return TypeId::ERROR;
+        }
+
+        // Get type parameters from the first interface declaration
+        let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
+        let mut params = Vec::new();
+        let mut updates = Vec::new();
+        if !first_decl.is_none() {
+            if let Some(node) = self.ctx.arena.get(first_decl)
+                && let Some(interface) = self.ctx.arena.get_interface(node)
+            {
+                (params, updates) = self.push_type_parameters(&interface.type_parameters);
+            }
+        }
+
+        let type_param_bindings = self.get_type_param_bindings();
+        let type_resolver = |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
+        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
+            self.resolve_type_symbol_for_lowering(node_idx)
+                .map(|sym_id_raw| {
+                    self.ctx
+                        .get_or_create_def_id(tsz_binder::SymbolId(sym_id_raw))
+                })
+        };
+        let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+        let lowering = TypeLowering::with_hybrid_resolver(
+            self.ctx.arena,
+            self.ctx.types,
+            &type_resolver,
+            &def_id_resolver,
+            &value_resolver,
+        )
+        .with_type_param_bindings(type_param_bindings);
+        let interface_type =
+            lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
+
+        self.pop_type_parameters(updates);
+        let _ = params; // params are not needed for this path
+
+        self.merge_interface_heritage_types(&declarations, interface_type)
     }
 
     /// Like `type_reference_symbol_type` but also returns the type parameters used.
