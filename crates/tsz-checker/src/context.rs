@@ -375,6 +375,9 @@ pub struct CheckerContext<'a> {
     /// Whether the source file has real syntax errors (not just conflict markers TS1185).
     /// Used to suppress TS2304 only when there are genuine parse errors.
     pub has_syntax_parse_errors: bool,
+    /// Positions (start) of syntax parse errors (excluding conflict markers TS1185).
+    /// Used for targeted TS2304 suppression near parse error sites.
+    pub syntax_parse_error_positions: Vec<u32>,
 
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,
@@ -698,6 +701,7 @@ impl<'a> CheckerContext<'a> {
             next_binding_group_id: 0,
             has_parse_errors: false,
             has_syntax_parse_errors: false,
+            syntax_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -823,6 +827,7 @@ impl<'a> CheckerContext<'a> {
             next_binding_group_id: 0,
             has_parse_errors: false,
             has_syntax_parse_errors: false,
+            syntax_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -939,6 +944,7 @@ impl<'a> CheckerContext<'a> {
             next_binding_group_id: 0,
             has_parse_errors: false,
             has_syntax_parse_errors: false,
+            syntax_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -1058,6 +1064,7 @@ impl<'a> CheckerContext<'a> {
             next_binding_group_id: 0,
             has_parse_errors: false,
             has_syntax_parse_errors: false,
+            syntax_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -1176,6 +1183,7 @@ impl<'a> CheckerContext<'a> {
             next_binding_group_id: 0,
             has_parse_errors: false,
             has_syntax_parse_errors: false,
+            syntax_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
@@ -1313,6 +1321,7 @@ impl<'a> CheckerContext<'a> {
             next_binding_group_id: 0,
             has_parse_errors: false,
             has_syntax_parse_errors: false,
+            syntax_parse_error_positions: Vec::new(),
             diagnostics: Vec::new(),
             emitted_diagnostics: FxHashSet::default(),
             modules_with_ts2307_emitted: FxHashSet::default(),
