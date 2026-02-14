@@ -25,6 +25,29 @@ interface TranspileResult {
   dts?: string | null;
 }
 
+interface SourceInputFile {
+  name: string;
+  content: string;
+}
+
+function dedupeUseStrictPreamble(text: string): string {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let seen = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === '"use strict";' || trimmed === "'use strict';") {
+      if (!seen) {
+        out.push('"use strict";');
+        seen = true;
+      }
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 // Convert target number to CLI arg
 function targetToCliArg(target: number): string {
   const targets: Record<number, string> = {
@@ -122,21 +145,63 @@ export class CliTranspiler {
     source: string,
     target: number,
     module: number,
-    options: { sourceFileName?: string; declaration?: boolean; alwaysStrict?: boolean; sourceMap?: boolean; downlevelIteration?: boolean; noEmitHelpers?: boolean } = {}
+    options: {
+      sourceFileName?: string;
+      declaration?: boolean;
+      alwaysStrict?: boolean;
+      sourceMap?: boolean;
+      downlevelIteration?: boolean;
+      noEmitHelpers?: boolean;
+      sourceFiles?: SourceInputFile[];
+      expectedJsFileName?: string;
+      expectedDtsFileName?: string;
+    } = {}
   ): Promise<TranspileResult> {
-    const { sourceFileName, declaration = false, alwaysStrict = false, sourceMap = false, downlevelIteration = false, noEmitHelpers = false } = options;
+    const {
+      sourceFileName,
+      declaration = false,
+      alwaysStrict = false,
+      sourceMap = false,
+      downlevelIteration = false,
+      noEmitHelpers = false,
+      sourceFiles,
+      expectedJsFileName,
+      expectedDtsFileName,
+    } = options;
     const testName = `test_${this.counter++}`;
-    const extMatch = sourceFileName?.match(/\.(ts|tsx|mts|cts)$/);
-    const inputExt = extMatch ? extMatch[0] : '.ts';
-    const inputFile = path.join(this.tempDir, `${testName}${inputExt}`);
-    const sourceStem = inputFile.replace(/\.(ts|tsx|mts|cts)$/, '');
-    const jsExt = inputExt === '.tsx' ? '.jsx' : inputExt === '.mts' ? '.mjs' : inputExt === '.cts' ? '.cjs' : '.js';
-    const jsFile = `${sourceStem}${jsExt}`;
-    const dtsFile = `${sourceStem}.d.ts`;
+    const testDir = path.join(this.tempDir, testName);
+    fs.mkdirSync(testDir, { recursive: true });
+
+    const files: SourceInputFile[] = sourceFiles && sourceFiles.length > 0
+      ? sourceFiles
+      : [{
+          name: sourceFileName ?? `${testName}.ts`,
+          content: source,
+        }];
+
+    const inputFiles: string[] = [];
+    const expectedOutputs: Array<{ jsPath: string; dtsPath: string }> = [];
+
+    const sourceExtToJsExt = (ext: string) =>
+      ext === '.tsx' ? '.jsx' : ext === '.mts' ? '.mjs' : ext === '.cts' ? '.cjs' : '.js';
+
+    for (const file of files) {
+      const relName = file.name.replace(/^\/+/, '');
+      const filePath = path.join(testDir, relName);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, file.content, 'utf-8');
+      inputFiles.push(filePath);
+
+      const extMatch = relName.match(/\.(ts|tsx|mts|cts)$/);
+      const ext = extMatch ? `.${extMatch[1]}` : '.ts';
+      const stem = filePath.replace(/\.(ts|tsx|mts|cts)$/, '');
+      expectedOutputs.push({
+        jsPath: `${stem}${sourceExtToJsExt(ext)}`,
+        dtsPath: `${stem}.d.ts`,
+      });
+    }
 
     try {
-      fs.writeFileSync(inputFile, source, 'utf-8');
-
       const targetArg = targetToCliArg(target);
       const moduleArg = moduleToCliArg(module);
 
@@ -153,7 +218,7 @@ export class CliTranspiler {
       if (sourceMap) args.push('--sourceMap');
       if (downlevelIteration) args.push('--downlevelIteration');
       if (noEmitHelpers) args.push('--noEmitHelpers');
-      const trailingArgs = ['--target', targetArg, '--module', moduleArg, inputFile];
+      const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
       args.push(...trailingArgs);
 
       // Run CLI asynchronously without shell overhead.
@@ -183,9 +248,11 @@ export class CliTranspiler {
         if (!shouldRetryDeclarationFastPath) {
           // Match tsc behavior: diagnostics can still produce outputs (exit code 2).
           // For JS-only emit mode, continue if JS output was generated.
-          if (!declaration && fs.existsSync(jsFile)) {
+          const hasJsOutput = expectedOutputs.some(o => fs.existsSync(o.jsPath));
+          const hasDtsOutput = expectedOutputs.some(o => fs.existsSync(o.dtsPath));
+          if (!declaration && hasJsOutput) {
             // continue
-          } else if (declaration && fs.existsSync(dtsFile)) {
+          } else if (declaration && hasDtsOutput) {
             // declaration emit produced output despite diagnostics
           } else {
             throw e;
@@ -205,17 +272,50 @@ export class CliTranspiler {
       let js = '';
       let dts: string | null = null;
 
-      if (fs.existsSync(jsFile)) {
-        js = fs.readFileSync(jsFile, 'utf-8');
-      }
+      const readNamedOutput = (name: string | undefined, dtsMode: boolean): string | null => {
+        if (!name) return null;
+        const outPath = path.join(testDir, name);
+        if (!fs.existsSync(outPath)) return null;
+        const content = fs.readFileSync(outPath, 'utf-8');
+        return dtsMode ? content : content;
+      };
 
-      if (declaration && fs.existsSync(dtsFile)) {
-        dts = fs.readFileSync(dtsFile, 'utf-8');
+      const namedJs = readNamedOutput(expectedJsFileName, false);
+      if (namedJs !== null) {
+        js = namedJs;
+      } else {
+        const chunks: string[] = [];
+        let sawUseStrict = false;
+        for (const out of expectedOutputs) {
+          if (fs.existsSync(out.jsPath)) {
+            let chunk = fs.readFileSync(out.jsPath, 'utf-8');
+            const strictPrefix = /^\s*["']use strict["'];\s*/;
+            if (sawUseStrict) {
+              chunk = chunk.replace(strictPrefix, '');
+            } else if (strictPrefix.test(chunk)) {
+              sawUseStrict = true;
+            }
+            chunks.push(chunk);
+          }
+        }
+        js = chunks.join('\n');
       }
+      js = dedupeUseStrictPreamble(js);
 
-      // Clean up output files
-      try { fs.unlinkSync(jsFile); } catch {}
-      try { fs.unlinkSync(dtsFile); } catch {}
+      if (declaration) {
+        const namedDts = readNamedOutput(expectedDtsFileName, true);
+        if (namedDts !== null) {
+          dts = namedDts;
+        } else {
+          const dtsChunks: string[] = [];
+          for (const out of expectedOutputs) {
+            if (fs.existsSync(out.dtsPath)) {
+              dtsChunks.push(fs.readFileSync(out.dtsPath, 'utf-8'));
+            }
+          }
+          dts = dtsChunks.length > 0 ? dtsChunks.join('\n') : null;
+        }
+      }
 
       return { js, dts };
     } catch (e) {
@@ -225,7 +325,7 @@ export class CliTranspiler {
       }
       throw e;
     } finally {
-      try { fs.unlinkSync(inputFile); } catch {}
+      try { fs.rmSync(testDir, { recursive: true, force: true }); } catch {}
     }
   }
 
