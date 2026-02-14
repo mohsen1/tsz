@@ -2110,10 +2110,23 @@ impl<'a> CheckerState<'a> {
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
                 elem
             } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                elems
-                    .get(element_index)
-                    .map(|e| e.type_id)
-                    .unwrap_or(TypeId::ANY)
+                if let Some(e) = elems.get(element_index) {
+                    e.type_id
+                } else {
+                    let has_rest_tail = elems.last().is_some_and(|element| element.rest);
+                    if !has_rest_tail {
+                        self.error_at_node(
+                            element_data.name,
+                            &format!(
+                                "Tuple type of length '{}' has no element at index '{}'.",
+                                elems.len(),
+                                element_index
+                            ),
+                            crate::types::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
+                        );
+                    }
+                    TypeId::ANY
+                }
             } else {
                 TypeId::ANY
             };
@@ -3042,16 +3055,24 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .arena
                         .get_expr_type_args(type_node)
-                        .and_then(|e| e.type_arguments.as_ref());
+                        .and_then(|e| e.type_arguments.as_ref())
+                        .or_else(|| {
+                            self.ctx
+                                .arena
+                                .get(expr_idx)
+                                .and_then(|expr_node| self.ctx.arena.get_call_expr(expr_node))
+                                .and_then(|call| call.type_arguments.as_ref())
+                        });
 
                     let required_count = self.count_required_type_params(heritage_sym);
                     let total_type_params = self.get_type_params_for_symbol(heritage_sym).len();
 
                     if let Some(type_args) = type_args {
                         if total_type_params == 0 {
-                            if let Some(&arg_idx) = type_args.nodes.first()
-                                && let Some(name) = self.heritage_name_text(expr_idx)
-                            {
+                            if let Some(&arg_idx) = type_args.nodes.first() {
+                                let name = self
+                                    .heritage_name_text(expr_idx)
+                                    .unwrap_or_else(|| "<expression>".to_string());
                                 self.error_at_node_msg(
                                     arg_idx,
                                     crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
@@ -3242,6 +3263,30 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else {
+                    // Heritage expression with explicit type arguments over a call expression
+                    // (e.g. `class C extends getBase()<T> {}`) should report TS2315 when
+                    // the expression resolves but is not generic.
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+                        && let Some(type_args) = expr_type_args.type_arguments.as_ref()
+                        && !type_args.nodes.is_empty()
+                        && let Some(expr_node) = self.ctx.arena.get(expr_idx)
+                        && expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                    {
+                        let expr_type = self.get_type_of_node(expr_idx);
+                        if !tsz_solver::type_queries::is_generic_type(self.ctx.types, expr_type)
+                            && let Some(&arg_idx) = type_args.nodes.first()
+                        {
+                            let name = self
+                                .heritage_name_text(expr_idx)
+                                .unwrap_or_else(|| "<expression>".to_string());
+                            self.error_at_node_msg(
+                                arg_idx,
+                                crate::types::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                                &[name.as_str()],
+                            );
+                        }
+                    }
+
                     // Could not resolve as a heritage symbol - check if it's an identifier
                     // that references a value with a constructor type
                     //
