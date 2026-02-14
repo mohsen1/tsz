@@ -511,6 +511,14 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         state_checking_src.contains("check_assignable_or_report_generic_at("),
         "state_checking destructuring generic mismatch checks should route through check_assignable_or_report_generic_at"
     );
+    assert!(
+        state_checking_src.contains("ensure_relation_input_ready("),
+        "state_checking relation/query precondition setup should route through ensure_relation_input_ready"
+    );
+    assert!(
+        !state_checking_src.contains("ensure_application_symbols_resolved("),
+        "state_checking should not manually orchestrate application-symbol preconditions"
+    );
 
     let state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
         .expect("failed to read src/state_checking_members.rs for architecture guard");
