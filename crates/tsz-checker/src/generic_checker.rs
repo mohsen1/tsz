@@ -47,7 +47,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Get the type parameters from the callee type
+        let callee_type = self.evaluate_application_type(callee_type);
+
+        let got = type_args_list.nodes.len();
+        // Get the type parameters from the callee type. For callables with overloads,
+        // prefer a signature whose type parameter arity matches the provided type args.
         let type_params =
             match query::classify_for_type_argument_extraction(self.ctx.types, callee_type) {
                 query::TypeArgumentExtractionKind::Function(shape_id) => {
@@ -56,17 +60,25 @@ impl<'a> CheckerState<'a> {
                 }
                 query::TypeArgumentExtractionKind::Callable(shape_id) => {
                     let shape = self.ctx.types.callable_shape(shape_id);
-                    // For callable types, use the first signature's type params
-                    shape
+                    let matching = shape
                         .call_signatures
-                        .first()
-                        .map(|sig| sig.type_params.clone())
-                        .unwrap_or_default()
+                        .iter()
+                        .find(|sig| sig.type_params.len() == got)
+                        .map(|sig| sig.type_params.clone());
+                    if let Some(params) = matching {
+                        params
+                    } else {
+                        // Fall back to first signature for diagnostics when no arity match exists.
+                        shape
+                            .call_signatures
+                            .first()
+                            .map(|sig| sig.type_params.clone())
+                            .unwrap_or_default()
+                    }
                 }
                 query::TypeArgumentExtractionKind::Other => return,
             };
 
-        let got = type_args_list.nodes.len();
         let expected = type_params.len();
 
         if type_params.is_empty() {
@@ -109,17 +121,18 @@ impl<'a> CheckerState<'a> {
                 // Resolve the constraint in case it's a Lazy type
                 let constraint = self.resolve_lazy_type(constraint);
 
-                // Instantiate the constraint with already-validated type arguments
-                let instantiated_constraint = if i > 0 {
-                    let mut subst = tsz_solver::TypeSubstitution::new();
-                    for (j, p) in type_params.iter().take(i).enumerate() {
-                        if let Some(&arg) = type_args.get(j) {
-                            subst.insert(p.name, arg);
-                        }
+                // Instantiate the constraint with type arguments up to and including the
+                // current parameter so self-referential constraints are validated.
+                let mut subst = tsz_solver::TypeSubstitution::new();
+                for (j, p) in type_params.iter().take(i + 1).enumerate() {
+                    if let Some(&arg) = type_args.get(j) {
+                        subst.insert(p.name, arg);
                     }
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
-                } else {
+                }
+                let instantiated_constraint = if subst.is_empty() {
                     constraint
+                } else {
+                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
                 };
 
                 // Resolve refs and lazy types before checking
@@ -215,17 +228,18 @@ impl<'a> CheckerState<'a> {
                 // Resolve the constraint in case it's a Lazy type
                 let constraint = self.resolve_lazy_type(constraint);
 
-                // Instantiate the constraint with already-validated type arguments
-                let instantiated_constraint = if i > 0 {
-                    let mut subst = tsz_solver::TypeSubstitution::new();
-                    for (j, p) in type_params.iter().take(i).enumerate() {
-                        if let Some(&arg) = type_args.get(j) {
-                            subst.insert(p.name, arg);
-                        }
+                // Instantiate the constraint with type arguments up to and including the
+                // current parameter so self-referential constraints are validated.
+                let mut subst = tsz_solver::TypeSubstitution::new();
+                for (j, p) in type_params.iter().take(i + 1).enumerate() {
+                    if let Some(&arg) = type_args.get(j) {
+                        subst.insert(p.name, arg);
                     }
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
-                } else {
+                }
+                let instantiated_constraint = if subst.is_empty() {
                     constraint
+                } else {
+                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
                 };
 
                 // Resolve refs and lazy types before checking
@@ -297,17 +311,18 @@ impl<'a> CheckerState<'a> {
                 // Resolve the constraint in case it's a Lazy type
                 let constraint = self.resolve_lazy_type(constraint);
 
-                // Instantiate the constraint with already-validated type arguments
-                let instantiated_constraint = if i > 0 {
-                    let mut subst = tsz_solver::TypeSubstitution::new();
-                    for (j, p) in type_params.iter().take(i).enumerate() {
-                        if let Some(&arg) = type_args.get(j) {
-                            subst.insert(p.name, arg);
-                        }
+                // Instantiate the constraint with type arguments up to and including the
+                // current parameter so self-referential constraints are validated.
+                let mut subst = tsz_solver::TypeSubstitution::new();
+                for (j, p) in type_params.iter().take(i + 1).enumerate() {
+                    if let Some(&arg) = type_args.get(j) {
+                        subst.insert(p.name, arg);
                     }
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
-                } else {
+                }
+                let instantiated_constraint = if subst.is_empty() {
                     constraint
+                } else {
+                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
                 };
 
                 // Resolve refs and lazy types before checking
