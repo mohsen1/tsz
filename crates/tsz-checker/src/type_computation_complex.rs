@@ -465,7 +465,10 @@ impl<'a> CheckerState<'a> {
                     let expected = expected_max.unwrap_or(expected_min);
                     self.error_argument_count_mismatch_at(expected, actual, idx);
                 }
-                TypeId::ERROR
+                // Recover with the constructor instance type so downstream checks
+                // (e.g. property access TS2339) still run after arity diagnostics.
+                self.instance_type_from_constructor_type(constructor_type)
+                    .unwrap_or(TypeId::ERROR)
             }
             CallResult::OverloadArgumentCountMismatch {
                 actual,
