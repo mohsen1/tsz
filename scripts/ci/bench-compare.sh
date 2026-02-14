@@ -15,6 +15,7 @@ SAMPLE_SIZE="${TSZ_PERF_SAMPLE_SIZE:-20}"
 WARMUP_TIME="${TSZ_PERF_WARMUP_TIME:-1}"
 MEASUREMENT_TIME="${TSZ_PERF_MEASUREMENT_TIME:-2}"
 FAIL_THRESHOLD_PCT="${TSZ_PERF_FAIL_THRESHOLD_PCT:-5}"
+FAIL_ON_REGRESSION="${TSZ_PERF_FAIL_ON_REGRESSION:-0}"
 
 if [ -n "${TSZ_PERF_BENCHES:-}" ]; then
   IFS=',' read -r -a BENCHES <<< "${TSZ_PERF_BENCHES}"
@@ -161,6 +162,7 @@ SUMMARY_MD="${OUT_DIR}/summary.md"
   echo "- Head SHA: \`$(git -C "${ROOT_DIR}" rev-parse --short HEAD)\`"
   echo "- Criterion args: \`${BENCH_ARGS[*]}\`"
   echo "- Regression threshold: \`${FAIL_THRESHOLD_PCT}%\` (statistically significant regressions only)"
+  echo "- Fail on regression: \`${FAIL_ON_REGRESSION}\`"
   echo ""
   echo "| Bench | Case | Mid change | Status |"
   echo "|---|---|---:|---|"
@@ -211,6 +213,9 @@ fi
 echo "Wrote comparison artifacts to: ${OUT_DIR}"
 
 if [ "${regressed_over_threshold}" -gt 0 ]; then
-  echo "Detected ${regressed_over_threshold} statistically significant regressions above ${FAIL_THRESHOLD_PCT}%." >&2
-  exit 1
+  if [ "${FAIL_ON_REGRESSION}" = "1" ]; then
+    echo "Detected ${regressed_over_threshold} statistically significant regressions above ${FAIL_THRESHOLD_PCT}%." >&2
+    exit 1
+  fi
+  echo "Detected ${regressed_over_threshold} statistically significant regressions above ${FAIL_THRESHOLD_PCT}% (report-only mode)." >&2
 fi

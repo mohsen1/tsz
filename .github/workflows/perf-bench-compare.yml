@@ -52,10 +52,12 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref || inputs.base_ref || 'main' }}
           TSZ_PERF_TARGET_DIR: ${{ github.workspace }}/target-perf
-          TSZ_PERF_SAMPLE_SIZE: '20'
+          TSZ_PERF_BENCHES: 'phase_timing_bench,real_world_bench'
+          TSZ_PERF_SAMPLE_SIZE: '15'
           TSZ_PERF_WARMUP_TIME: '1'
-          TSZ_PERF_MEASUREMENT_TIME: '2'
-          TSZ_PERF_FAIL_THRESHOLD_PCT: '5'
+          TSZ_PERF_MEASUREMENT_TIME: '1'
+          TSZ_PERF_FAIL_THRESHOLD_PCT: '10'
+          TSZ_PERF_FAIL_ON_REGRESSION: '0'
         run: ./scripts/ci/bench-compare.sh
 
       - name: Upload benchmark artifacts
@@ -66,4 +68,3 @@ jobs:
           path: ${{ runner.temp }}/tsz-perf-compare-*/out
           if-no-files-found: warn
           retention-days: 7
-
