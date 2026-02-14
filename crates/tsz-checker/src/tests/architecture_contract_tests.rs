@@ -332,6 +332,18 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         state_type_environment_src.contains("collect_referenced_types("),
         "state_type_environment should use solver collect_referenced_types visitor helper for traversal preconditions"
     );
+    assert!(
+        state_type_environment_src.contains("collect_lazy_def_ids("),
+        "state_type_environment should use solver collect_lazy_def_ids visitor helper for lazy DefId preconditions"
+    );
+    assert!(
+        state_type_environment_src.contains("collect_enum_def_ids("),
+        "state_type_environment should use solver collect_enum_def_ids visitor helper for enum DefId preconditions"
+    );
+    assert!(
+        state_type_environment_src.contains("collect_type_queries("),
+        "state_type_environment should use solver collect_type_queries visitor helper for type-query symbol preconditions"
+    );
 
     let type_computation_complex_src = fs::read_to_string("src/type_computation_complex.rs")
         .expect("failed to read src/type_computation_complex.rs for architecture guard");

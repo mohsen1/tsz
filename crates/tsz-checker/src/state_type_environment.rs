@@ -12,7 +12,10 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 use tsz_solver::types::Visibility;
-use tsz_solver::visitor::{collect_referenced_types, lazy_def_id};
+use tsz_solver::visitor::{
+    collect_enum_def_ids, collect_lazy_def_ids, collect_referenced_types, collect_type_queries,
+    lazy_def_id,
+};
 
 impl<'a> CheckerState<'a> {
     /// Get type of object literal.
@@ -894,27 +897,33 @@ impl<'a> CheckerState<'a> {
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> bool {
         let mut fully_resolved = true;
-        for current in collect_referenced_types(self.ctx.types, type_id) {
-            if !visited.insert(current) {
-                continue;
-            }
+        visited.extend(collect_referenced_types(self.ctx.types, type_id));
 
-            if let Some(def_id) = query::lazy_def_id(self.ctx.types, current) {
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    // Use get_type_of_symbol (not type_reference_symbol_type) because
-                    // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
-                    // which insert_type_env_symbol rejects as a self-recursive alias.
-                    // We need the concrete structural type for TypeEnvironment resolution.
-                    let resolved = self.get_type_of_symbol(sym_id);
-                    fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
-                }
-                continue;
+        for def_id in collect_lazy_def_ids(self.ctx.types, type_id) {
+            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                // Use get_type_of_symbol (not type_reference_symbol_type) because
+                // type_reference_symbol_type returns Lazy(DefId) for interfaces/classes,
+                // which insert_type_env_symbol rejects as a self-recursive alias.
+                // We need the concrete structural type for TypeEnvironment resolution.
+                let resolved = self.get_type_of_symbol(sym_id);
+                fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
             }
+        }
 
-            if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(current) {
+        for def_id in collect_enum_def_ids(self.ctx.types, type_id) {
+            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
                 let resolved = self.type_reference_symbol_type(sym_id);
                 fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
             }
+        }
+
+        for symbol_ref in collect_type_queries(self.ctx.types, type_id) {
+            let sym_id = SymbolId(symbol_ref.0);
+            if self.ctx.binder.get_symbol(sym_id).is_none() {
+                continue;
+            }
+            let resolved = self.type_reference_symbol_type(sym_id);
+            fully_resolved &= self.insert_type_env_symbol(sym_id, resolved);
         }
 
         fully_resolved

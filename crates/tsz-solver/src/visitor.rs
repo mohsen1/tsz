@@ -579,6 +579,22 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     out
 }
 
+/// Collect all unique enum DefIds reachable from `root`.
+pub fn collect_enum_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId> {
+    let mut out = Vec::new();
+    let mut seen = FxHashSet::default();
+
+    walk_referenced_types(types, root, |type_id| {
+        if let Some(TypeKey::Enum(def_id, _)) = types.lookup(type_id) {
+            if seen.insert(def_id) {
+                out.push(def_id);
+            }
+        }
+    });
+
+    out
+}
+
 /// Collect all unique type-query symbol references reachable from `root`.
 pub fn collect_type_queries(types: &dyn TypeDatabase, root: TypeId) -> Vec<SymbolRef> {
     let mut out = Vec::new();
