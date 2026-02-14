@@ -110,6 +110,15 @@ CHECKS = [
         {"exclude_dirs": {"tsz-solver", "tests"}, "ignore_comment_lines": True},
     ),
     (
+        "Non-solver/non-lowering crates must not inspect TypeData internals in production code",
+        ROOT / "crates",
+        re.compile(r"\buse\s+tsz_solver::.*TypeData\b|\bTypeData::"),
+        {
+            "exclude_dirs": {"tsz-solver", "tsz-lowering", "tests"},
+            "ignore_comment_lines": True,
+        },
+    ),
+    (
         "LSP boundary: direct lookup() on solver interner",
         ROOT / "crates" / "tsz-lsp",
         re.compile(r"\.lookup\s*\("),
