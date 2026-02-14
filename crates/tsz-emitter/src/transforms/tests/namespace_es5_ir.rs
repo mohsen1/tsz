@@ -156,8 +156,8 @@ fn test_namespace_es5_enum_emit_lowered() {
         "Should lower enum member assignments inside namespace"
     );
     assert!(
-        output.contains("A.Color = Color;"),
-        "Should export enum symbol through namespace assignment"
+        output.contains("Color = A.Color || (A.Color = {})"),
+        "Should inline enum namespace binding in IIFE argument to match tsc"
     );
 }
 
