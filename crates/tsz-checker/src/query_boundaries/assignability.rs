@@ -201,14 +201,62 @@ pub(crate) struct AssignabilityFailureAnalysis {
     pub failure_reason: Option<SubtypeFailureReason>,
 }
 
-pub(crate) fn analyze_assignability_failure_with_context(
+pub(crate) struct AssignabilityGateResult {
+    pub related: bool,
+    pub analysis: Option<AssignabilityFailureAnalysis>,
+}
+
+pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+    flags: u16,
+    inheritance_graph: &tsz_solver::InheritanceGraph,
+    sound_mode: bool,
+    overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
+    ctx: Option<&crate::context::CheckerContext<'_>>,
+    collect_failure_analysis: bool,
+) -> AssignabilityGateResult {
+    let related = is_assignable_with_overrides(
+        db,
+        resolver,
+        source,
+        target,
+        flags,
+        inheritance_graph,
+        sound_mode,
+        overrides,
+    );
+
+    if !collect_failure_analysis || related {
+        return AssignabilityGateResult {
+            related,
+            analysis: None,
+        };
+    }
+
+    let analysis = ctx.map(|ctx| {
+        analyze_assignability_failure_with_context(
+            db.as_type_database(),
+            ctx,
+            resolver,
+            source,
+            target,
+        )
+    });
+
+    AssignabilityGateResult { related, analysis }
+}
+
+pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeResolver>(
     db: &dyn TypeDatabase,
     ctx: &crate::context::CheckerContext<'_>,
-    env: &tsz_solver::TypeEnvironment,
+    resolver: &R,
     source: TypeId,
     target: TypeId,
 ) -> AssignabilityFailureAnalysis {
-    let mut checker = tsz_solver::CompatChecker::with_resolver(db, env);
+    let mut checker = tsz_solver::CompatChecker::with_resolver(db, resolver);
     ctx.configure_compat_checker(&mut checker);
     AssignabilityFailureAnalysis {
         weak_union_violation: checker.is_weak_union_violation(source, target),
