@@ -34,10 +34,10 @@ mod tests;
 use crate::emitter::type_printer::TypePrinter;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
-use tsz_checker::TypeCache;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -54,7 +54,7 @@ pub struct DeclarationEmitter<'a> {
     source_map_state: Option<SourceMapState>,
     pending_source_pos: Option<SourcePosition>,
     /// Type cache for looking up inferred types
-    type_cache: Option<TypeCache>,
+    type_cache: Option<TypeCacheView>,
     /// Type interner for printing types
     type_interner: Option<&'a TypeInterner>,
     /// Binder state for symbol resolution (used by UsageAnalyzer)
@@ -137,7 +137,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub fn with_type_info(
         arena: &'a NodeArena,
-        type_cache: TypeCache,
+        type_cache: TypeCacheView,
         type_interner: &'a TypeInterner,
         binder: &'a BinderState,
     ) -> Self {

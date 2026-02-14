@@ -2034,9 +2034,14 @@ pub(crate) fn emit_outputs(
 
                 // Create emitter with type information and binder
                 let mut emitter = if let Some(ref cache) = type_cache {
+                    use tsz::type_cache_view::TypeCacheView;
+                    let cache_view = TypeCacheView {
+                        node_types: cache.node_types.clone(),
+                        def_to_symbol: cache.def_to_symbol.clone(),
+                    };
                     let mut emitter = DeclarationEmitter::with_type_info(
                         &file.arena,
-                        cache.clone(),
+                        cache_view,
                         &program.type_interner,
                         &binder,
                     );

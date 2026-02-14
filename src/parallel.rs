@@ -1590,7 +1590,7 @@ pub fn compile_files_with_libs(
 
 use crate::checker::context::{CheckerOptions, LibContext};
 use crate::checker::state::CheckerState;
-use crate::checker::types::diagnostics::Diagnostic;
+use crate::checker::diagnostics::Diagnostic;
 use crate::lib_loader::LibFile;
 use crate::parser::syntax_kind_ext;
 use crate::solver::TypeId;

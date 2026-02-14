@@ -12,7 +12,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::query_boundaries::type_computation::{is_type_parameter_type, union_members};
-use crate::state::CheckerState;
+use crate::state::{CheckerState, EnumKind};
 use crate::types::{Diagnostic, DiagnosticCategory};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;

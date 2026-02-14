@@ -171,7 +171,8 @@ impl<'a> TypePrinter<'a> {
         if visitor::is_this_type(self.interner, type_id) {
             return "this".to_string();
         }
-        if let Some((kind, type_arg)) = visitor::string_intrinsic_components(self.interner, type_id) {
+        if let Some((kind, type_arg)) = visitor::string_intrinsic_components(self.interner, type_id)
+        {
             return self.print_string_intrinsic(kind, type_arg);
         }
         if visitor::module_namespace_symbol_ref(self.interner, type_id).is_some() {
@@ -487,27 +488,9 @@ impl<'a> TypePrinter<'a> {
             }
         }
 
-        // Symbol is not visible or we don't have symbol info - inline the type
-        // Try to resolve DefId to TypeId using the symbol_types cache
-        let type_id = if let Some(sym_id) = sym_id {
-            if let Some(cache) = self.type_cache {
-                cache.symbol_types.get(&sym_id).copied()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some(type_id) = type_id {
-            // Recursively print the type with increased depth
-            let mut printer = self.clone();
-            printer.current_depth += 1;
-            printer.print_type(type_id)
-        } else {
-            // Fallback to "any" if we can't resolve
-            "any".to_string()
-        }
+        // Symbol is not visible or we don't have symbol info.
+        // Fallback to `any` when we cannot legally name the referenced type.
+        "any".to_string()
     }
 
     fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {

@@ -1211,7 +1211,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// with checker-provided overrides for enums, abstract constructors, and accessibility.
     ///
     /// This is the main entry point for assignability checking when checker context is available.
-    pub fn is_assignable_with_overrides<P: AssignabilityOverrideProvider>(
+    pub fn is_assignable_with_overrides<P: AssignabilityOverrideProvider + ?Sized>(
         &mut self,
         source: TypeId,
         target: TypeId,
