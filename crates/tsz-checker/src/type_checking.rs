@@ -803,27 +803,31 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(expected_type);
 
         // Check if the return type is assignable to the expected type.
-        // Constructors are validated holistically by TS2409 at declaration level,
-        // so we suppress per-return TS2322 diagnostics here.
         let is_in_constructor = self
             .ctx
             .enclosing_class
             .as_ref()
             .is_some_and(|c| c.in_constructor);
 
+        let error_node = if !return_data.expression.is_none() {
+            return_data.expression
+        } else {
+            stmt_idx
+        };
+
         if expected_type != TypeId::ANY
-            && !is_in_constructor
-            && !self.check_assignable_or_report(
-                return_type,
-                expected_type,
-                if !return_data.expression.is_none() {
-                    return_data.expression
-                } else {
-                    stmt_idx
-                },
-            )
+            && !self.check_assignable_or_report(return_type, expected_type, error_node)
         {
-            // Diagnostic emitted by check_assignable_or_report.
+            // TS2409: In constructors, also emit the constructor-specific diagnostic
+            // alongside the TS2322 already emitted by check_assignable_or_report.
+            if is_in_constructor {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
+                    diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
+                );
+            }
         }
 
         if expected_type != TypeId::ANY
