@@ -262,6 +262,31 @@ impl<'a> LoweringPass<'a> {
                             idx,
                             TransformDirective::ES5VariableDeclarationList { decl_list: idx },
                         );
+
+                        let need_downlevel_read = self.ctx.options.downlevel_iteration
+                            && decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                                if let Some(decl_node) = self.arena.get(decl_idx) {
+                                    if let Some(decl) =
+                                        self.arena.get_variable_declaration(decl_node)
+                                    {
+                                        if decl.initializer.is_none() {
+                                            return false;
+                                        }
+
+                                        self.arena.get(decl.name).is_some_and(|name_node| {
+                                            name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                        })
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            });
+
+                        if need_downlevel_read {
+                            self.transforms.helpers_mut().read = true;
+                        }
                     }
                     for &decl in &decl_list.declarations.nodes {
                         self.visit(decl);

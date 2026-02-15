@@ -202,32 +202,32 @@ impl<'a> UsageAnalyzer<'a> {
                 // Check if export_clause contains a declaration we need to analyze
                 if let Some(export_node) = self.arena.get(stmt_idx)
                     && let Some(export) = self.arena.get_export_decl(export_node)
+                    && !export.export_clause.is_none()
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
                 {
-                    if !export.export_clause.is_none() && let Some(clause_node) = self.arena.get(export.export_clause) {
-                        match clause_node.kind {
-                            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                                self.analyze_function_declaration(export.export_clause);
-                            }
-                            k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                                self.analyze_class_declaration(export.export_clause);
-                            }
-                            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                                self.analyze_interface_declaration(export.export_clause);
-                            }
-                            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                                self.analyze_type_alias_declaration(export.export_clause);
-                            }
-                            k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                                self.analyze_enum_declaration(export.export_clause);
-                            }
-                            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                                self.analyze_variable_statement(export.export_clause);
-                            }
-                            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                                self.analyze_import_equals_declaration(export.export_clause);
-                            }
-                            _ => {}
+                    match clause_node.kind {
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                            self.analyze_function_declaration(export.export_clause);
                         }
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                            self.analyze_class_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                            self.analyze_interface_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                            self.analyze_type_alias_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                            self.analyze_enum_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                            self.analyze_variable_statement(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                            self.analyze_import_equals_declaration(export.export_clause);
+                        }
+                        _ => {}
                     }
                 }
             }

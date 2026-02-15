@@ -37,6 +37,8 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let wrap_spread_with_read = self.destructuring_read_depth > 0;
+
         // Split array into segments by spread elements
         let mut segments: Vec<ArraySegment> = Vec::new();
         let mut current_start = 0;
@@ -74,7 +76,7 @@ impl<'a> Printer<'a> {
                 // Only a spread element: [...a] -> __spreadArray([], a, true)
                 self.write("__spreadArray([], ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                 }
                 self.write(", true)");
             }
@@ -85,7 +87,7 @@ impl<'a> Printer<'a> {
                 // Spread first, then elements: [...a, 1, 2] -> __spreadArray(a, [1, 2], false)
                 self.write("__spreadArray(");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                 }
                 self.write(", ");
                 self.write("[");
@@ -104,7 +106,7 @@ impl<'a> Printer<'a> {
                 self.write("]");
                 self.write(", ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                 }
                 self.write(", false)");
             }
@@ -120,7 +122,7 @@ impl<'a> Printer<'a> {
                 self.write("]");
                 self.write(", ");
                 if let Some(spread_node) = self.arena.get(*spread_idx) {
-                    self.emit_spread_expression(spread_node);
+                    self.emit_spread_expression_with_read(spread_node, wrap_spread_with_read);
                 }
                 self.write(", false)");
                 // Append suffix with concat
@@ -145,7 +147,10 @@ impl<'a> Printer<'a> {
                         }
                         ArraySegment::Spread(spread_idx) => {
                             if let Some(spread_node) = self.arena.get(*spread_idx) {
-                                self.emit_spread_expression(spread_node);
+                                self.emit_spread_expression_with_read(
+                                    spread_node,
+                                    wrap_spread_with_read,
+                                );
                             }
                         }
                     }
@@ -168,6 +173,18 @@ impl<'a> Printer<'a> {
         // Get the expression inside the spread element
         if let Some(spread) = self.arena.get_spread(node) {
             self.emit(spread.expression);
+        }
+    }
+
+    fn emit_spread_expression_with_read(&mut self, node: &Node, wrap_with_read: bool) {
+        if let Some(spread) = self.arena.get_spread(node) {
+            if wrap_with_read {
+                self.write("__read(");
+                self.emit(spread.expression);
+                self.write(")");
+            } else {
+                self.emit(spread.expression);
+            }
         }
     }
 

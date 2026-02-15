@@ -234,10 +234,10 @@ impl<'a> Printer<'a> {
                 continue;
             };
 
-            if let Some(binary) = self.arena.get_binary_expr(node) {
-                if binary.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16 {
-                    count += 1;
-                }
+            if let Some(binary) = self.arena.get_binary_expr(node)
+                && binary.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+            {
+                count += 1;
             }
 
             if self.is_logical_assignment_temp_scope_boundary(node) {

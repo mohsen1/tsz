@@ -645,11 +645,11 @@ impl<'a> DeclarationEmitter<'a> {
                 .copied()
                 .or_else(|| self.get_node_type_or_names(&[func.name]));
 
-            if let Some(func_type_id) = func_type_id {
-                if let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id) {
-                    self.write(": ");
-                    self.write(&self.print_type_id(return_type_id));
-                }
+            if let Some(func_type_id) = func_type_id
+                && let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+            {
+                self.write(": ");
+                self.write(&self.print_type_id(return_type_id));
             }
         }
 
@@ -1023,11 +1023,11 @@ impl<'a> DeclarationEmitter<'a> {
         if is_getter && !accessor.type_annotation.is_none() {
             self.write(": ");
             self.emit_type(accessor.type_annotation);
-        } else if is_getter {
-            if let Some(type_id) = self.get_node_type_or_names(&[accessor_idx, accessor.name]) {
-                self.write(": ");
-                self.write(&self.print_type_id(type_id));
-            }
+        } else if is_getter
+            && let Some(type_id) = self.get_node_type_or_names(&[accessor_idx, accessor.name])
+        {
+            self.write(": ");
+            self.write(&self.print_type_id(type_id));
         }
 
         self.write(";");

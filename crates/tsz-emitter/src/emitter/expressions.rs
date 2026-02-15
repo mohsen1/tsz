@@ -447,15 +447,13 @@ impl<'a> Printer<'a> {
             break;
         }
 
-        if let Some(current_node) = self.arena.get(current) {
-            if let Some(binary) = self.arena.get_binary_expr(current_node) {
-                if binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
-                    && !self.ctx.options.target.supports_es2020()
-                {
-                    self.emit_nullish_coalescing_expression_for_logical_assignment(binary);
-                    return;
-                }
-            }
+        if let Some(current_node) = self.arena.get(current)
+            && let Some(binary) = self.arena.get_binary_expr(current_node)
+            && binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
+            && !self.ctx.options.target.supports_es2020()
+        {
+            self.emit_nullish_coalescing_expression_for_logical_assignment(binary);
+            return;
         }
 
         if self.arena.get(current).is_some() {
@@ -591,10 +589,10 @@ impl<'a> Printer<'a> {
             return false;
         };
 
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.arena.get_parenthesized(node) {
-                return self.is_simple_nullish_expression(paren.expression);
-            }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.is_simple_nullish_expression(paren.expression);
         }
 
         node.kind == SyntaxKind::Identifier as u16
@@ -861,33 +859,32 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_optional_property_access(&mut self, access: &AccessExprData, token: &str) {
-        if let Some(text) = self.source_text {
-            if let Some(expr_node) = self.arena.get(access.expression) {
-                if let Some(name_node) = self.arena.get(access.name_or_argument) {
-                    let expr_end = expr_node.end as usize;
-                    let name_start = name_node.pos as usize;
-                    let between_end = std::cmp::min(name_start, text.len());
-                    let between_start = std::cmp::min(expr_end, between_end);
-                    let between = &text[between_start..between_end];
-                    if between.contains('\n') {
-                        if let Some(dot_pos) = between.find('.') {
-                            let after_dot = &between[dot_pos + 1..];
-                            if after_dot.contains('\n') {
-                                self.emit(access.expression);
-                                self.write(token);
-                                self.write_line();
-                                self.increase_indent();
-                                self.emit(access.name_or_argument);
-                                self.decrease_indent();
-                                return;
-                            } else {
-                                self.emit(access.expression);
-                                self.write(token);
-                                self.emit(access.name_or_argument);
-                                return;
-                            }
-                        }
-                    }
+        if let Some(text) = self.source_text
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            let expr_end = expr_node.end as usize;
+            let name_start = name_node.pos as usize;
+            let between_end = std::cmp::min(name_start, text.len());
+            let between_start = std::cmp::min(expr_end, between_end);
+            let between = &text[between_start..between_end];
+            if between.contains('\n')
+                && let Some(dot_pos) = between.find('.')
+            {
+                let after_dot = &between[dot_pos + 1..];
+                if after_dot.contains('\n') {
+                    self.emit(access.expression);
+                    self.write(token);
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit(access.name_or_argument);
+                    self.decrease_indent();
+                    return;
+                } else {
+                    self.emit(access.expression);
+                    self.write(token);
+                    self.emit(access.name_or_argument);
+                    return;
                 }
             }
         }
