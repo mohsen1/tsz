@@ -1086,6 +1086,56 @@ function* f() {
     );
 }
 
+#[test]
+fn test_generator_recovery_keeps_yield_statement_after_broken_initializer() {
+    let source = r"
+function* f() {
+    )
+    yield 1;
+    const ok = 2;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let function_idx = source_file.statements.nodes[0];
+    let function_node = parser.get_arena().get(function_idx).unwrap();
+    let function_data = parser.get_arena().get_function(function_node).unwrap();
+    let body = parser.get_arena().get_block_at(function_data.body).unwrap();
+
+    assert!(!parser.get_diagnostics().is_empty());
+    assert_eq!(
+        body.statements.nodes.len(),
+        2,
+        "Expected parser recovery to keep yield statement after an invalid token",
+    );
+
+    let yield_stmt_node = parser
+        .get_arena()
+        .get(body.statements.nodes[0])
+        .expect("expected yield statement in generator body");
+    assert_eq!(
+        yield_stmt_node.kind,
+        crate::parser::syntax_kind_ext::EXPRESSION_STATEMENT,
+        "Expected first recovered statement to be an expression statement containing yield",
+    );
+
+    let yield_stmt_data = parser
+        .get_arena()
+        .get_expression_statement(yield_stmt_node)
+        .expect("expected expression statement data for recovered yield statement");
+    let yield_expr_node = parser
+        .get_arena()
+        .get(yield_stmt_data.expression)
+        .expect("expected recovered yield expression node");
+    let yield_text = &source[yield_expr_node.pos as usize..yield_expr_node.end as usize];
+    assert!(
+        yield_text.trim_start().starts_with("yield"),
+        "Expected recovered statement text to start with `yield`, got: {yield_text:?}"
+    );
+}
+
 // =============================================================================
 // Orphan Catch/Finally Tests
 // =============================================================================

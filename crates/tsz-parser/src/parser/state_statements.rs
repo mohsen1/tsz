@@ -2836,6 +2836,19 @@ impl ParserState {
     pub(crate) fn parse_interface_heritage_type_reference(&mut self) -> NodeIndex {
         use tsz_common::diagnostics::diagnostic_codes;
 
+        if self.is_token(SyntaxKind::OpenParenToken) {
+            let start_pos = self.token_pos();
+            let invalid_ref = self.parse_heritage_type_reference();
+            let end_pos = self.token_end();
+            self.parse_error_at(
+                start_pos,
+                end_pos - start_pos,
+                "An interface can only extend an identifier/qualified-name with optional type arguments.",
+                diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_IDENTIFIER_QUALIFIED_NAME_WITH_OPTIONAL_TYPE_ARG,
+            );
+            return invalid_ref;
+        }
+
         if matches!(
             self.token(),
             SyntaxKind::NullKeyword
