@@ -42,7 +42,7 @@ use crate::parser::{ParseDiagnostic, ParserState};
 use anyhow::{Context, Result, bail};
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::{
-    IntoParallelIterator, IntoParallelRefIterator, IndexedParallelIterator, ParallelIterator,
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
