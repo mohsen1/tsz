@@ -1948,6 +1948,12 @@ pub struct WasmProgram {
     compiler_options: CompilerOptions,
 }
 
+impl Default for WasmProgram {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[wasm_bindgen]
 impl WasmProgram {
     /// Create a new empty program.
