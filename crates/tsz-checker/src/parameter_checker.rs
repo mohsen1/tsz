@@ -44,23 +44,49 @@ impl<'a> CheckerState<'a> {
             let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
                 continue;
             };
-            if ident.escaped_text != "arguments" && ident.escaped_text != "eval" {
-                continue;
+
+            // TS1100: 'eval' and 'arguments' invalid in strict mode
+            if ident.escaped_text == "arguments" || ident.escaped_text == "eval" {
+                if use_class_strict_message && self.ctx.enclosing_class.is_some() {
+                    self.error_at_node_msg(
+                        param.name,
+                        crate::diagnostics::diagnostic_codes
+                            ::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                        &[&ident.escaped_text],
+                    );
+                } else {
+                    self.error_at_node_msg(
+                        param.name,
+                        crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                        &[&ident.escaped_text],
+                    );
+                }
             }
 
-            if use_class_strict_message && self.ctx.enclosing_class.is_some() {
-                self.error_at_node_msg(
-                    param.name,
-                    crate::diagnostics::diagnostic_codes
-                        ::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                    &[&ident.escaped_text],
-                );
-            } else {
-                self.error_at_node_msg(
-                    param.name,
-                    crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                    &[&ident.escaped_text],
-                );
+            // TS1212/TS1213: Reserved word used as parameter name in strict mode
+            if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                if use_class_strict_message && self.ctx.enclosing_class.is_some() {
+                    let message = format_message(
+                        diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                        &[&ident.escaped_text],
+                    );
+                    self.error_at_node(
+                        param.name,
+                        &message,
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                        &[&ident.escaped_text],
+                    );
+                    self.error_at_node(
+                        param.name,
+                        &message,
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                    );
+                }
             }
         }
     }
