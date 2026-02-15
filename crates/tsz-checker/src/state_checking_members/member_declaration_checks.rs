@@ -570,6 +570,8 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+            self.check_computed_property_name(sig.name);
+
             let updates = self.push_missing_name_type_parameters(&sig.type_parameters);
             self.check_type_parameters_for_missing_names(&sig.type_parameters);
             self.check_duplicate_type_parameters(&sig.type_parameters);

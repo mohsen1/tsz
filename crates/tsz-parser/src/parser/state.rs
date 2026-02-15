@@ -390,8 +390,11 @@ impl ParserState {
                     | SyntaxKind::YieldKeyword
             )
         {
+            let token_text = self.scanner.get_token_value_ref();
             self.parse_error_at_current_token(
-                "A class member cannot have the keyword.",
+                &format!(
+                    "Identifier expected. '{token_text}' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+                ),
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
             );
             return true;
