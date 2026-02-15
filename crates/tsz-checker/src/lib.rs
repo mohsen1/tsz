@@ -168,6 +168,9 @@ mod private_brands;
 #[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
+#[cfg(test)]
+#[path = "../tests/repro_parserreal.rs"]
+mod repro_parserreal;
 
 // Re-export key types
 pub use context::{CheckerContext, CheckerOptions, EnclosingClassInfo, TypeCache};

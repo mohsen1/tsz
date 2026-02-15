@@ -63,10 +63,14 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
-        // Check cache first — but only use cache when not in the middle of resolving
-        // another class (class_instance_resolution_set tracks active resolutions).
-        // During active resolution, cached types may be incomplete due to circular refs.
-        let can_use_cache = self.ctx.class_instance_resolution_set.is_empty();
+        // Prefer cache misses only for the class currently being resolved.
+        // When resolving a different class while some other class is on the stack,
+        // reusing cached instance types is safe and avoids duplicate non-canonical
+        // allocations (for example, parser fixtures like `Dataset | Dataset`).
+        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let can_use_cache = current_sym
+            .map(|sym_id| !self.ctx.class_instance_resolution_set.contains(&sym_id))
+            .unwrap_or(true);
         if can_use_cache && let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
             return cached;
         }
