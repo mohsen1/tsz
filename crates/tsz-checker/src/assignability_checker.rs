@@ -305,7 +305,7 @@ impl<'a> CheckerState<'a> {
         let env = self.ctx.type_env.borrow();
         are_types_overlapping_with_env(
             self.ctx.types,
-            &*env,
+            &env,
             left,
             right,
             self.ctx.strict_null_checks(),

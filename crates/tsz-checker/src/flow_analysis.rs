@@ -1448,7 +1448,7 @@ impl<'a> CheckerState<'a> {
                         let env = self.ctx.type_env.borrow();
                         are_types_mutually_subtype_with_env(
                             self.ctx.types,
-                            &*env,
+                            &env,
                             sib_narrowed,
                             prop_type,
                             self.ctx.strict_null_checks(),

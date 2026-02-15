@@ -64,7 +64,7 @@ impl<'a> CheckerState<'a> {
             exact_optional_property_types: self.ctx.exact_optional_property_types(),
             no_unchecked_indexed_access: self.ctx.no_unchecked_indexed_access(),
         };
-        let judge = DefaultJudge::new(self.ctx.types, &*env, config);
+        let judge = DefaultJudge::new(self.ctx.types, &env, config);
         f(&judge)
     }
 
