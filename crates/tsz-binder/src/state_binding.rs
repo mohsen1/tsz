@@ -1148,11 +1148,8 @@ impl BinderState {
                             .scope_chain
                             .get(self.current_scope_idx)
                             .and_then(|ctx| {
-                                if ctx.container_kind == ContainerKind::Module {
-                                    Some(ctx.container_node)
-                                } else {
-                                    None
-                                }
+                                (ctx.container_kind == ContainerKind::Module)
+                                    .then(|| ctx.container_node)
                             })
                             .and_then(|container_idx| {
                                 self.node_symbols.get(&container_idx.0).copied()

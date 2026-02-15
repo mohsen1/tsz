@@ -83,16 +83,14 @@ fn actual_main() -> Result<()> {
     }
 
     // Initialize tracer if --generateTrace is specified
-    let tracer = if args.generate_trace.is_some() {
+    let tracer = args.generate_trace.is_some().then(|| {
         let mut t = tsz_cli::trace::Tracer::new();
         // Add process metadata
         let mut meta_args = FxHashMap::default();
         meta_args.insert("name".to_string(), serde_json::json!("tsz"));
         t.metadata("process_name", meta_args);
-        Some(t)
-    } else {
-        None
-    };
+        t
+    });
 
     // Handle --generateCpuProfile: this is a V8-specific feature not applicable to a native
     // Rust compiler. The flag is accepted for CLI compatibility with tsc but has no effect.
@@ -501,11 +499,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         })
         .or_else(|| {
             let default_path = cwd.join("tsconfig.json");
-            if default_path.exists() {
-                Some(default_path)
-            } else {
-                None
-            }
+            default_path.exists().then(|| default_path)
         });
 
     let config = if let Some(path) = tsconfig_path.as_ref() {
@@ -710,11 +704,7 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         })
         .or_else(|| {
             let default_path = cwd.join("tsconfig.json");
-            if default_path.exists() {
-                Some(default_path)
-            } else {
-                None
-            }
+            default_path.exists().then(|| default_path)
         });
 
     let config = if let Some(path) = tsconfig_path.as_ref() {
@@ -799,11 +789,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         })
         .or_else(|| {
             let default_path = cwd.join("tsconfig.json");
-            if default_path.exists() {
-                Some(default_path)
-            } else {
-                None
-            }
+            default_path.exists().then(|| default_path)
         });
 
     let Some(ref root_config_path) = tsconfig_path else {

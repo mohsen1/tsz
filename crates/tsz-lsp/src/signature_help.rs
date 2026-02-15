@@ -288,7 +288,7 @@ impl<'a> SignatureHelpProvider<'a> {
                         (tmpl_node.pos, 0)
                     }
                 } else {
-                    (offset as u32, 0)
+                    (offset, 0)
                 }
             }
         };
@@ -628,7 +628,7 @@ impl<'a> SignatureHelpProvider<'a> {
         };
 
         // Cursor in head (before the first ${) → param 0 (templateStrings)
-        if cursor_offset < head_node.end as u32 {
+        if cursor_offset < head_node.end {
             return 0;
         }
 
@@ -642,11 +642,11 @@ impl<'a> SignatureHelpProvider<'a> {
                     // Cursor at or before the literal's `}` → in expression area → param i+1
                     // The literal starts with `}` which closes the expression; cursor there
                     // is still conceptually "at the expression" (matches TypeScript behavior).
-                    if cursor_offset <= lit_node.pos as u32 {
+                    if cursor_offset <= lit_node.pos {
                         return (i + 1) as u32;
                     }
                     // Cursor within the literal (template text after `}`) → param 0
-                    if cursor_offset < lit_node.end as u32 {
+                    if cursor_offset < lit_node.end {
                         return 0;
                     }
                     // Cursor past this literal → continue to next span

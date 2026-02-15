@@ -52,15 +52,13 @@ impl ParserState {
         };
 
         // Parse type parameters: interface IList<T> {}
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse heritage clauses (extends only for interfaces)
         // Interfaces can extend multiple types: interface A extends B, C, D { }
-        let heritage_clauses = if self.is_token(SyntaxKind::ExtendsKeyword) {
+        let heritage_clauses = self.is_token(SyntaxKind::ExtendsKeyword).then(|| {
             let clause_start = self.token_pos();
             self.next_token();
 
@@ -83,10 +81,8 @@ impl ParserState {
                     types: self.make_node_list(types),
                 },
             );
-            Some(self.make_node_list(vec![clause]))
-        } else {
-            None
-        };
+            self.make_node_list(vec![clause])
+        });
 
         // Check for duplicate extends clause: interface I extends A extends B { }
         if self.is_token(SyntaxKind::ExtendsKeyword) {
@@ -343,14 +339,12 @@ impl ParserState {
         start_pos: u32,
         is_readonly: bool,
     ) -> Option<NodeList> {
-        if is_readonly {
+        is_readonly.then(|| {
             let mod_idx = self
                 .arena
                 .create_modifier(SyntaxKind::ReadonlyKeyword, start_pos);
-            Some(self.make_node_list(vec![mod_idx]))
-        } else {
-            None
-        }
+            self.make_node_list(vec![mod_idx])
+        })
     }
 
     fn parse_type_member_method_signature(
@@ -360,11 +354,9 @@ impl ParserState {
         modifiers: Option<NodeList>,
         question_token: bool,
     ) -> NodeIndex {
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
@@ -441,11 +433,9 @@ impl ParserState {
     /// Parse call signature: (): returnType or <T>(): returnType
     pub(crate) fn parse_call_signature(&mut self, start_pos: u32) -> NodeIndex {
         // Parse optional type parameters: <T, U>
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
@@ -479,11 +469,9 @@ impl ParserState {
         self.parse_expected(SyntaxKind::NewKeyword);
 
         // Parse optional type parameters: new <T>()
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
@@ -687,11 +675,9 @@ impl ParserState {
         let name = self.parse_identifier();
 
         // Parse optional type parameters: <T, U extends Foo>
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse expected equals token, but recover gracefully if missing
         // If the next token can start a type (e.g., {, (, [), emit error and continue parsing

@@ -1743,11 +1743,7 @@ impl<'a> NarrowingContext<'a> {
                     if let Some(narrowed) = self.narrow_type_param_to_function(member) {
                         return narrowed.non_never();
                     }
-                    if self.is_function_type(member) {
-                        Some(member)
-                    } else {
-                        None
-                    }
+                    self.is_function_type(member).then(|| member)
                 })
                 .collect();
 

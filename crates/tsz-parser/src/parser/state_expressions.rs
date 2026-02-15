@@ -383,11 +383,9 @@ impl ParserState {
         }
 
         // Parse optional type parameters: <T, U extends Foo>
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse parameters
         let parameters = if self.is_token(SyntaxKind::OpenParenToken) {
@@ -3031,16 +3029,14 @@ impl ParserState {
             );
         }
 
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
                 diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
             );
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+            self.parse_type_parameters()
+        });
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
@@ -3116,16 +3112,14 @@ impl ParserState {
             );
         }
 
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
                 diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
             );
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+            self.parse_type_parameters()
+        });
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
@@ -3190,15 +3184,13 @@ impl ParserState {
         is_generator: bool,
     ) -> NodeIndex {
         // Build modifiers if async
-        let modifiers = if is_async {
-            self.next_token(); // consume 'async'
+        let modifiers = is_async.then(|| {
+            self.next_token();
             let mod_idx = self
                 .arena
                 .create_modifier(SyntaxKind::AsyncKeyword, start_pos);
-            Some(self.make_node_list(vec![mod_idx]))
-        } else {
-            None
-        };
+            self.make_node_list(vec![mod_idx])
+        });
 
         // Check for generator after async: async *foo()
         // or standalone generator: *foo()
@@ -3227,11 +3219,9 @@ impl ParserState {
                 return NodeIndex::NONE;
             }
 
-            let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-                Some(self.parse_type_parameters())
-            } else {
-                None
-            };
+            let type_parameters = self
+                .is_token(SyntaxKind::LessThanToken)
+                .then(|| self.parse_type_parameters());
 
             let parameters = if self.is_token(SyntaxKind::OpenParenToken) {
                 self.parse_expected(SyntaxKind::OpenParenToken);
@@ -3301,11 +3291,9 @@ impl ParserState {
         is_async: bool,
     ) -> NodeIndex {
         // Optional type parameters
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
@@ -3338,14 +3326,12 @@ impl ParserState {
         // Restore context flags after parsing body.
         self.context_flags = saved_flags;
 
-        let modifiers = if is_async {
+        let modifiers = is_async.then(|| {
             let mod_idx = self
                 .arena
                 .create_modifier(SyntaxKind::AsyncKeyword, start_pos);
-            Some(self.make_node_list(vec![mod_idx]))
-        } else {
-            None
-        };
+            self.make_node_list(vec![mod_idx])
+        });
 
         let end_pos = self.token_end();
         self.arena.add_method_decl(
@@ -3495,16 +3481,14 @@ impl ParserState {
             end_pos = end_pos.max(node.end);
         }
 
-        let arguments = if self.is_token(SyntaxKind::OpenParenToken) {
+        let arguments = self.is_token(SyntaxKind::OpenParenToken).then(|| {
             self.next_token();
             let args = self.parse_argument_list();
             let call_end = self.token_end();
             self.parse_expected(SyntaxKind::CloseParenToken);
             end_pos = call_end;
-            Some(args)
-        } else {
-            None
-        };
+            args
+        });
 
         self.arena.add_call_expr(
             syntax_kind_ext::NEW_EXPRESSION,

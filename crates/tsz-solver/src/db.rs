@@ -1415,7 +1415,7 @@ impl QueryDatabase for QueryCache<'_> {
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
         let trace_enabled = crate::query_trace::enabled();
-        let trace_query_id = if trace_enabled {
+        let trace_query_id = trace_enabled.then(|| {
             let query_id = crate::query_trace::next_query_id();
             crate::query_trace::unary_start(
                 query_id,
@@ -1423,10 +1423,8 @@ impl QueryDatabase for QueryCache<'_> {
                 type_id,
                 no_unchecked_indexed_access,
             );
-            Some(query_id)
-        } else {
-            None
-        };
+            query_id
+        });
         let key = (type_id, no_unchecked_indexed_access);
         // Handle poisoned locks gracefully
         let cached = match self.eval_cache.read() {
@@ -1460,7 +1458,7 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
         let trace_enabled = crate::query_trace::enabled();
-        let trace_query_id = if trace_enabled {
+        let trace_query_id = trace_enabled.then(|| {
             let query_id = crate::query_trace::next_query_id();
             crate::query_trace::relation_start(
                 query_id,
@@ -1469,10 +1467,8 @@ impl QueryDatabase for QueryCache<'_> {
                 target,
                 flags,
             );
-            Some(query_id)
-        } else {
-            None
-        };
+            query_id
+        });
         let key = RelationCacheKey::subtype(source, target, flags, 0);
         // Handle poisoned locks gracefully
         let cached = match self.subtype_cache.read() {
@@ -1514,7 +1510,7 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
         let trace_enabled = crate::query_trace::enabled();
-        let trace_query_id = if trace_enabled {
+        let trace_query_id = trace_enabled.then(|| {
             let query_id = crate::query_trace::next_query_id();
             crate::query_trace::relation_start(
                 query_id,
@@ -1523,10 +1519,8 @@ impl QueryDatabase for QueryCache<'_> {
                 target,
                 flags,
             );
-            Some(query_id)
-        } else {
-            None
-        };
+            query_id
+        });
         // Task A: Use passed flags instead of hardcoded 0,0
         let key = RelationCacheKey::assignability(source, target, flags, 0);
 

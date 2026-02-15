@@ -280,11 +280,7 @@ pub fn get_iterable_element_type_from_db(db: &dyn TypeDatabase, type_id: TypeId)
                 (prop_name.as_ref() == "[Symbol.iterator]" || prop_name.as_ref() == "next")
                     && prop.is_method
             });
-            if has_iterator {
-                Some(TypeId::ANY)
-            } else {
-                None
-            }
+            has_iterator.then_some(TypeId::ANY)
         }
         _ => None,
     }

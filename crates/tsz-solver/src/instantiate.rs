@@ -195,7 +195,7 @@ impl<'a> TypeInstantiator<'a> {
         // would incorrectly return string instead of T. Conversely, if T→T is
         // cached while shadowed, it would persist after leaving the scope.
         // Saving/restoring ensures correctness across shadowing boundaries.
-        let saved_visiting = if !sig.type_params.is_empty() {
+        let saved_visiting = (!sig.type_params.is_empty()).then(|| {
             let saved = self.visiting.clone();
             // Remove cached entries for TypeParameters being shadowed.
             // Without this, instantiate_inner returns cached results before
@@ -204,10 +204,8 @@ impl<'a> TypeInstantiator<'a> {
                 let tp_id = self.interner.type_param(tp.clone());
                 self.visiting.remove(&tp_id);
             }
-            Some(saved)
-        } else {
-            None
-        };
+            saved
+        });
 
         self.shadowed
             .extend(sig.type_params.iter().map(|tp| tp.name));
@@ -420,7 +418,7 @@ impl<'a> TypeInstantiator<'a> {
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(*shape_id);
                 let shadowed_len = self.shadowed.len();
-                let saved_visiting = if !shape.type_params.is_empty() {
+                let saved_visiting = (!shape.type_params.is_empty()).then(|| {
                     let saved = self.visiting.clone();
                     // Remove cached entries for TypeParameters being shadowed.
                     // The cache might already contain T→string from instantiating
@@ -431,10 +429,8 @@ impl<'a> TypeInstantiator<'a> {
                         let tp_id = self.interner.type_param(tp.clone());
                         self.visiting.remove(&tp_id);
                     }
-                    Some(saved)
-                } else {
-                    None
-                };
+                    saved
+                });
                 self.shadowed
                     .extend(shape.type_params.iter().map(|tp| tp.name));
 

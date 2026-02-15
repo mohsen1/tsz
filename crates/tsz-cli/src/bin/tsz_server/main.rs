@@ -1742,11 +1742,7 @@ impl Server {
             let node = arena.get(decl)?;
             let start = node.pos as usize;
             let end = node.end.min(source_text.len() as u32) as usize;
-            if start < end {
-                Some(&source_text[start..end])
-            } else {
-                None
-            }
+            (start < end).then(|| &source_text[start..end])
         });
 
         if let Some(text) = decl_text {
@@ -1838,11 +1834,7 @@ impl Server {
             let node = arena.get(decl)?;
             let start = node.pos as usize;
             let end = node.end.min(source_text.len() as u32) as usize;
-            if start < end {
-                Some(&source_text[start..end])
-            } else {
-                None
-            }
+            (start < end).then(|| &source_text[start..end])
         });
 
         if let Some(text) = decl_text {
@@ -3939,11 +3931,7 @@ impl Server {
         // Solution: Reserve SymbolIds 0..N in user's arena BEFORE binding.
         // This forces new allocations to start at N, preventing collisions.
         // Lib symbols are accessed via lib_binders fallback OR via reserved slots.
-        let unified_lib_binder = if !lib_files.is_empty() {
-            Some(lib_files[0].binder.clone())
-        } else {
-            None
-        };
+        let unified_lib_binder = (!lib_files.is_empty()).then(|| lib_files[0].binder.clone());
 
         // Count lib symbols to set base offset in user binders
         let lib_symbol_count = unified_lib_binder

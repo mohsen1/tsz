@@ -285,11 +285,8 @@ impl<'a> CheckerState<'a> {
                             .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                             .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                             .and_then(|param| {
-                                if !param.type_annotation.is_none() {
-                                    Some(self.get_type_from_type_node(param.type_annotation))
-                                } else {
-                                    None
-                                }
+                                (!param.type_annotation.is_none())
+                                    .then(|| self.get_type_from_type_node(param.type_annotation))
                             })
                             .unwrap_or(TypeId::UNKNOWN);
                         entry.setter = Some(setter_type);
@@ -1196,11 +1193,8 @@ impl<'a> CheckerState<'a> {
                             .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                             .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                             .and_then(|param| {
-                                if !param.type_annotation.is_none() {
-                                    Some(self.get_type_from_type_node(param.type_annotation))
-                                } else {
-                                    None
-                                }
+                                (!param.type_annotation.is_none())
+                                    .then(|| self.get_type_from_type_node(param.type_annotation))
                             })
                             .unwrap_or(TypeId::UNKNOWN);
                         entry.setter = Some(setter_type);
@@ -1228,11 +1222,8 @@ impl<'a> CheckerState<'a> {
                         .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                         .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                         .and_then(|param| {
-                            if !param.type_annotation.is_none() {
-                                Some(self.get_type_from_type_node(param.type_annotation))
-                            } else {
-                                None
-                            }
+                            (!param.type_annotation.is_none())
+                                .then(|| self.get_type_from_type_node(param.type_annotation))
                         })
                         .unwrap_or(TypeId::STRING);
 

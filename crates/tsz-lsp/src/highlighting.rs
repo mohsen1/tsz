@@ -292,7 +292,7 @@ impl<'a> DocumentHighlightProvider<'a> {
                 }
             }
         }
-        if best.is_some() { Some(best) } else { None }
+        best.is_some().then(|| best)
     }
 
     /// Skip whitespace forward from an offset and return the new offset.

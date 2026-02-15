@@ -3902,16 +3902,10 @@ impl<'a> CheckerState<'a> {
 
         if left_is_symbol || right_is_symbol {
             // Format type strings first to avoid holding formatter across mutable borrows
-            let left_type_str = if left_is_symbol {
-                Some(self.ctx.create_type_formatter().format(left_type))
-            } else {
-                None
-            };
-            let right_type_str = if right_is_symbol {
-                Some(self.ctx.create_type_formatter().format(right_type))
-            } else {
-                None
-            };
+            let left_type_str =
+                left_is_symbol.then(|| self.ctx.create_type_formatter().format(left_type));
+            let right_type_str =
+                right_is_symbol.then(|| self.ctx.create_type_formatter().format(right_type));
 
             // Emit TS2469 for symbol operands
             if let (Some(loc), Some(type_str)) =

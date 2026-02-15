@@ -839,17 +839,10 @@ impl<'a> TypeLowering<'a> {
             .map(|id_data| self.interner.intern_string(&id_data.escaped_text))
             .unwrap_or_else(|| self.interner.intern_string("T"));
 
-        let constraint = if data.constraint != NodeIndex::NONE {
-            Some(self.lower_type(data.constraint))
-        } else {
-            None
-        };
+        let constraint =
+            (data.constraint != NodeIndex::NONE).then(|| self.lower_type(data.constraint));
 
-        let default = if data.default != NodeIndex::NONE {
-            Some(self.lower_type(data.default))
-        } else {
-            None
-        };
+        let default = (data.default != NodeIndex::NONE).then(|| self.lower_type(data.default));
 
         let is_const = self.has_const_modifier(&data.modifiers);
 
@@ -2192,11 +2185,8 @@ impl<'a> TypeLowering<'a> {
             self.push_type_param_scope();
             let type_param_id = self.interner.type_param(type_param.clone());
             self.add_type_param_binding(type_param.name, type_param_id);
-            let name_type = if data.name_type != NodeIndex::NONE {
-                Some(self.lower_type(data.name_type))
-            } else {
-                None
-            };
+            let name_type =
+                (data.name_type != NodeIndex::NONE).then(|| self.lower_type(data.name_type));
             let template = self.lower_type(data.type_node);
             self.pop_type_param_scope();
             let mapped = MappedType {
@@ -2240,17 +2230,11 @@ impl<'a> TypeLowering<'a> {
                 .map(|ident| self.interner.intern_string(&ident.escaped_text))
                 .unwrap_or_else(|| self.interner.intern_string("K"));
 
-            let constraint = if param_data.constraint != NodeIndex::NONE {
-                Some(self.lower_type(param_data.constraint))
-            } else {
-                None
-            };
+            let constraint = (param_data.constraint != NodeIndex::NONE)
+                .then(|| self.lower_type(param_data.constraint));
 
-            let default = if param_data.default != NodeIndex::NONE {
-                Some(self.lower_type(param_data.default))
-            } else {
-                None
-            };
+            let default = (param_data.default != NodeIndex::NONE)
+                .then(|| self.lower_type(param_data.default));
 
             // Use Unknown instead of Any for stricter type checking
             // When a generic parameter has no constraint, use Unknown to prevent
@@ -2893,11 +2877,7 @@ impl<'a> TypeLowering<'a> {
             None => return (return_type, None),
         };
 
-        let type_id = if data.type_node != NodeIndex::NONE {
-            Some(self.lower_type(data.type_node))
-        } else {
-            None
-        };
+        let type_id = (data.type_node != NodeIndex::NONE).then(|| self.lower_type(data.type_node));
 
         let mut parameter_index = None;
         if let TypePredicateTarget::Identifier(name) = &target {

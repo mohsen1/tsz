@@ -297,11 +297,7 @@ pub struct PathMapping {
 impl PathMapping {
     pub fn match_specifier(&self, specifier: &str) -> Option<String> {
         if !self.pattern.contains('*') {
-            return if self.pattern == specifier {
-                Some(String::new())
-            } else {
-                None
-            };
+            return (self.pattern == specifier).then(|| String::new());
         }
 
         if !specifier.starts_with(&self.prefix) || !specifier.ends_with(&self.suffix) {

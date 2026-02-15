@@ -209,11 +209,7 @@ pub(crate) fn resolve_type_package_entry(
             &conditions,
             options,
         )?;
-        if is_declaration_file(&resolved) {
-            Some(resolved)
-        } else {
-            None
-        }
+        is_declaration_file(&resolved).then(|| resolved)
     }
 }
 
@@ -1556,11 +1552,7 @@ fn select_types_versions_paths_for_version(
 
 fn match_types_versions_pattern(pattern: &str, subpath: &str) -> Option<String> {
     if !pattern.contains('*') {
-        return if pattern == subpath {
-            Some(String::new())
-        } else {
-            None
-        };
+        return (pattern == subpath).then(|| String::new());
     }
 
     let star = pattern.find('*')?;
@@ -1726,13 +1718,7 @@ fn resolve_exports_subpath(
     conditions: &[&str],
 ) -> Option<String> {
     match exports {
-        serde_json::Value::String(value) => {
-            if subpath_key == "." {
-                Some(value.clone())
-            } else {
-                None
-            }
-        }
+        serde_json::Value::String(value) => (subpath_key == ".").then(|| value.clone()),
         serde_json::Value::Array(list) => {
             for entry in list {
                 if let Some(resolved) = resolve_exports_subpath(entry, subpath_key, conditions) {

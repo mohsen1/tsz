@@ -414,11 +414,9 @@ impl ParserState {
 
         let first_name = self.parse_type_identifier_or_keyword();
         let type_name = self.parse_qualified_name_rest(first_name);
-        let type_arguments = if self.is_less_than_or_compound() {
-            Some(self.parse_type_arguments())
-        } else {
-            None
-        };
+        let type_arguments = self
+            .is_less_than_or_compound()
+            .then(|| self.parse_type_arguments());
 
         self.arena.add_type_ref(
             syntax_kind_ext::TYPE_REFERENCE,
@@ -738,11 +736,9 @@ impl ParserState {
         }
 
         // Parse optional type arguments for instantiation expressions: typeof Err<U>
-        let type_arguments = if self.is_less_than_or_compound() {
-            Some(self.parse_type_arguments())
-        } else {
-            None
-        };
+        let type_arguments = self
+            .is_less_than_or_compound()
+            .then(|| self.parse_type_arguments());
 
         let end_pos = self.token_end();
 
@@ -788,11 +784,9 @@ impl ParserState {
         }
 
         // Parse optional type arguments: import("./a").Type<T>
-        let type_arguments = if self.is_less_than_or_compound() {
-            Some(self.parse_type_arguments())
-        } else {
-            None
-        };
+        let type_arguments = self
+            .is_less_than_or_compound()
+            .then(|| self.parse_type_arguments());
 
         let end_pos = self.token_end();
 
@@ -1755,11 +1749,9 @@ impl ParserState {
         self.parse_expected(SyntaxKind::NewKeyword);
 
         // Parse optional type parameters: new <T>() => T
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse parameters: new (x: T, y: U) => ...
         self.parse_expected(SyntaxKind::OpenParenToken);
@@ -2065,11 +2057,9 @@ impl ParserState {
         let tag_name = self.parse_jsx_element_name();
 
         // Parse optional type arguments
-        let type_arguments = if self.is_less_than_or_compound() {
-            Some(self.parse_type_arguments())
-        } else {
-            None
-        };
+        let type_arguments = self
+            .is_less_than_or_compound()
+            .then(|| self.parse_type_arguments());
 
         // Parse attributes
         let attributes = self.parse_jsx_attributes();

@@ -1849,11 +1849,9 @@ impl<'a> ScopeWalker<'a> {
         // Recurse into children
         let found = self
             .for_each_child(current, |walker, child_idx| {
-                if walker.walk_for_scope(child_idx, target, result) {
-                    Some(true)
-                } else {
-                    None
-                }
+                walker
+                    .walk_for_scope(child_idx, target, result)
+                    .then(|| true)
             })
             .is_some();
 
