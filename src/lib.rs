@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use std::sync::Mutex;
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
 
 type LibFileCache = FxHashMap<(String, u64), Arc<lib_loader::LibFile>>;
 
@@ -73,7 +73,7 @@ pub use tsz_common::limits;
 pub use tsz_scanner as scanner;
 pub use tsz_scanner::char_codes;
 pub use tsz_scanner::scanner_impl;
-pub use tsz_scanner::scanner_impl::*;
+pub use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
 pub use tsz_scanner::*;
 #[cfg(test)]
 #[path = "../tests/scanner_impl_tests.rs"]
