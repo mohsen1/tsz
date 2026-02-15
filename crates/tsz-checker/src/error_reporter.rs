@@ -4219,6 +4219,23 @@ impl<'a> CheckerState<'a> {
     // Type/Value Mismatch Errors
     // =========================================================================
 
+    /// Report TS2698: Spread types may only be created from object types.
+    pub fn report_spread_not_object_type(&mut self, idx: NodeIndex) {
+        if let Some(loc) = self.get_source_location(idx) {
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES,
+                category: DiagnosticCategory::Error,
+                message_text:
+                    diagnostic_messages::SPREAD_TYPES_MAY_ONLY_BE_CREATED_FROM_OBJECT_TYPES
+                        .to_string(),
+                start: loc.start,
+                length: loc.length(),
+                file: self.ctx.file_name.clone(),
+                related_information: Vec::new(),
+            });
+        }
+    }
+
     /// Report TS2693/TS2585: Symbol only refers to a type, but is used as a value.
     ///
     /// For ES2015+ types (Promise, Map, Set, Symbol, etc.), emits TS2585 with a suggestion

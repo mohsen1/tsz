@@ -2922,6 +2922,15 @@ impl<'a> CheckerState<'a> {
                     });
                 if let Some(spread_expr) = spread_expr {
                     let spread_type = self.get_type_of_node(spread_expr);
+                    // TS2698: Spread types may only be created from object types
+                    let resolved_spread = self.resolve_type_for_property_access(spread_type);
+                    let resolved_spread = self.resolve_lazy_type(resolved_spread);
+                    if !tsz_solver::type_queries::is_valid_spread_type(
+                        self.ctx.types,
+                        resolved_spread,
+                    ) {
+                        self.report_spread_not_object_type(elem_idx);
+                    }
                     for prop in self.collect_object_spread_properties(spread_type) {
                         properties.insert(prop.name, prop);
                     }

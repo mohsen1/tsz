@@ -506,6 +506,67 @@ fn is_function_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
 }
 
+/// Check if a type is valid for object spreading (`{...x}`).
+///
+/// Returns `true` for types that can be spread into an object literal:
+/// - `any`, `never`, `error` (always spreadable)
+/// - Object types, arrays, tuples, functions, callables, mapped types
+/// - `object` intrinsic (non-primitive)
+/// - Type parameters (spreadable by default; constraint checked separately)
+/// - Unions: all members must be spreadable
+/// - Intersections: all members must be spreadable
+///
+/// Returns `false` for primitive types (`number`, `string`, `boolean`, etc.),
+/// literals, `null`, `undefined`, `void`, and `unknown`.
+pub fn is_valid_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_valid_spread_type_impl(db, type_id, 0)
+}
+
+fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
+    if depth > 20 {
+        return true;
+    }
+    match type_id {
+        TypeId::ANY | TypeId::NEVER | TypeId::ERROR => return true,
+        _ => {}
+    }
+    match db.lookup(type_id) {
+        // Primitives and literals are not spreadable
+        Some(
+            TypeData::Intrinsic(
+                IntrinsicKind::String
+                | IntrinsicKind::Number
+                | IntrinsicKind::Boolean
+                | IntrinsicKind::Bigint
+                | IntrinsicKind::Symbol
+                | IntrinsicKind::Void
+                | IntrinsicKind::Null
+                | IntrinsicKind::Undefined
+                | IntrinsicKind::Unknown,
+            )
+            | TypeData::Literal(_),
+        ) => false,
+        // Union: all members must be spreadable
+        Some(TypeData::Union(members)) => {
+            let members = db.type_list(members);
+            members
+                .iter()
+                .all(|&m| is_valid_spread_type_impl(db, m, depth + 1))
+        }
+        // Intersection: all members must be spreadable
+        Some(TypeData::Intersection(members)) => {
+            let members = db.type_list(members);
+            members
+                .iter()
+                .all(|&m| is_valid_spread_type_impl(db, m, depth + 1))
+        }
+        Some(TypeData::ReadonlyType(inner)) => is_valid_spread_type_impl(db, inner, depth + 1),
+        // Everything else is spreadable: object types, arrays, tuples, functions,
+        // callables, mapped types, type parameters, lazy refs, applications, etc.
+        _ => true,
+    }
+}
+
 /// Check if a type is an empty object type (no properties, no index signatures).
 pub fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match db.lookup(type_id) {
