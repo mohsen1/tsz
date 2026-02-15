@@ -704,7 +704,7 @@ impl UnsoundnessAudit {
 
         // Overall stats
         report.push_str("## Overall Status\n\n");
-        report.push_str(&format!("- **Total Rules:** 44\n",));
+        report.push_str("- **Total Rules:** 44\n");
         report.push_str(&format!(
             "- **Fully Implemented:** {} ({:.1}%)\n",
             self.count_by_status(ImplementationStatus::FullyImplemented),
