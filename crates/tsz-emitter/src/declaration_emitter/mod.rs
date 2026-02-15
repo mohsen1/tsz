@@ -85,6 +85,8 @@ pub struct DeclarationEmitter<'a> {
     import_name_map: FxHashMap<String, SymbolId>,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     inside_declare_namespace: bool,
+    /// Whether the current source file is an external module.
+    is_external_module: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
     in_constructor_params: bool,
     /// Track function names that have overload signatures (to skip implementation signatures)
@@ -123,6 +125,7 @@ impl<'a> DeclarationEmitter<'a> {
             import_symbol_map: FxHashMap::default(),
             import_name_map: FxHashMap::default(),
             inside_declare_namespace: false,
+            is_external_module: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
@@ -157,6 +160,7 @@ impl<'a> DeclarationEmitter<'a> {
             import_symbol_map: FxHashMap::default(),
             import_name_map: FxHashMap::default(),
             inside_declare_namespace: false,
+            is_external_module: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
@@ -372,6 +376,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Reset usage tracking for each file
         self.used_symbols = None;
         self.foreign_symbols = None;
+        self.is_external_module = false;
 
         self.reset_writer();
         self.indent_level = 0;
@@ -436,6 +441,8 @@ impl<'a> DeclarationEmitter<'a> {
             return String::new();
         };
 
+        self.is_external_module = self.is_external_module_source(source_file);
+
         debug!(
             "[DEBUG] source_file has {} comments",
             source_file.comments.len()
@@ -490,6 +497,30 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn is_external_module_source(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            match stmt.kind {
+                k if k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+                {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
     fn emit_statement(&mut self, stmt_idx: NodeIndex) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
@@ -537,10 +568,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_import_declaration_if_needed(stmt_idx);
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.emit_module_declaration(stmt_idx);
+                self.emit_module_declaration(stmt_idx, false);
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                self.emit_import_equals_declaration(stmt_idx);
+                self.emit_import_equals_declaration(stmt_idx, false);
             }
             k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
                 self.emit_namespace_export_declaration(stmt_idx);
@@ -561,11 +592,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        // Check for export modifier
         let is_exported = self.has_export_modifier(&func.modifiers);
 
-        // In declaration emit mode, only emit exported functions
-        if !is_exported {
+        if !self.should_emit_top_level_declaration(&func.modifiers) {
             return;
         }
 
@@ -596,7 +625,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        self.write("export declare function ");
+        if !self.inside_declare_namespace {
+            if is_exported {
+                self.write("export ");
+            }
+            self.write("declare ");
+        }
+        self.write("function ");
 
         // Function name
         self.emit_node(func.name);
@@ -619,9 +654,14 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it
-            if let Some(func_type_id) = cache.node_types.get(&func_idx.0) {
-                if let Some(return_type_id) =
-                    type_queries::get_return_type(*interner, *func_type_id)
+            let func_type_id = cache
+                .node_types
+                .get(&func_idx.0)
+                .copied()
+                .or_else(|| self.get_node_type_or_names(&[func.name]));
+
+            if let Some(func_type_id) = func_type_id {
+                if let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
                 {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));
@@ -640,6 +680,10 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(class) = self.arena.get_class(class_node) else {
             return;
         };
+
+        if !self.should_emit_top_level_declaration(&class.modifiers) {
+            return;
+        }
 
         let is_exported = self.has_export_modifier(&class.modifiers);
         let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
@@ -1041,6 +1085,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if !self.should_emit_top_level_declaration(&iface.modifiers) {
+            return;
+        }
+
         let is_exported = self.has_export_modifier(&iface.modifiers);
 
         self.write_indent();
@@ -1350,6 +1398,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if !self.should_emit_top_level_declaration(&alias.modifiers) {
+            return;
+        }
+
         let is_exported = self.has_export_modifier(&alias.modifiers);
 
         self.write_indent();
@@ -1381,6 +1433,10 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(enum_data) = self.arena.get_enum(enum_node) else {
             return;
         };
+
+        if !self.should_emit_top_level_declaration(&enum_data.modifiers) {
+            return;
+        }
 
         let is_exported = self.has_export_modifier(&enum_data.modifiers);
         let is_const = self.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword as u16);
@@ -1485,6 +1541,10 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
             return;
         };
+
+        if !self.should_emit_top_level_declaration(&var_stmt.modifiers) {
+            return;
+        }
 
         let is_exported = self.has_export_modifier(&var_stmt.modifiers);
 
@@ -1736,14 +1796,12 @@ impl<'a> DeclarationEmitter<'a> {
                     return;
                 }
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    self.emit_module_declaration(export.export_clause);
+                    self.emit_module_declaration(export.export_clause, true);
                     return;
                 }
                 k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                     // Emit: export import x = require(...)
-                    self.write_indent();
-                    self.write("export ");
-                    self.emit_import_equals_declaration(export.export_clause);
+                    self.emit_import_equals_declaration(export.export_clause, true);
                     return;
                 }
                 _ => {}
@@ -1953,6 +2011,11 @@ impl<'a> DeclarationEmitter<'a> {
         if !exports.name.is_none() && exports.elements.nodes.is_empty() {
             self.write("* as ");
             self.emit_node(exports.name);
+            return;
+        }
+
+        if exports.elements.nodes.is_empty() {
+            self.write("{}");
             return;
         }
 
@@ -2517,7 +2580,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(spec.name);
     }
 
-    fn emit_module_declaration(&mut self, module_idx: NodeIndex) {
+    fn emit_module_declaration(&mut self, module_idx: NodeIndex, force_exported: bool) {
         let Some(module_node) = self.arena.get(module_idx) else {
             return;
         };
@@ -2525,7 +2588,7 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&module.modifiers);
+        let is_exported = force_exported || self.has_export_modifier(&module.modifiers);
 
         self.write_indent();
         // Don't emit 'export' or 'declare' inside a declare namespace
@@ -2569,7 +2632,7 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     // Nested namespace: module A.B is represented as ModuleDeclaration with body = ModuleDeclaration of C
                     if let Some(_nested_module) = self.arena.get_module(body_node) {
-                        self.emit_module_declaration(module.body);
+                        self.emit_module_declaration(module.body, false);
                     }
                 }
             }
@@ -2583,7 +2646,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
-    fn emit_import_equals_declaration(&mut self, import_idx: NodeIndex) {
+    fn emit_import_equals_declaration(&mut self, import_idx: NodeIndex, already_exported: bool) {
         let Some(import_node) = self.arena.get(import_idx) else {
             return;
         };
@@ -2591,11 +2654,7 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        // For import equals declarations:
-        // - import_clause is the variable name (identifier)
-        // - module_specifier is the require() expression
-
-        let is_exported = self.has_export_modifier(&import_eq.modifiers);
+        let is_exported = already_exported || self.has_export_modifier(&import_eq.modifiers);
 
         self.write_indent();
         if is_exported {
@@ -3299,6 +3358,14 @@ impl<'a> DeclarationEmitter<'a> {
         self.has_modifier(modifiers, SyntaxKind::ExportKeyword as u16)
     }
 
+    fn should_emit_top_level_declaration(&self, modifiers: &Option<NodeList>) -> bool {
+        if self.is_external_module && !self.inside_declare_namespace {
+            return self.has_export_modifier(modifiers);
+        }
+
+        true
+    }
+
     /// Get the function/method name as a string for overload tracking
     fn get_function_name(&self, func_idx: NodeIndex) -> Option<String> {
         let func_node = self.arena.get(func_idx)?;
@@ -3679,8 +3746,71 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(type_id) = self.get_node_type(node_id) {
                 return Some(type_id);
             }
+
+            if let Some(node) = self.arena.get(node_id) {
+                for related_id in self.get_node_type_related_nodes(node) {
+                    if let Some(type_id) = self.get_node_type(related_id) {
+                        return Some(type_id);
+                    }
+                }
+            }
         }
         None
+    }
+
+    fn get_node_type_related_nodes(&self, node: &Node) -> Vec<NodeIndex> {
+        match node.kind {
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                if let Some(decl) = self.arena.get_variable_declaration(node) {
+                    let mut related = Vec::with_capacity(2);
+                    if !decl.initializer.is_none() {
+                        related.push(decl.initializer);
+                    }
+                    related.push(decl.type_annotation);
+                    related
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                if let Some(decl) = self.arena.get_property_decl(node) {
+                    let mut related = Vec::with_capacity(2);
+                    if !decl.initializer.is_none() {
+                        related.push(decl.initializer);
+                    }
+                    related.push(decl.type_annotation);
+                    related
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::PARAMETER => {
+                if let Some(param) = self.arena.get_parameter(node) {
+                    if !param.initializer.is_none() {
+                        vec![param.initializer]
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access_expr) = self.arena.get_access_expr(node) {
+                    vec![access_expr.expression, access_expr.name_or_argument]
+                } else {
+                    Vec::new()
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_QUERY => {
+                if let Some(query) = self.arena.get_type_query(node) {
+                    vec![query.expr_name]
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Print a TypeId as TypeScript syntax using TypePrinter.
