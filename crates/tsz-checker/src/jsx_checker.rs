@@ -73,7 +73,13 @@ impl<'a> CheckerState<'a> {
                 let tag_literal = factory.literal_string(tag);
                 return factory.index_access(intrinsic_elements_type, tag_literal);
             }
-            // Fall back to ANY if JSX namespace is not available
+            // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                idx,
+                diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
+                &["IntrinsicElements"],
+            );
             TypeId::ANY
         } else {
             // Component: resolve as variable expression
@@ -145,7 +151,7 @@ impl<'a> CheckerState<'a> {
     /// Get the JSX.Element type for fragments.
     ///
     /// Rule #36: Fragments resolve to JSX.Element type.
-    pub(crate) fn get_jsx_element_type(&mut self) -> TypeId {
+    pub(crate) fn get_jsx_element_type(&mut self, node_idx: NodeIndex) -> TypeId {
         // Try to resolve JSX.Element from the JSX namespace
         if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
             let lib_binders = self.get_lib_binders();
@@ -159,7 +165,13 @@ impl<'a> CheckerState<'a> {
                 return self.type_reference_symbol_type(element_sym_id);
             }
         }
-        // Fall back to ANY if JSX namespace or Element type is not available
+        // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.Element' exists.
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            node_idx,
+            diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
+            &["Element"],
+        );
         TypeId::ANY
     }
 }

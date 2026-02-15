@@ -948,7 +948,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
             k if k == syntax_kind_ext::JSX_FRAGMENT => {
                 // JSX fragments resolve to JSX.Element type
-                self.checker.get_jsx_element_type()
+                self.checker.get_jsx_element_type(idx)
             }
 
             // Non-null assertion: x!
