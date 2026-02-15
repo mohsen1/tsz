@@ -426,6 +426,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =======================================================================
+        // CYCLE DETECTION: DefId-level tracking for Application base pairs
+        // =======================================================================
+        // When checking App(List, args1) <: App(Seq, args2), structural expansion
+        // can produce recursive applications (e.g., List<Pair<T,S>> <: Seq<Pair<T,S>>
+        // expanding to members that return List<Pair<Pair<T,S>,S2>> <: Seq<Pair<...>>).
+        // Without cycle detection at the base-type level, this infinite expansion
+        // leads to false negatives. We detect cycles by tracking (source_base_DefId,
+        // target_base_DefId) pairs — coinductive semantics assume the relation holds.
+        // =======================================================================
+        let s_base_def = lazy_def_id(self.interner, s_app.base).or_else(|| {
+            ref_symbol(self.interner, s_app.base)
+                .and_then(|sym| self.resolver.symbol_to_def_id(sym))
+        });
+        let t_base_def = lazy_def_id(self.interner, t_app.base).or_else(|| {
+            ref_symbol(self.interner, t_app.base)
+                .and_then(|sym| self.resolver.symbol_to_def_id(sym))
+        });
+
+        let app_def_pair = match (s_base_def, t_base_def) {
+            (Some(s_def), Some(t_def)) if s_def != t_def => Some((s_def, t_def)),
+            _ => None,
+        };
+
+        if let Some(def_pair) = app_def_pair {
+            // Check for cycles before expansion
+            if self.def_guard.is_visiting(&def_pair)
+                || self.def_guard.is_visiting(&(def_pair.1, def_pair.0))
+            {
+                return SubtypeResult::CycleDetected;
+            }
+            use crate::recursion::RecursionResult;
+            match self.def_guard.enter(def_pair) {
+                RecursionResult::Cycle => return SubtypeResult::CycleDetected,
+                RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
+                    return SubtypeResult::DepthExceeded;
+                }
+                RecursionResult::Entered => {}
+            }
+        }
+
+        // =======================================================================
         // SLOW PATH: Structural expansion for mismatched bases or unknown variance
         // =======================================================================
         // When bases differ or variance is unavailable, we expand both applications
@@ -436,7 +477,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =======================================================================
         let s_expanded = self.try_expand_application(s_app_id);
         let t_expanded = self.try_expand_application(t_app_id);
-        match (s_expanded, t_expanded) {
+        let result = match (s_expanded, t_expanded) {
             (Some(s_struct), Some(t_struct)) => self.check_subtype(s_struct, t_struct),
             (Some(s_struct), None) => {
                 // Re-intern the target application for comparison
@@ -457,16 +498,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // This mirrors common TS behavior for readonly/out-position generic uses and
                 // avoids broad false-positive assignability failures from an expansion miss.
                 if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                    let mut all_ok = true;
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                         if !self.check_subtype(*s_arg, *t_arg).is_true() {
-                            return SubtypeResult::False;
+                            all_ok = false;
+                            break;
                         }
                     }
-                    return SubtypeResult::True;
+                    if all_ok {
+                        SubtypeResult::True
+                    } else {
+                        SubtypeResult::False
+                    }
+                } else {
+                    SubtypeResult::False
                 }
-                SubtypeResult::False
             }
+        };
+
+        // Clean up cycle detection guard
+        if let Some(def_pair) = app_def_pair {
+            self.def_guard.leave(def_pair);
         }
+
+        result
     }
 
     /// Check Application expansion to target (one-sided Application case).
