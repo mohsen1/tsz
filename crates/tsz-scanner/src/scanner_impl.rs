@@ -371,7 +371,6 @@ impl ScannerState {
 
     /// Scan the next token.
     #[wasm_bindgen]
-    #[allow(clippy::too_many_lines)]
     pub fn scan(&mut self) -> SyntaxKind {
         self.full_start_pos = self.pos;
         self.token_flags = 0;

@@ -1,6 +1,4 @@
 //! Parser state - expression parsing methods
-#![allow(clippy::too_many_lines)]
-
 use super::state::{
     CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN,
     CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,

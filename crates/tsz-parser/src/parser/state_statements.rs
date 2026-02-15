@@ -1,6 +1,4 @@
 //! Parser state - statement and declaration parsing methods
-#![allow(clippy::too_many_lines)]
-
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC,
     CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT,
