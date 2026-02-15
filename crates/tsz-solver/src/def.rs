@@ -461,6 +461,16 @@ impl DefinitionStore {
         }
     }
 
+    /// Update the instance shape for a type definition.
+    ///
+    /// This is used by checker code when a concrete object-like shape is computed
+    /// for an interface/class definition and should be recorded for diagnostics.
+    pub fn set_instance_shape(&self, id: DefId, shape: Arc<ObjectShape>) {
+        if let Some(mut entry) = self.definitions.get_mut(&id) {
+            entry.instance_shape = Some(shape);
+        }
+    }
+
     /// Number of definitions.
     pub fn len(&self) -> usize {
         self.definitions.len()
