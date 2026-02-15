@@ -342,7 +342,7 @@ impl<'a> CheckerState<'a> {
 
         // TS2630: Cannot assign to 'x' because it is a function.
         // This check must come after valid assignment target check but before type checking.
-        self.check_function_assignment(left_idx);
+        let is_function_assignment = self.check_function_assignment(left_idx);
 
         // Set destructuring flag when LHS is an object/array pattern to suppress
         // TS1117 (duplicate property) checks in destructuring targets.
@@ -384,6 +384,12 @@ impl<'a> CheckerState<'a> {
         // No need to manually track freshness removal here.
 
         self.ctx.contextual_type = prev_context;
+
+        if is_function_assignment {
+            // TS2630 is terminal in TypeScript for simple assignment targets.
+            // Avoid cascading TS2322/other assignability diagnostics.
+            return right_type;
+        }
 
         self.ensure_relation_input_ready(right_type);
         self.ensure_relation_input_ready(left_type);

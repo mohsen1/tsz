@@ -616,94 +616,128 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|args| !args.nodes.is_empty());
         let factory = self.ctx.types.factory();
+        let flow_type_for_query_expr = |state: &mut Self| {
+            let prev_skip = state.ctx.skip_flow_narrowing;
+            state.ctx.skip_flow_narrowing = false;
+            let ty = state.get_type_of_node(type_query.expr_name);
+            state.ctx.skip_flow_narrowing = prev_skip;
+            ty
+        };
 
-        let base =
-            if let Some(sym_id) = self.resolve_value_symbol_for_lowering(type_query.expr_name) {
-                trace!("=== get_type_from_type_query ===");
-                trace!(name = ?name_text, sym_id, "get_type_from_type_query");
+        if !has_type_args
+            && let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
+            && (expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                || expr_node.kind
+                    == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || expr_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || expr_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+                || expr_node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16)
+        {
+            // Prefer flow-aware value-space type at the query site.
+            // This keeps `typeof expr` aligned with control-flow narrowing.
+            let expr_type = flow_type_for_query_expr(self);
+            if expr_type != TypeId::ANY && expr_type != TypeId::ERROR {
+                return expr_type;
+            }
+        }
 
-                // Always compute the symbol type to ensure it's in the type environment
-                // This is important for Application resolution and TypeQuery resolution during subtype checking
-                let resolved = self.get_type_of_symbol(tsz_binder::SymbolId(sym_id));
-                trace!(resolved = ?resolved, "resolved type");
+        let base = if let Some(sym_id) =
+            self.resolve_value_symbol_for_lowering(type_query.expr_name)
+        {
+            trace!("=== get_type_from_type_query ===");
+            trace!(name = ?name_text, sym_id, "get_type_from_type_query");
 
-                if !has_type_args && resolved != TypeId::ANY && resolved != TypeId::ERROR {
-                    // Return resolved type directly when there are no type arguments
-                    trace!("=> returning resolved type directly");
+            // Always compute the symbol type to ensure it's in the type environment
+            // This is important for Application resolution and TypeQuery resolution during subtype checking
+            let resolved = self.get_type_of_symbol(tsz_binder::SymbolId(sym_id));
+            trace!(resolved = ?resolved, "resolved type");
+
+            if !has_type_args {
+                // Prefer flow-aware type at the query site for `typeof expr` in narrowed scopes
+                // (e.g. inside `if (x.p === "A")`, `typeof x.p` should be `"A"`).
+                let flow_resolved = flow_type_for_query_expr(self);
+                if flow_resolved != TypeId::ANY && flow_resolved != TypeId::ERROR {
+                    trace!(flow_resolved = ?flow_resolved, "=> returning flow-resolved type directly");
+                    return flow_resolved;
+                }
+                if resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                    // Fall back to symbol type when flow result is unavailable.
+                    trace!("=> returning symbol-resolved type directly");
                     return resolved;
                 }
+            }
 
-                // For type arguments or when resolved is ANY/ERROR, use TypeQuery
-                let typequery_type = factory.type_query(SymbolRef(sym_id));
-                trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
-                typequery_type
-            } else if self
-                .resolve_type_symbol_for_lowering(type_query.expr_name)
-                .is_some()
-            {
-                let name = name_text.as_deref().unwrap_or("<unknown>");
-                self.error_type_only_value_at(name, type_query.expr_name);
+            // For type arguments or when resolved is ANY/ERROR, use TypeQuery
+            let typequery_type = factory.type_query(SymbolRef(sym_id));
+            trace!(typequery_type = ?typequery_type, "=> returning TypeQuery type");
+            typequery_type
+        } else if self
+            .resolve_type_symbol_for_lowering(type_query.expr_name)
+            .is_some()
+        {
+            let name = name_text.as_deref().unwrap_or("<unknown>");
+            self.error_type_only_value_at(name, type_query.expr_name);
+            return TypeId::ERROR;
+        } else if let Some(name) = name_text {
+            if is_identifier {
+                // Handle global intrinsics that may not have symbols in the binder
+                // (e.g., `typeof undefined`, `typeof NaN`, `typeof Infinity`, `typeof globalThis`)
+                match name.as_str() {
+                    "undefined" => return TypeId::UNDEFINED,
+                    "NaN" | "Infinity" => return TypeId::NUMBER,
+                    // globalThis is a synthetic symbol in tsc whose exports are all globals.
+                    // typeof globalThis should resolve to a type with all global members.
+                    // For now, return ANY to suppress false TS2304/TS2552 errors.
+                    // TODO: Create a proper object type with global members.
+                    "globalThis" => return TypeId::ANY,
+                    _ => {}
+                }
+                if self.is_known_global_value_name(&name) {
+                    // Emit TS2318/TS2583 for missing global type in typeof context
+                    // TS2583 for ES2015+ types, TS2304 for other globals
+                    use tsz_binder::lib_loader;
+                    if lib_loader::is_es2015_plus_type(&name) {
+                        self.error_cannot_find_global_type(&name, type_query.expr_name);
+                    } else {
+                        self.error_cannot_find_name_at(&name, type_query.expr_name);
+                    }
+                    return TypeId::ERROR;
+                }
+                // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                if self.is_unresolved_import_symbol(type_query.expr_name) {
+                    return TypeId::ANY;
+                }
+                self.error_cannot_find_name_at(&name, type_query.expr_name);
                 return TypeId::ERROR;
-            } else if let Some(name) = name_text {
-                if is_identifier {
-                    // Handle global intrinsics that may not have symbols in the binder
-                    // (e.g., `typeof undefined`, `typeof NaN`, `typeof Infinity`, `typeof globalThis`)
-                    match name.as_str() {
-                        "undefined" => return TypeId::UNDEFINED,
-                        "NaN" | "Infinity" => return TypeId::NUMBER,
-                        // globalThis is a synthetic symbol in tsc whose exports are all globals.
-                        // typeof globalThis should resolve to a type with all global members.
-                        // For now, return ANY to suppress false TS2304/TS2552 errors.
-                        // TODO: Create a proper object type with global members.
-                        "globalThis" => return TypeId::ANY,
-                        _ => {}
-                    }
-                    if self.is_known_global_value_name(&name) {
-                        // Emit TS2318/TS2583 for missing global type in typeof context
-                        // TS2583 for ES2015+ types, TS2304 for other globals
-                        use tsz_binder::lib_loader;
-                        if lib_loader::is_es2015_plus_type(&name) {
-                            self.error_cannot_find_global_type(&name, type_query.expr_name);
-                        } else {
-                            self.error_cannot_find_name_at(&name, type_query.expr_name);
-                        }
-                        return TypeId::ERROR;
-                    }
-                    // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
-                    if self.is_unresolved_import_symbol(type_query.expr_name) {
-                        return TypeId::ANY;
-                    }
-                    self.error_cannot_find_name_at(&name, type_query.expr_name);
-                    return TypeId::ERROR;
+            }
+            if let Some(missing_idx) = self.missing_type_query_left(type_query.expr_name)
+                && let Some(missing_name) = self
+                    .ctx
+                    .arena
+                    .get(missing_idx)
+                    .and_then(|node| self.ctx.arena.get_identifier(node))
+                    .map(|ident| ident.escaped_text.clone())
+            {
+                // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
+                if self.is_unresolved_import_symbol(missing_idx) {
+                    return TypeId::ANY;
                 }
-                if let Some(missing_idx) = self.missing_type_query_left(type_query.expr_name)
-                    && let Some(missing_name) = self
-                        .ctx
-                        .arena
-                        .get(missing_idx)
-                        .and_then(|node| self.ctx.arena.get_identifier(node))
-                        .map(|ident| ident.escaped_text.clone())
-                {
-                    // Suppress TS2304 if this is an unresolved import (TS2307 was already emitted)
-                    if self.is_unresolved_import_symbol(missing_idx) {
-                        return TypeId::ANY;
-                    }
-                    self.error_cannot_find_name_at(&missing_name, missing_idx);
-                    return TypeId::ERROR;
-                }
-                if self.report_type_query_missing_member(type_query.expr_name) {
-                    return TypeId::ERROR;
-                }
-                // Not found - fall back to hash (for forward compatibility)
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
-                let mut hasher = DefaultHasher::new();
-                name.hash(&mut hasher);
-                let symbol_id = hasher.finish() as u32;
-                factory.type_query(SymbolRef(symbol_id))
-            } else {
-                return TypeId::ERROR; // No name text - propagate error
-            };
+                self.error_cannot_find_name_at(&missing_name, missing_idx);
+                return TypeId::ERROR;
+            }
+            if self.report_type_query_missing_member(type_query.expr_name) {
+                return TypeId::ERROR;
+            }
+            // Not found - fall back to hash (for forward compatibility)
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            name.hash(&mut hasher);
+            let symbol_id = hasher.finish() as u32;
+            factory.type_query(SymbolRef(symbol_id))
+        } else {
+            return TypeId::ERROR; // No name text - propagate error
+        };
 
         let factory = self.ctx.types.factory();
         if let Some(args) = &type_query.type_arguments

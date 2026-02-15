@@ -117,6 +117,7 @@ impl<T: SubtypeTracer> DynSubtypeTracer for T {
 ///
 /// The closure is never called, so no allocations occur.
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 pub struct FastTracer;
 
 #[cfg(test)]
@@ -147,6 +148,7 @@ impl SubtypeTracer for FastTracer {
 /// }
 /// ```
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DiagnosticTracer {
     /// The first failure reason encountered (if any).
     failure: Option<SubtypeFailureReason>,
@@ -165,10 +167,6 @@ impl DiagnosticTracer {
     }
 
     /// Get a reference to the collected failure reason (if any).
-    pub fn get_failure(&self) -> Option<&SubtypeFailureReason> {
-        self.failure.as_ref()
-    }
-
     /// Check if any failure was collected.
     pub fn has_failure(&self) -> bool {
         self.failure.is_some()
@@ -529,8 +527,8 @@ pub mod codes {
 
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
 
-    #[cfg(test)]
-    /// Same code as TYPE_NOT_ASSIGNABLE (TS2322) — used for nested property elaboration.
+    /// Same code as TYPE_NOT_ASSIGNABLE (TS2322) -- used for nested property elaboration.
+    #[allow(dead_code)]
     pub const NESTED_TYPE_MISMATCH: u32 = dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
 
     // Function/call errors
@@ -807,6 +805,7 @@ impl<'a> DiagnosticBuilder<'a> {
     ///
     /// This is emitted when noImplicitAny is enabled and a function parameter
     /// has no type annotation and no contextual type.
+    #[allow(dead_code)]
     pub fn implicit_any_parameter(&mut self, param_name: &str) -> TypeDiagnostic {
         TypeDiagnostic::error(
             format!("Parameter '{}' implicitly has an 'any' type.", param_name),
@@ -818,6 +817,7 @@ impl<'a> DiagnosticBuilder<'a> {
     ///
     /// This is used when the implicit type is known to be something other than 'any',
     /// such as when a rest parameter implicitly has 'any[]'.
+    #[allow(dead_code)]
     pub fn implicit_any_parameter_with_type(
         &mut self,
         param_name: &str,
@@ -837,6 +837,7 @@ impl<'a> DiagnosticBuilder<'a> {
     ///
     /// This is emitted when noImplicitAny is enabled and a class/interface member
     /// has no type annotation.
+    #[allow(dead_code)]
     pub fn implicit_any_member(&mut self, member_name: &str) -> TypeDiagnostic {
         TypeDiagnostic::error(
             format!("Member '{}' implicitly has an 'any' type.", member_name),
@@ -848,6 +849,7 @@ impl<'a> DiagnosticBuilder<'a> {
     ///
     /// This is emitted when noImplicitAny is enabled and a variable declaration
     /// has no type annotation and the inferred type is 'any'.
+    #[allow(dead_code)]
     pub fn implicit_any_variable(&mut self, var_name: &str, var_type: TypeId) -> TypeDiagnostic {
         let type_str = self.formatter.format(var_type);
         TypeDiagnostic::error(
@@ -863,6 +865,7 @@ impl<'a> DiagnosticBuilder<'a> {
     ///
     /// This is emitted when noImplicitAny is enabled and a function declaration
     /// has no return type annotation and returns 'any'.
+    #[allow(dead_code)]
     pub fn implicit_any_return(&mut self, func_name: &str, return_type: TypeId) -> TypeDiagnostic {
         let type_str = self.formatter.format(return_type);
         TypeDiagnostic::error(
@@ -878,6 +881,7 @@ impl<'a> DiagnosticBuilder<'a> {
     ///
     /// This is emitted when noImplicitAny is enabled and a function expression
     /// has no return type annotation and returns 'any'.
+    #[allow(dead_code)]
     pub fn implicit_any_return_function_expression(
         &mut self,
         return_type: TypeId,
@@ -1253,6 +1257,7 @@ impl SubtypeFailureReason {
     }
 }
 
+#[allow(dead_code)]
 impl PendingDiagnosticBuilder {
     /// Create an "Argument not assignable" pending diagnostic.
     pub fn argument_not_assignable(arg_type: TypeId, param_type: TypeId) -> PendingDiagnostic {

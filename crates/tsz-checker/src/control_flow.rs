@@ -1928,7 +1928,9 @@ impl<'a> FlowAnalyzer<'a> {
         }
         let rhs = self.skip_parens_and_assertions(rhs);
         let rhs_node = self.arena.get(rhs)?;
-        let key = self.property_key_from_name(name)?;
+        let key = self
+            .property_key_from_name(name)
+            .or_else(|| self.property_key_from_name_with_rhs_effects(name, rhs))?;
 
         if rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
             let lit = self.arena.get_literal_expr(rhs_node)?;
@@ -1951,6 +1953,103 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    fn property_key_from_name_with_rhs_effects(
+        &self,
+        name: NodeIndex,
+        rhs: NodeIndex,
+    ) -> Option<PropertyKey> {
+        let name = self.skip_parens_and_assertions(name);
+        let name_node = self.arena.get(name)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let computed = self.arena.get_computed_property(name_node)?;
+        let key_expr = self.skip_parens_and_assertions(computed.expression);
+
+        if let Some(key) = self.property_key_from_assignment_like_expr(key_expr) {
+            return Some(key);
+        }
+
+        let key_node = self.arena.get(key_expr)?;
+        if key_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        self.property_key_from_rhs_assignment_to_reference(rhs, key_expr)
+    }
+
+    fn property_key_from_assignment_like_expr(&self, expr: NodeIndex) -> Option<PropertyKey> {
+        let expr = self.skip_parens_and_assertions(expr);
+        let node = self.arena.get(expr)?;
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(node)?;
+        if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        if let Some(value) = self.literal_number_from_node_or_type(bin.right)
+            && value.fract() == 0.0
+            && value >= 0.0
+        {
+            return Some(PropertyKey::Index(value as usize));
+        }
+        self.literal_atom_from_node_or_type(bin.right)
+            .map(PropertyKey::Atom)
+    }
+
+    fn property_key_from_rhs_assignment_to_reference(
+        &self,
+        rhs: NodeIndex,
+        reference: NodeIndex,
+    ) -> Option<PropertyKey> {
+        let rhs = self.skip_parens_and_assertions(rhs);
+        let rhs_node = self.arena.get(rhs)?;
+        if rhs_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let rhs_elements = self.arena.get_literal_expr(rhs_node)?;
+        let mut inferred = None;
+        for &elem in &rhs_elements.elements.nodes {
+            if elem.is_none() {
+                continue;
+            }
+            if let Some(key) = self.property_key_from_assignment_to_reference(elem, reference) {
+                inferred = Some(key);
+            }
+        }
+        inferred
+    }
+
+    fn property_key_from_assignment_to_reference(
+        &self,
+        expr: NodeIndex,
+        reference: NodeIndex,
+    ) -> Option<PropertyKey> {
+        let expr = self.skip_parens_and_assertions(expr);
+        let node = self.arena.get(expr)?;
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let bin = self.arena.get_binary_expr(node)?;
+        if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        if !self.is_matching_reference(bin.left, reference) {
+            return None;
+        }
+        if let Some(value) = self.literal_number_from_node_or_type(bin.right)
+            && value.fract() == 0.0
+            && value >= 0.0
+        {
+            return Some(PropertyKey::Index(value as usize));
+        }
+        self.literal_atom_from_node_or_type(bin.right)
+            .map(PropertyKey::Atom)
     }
 
     pub(crate) fn find_property_in_object_literal(

@@ -1876,8 +1876,7 @@ fn read_source_files(
 
                 let Some(resolved_reference) = candidates
                     .iter()
-                    .filter(|candidate| candidate.is_file())
-                    .next()
+                    .find(|candidate| candidate.is_file())
                     .map(|candidate| canonicalize_or_owned(candidate))
                 else {
                     continue;
@@ -2353,7 +2352,10 @@ fn collect_diagnostics(
         // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<Vec<Diagnostic>> = {
-            use rayon::prelude::*;
+            use rayon::iter::{
+                IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
+                ParallelIterator,
+            };
             work_items
                 .par_iter()
                 .zip(per_file_binders.into_par_iter())

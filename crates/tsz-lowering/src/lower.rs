@@ -16,7 +16,11 @@ use tsz_parser::parser::node::{IndexSignatureData, NodeArena, SignatureData, Typ
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::def::DefId;
-use tsz_solver::types::*;
+use tsz_solver::types::{
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedModifier,
+    MappedType, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan,
+    TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget, Visibility,
+};
 use tsz_solver::{QueryDatabase, SubtypeChecker, TypeDatabase, TypeResolver};
 
 /// Maximum number of type lowering operations to prevent infinite loops
@@ -1557,6 +1561,13 @@ impl<'a> TypeLowering<'a> {
         if let Some(lit_data) = self.arena.get_literal(node)
             && !lit_data.text.is_empty()
         {
+            // Canonicalize numeric property names (e.g. "1.", "1.0" -> "1")
+            if node.kind == SyntaxKind::NumericLiteral as u16
+                && let Some(canonical) =
+                    tsz_solver::utils::canonicalize_numeric_name(&lit_data.text)
+            {
+                return Some(self.interner.intern_string(&canonical));
+            }
             return Some(self.interner.intern_string(&lit_data.text));
         }
         // Handle computed property names like [Symbol.iterator]

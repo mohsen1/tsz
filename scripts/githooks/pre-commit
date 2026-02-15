@@ -21,6 +21,7 @@
 #   TSZ_SKIP_CONFORMANCE=1   Skip the conformance regression check
 #   TSZ_SKIP_BENCH=1         Skip microbenchmark regression check
 #   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
+#   TSZ_CLEAN_STALE_DAYS=7   Remove build artifacts older than N days
 #   TSZ_BENCH_UPDATE_BASELINE=1  Refresh local microbenchmark baseline
 #   TSZ_TEST_ALL=1           Force testing all crates
 
@@ -35,6 +36,7 @@ cd "$ROOT_DIR"
 SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
 SKIP_BENCH="${TSZ_SKIP_BENCH:-}"
 SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
+CLEAN_STALE_DAYS="${TSZ_CLEAN_STALE_DAYS:-7}"
 
 echo "Pre-commit checks..."
 
@@ -186,10 +188,44 @@ fi
 if [ "$SKIP_CLEAN" != "1" ]; then
     echo "1/6 Cleaning stale target artifacts..."
     TARGET_DIR="$ROOT_DIR/.target"
+
+    # Always-safe removals that tend to accumulate quickly.
     if [ -d "$TARGET_DIR" ]; then
         [ -d "$TARGET_DIR/doc" ] && rm -rf "$TARGET_DIR/doc"
         [ -d "$TARGET_DIR/nextest" ] && rm -rf "$TARGET_DIR/nextest"
     fi
+
+    # Keep recent caches for speed, prune only stale heavyweight artifacts.
+    cleanup_stale_artifacts() {
+        local base_dir="$1"
+        local stale_days="$2"
+
+        [ -d "$base_dir" ] || return 0
+
+        # Remove stale profiles and cache dirs that can grow very large.
+        find "$base_dir" -mindepth 1 -maxdepth 1 -type d \( \
+            -name "debug" -o \
+            -name "release" -o \
+            -name "dist" -o \
+            -name "dist-fast" -o \
+            -name "dist-quick" -o \
+            -name "tmp" -o \
+            -name "incremental" -o \
+            -name ".fingerprint" \
+        \) -mtime +"$stale_days" -prune -exec rm -rf {} + 2>/dev/null || true
+
+        # Remove stale nested incremental/fingerprint caches.
+        find "$base_dir" -type d \( -name "incremental" -o -name ".fingerprint" \) \
+            -mtime +"$stale_days" -prune -exec rm -rf {} + 2>/dev/null || true
+    }
+
+    cleanup_stale_artifacts "$ROOT_DIR/.target" "$CLEAN_STALE_DAYS"
+    cleanup_stale_artifacts "$ROOT_DIR/.target-bench" "$CLEAN_STALE_DAYS"
+
+    # Clean additional isolated build targets used by local scripts.
+    find "$ROOT_DIR" -mindepth 1 -maxdepth 1 -type d -name ".target-*" \
+        ! -name ".target" ! -name ".target-bench" \
+        -mtime +"$CLEAN_STALE_DAYS" -prune -exec rm -rf {} + 2>/dev/null || true
 else
     echo "1/6 Target cleanup skipped (TSZ_SKIP_CLEAN=1)"
 fi

@@ -165,8 +165,7 @@ impl<'a> CheckerState<'a> {
             {
                 // Extract property
                 if let Some(sig) = self.ctx.arena.get_signature(member_node)
-                    && let Some(name_node) = self.ctx.arena.get(sig.name)
-                    && let Some(id_data) = self.ctx.arena.get_identifier(name_node)
+                    && let Some(name_atom) = self.get_member_name_atom(sig.name)
                 {
                     let type_id = if !sig.type_annotation.is_none() {
                         self.get_type_from_type_node(sig.type_annotation)
@@ -175,7 +174,7 @@ impl<'a> CheckerState<'a> {
                     };
 
                     properties.push(PropertyInfo {
-                        name: self.ctx.types.intern_string(&id_data.escaped_text),
+                        name: name_atom,
                         type_id,
                         write_type: type_id,
                         optional: sig.question_token,
@@ -189,10 +188,8 @@ impl<'a> CheckerState<'a> {
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
                 if let Some(accessor) = self.ctx.arena.get_accessor(member_node)
-                    && let Some(name_node) = self.ctx.arena.get(accessor.name)
-                    && let Some(id_data) = self.ctx.arena.get_identifier(name_node)
+                    && let Some(name_atom) = self.get_member_name_atom(accessor.name)
                 {
-                    let name_atom = self.ctx.types.intern_string(&id_data.escaped_text);
                     let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                         getter: None,
                         setter: None,
@@ -1247,5 +1244,28 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Get the interned Atom for a member name node, handling identifiers,
+    /// string literals, and numeric literals (with canonical normalization).
+    fn get_member_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+
+        // Identifier
+        if let Some(id_data) = self.ctx.arena.get_identifier(name_node) {
+            return Some(self.ctx.types.intern_string(&id_data.escaped_text));
+        }
+
+        // String literal or numeric literal
+        if let Some(lit) = self.ctx.arena.get_literal(name_node) {
+            if name_node.kind == SyntaxKind::NumericLiteral as u16
+                && let Some(canonical) = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+            {
+                return Some(self.ctx.types.intern_string(&canonical));
+            }
+            return Some(self.ctx.types.intern_string(&lit.text));
+        }
+
+        None
     }
 }

@@ -730,6 +730,11 @@ impl TypeResolver for TypeEnvironment {
     }
 }
 
+/// Maximum number of unique type pairs to track in cycle detection.
+/// Prevents unbounded memory growth in pathological cases.
+#[allow(dead_code)]
+pub const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
+
 // =============================================================================
 // Task #48: SubtypeVisitor - Visitor Pattern for Subtype Checking
 // =============================================================================
@@ -2703,6 +2708,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        // Check if target is the global `Object` interface from lib.d.ts.
+        // This is a separate path from intrinsic `object`:
+        // - `object` (lowercase) includes callable values.
+        // - `Object` (capitalized interface) should follow TS structural rules and
+        //   exclude bare callable types from primitive-style object assignability.
+        if lazy_def_id(self.interner, target)
+            .is_some_and(|t_def| self.resolver.is_boxed_def_id(t_def, IntrinsicKind::Object))
+        {
+            let source_eval = self.evaluate_type(source);
+            if self.is_global_object_interface_type(source_eval) {
+                return SubtypeResult::True;
+            }
+
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                })
+            {
+                return SubtypeResult::False;
+            }
+            return SubtypeResult::False;
+        }
+
         if let (Some(s_elem), Some(t_elem)) = (
             array_element_type(self.interner, source),
             array_element_type(self.interner, target),
@@ -4480,6 +4509,18 @@ impl<'a, R: TypeResolver> AssignabilityChecker for SubtypeChecker<'a, R> {
     }
 }
 
+/// Convenience function for one-off subtype checks with a resolver
+#[allow(dead_code)]
+pub fn is_subtype_of_with_resolver<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let mut checker = SubtypeChecker::with_resolver(interner, resolver);
+    checker.is_subtype_of(source, target)
+}
+
 /// Check if two types are structurally identical using De Bruijn indices for cycles.
 ///
 /// This is the O(1) alternative to bidirectional subtyping for identity checks.
@@ -4517,6 +4558,19 @@ pub fn is_subtype_of_with_flags(
     flags: u16,
 ) -> bool {
     let mut checker = SubtypeChecker::new(interner).apply_flags(flags);
+    checker.is_subtype_of(source, target)
+}
+
+/// Convenience function for one-off subtype checks with a resolver, routed through a QueryDatabase.
+#[allow(dead_code)]
+pub fn is_subtype_of_with_resolver_and_db<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let mut checker =
+        SubtypeChecker::with_resolver(db.as_type_database(), resolver).with_query_db(db);
     checker.is_subtype_of(source, target)
 }
 

@@ -35,7 +35,7 @@
 //! // usages are inlined
 //! ```
 
-use crate::transforms::ir::*;
+use crate::transforms::ir::{EnumMember, EnumMemberValue, IRNode};
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};

@@ -413,7 +413,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_in_object_literal_member(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, FUNCTION_DECLARATION,
+            FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION,
+            SET_ACCESSOR,
+        };
         let mut current = idx;
         let mut saw_object_member = false;
 

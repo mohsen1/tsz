@@ -52,13 +52,32 @@ pub mod type_queries;
 pub mod type_queries_extended;
 pub mod types;
 pub mod unsoundness_audit;
-mod utils;
+pub mod utils;
 pub mod variance;
 pub mod visitor;
 pub mod widening;
 pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
-pub use visitor::*;
+pub use visitor::{
+    ConstAssertionVisitor, ObjectTypeKind, RecursiveTypeCollector, TypeCollectorVisitor, TypeKind,
+    TypeKindVisitor, TypePredicateVisitor, TypeVisitor, application_id, array_element_type,
+    bound_parameter_index, callable_shape_id, classify_object_type, collect_all_types,
+    collect_enum_def_ids, collect_lazy_def_ids, collect_referenced_types, collect_type_queries,
+    conditional_type_id, contains_error_type, contains_infer_types, contains_this_type,
+    contains_type_matching, contains_type_parameters, enum_components, for_each_child,
+    function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind, is_array_type,
+    is_conditional_type, is_empty_object_type, is_empty_object_type_db, is_enum_type,
+    is_error_type, is_function_type, is_function_type_db, is_generic_application,
+    is_index_access_type, is_intersection_type, is_literal_type, is_literal_type_db,
+    is_mapped_type, is_module_namespace_type, is_module_namespace_type_db, is_object_like_type,
+    is_object_like_type_db, is_primitive_type, is_template_literal_type, is_this_type,
+    is_tuple_type, is_type_kind, is_type_parameter, is_type_reference, is_union_type, is_unit_type,
+    keyof_inner_type, lazy_def_id, literal_number, literal_string, literal_value, mapped_type_id,
+    module_namespace_symbol_ref, no_infer_inner_type, object_shape_id, object_with_index_shape_id,
+    readonly_inner_type, recursive_index, ref_symbol, string_intrinsic_components,
+    template_literal_id, test_type, tuple_list_id, type_param_info, type_query_symbol,
+    union_list_id, unique_symbol_ref, walk_referenced_types,
+};
 
 pub use apparent::{
     ApparentMemberKind, apparent_object_member_kind, apparent_primitive_member_kind,
