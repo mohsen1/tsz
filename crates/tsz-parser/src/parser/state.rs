@@ -59,6 +59,9 @@ pub const CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES: u32 = 1024;
 /// Context flag: inside a block statement (function body, bare block, if/while/for body).
 /// When set, modifiers like `export` and `declare` are not allowed and emit TS1184.
 pub const CONTEXT_FLAG_IN_BLOCK: u32 = 8192;
+/// Context flag: parsing inside a parenthesized expression.
+/// Used to keep arrow-function/parenthesized recovery behavior consistent.
+pub const CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION: u32 = 16384;
 
 // =============================================================================
 // Parse Diagnostic
@@ -424,6 +427,12 @@ impl ParserState {
     #[inline]
     pub(crate) const fn in_block_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_IN_BLOCK) != 0
+    }
+
+    /// Check if we're currently parsing inside a parenthesized expression.
+    #[inline]
+    pub(crate) const fn in_parenthesized_expression_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION) != 0
     }
 
     /// Check if the current token is an illegal binding identifier in the current context
