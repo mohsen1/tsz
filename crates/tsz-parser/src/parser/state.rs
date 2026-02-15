@@ -213,12 +213,20 @@ impl ParserState {
     // Token Utilities (shared with regular parser)
     // =========================================================================
 
-    /// Check if we're in a JSX file (.tsx or .jsx)
+    /// Check if we're in a JSX file.
+    /// In tsc, .js/.cjs/.mjs/.jsx/.tsx all use LanguageVariant.JSX,
+    /// only .ts/.cts/.mts use LanguageVariant.Standard.
     pub(crate) fn is_jsx_file(&self) -> bool {
         std::path::Path::new(&self.file_name)
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("tsx") || ext.eq_ignore_ascii_case("jsx"))
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("tsx")
+                    || ext.eq_ignore_ascii_case("jsx")
+                    || ext.eq_ignore_ascii_case("js")
+                    || ext.eq_ignore_ascii_case("cjs")
+                    || ext.eq_ignore_ascii_case("mjs")
+            })
     }
 
     /// Get current token
