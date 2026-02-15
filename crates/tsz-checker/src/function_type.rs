@@ -344,10 +344,11 @@ impl<'a> CheckerState<'a> {
                 //
                 // JSDoc @param {type} annotations also suppress TS7006 in JS files.
                 // Also check for inline /** @type {T} */ annotations on the parameter itself.
+                // A @type {function-type} on the function also suppresses TS7006 for all params.
                 let has_jsdoc_param = if !has_contextual_type && param.type_annotation.is_none() {
                     let from_func_jsdoc = if let Some(ref jsdoc) = func_jsdoc {
                         let pname = self.parameter_name_for_error(param.name);
-                        Self::jsdoc_has_param_type(jsdoc, &pname)
+                        Self::jsdoc_has_param_type(jsdoc, &pname) || Self::jsdoc_has_type_tag(jsdoc)
                     } else {
                         false
                     };
