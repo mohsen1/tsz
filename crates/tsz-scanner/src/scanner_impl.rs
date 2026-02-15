@@ -955,7 +955,6 @@ impl ScannerState {
     }
 
     /// Scan a string literal.
-    #[allow(clippy::too_many_lines)]
     fn scan_string(&mut self, quote: u32) {
         self.pos += 1; // Skip opening quote
         let mut result = String::new();
@@ -969,153 +968,9 @@ impl ScannerState {
                 return;
             }
             if ch == CharacterCodes::BACKSLASH {
-                // Handle escape sequences
                 self.pos += 1;
                 if self.pos < self.end {
-                    let escaped = self.char_code_unchecked(self.pos);
-                    // Get byte length of the escaped character BEFORE advancing
-                    let escaped_char_len = self.char_len_at(self.pos);
-                    self.pos += escaped_char_len;
-                    match escaped {
-                        CharacterCodes::_0 => {
-                            // \0 - null character (only if not followed by digit)
-                            if self.pos < self.end && is_digit(self.char_code_unchecked(self.pos)) {
-                                // Legacy octal escape: \0N - scan as octal
-                                let mut value = 0u32;
-                                // Back up to include the '0' we already consumed
-                                let octal_start = self.pos - 1;
-                                self.pos = octal_start;
-                                while self.pos < self.end
-                                    && self.pos < octal_start + 3
-                                    && is_octal_digit(self.char_code_unchecked(self.pos))
-                                {
-                                    value = value * 8
-                                        + (self.char_code_unchecked(self.pos) - CharacterCodes::_0);
-                                    self.pos += 1;
-                                }
-                                if let Some(c) = char::from_u32(value) {
-                                    result.push(c);
-                                }
-                            } else {
-                                result.push('\0');
-                            }
-                        }
-                        CharacterCodes::_1
-                        | CharacterCodes::_2
-                        | CharacterCodes::_3
-                        | CharacterCodes::_4
-                        | CharacterCodes::_5
-                        | CharacterCodes::_6
-                        | CharacterCodes::_7 => {
-                            // Legacy octal escape: \1 through \7
-                            let mut value = escaped - CharacterCodes::_0;
-                            // Consume up to 2 more octal digits
-                            let mut count = 1;
-                            while count < 3
-                                && self.pos < self.end
-                                && is_octal_digit(self.char_code_unchecked(self.pos))
-                            {
-                                value = value * 8
-                                    + (self.char_code_unchecked(self.pos) - CharacterCodes::_0);
-                                self.pos += 1;
-                                count += 1;
-                            }
-                            if let Some(c) = char::from_u32(value) {
-                                result.push(c);
-                            }
-                        }
-                        CharacterCodes::LOWER_N => result.push('\n'),
-                        CharacterCodes::LOWER_R => result.push('\r'),
-                        CharacterCodes::LOWER_T => result.push('\t'),
-                        CharacterCodes::LOWER_V => result.push('\x0B'),
-                        CharacterCodes::LOWER_B => result.push('\x08'),
-                        CharacterCodes::LOWER_F => result.push('\x0C'),
-                        CharacterCodes::BACKSLASH => result.push('\\'),
-                        c if c == quote => result.push(char::from_u32(quote).unwrap_or('\0')),
-                        CharacterCodes::LOWER_X => {
-                            // Hex escape \xHH
-                            if self.pos + 2 <= self.end {
-                                let hex = self.substring(self.pos, self.pos + 2);
-                                if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                                    self.pos += 2;
-                                    if let Some(c) = char::from_u32(code) {
-                                        result.push(c);
-                                    }
-                                } else {
-                                    result.push('\\');
-                                    result.push('x');
-                                }
-                            } else {
-                                result.push('\\');
-                                result.push('x');
-                            }
-                        }
-                        CharacterCodes::LOWER_U => {
-                            // Unicode escape \uHHHH or \u{H+}
-                            if self.pos < self.end
-                                && self.char_code_unchecked(self.pos) == CharacterCodes::OPEN_BRACE
-                            {
-                                // \u{...}
-                                self.pos += 1;
-                                let hex_start = self.pos;
-                                while self.pos < self.end
-                                    && is_hex_digit(self.char_code_unchecked(self.pos))
-                                {
-                                    self.pos += 1;
-                                }
-                                if self.pos < self.end
-                                    && self.char_code_unchecked(self.pos)
-                                        == CharacterCodes::CLOSE_BRACE
-                                {
-                                    let hex = self.substring(hex_start, self.pos);
-                                    self.pos += 1;
-                                    if let Ok(code) = u32::from_str_radix(&hex, 16)
-                                        && let Some(c) = char::from_u32(code)
-                                    {
-                                        result.push(c);
-                                    }
-                                } else {
-                                    result.push('\\');
-                                    result.push('u');
-                                }
-                            } else if self.pos + 4 <= self.end {
-                                // \uHHHH
-                                let hex = self.substring(self.pos, self.pos + 4);
-                                if let Ok(code) = u32::from_str_radix(&hex, 16)
-                                    && let Some(c) = char::from_u32(code)
-                                {
-                                    self.pos += 4;
-                                    result.push(c);
-                                } else {
-                                    result.push('\\');
-                                    result.push('u');
-                                }
-                            } else {
-                                result.push('\\');
-                                result.push('u');
-                            }
-                        }
-                        // Line continuation: backslash followed by line terminator
-                        CharacterCodes::LINE_FEED
-                        | CharacterCodes::CARRIAGE_RETURN
-                        | CharacterCodes::LINE_SEPARATOR
-                        | CharacterCodes::PARAGRAPH_SEPARATOR => {
-                            // Line continuation - don't add anything to result
-                            // Also handle CR+LF as a single line break
-                            if escaped == CharacterCodes::CARRIAGE_RETURN
-                                && self.pos < self.end
-                                && self.char_code_unchecked(self.pos) == CharacterCodes::LINE_FEED
-                            {
-                                self.pos += 1;
-                            }
-                        }
-                        _ => {
-                            // Unknown escape - just include the character (not the backslash)
-                            if let Some(c) = char::from_u32(escaped) {
-                                result.push(c);
-                            }
-                        }
-                    }
+                    self.scan_string_escape(quote, &mut result);
                 }
             } else if ch == CharacterCodes::LINE_FEED || ch == CharacterCodes::CARRIAGE_RETURN {
                 // Unterminated string
@@ -1135,6 +990,142 @@ impl ScannerState {
         self.token_flags |= TokenFlags::Unterminated as u32;
         self.token_value = result;
         self.token = SyntaxKind::StringLiteral;
+    }
+
+    fn scan_string_escape(&mut self, quote: u32, result: &mut String) {
+        let escaped = self.char_code_unchecked(self.pos);
+        // Get byte length of the escaped character before advancing.
+        let escaped_len = self.char_len_at(self.pos);
+        self.pos += escaped_len;
+
+        match escaped {
+            CharacterCodes::_0 => self.scan_string_escape_zero(result),
+            CharacterCodes::_1
+            | CharacterCodes::_2
+            | CharacterCodes::_3
+            | CharacterCodes::_4
+            | CharacterCodes::_5
+            | CharacterCodes::_6
+            | CharacterCodes::_7 => self.scan_string_escape_octal(escaped, result),
+            CharacterCodes::LOWER_N => result.push('\n'),
+            CharacterCodes::LOWER_R => result.push('\r'),
+            CharacterCodes::LOWER_T => result.push('\t'),
+            CharacterCodes::LOWER_V => result.push('\x0B'),
+            CharacterCodes::LOWER_B => result.push('\x08'),
+            CharacterCodes::LOWER_F => result.push('\x0C'),
+            CharacterCodes::BACKSLASH => result.push('\\'),
+            c if c == quote => result.push(char::from_u32(quote).unwrap_or('\0')),
+            CharacterCodes::LOWER_X => self.scan_string_escape_hex(result),
+            CharacterCodes::LOWER_U => self.scan_string_escape_unicode(result),
+            CharacterCodes::LINE_FEED
+            | CharacterCodes::CARRIAGE_RETURN
+            | CharacterCodes::LINE_SEPARATOR
+            | CharacterCodes::PARAGRAPH_SEPARATOR => {
+                // Line continuation - also handle CR+LF as a single line break
+                if escaped == CharacterCodes::CARRIAGE_RETURN
+                    && self.pos < self.end
+                    && self.char_code_unchecked(self.pos) == CharacterCodes::LINE_FEED
+                {
+                    self.pos += 1;
+                }
+            }
+            _ => {
+                if let Some(c) = char::from_u32(escaped) {
+                    result.push(c);
+                }
+            }
+        }
+    }
+
+    fn scan_string_escape_zero(&mut self, result: &mut String) {
+        if self.pos < self.end && is_digit(self.char_code_unchecked(self.pos)) {
+            // Legacy octal escape: \0N - scan as octal
+            let mut value = 0u32;
+            let octal_start = self.pos - 1; // include the '0'
+            self.pos = octal_start;
+            while self.pos < self.end
+                && self.pos < octal_start + 3
+                && is_octal_digit(self.char_code_unchecked(self.pos))
+            {
+                value = value * 8 + (self.char_code_unchecked(self.pos) - CharacterCodes::_0);
+                self.pos += 1;
+            }
+            if let Some(c) = char::from_u32(value) {
+                result.push(c);
+            }
+        } else {
+            result.push('\0');
+        }
+    }
+
+    fn scan_string_escape_octal(&mut self, escaped: u32, result: &mut String) {
+        // Legacy octal escape: \1 through \7
+        let mut value = escaped - CharacterCodes::_0;
+        let mut count = 1;
+        while count < 3 && self.pos < self.end && is_octal_digit(self.char_code_unchecked(self.pos))
+        {
+            value = value * 8 + (self.char_code_unchecked(self.pos) - CharacterCodes::_0);
+            self.pos += 1;
+            count += 1;
+        }
+        if let Some(c) = char::from_u32(value) {
+            result.push(c);
+        }
+    }
+
+    fn scan_string_escape_hex(&mut self, result: &mut String) {
+        if self.pos + 2 <= self.end {
+            let hex = self.substring(self.pos, self.pos + 2);
+            if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                self.pos += 2;
+                if let Some(c) = char::from_u32(code) {
+                    result.push(c);
+                }
+                return;
+            }
+        }
+        result.push('\\');
+        result.push('x');
+    }
+
+    fn scan_string_escape_unicode(&mut self, result: &mut String) {
+        if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::OPEN_BRACE {
+            self.pos += 1;
+            let hex_start = self.pos;
+            while self.pos < self.end && is_hex_digit(self.char_code_unchecked(self.pos)) {
+                self.pos += 1;
+            }
+            if self.pos < self.end
+                && self.char_code_unchecked(self.pos) == CharacterCodes::CLOSE_BRACE
+            {
+                let hex = self.substring(hex_start, self.pos);
+                self.pos += 1;
+                if let Ok(code) = u32::from_str_radix(&hex, 16)
+                    && let Some(c) = char::from_u32(code)
+                {
+                    result.push(c);
+                    return;
+                }
+            }
+            result.push('\\');
+            result.push('u');
+            return;
+        }
+        if self.pos + 4 <= self.end {
+            let hex = self.substring(self.pos, self.pos + 4);
+            if let Ok(code) = u32::from_str_radix(&hex, 16)
+                && let Some(c) = char::from_u32(code)
+            {
+                self.pos += 4;
+                result.push(c);
+                return;
+            }
+            result.push('\\');
+            result.push('u');
+            return;
+        }
+        result.push('\\');
+        result.push('u');
     }
 
     /// Scan a template literal (simplified).
