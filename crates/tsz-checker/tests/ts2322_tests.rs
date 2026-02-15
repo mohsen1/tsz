@@ -751,6 +751,7 @@ fn test_ts2322_strict_js_strictness_affects_nullability() {
         CheckerOptions {
             check_js: true,
             strict: false,
+            strict_null_checks: false,
             ..CheckerOptions::default()
         },
     );
@@ -1032,6 +1033,7 @@ fn test_ts2322_check_jsx_strict_nullability_effect() {
         CheckerOptions {
             check_js: true,
             strict: false,
+            strict_null_checks: false,
             ..Default::default()
         },
     );

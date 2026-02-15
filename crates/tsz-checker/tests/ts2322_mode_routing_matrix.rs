@@ -236,6 +236,7 @@ fn test_target_sensitive_strictness_effect_on_jsdoc_error_classification() {
         CheckerOptions {
             check_js: true,
             strict: false,
+            strict_null_checks: false,
             ..CheckerOptions::default()
         },
     );
