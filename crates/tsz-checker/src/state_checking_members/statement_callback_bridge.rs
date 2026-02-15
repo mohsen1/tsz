@@ -64,6 +64,20 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         };
 
+        // TS1100: 'arguments' and 'eval' are invalid in function names in strict contexts.
+        if self.is_strict_mode_for_node(func_idx)
+            && !func.name.is_none()
+            && let Some(func_name_node) = self.ctx.arena.get(func.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(func_name_node)
+            && (ident.escaped_text == "arguments" || ident.escaped_text == "eval")
+        {
+            self.error_at_node_msg(
+                func.name,
+                crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                &[&ident.escaped_text],
+            );
+        }
+
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if function has 'declare' modifier but also has a body
         // Point error at the body (opening brace) to match tsc
@@ -94,6 +108,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check for duplicate parameter names (TS2300)
         self.check_duplicate_parameters(&func.parameters);
+        if !self.has_declare_modifier(&func.modifiers) && !self.ctx.file_name.ends_with(".d.ts") {
+            self.check_strict_mode_reserved_parameter_names(
+                &func.parameters.nodes,
+                func_idx,
+                false,
+            );
+        }
 
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&func.parameters);

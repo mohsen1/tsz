@@ -133,6 +133,11 @@ impl<'a> CheckerState<'a> {
             self.check_parameter_ordering(parameters);
             // Check that rest parameters have array types (TS2370)
             self.check_rest_parameter_types(&parameters.nodes);
+            self.check_strict_mode_reserved_parameter_names(
+                &parameters.nodes,
+                idx,
+                self.ctx.enclosing_class.is_some(),
+            );
         }
 
         // For nested functions/methods, push enclosing type parameters first so that

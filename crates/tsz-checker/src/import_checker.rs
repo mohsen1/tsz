@@ -314,7 +314,9 @@ impl<'a> CheckerState<'a> {
 
         // Check named imports: import { X, Y } from "module"
         if has_named_imports {
-            let bindings_node = bindings_node.unwrap();
+            let Some(bindings_node) = bindings_node else {
+                return;
+            };
             let named_imports = match self.ctx.arena.get_named_imports(bindings_node) {
                 Some(ni) => ni,
                 None => return,

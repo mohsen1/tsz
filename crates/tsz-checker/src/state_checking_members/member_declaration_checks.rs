@@ -608,6 +608,11 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(sig) = self.ctx.arena.get_signature(node) {
                 if let Some(params) = &sig.parameters {
+                    self.check_strict_mode_reserved_parameter_names(
+                        &params.nodes,
+                        member_idx,
+                        false,
+                    );
                     self.check_parameter_properties(&params.nodes);
                     for &param_idx in &params.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -646,6 +651,11 @@ impl<'a> CheckerState<'a> {
         else if node.kind == syntax_kind_ext::METHOD_SIGNATURE {
             if let Some(sig) = self.ctx.arena.get_signature(node) {
                 if let Some(params) = &sig.parameters {
+                    self.check_strict_mode_reserved_parameter_names(
+                        &params.nodes,
+                        member_idx,
+                        false,
+                    );
                     self.check_parameter_properties(&params.nodes);
                     for &param_idx in &params.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)

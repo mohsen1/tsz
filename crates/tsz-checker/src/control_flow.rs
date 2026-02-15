@@ -711,21 +711,24 @@ impl<'a> FlowAnalyzer<'a> {
 
                 if needs_antecedent {
                     // Check if antecedent is ready (similar to merge point logic)
-                    let &ant = flow.antecedent.first().unwrap();
-                    if !visited.contains(&ant) && !results.contains_key(&ant) {
-                        // Antecedent not ready - schedule it and defer self
-                        if !in_worklist.contains(&ant) {
-                            worklist.push_front((ant, current_type));
-                            in_worklist.insert(ant);
+                    if let Some(&ant) = flow.antecedent.first() {
+                        if !visited.contains(&ant) && !results.contains_key(&ant) {
+                            // Antecedent not ready - schedule it and defer self
+                            if !in_worklist.contains(&ant) {
+                                worklist.push_front((ant, current_type));
+                                in_worklist.insert(ant);
+                            }
+                            if !in_worklist.contains(&current_flow) {
+                                worklist.push_back((current_flow, current_type));
+                                in_worklist.insert(current_flow);
+                            }
+                            continue;
                         }
-                        if !in_worklist.contains(&current_flow) {
-                            worklist.push_back((current_flow, current_type));
-                            in_worklist.insert(current_flow);
-                        }
-                        continue;
+                        // Antecedent is ready - get its result
+                        *results.get(&ant).unwrap_or(&current_type)
+                    } else {
+                        current_type
                     }
-                    // Antecedent is ready - get its result
-                    *results.get(&ant).unwrap_or(&current_type)
                 } else if affects_ref {
                     // For local variables, TypeScript preserves narrowing across method calls
                     current_type

@@ -903,8 +903,7 @@ impl<'a> CheckerState<'a> {
     /// Panics in debug mode if the code has no registered template.
     pub(crate) fn error_at_node_msg(&mut self, node_idx: NodeIndex, code: u32, args: &[&str]) {
         use tsz_common::diagnostics::get_message_template;
-        let template = get_message_template(code)
-            .unwrap_or_else(|| panic!("no message template for diagnostic code {code}"));
+        let template = get_message_template(code).unwrap_or("Unexpected checker diagnostic code.");
         let message = format_message(template, args);
         self.error_at_node(node_idx, &message, code);
     }
@@ -4024,13 +4023,12 @@ impl<'a> CheckerState<'a> {
                 matches!(op, "&" | "|" | "^") && left_is_boolean && right_is_boolean;
 
             if is_boolean_bitwise {
-                let suggestion = match op {
-                    "&" => "&&",
-                    "|" => "||",
-                    "^" => "!==",
-                    _ => panic!(
-                        "invariant violation: boolean bitwise suggestion requested for unexpected operator"
-                    ),
+                let suggestion = if op == "&" {
+                    "&&"
+                } else if op == "|" {
+                    "||"
+                } else {
+                    "!=="
                 };
                 if let Some(loc) = self.get_source_location(node_idx) {
                     let message = format!(

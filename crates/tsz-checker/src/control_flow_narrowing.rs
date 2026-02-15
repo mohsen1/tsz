@@ -1737,7 +1737,7 @@ impl<'a> FlowAnalyzer<'a> {
             buf[pos] = b'-';
         }
 
-        let text = std::str::from_utf8(&buf[pos..]).expect("decimal digits must be valid UTF-8");
+        let text = std::str::from_utf8(&buf[pos..]).unwrap_or("0");
         self.interner.intern_string(text)
     }
 
