@@ -265,10 +265,10 @@ fn ensure_file_exists(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn is_js_file(path: &Path) -> bool {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("js") | Some("jsx") | Some("mjs") | Some("cjs") => true,
-        _ => false,
-    }
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("js") | Some("jsx") | Some("mjs") | Some("cjs")
+    )
 }
 
 pub(crate) fn is_ts_file(path: &Path) -> bool {
@@ -281,10 +281,10 @@ pub(crate) fn is_ts_file(path: &Path) -> bool {
         return true;
     }
 
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("ts") | Some("tsx") | Some("mts") | Some("cts") => true,
-        _ => false,
-    }
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ts") | Some("tsx") | Some("mts") | Some("cts")
+    )
 }
 
 /// Check if a path is a valid module file for module resolution purposes.
@@ -299,10 +299,10 @@ pub(crate) fn is_valid_module_file(path: &Path) -> bool {
         return true;
     }
 
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("ts") | Some("tsx") | Some("mts") | Some("cts") | Some("json") => true,
-        _ => false,
-    }
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ts") | Some("tsx") | Some("mts") | Some("cts") | Some("json")
+    )
 }
 
 fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {

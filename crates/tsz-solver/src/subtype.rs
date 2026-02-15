@@ -2572,18 +2572,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(s_kind) = intrinsic_kind(self.interner, source) {
             if self.is_boxed_primitive_subtype(s_kind, target) {
                 return SubtypeResult::True;
-            } else {
-                // Trace: Intrinsic type mismatch (boxed primitive check failed)
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
+            }
+            // Trace: Intrinsic type mismatch (boxed primitive check failed)
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                })
+            {
                 return SubtypeResult::False;
             }
+            return SubtypeResult::False;
         }
 
         if let (Some(lit), Some(t_kind)) = (
@@ -2599,18 +2598,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             if s_lit == t_lit {
                 return SubtypeResult::True;
-            } else {
-                // Trace: Literal type mismatch
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::LiteralTypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
+            }
+            // Trace: Literal type mismatch
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(SubtypeFailureReason::LiteralTypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                })
+            {
                 return SubtypeResult::False;
             }
+            return SubtypeResult::False;
         }
 
         if let (Some(LiteralValue::String(s_lit)), Some(t_spans)) = (
@@ -2623,18 +2621,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if intrinsic_kind(self.interner, target) == Some(IntrinsicKind::Object) {
             if self.is_object_keyword_type(source) {
                 return SubtypeResult::True;
-            } else {
-                // Trace: Source is not object-compatible
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
+            }
+            // Trace: Source is not object-compatible
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                })
+            {
                 return SubtypeResult::False;
             }
+            return SubtypeResult::False;
         }
 
         // Check if target is the Function intrinsic (TypeId::FUNCTION) or the
@@ -2657,18 +2654,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if is_function_target {
             if self.is_callable_type(source) {
                 return SubtypeResult::True;
-            } else {
-                // Trace: Source is not function-compatible
-                if let Some(tracer) = &mut self.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                        source_type: source,
-                        target_type: target,
-                    })
-                {
-                    return SubtypeResult::False;
-                }
+            }
+            // Trace: Source is not function-compatible
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                })
+            {
                 return SubtypeResult::False;
             }
+            return SubtypeResult::False;
         }
 
         if let (Some(s_elem), Some(t_elem)) = (

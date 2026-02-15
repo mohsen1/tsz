@@ -388,14 +388,13 @@ impl<'a> BinaryOpEvaluator<'a> {
 
             if valid_left && valid_right {
                 return BinaryOpResult::Success(TypeId::STRING);
-            } else {
-                // TS2365: Operator '+' cannot be applied to types 'string' and 'object'
-                return BinaryOpResult::TypeError {
-                    left,
-                    right,
-                    op: "+",
-                };
             }
+            // TS2365: Operator '+' cannot be applied to types 'string' and 'object'
+            return BinaryOpResult::TypeError {
+                left,
+                right,
+                op: "+",
+            };
         }
 
         // number-like + number-like = number

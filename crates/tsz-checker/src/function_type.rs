@@ -1292,23 +1292,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Check if the member is an enum member or a namespace export
-                let member_symbol = self.ctx.binder.get_symbol(member_sym_id);
-                let is_enum_member = member_symbol
-                    .map(|s| s.flags & symbol_flags::ENUM_MEMBER != 0)
-                    .unwrap_or(false);
-
-                if is_enum_member {
-                    // Enum member property access should produce the member type (`E.A`),
-                    // not the enum namespace type (`E`). Member types remain assignable to
-                    // their parent enum via solver compatibility rules.
-                    let member_type = self.get_type_of_symbol(member_sym_id);
-                    return self.apply_flow_narrowing(idx, member_type);
-                } else {
-                    // Namespace exports (functions, variables, etc.) - use their actual type
-                    let member_type = self.get_type_of_symbol(member_sym_id);
-                    return self.apply_flow_narrowing(idx, member_type);
-                }
+                // Enum members and namespace exports both resolve to the selected member symbol type.
+                // Namespace exports may represent functions, variables, etc., each with its own symbol type.
+                let member_type = self.get_type_of_symbol(member_sym_id);
+                return self.apply_flow_narrowing(idx, member_type);
             }
         }
 

@@ -4649,14 +4649,14 @@ impl<'a> CheckerState<'a> {
                 // This is an implementation - check if name matches
                 let impl_name = self.get_function_name_from_node(stmt_idx);
                 return (true, impl_name, Some(stmt_idx));
-            } else {
-                // Another overload signature without body - need to look further
-                // but we should check if this is the same function name
-                let overload_name = self.get_function_name_from_node(stmt_idx);
-                if overload_name.as_ref() == Some(&name.to_string()) {
-                    // Same function, continue looking for implementation
-                    return self.find_function_impl(statements, start + 1, name);
-                }
+            }
+
+            // Another overload signature without body - need to look further
+            // but we should check if this is the same function name
+            let overload_name = self.get_function_name_from_node(stmt_idx);
+            if overload_name.as_ref() == Some(&name.to_string()) {
+                // Same function, continue looking for implementation
+                return self.find_function_impl(statements, start + 1, name);
             }
         }
 
