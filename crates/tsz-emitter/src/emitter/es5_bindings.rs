@@ -352,10 +352,80 @@ impl<'a> Printer<'a> {
         false
     }
 
+    fn unwrap_parenthesized_binding_pattern(&self, mut pattern_idx: NodeIndex) -> NodeIndex {
+        while let Some(node) = self.arena.get(pattern_idx) {
+            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                break;
+            }
+            let Some(paren) = self.arena.get_parenthesized(node) else {
+                break;
+            };
+            if paren.expression.is_none() {
+                break;
+            }
+            pattern_idx = paren.expression;
+        }
+        pattern_idx
+    }
+
+    fn is_binding_pattern_array_shape(&self, pattern_node: &Node) -> bool {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+        pattern.elements.nodes.iter().all(|&elem_idx| {
+            if elem_idx.is_none() {
+                return true;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                return false;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                return false;
+            };
+            if elem.dot_dot_dot_token {
+                return true;
+            }
+            elem.property_name.is_none()
+        })
+    }
+
+    fn binding_pattern_non_rest_count(&self, pattern_node: &Node) -> usize {
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return 0;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return 0;
+        };
+        let mut count = 0;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                count += 1;
+                continue;
+            }
+
+            let Some(node) = self.arena.get(elem_idx) else {
+                count += 1;
+                continue;
+            };
+            let Some(element) = self.arena.get_binding_element(node) else {
+                count += 1;
+                continue;
+            };
+            if element.dot_dot_dot_token {
+                break;
+            }
+            count += 1;
+        }
+        count
+    }
+
     /// Emit ES5 destructuring: { x, y } = obj → _a = obj, x = _a.x, y = _a.y
     /// When the initializer is a simple identifier, TypeScript skips the temp variable
     /// and uses the identifier directly: var [, name] = robot → var name = robot[1]
-    fn emit_es5_destructuring(&mut self, decl_idx: NodeIndex, first: &mut bool) {
+    pub(super) fn emit_es5_destructuring(&mut self, decl_idx: NodeIndex, first: &mut bool) {
         let Some(decl_node) = self.arena.get(decl_idx) else {
             return;
         };
@@ -366,60 +436,80 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Check if the initializer is a simple identifier - if so, skip temp variable
         let is_simple_ident = self
             .arena
             .get(decl.initializer)
             .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
 
         if is_simple_ident {
-            // Use the identifier directly without temp variable
             let ident_text = self.get_identifier_text(decl.initializer);
             self.emit_es5_destructuring_pattern_direct(pattern_node, &ident_text, first);
-        } else {
-            // For complex expressions: check if single binding at index 0 → inline
-            // TypeScript only inlines [x] = expr → x = expr[0], not [, x] = expr
-            let (effective_count, has_rest) = self.count_effective_bindings(pattern_node);
-            if effective_count == 1
-                && !has_rest
-                && self.emit_single_object_binding_inline_simple(
-                    pattern_node,
-                    decl.initializer,
-                    first,
-                )
-            {
-                return;
-            }
-            if effective_count == 1
-                && !has_rest
-                && self.emit_single_array_binding_inline(pattern_node, decl.initializer, first)
-            {
-                return;
-            }
-
-            // Rest-only array pattern: [...rest] = expr → rest = expr.slice(0)
-            // TypeScript inlines this without a temp variable for any expression
-            if effective_count == 0
-                && has_rest
-                && self.emit_rest_only_array_inline(pattern_node, decl.initializer, first)
-            {
-                return;
-            }
-
-            // Complex expression with multiple bindings: need temp variable
-            let temp_name = self.get_temp_var_name();
-
-            // Emit temp variable assignment: _a = initializer
-            if !*first {
-                self.write(", ");
-            }
-            *first = false;
-            self.write(&temp_name);
-            self.write(" = ");
-            self.emit(decl.initializer);
-
-            self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+            return;
         }
+
+        if self.ctx.options.downlevel_iteration
+            && pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            self.emit_es5_destructuring_with_read_node(decl.name, decl.initializer, first);
+            return;
+        }
+
+        self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
+    }
+
+    fn emit_es5_destructuring_fallback(
+        &mut self,
+        pattern_node: &Node,
+        initializer: NodeIndex,
+        first: &mut bool,
+        allow_expression_emit: bool,
+    ) {
+        let (effective_count, has_rest) = self.count_effective_bindings(pattern_node);
+        if effective_count == 1
+            && !has_rest
+            && self.emit_single_object_binding_inline_nested(
+                pattern_node,
+                initializer,
+                first,
+                allow_expression_emit,
+            )
+        {
+            return;
+        }
+        if effective_count == 1
+            && !has_rest
+            && self.emit_single_object_binding_inline_simple(pattern_node, initializer, first)
+        {
+            return;
+        }
+        if effective_count == 1
+            && !has_rest
+            && self.emit_single_array_binding_inline(pattern_node, initializer, first)
+        {
+            return;
+        }
+
+        if effective_count == 0
+            && has_rest
+            && self.emit_rest_only_array_inline(pattern_node, initializer, first)
+        {
+            return;
+        }
+
+        let temp_name = self.get_temp_var_name();
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+        self.write(&temp_name);
+        self.write(" = ");
+        if allow_expression_emit {
+            self.emit(initializer);
+        } else {
+            self.emit_expression(initializer);
+        }
+
+        self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
     }
 
     // ES5 parity: for a single object binding with an identifier key, inline source access.
@@ -509,6 +599,406 @@ impl<'a> Printer<'a> {
         true
     }
 
+    fn emit_single_object_binding_inline_nested(
+        &mut self,
+        pattern_node: &Node,
+        initializer: NodeIndex,
+        first: &mut bool,
+        allow_expression_emit: bool,
+    ) -> bool {
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return false;
+        };
+
+        let mut elem_idx = NodeIndex::NONE;
+        for idx in &pattern.elements.nodes {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(*idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.dot_dot_dot_token {
+                continue;
+            }
+            elem_idx = *idx;
+            break;
+        }
+
+        if elem_idx.is_none() {
+            return false;
+        }
+        if pattern.elements.nodes.len() > 1
+            && pattern
+                .elements
+                .nodes
+                .iter()
+                .filter(|&&idx| {
+                    if idx.is_none() {
+                        return false;
+                    }
+                    let Some(node) = self.arena.get(idx) else {
+                        return false;
+                    };
+                    let Some(element) = self.arena.get_binding_element(node) else {
+                        return false;
+                    };
+                    !element.dot_dot_dot_token
+                })
+                .count()
+                > 1
+        {
+            return false;
+        }
+
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return false;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return false;
+        };
+        if elem.dot_dot_dot_token || !self.is_binding_pattern(elem.name) {
+            return false;
+        }
+
+        let pattern_name = self.unwrap_parenthesized_binding_pattern(elem.name);
+        let Some(_pattern_name_node) = self.arena.get(pattern_name) else {
+            return false;
+        };
+        if !self.is_binding_pattern(pattern_name) {
+            return false;
+        }
+
+        let key_idx = if !elem.property_name.is_none() {
+            elem.property_name
+        } else {
+            elem.name
+        };
+        let Some(key_node) = self.arena.get(key_idx) else {
+            return false;
+        };
+        if key_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+
+        let Some(pattern_node) = self.arena.get(pattern_name) else {
+            return false;
+        };
+        let is_array_shape = self.is_binding_pattern_array_shape(pattern_node);
+
+        if elem.initializer.is_none() {
+            if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                let child_count = self.binding_pattern_non_rest_count(pattern_node);
+                if is_array_shape {
+                    let read_name = self.get_temp_var_name();
+                    self.write(&read_name);
+                    self.write(" = __read(");
+                    if allow_expression_emit {
+                        self.emit(initializer);
+                    } else {
+                        self.emit_expression(initializer);
+                    }
+                    self.write(".");
+                    self.write_identifier_text(key_idx);
+                    if child_count > 0 {
+                        self.write(", ");
+                        self.write(&child_count.to_string());
+                    }
+                    self.write(")");
+                    self.emit_es5_destructuring_pattern_idx(pattern_name, &read_name);
+                } else {
+                    let value_name = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&value_name);
+                    self.write(" = ");
+                    if allow_expression_emit {
+                        self.emit(initializer);
+                    } else {
+                        self.emit_expression(initializer);
+                    }
+                    self.write(".");
+                    self.write_identifier_text(key_idx);
+
+                    if child_count > 0 {
+                        let read_name = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&read_name);
+                        self.write(" = __read(");
+                        self.write(&value_name);
+                        self.write(", ");
+                        self.write(&child_count.to_string());
+                        self.write(")");
+                        self.emit_es5_destructuring_pattern_idx(pattern_name, &read_name);
+                    } else {
+                        self.emit_es5_destructuring_pattern_idx(pattern_name, &value_name);
+                    }
+                }
+                return true;
+            }
+
+            if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && self.emit_single_object_binding_inline_nested_object_node(
+                    pattern_name,
+                    initializer,
+                    key_idx,
+                    allow_expression_emit,
+                )
+            {
+                return true;
+            }
+
+            let value_name = self.get_temp_var_name();
+            self.write(&value_name);
+            self.write(" = ");
+            if allow_expression_emit {
+                self.emit(initializer);
+            } else {
+                self.emit_expression(initializer);
+            }
+            self.write(".");
+            self.write_identifier_text(key_idx);
+            self.emit_es5_destructuring_pattern_idx(pattern_name, &value_name);
+            return true;
+        }
+
+        let value_name = self.get_temp_var_name();
+        self.write(&value_name);
+        self.write(" = ");
+        if allow_expression_emit {
+            self.emit(initializer);
+        } else {
+            self.emit_expression(initializer);
+        }
+        self.write(".");
+        self.write_identifier_text(key_idx);
+        let defaulted_name = self.get_temp_var_name();
+        self.write(", ");
+        self.write(&defaulted_name);
+        self.write(" = ");
+        self.write(&value_name);
+        self.write(" === void 0 ? ");
+        self.emit_expression(elem.initializer);
+        self.write(" : ");
+        self.write(&value_name);
+
+        let child_count = self.binding_pattern_non_rest_count(pattern_node);
+        match pattern_node.kind {
+            syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                if is_array_shape {
+                    self.emit_es5_destructuring_pattern_idx(pattern_name, &defaulted_name);
+                } else if child_count > 0 {
+                    let read_name = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&read_name);
+                    self.write(" = __read(");
+                    self.write(&defaulted_name);
+                    self.write(", ");
+                    self.write(&child_count.to_string());
+                    self.write(")");
+                    self.emit_es5_destructuring_pattern_idx(pattern_name, &read_name);
+                } else {
+                    self.emit_es5_destructuring_pattern_idx(pattern_name, &defaulted_name);
+                }
+            }
+            syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                if !self
+                    .emit_single_object_binding_inline_nested_object(pattern_name, &defaulted_name)
+                {
+                    self.emit_es5_destructuring_pattern_idx(pattern_name, &defaulted_name);
+                }
+            }
+            _ => {
+                self.emit_es5_destructuring_pattern_idx(pattern_name, &defaulted_name);
+            }
+        }
+        true
+    }
+
+    fn emit_single_object_binding_inline_nested_object(
+        &mut self,
+        pattern_node: NodeIndex,
+        source_name: &str,
+    ) -> bool {
+        let Some(pattern_ast) = self.arena.get(pattern_node) else {
+            return false;
+        };
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_ast) else {
+            return false;
+        };
+        if pattern.elements.nodes.is_empty() {
+            return false;
+        }
+
+        let mut child = NodeIndex::NONE;
+        let mut non_rest = 0;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                return false;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                return false;
+            };
+            if elem.dot_dot_dot_token {
+                return false;
+            }
+            child = elem_idx;
+            non_rest += 1;
+            if non_rest > 1 {
+                return false;
+            }
+        }
+        if child.is_none() {
+            return false;
+        }
+
+        let Some(child_node) = self.arena.get(child) else {
+            return false;
+        };
+        let Some(child_elem) = self.arena.get_binding_element(child_node) else {
+            return false;
+        };
+        if self.is_binding_pattern(child_elem.name) || !self.has_identifier_text(child_elem.name) {
+            return false;
+        }
+
+        let key_idx = if !child_elem.property_name.is_none() {
+            child_elem.property_name
+        } else {
+            child_elem.name
+        };
+        let Some(key_node) = self.arena.get(key_idx) else {
+            return false;
+        };
+        if key_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        self.write(", ");
+        self.write_identifier_text(child_elem.name);
+        self.write(" = ");
+        self.write(source_name);
+        self.write(".");
+        self.write_identifier_text(key_idx);
+        if !child_elem.initializer.is_none() {
+            self.write(" === void 0 ? ");
+            self.emit_expression(child_elem.initializer);
+            self.write(" : ");
+            self.write(source_name);
+            self.write(".");
+            self.write_identifier_text(key_idx);
+        }
+        true
+    }
+
+    fn emit_single_object_binding_inline_nested_object_node(
+        &mut self,
+        pattern_node: NodeIndex,
+        initializer: NodeIndex,
+        key_idx: NodeIndex,
+        allow_expression_emit: bool,
+    ) -> bool {
+        let Some(pattern_ast) = self.arena.get(pattern_node) else {
+            return false;
+        };
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_ast) else {
+            return false;
+        };
+        if pattern.elements.nodes.is_empty() {
+            return false;
+        }
+
+        let mut child = NodeIndex::NONE;
+        let mut non_rest = 0;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                return false;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                return false;
+            };
+            if elem.dot_dot_dot_token {
+                return false;
+            }
+            child = elem_idx;
+            non_rest += 1;
+            if non_rest > 1 {
+                return false;
+            }
+        }
+        if child.is_none() {
+            return false;
+        }
+
+        let Some(child_node) = self.arena.get(child) else {
+            return false;
+        };
+        let Some(child_elem) = self.arena.get_binding_element(child_node) else {
+            return false;
+        };
+        if self.is_binding_pattern(child_elem.name) || !self.has_identifier_text(child_elem.name) {
+            return false;
+        }
+
+        let child_key_idx = if !child_elem.property_name.is_none() {
+            child_elem.property_name
+        } else {
+            child_elem.name
+        };
+        let Some(child_key_node) = self.arena.get(child_key_idx) else {
+            return false;
+        };
+        if child_key_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let value_name = self.get_temp_var_name();
+        self.write(&value_name);
+        self.write(" = ");
+        if allow_expression_emit {
+            self.emit(initializer);
+        } else {
+            self.emit_expression(initializer);
+        }
+        self.write(".");
+        self.write_identifier_text(key_idx);
+        self.write(".");
+        self.write_identifier_text(child_key_idx);
+
+        if child_elem.initializer.is_none() {
+            self.write(", ");
+            self.write_identifier_text(child_elem.name);
+            self.write(" = ");
+            self.write(&value_name);
+        } else {
+            self.write(", ");
+            self.write_identifier_text(child_elem.name);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(child_elem.initializer);
+            self.write(" : ");
+            self.write(&value_name);
+        }
+        true
+    }
+
     fn emit_es5_destructuring_from_value(
         &mut self,
         pattern_idx: NodeIndex,
@@ -536,6 +1026,288 @@ impl<'a> Printer<'a> {
     /// Emit ES5 destructuring using __read helper for downlevelIteration
     /// Transforms: `[a = 0, b = 1] = expr`
     /// Into: `_d = __read(expr, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, _f = _d[1], b = _f === void 0 ? 1 : _f`
+    fn emit_es5_destructuring_with_read_node(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_expr: NodeIndex,
+        _first: &mut bool,
+    ) {
+        if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
+            eprintln!("emit_es5_destructuring_with_read_node entered");
+        }
+
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            let temp_name = self.get_temp_var_name();
+            self.write(&temp_name);
+            self.write(" = ");
+            self.emit(source_expr);
+            self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+            return;
+        }
+
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        let element_count = pattern
+            .elements
+            .nodes
+            .iter()
+            .filter(|&&elem_idx| {
+                self.arena
+                    .get(elem_idx)
+                    .and_then(|n| self.arena.get_binding_element(n))
+                    .is_some_and(|e| !e.dot_dot_dot_token)
+            })
+            .count();
+
+        let read_temp = self.get_temp_var_name();
+        self.write(&read_temp);
+        self.write(" = __read(");
+        self.emit(source_expr);
+        if element_count > 0 {
+            self.write(", ");
+            self.write(&element_count.to_string());
+        }
+        self.write(")");
+
+        for (index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+            if elem.name.is_none() {
+                continue;
+            }
+
+            if elem.dot_dot_dot_token {
+                if self.is_binding_pattern(elem.name) {
+                    let rest_temp = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&rest_temp);
+                    self.write(" = ");
+                    self.write(&read_temp);
+                    self.write(".slice(");
+                    self.write(&index.to_string());
+                    self.write(")");
+                    self.emit_es5_destructuring_pattern_idx(elem.name, &rest_temp);
+                } else if self.has_identifier_text(elem.name) {
+                    self.write(", ");
+                    self.emit_commonjs_binding_target(elem.name);
+                    self.write(" = ");
+                    self.write(&read_temp);
+                    self.write(".slice(");
+                    self.write(&index.to_string());
+                    self.write(")");
+                }
+                continue;
+            }
+
+            let unwrapped_name = self.unwrap_parenthesized_binding_pattern(elem.name);
+            if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
+                let elem_kind = self.arena.get(elem.name).map(|n| n.kind).unwrap_or(0);
+                eprintln!(
+                    "downlevel-bp-element index={} elem_name={:?} unwrapped={:?} kind={}",
+                    index, elem.name, unwrapped_name, elem_kind
+                );
+                eprintln!(
+                    "downlevel-bp-kind-bytes: elem={} unwrapped={}",
+                    self.arena.get(unwrapped_name).map(|n| n.kind).unwrap_or(0),
+                    SyntaxKind::Identifier as u16
+                );
+            }
+            if let Some(name_node) = self.arena.get(unwrapped_name) {
+                if name_node.kind == SyntaxKind::Identifier as u16 {
+                    let elem_source = format!("{}[{}]", read_temp, index);
+                    if elem.initializer.is_none() {
+                        self.write(", ");
+                        self.emit_commonjs_binding_target(elem.name);
+                        self.write(" = ");
+                        self.write(&elem_source);
+                    } else {
+                        let value_name = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&value_name);
+                        self.write(" = ");
+                        self.write(&elem_source);
+                        self.write(", ");
+                        self.emit_commonjs_binding_target(elem.name);
+                        self.write(" = ");
+                        self.write(&value_name);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(elem.initializer);
+                        self.write(" : ");
+                        self.write(&value_name);
+                    }
+                } else if self.is_binding_pattern(unwrapped_name) {
+                    let Some(unwrapped_node) = self.arena.get(unwrapped_name) else {
+                        continue;
+                    };
+                    let elem_source = format!("{}[{}]", read_temp, index);
+                    if unwrapped_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                        if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
+                            eprintln!(
+                                "downlevel-nested-array index={} unwrapped={} source={}",
+                                index, unwrapped_name.0, elem_source
+                            );
+                        }
+                        self.write(", ");
+                        let source_expr = if elem.initializer.is_none() {
+                            elem_source
+                        } else {
+                            let defaulted = self.get_temp_var_name();
+                            self.write(&defaulted);
+                            self.write(" = ");
+                            self.write(&elem_source);
+                            self.write(" === void 0 ? ");
+                            self.emit_expression(elem.initializer);
+                            self.write(" : ");
+                            self.write(&elem_source);
+                            defaulted
+                        };
+
+                        let element_count = self.binding_pattern_non_rest_count(unwrapped_node);
+                        let nested_temp = self.get_temp_var_name();
+                        self.write(&nested_temp);
+                        self.write(" = __read(");
+                        self.write(&source_expr);
+                        if element_count > 0 {
+                            self.write(", ");
+                            self.write(&element_count.to_string());
+                        }
+                        self.write(")");
+                        self.emit_es5_destructuring_with_read_tail(unwrapped_name, &nested_temp);
+                    } else {
+                        let pattern_temp = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&pattern_temp);
+                        self.write(" = ");
+                        self.write(&elem_source);
+
+                        let target_temp = if !elem.initializer.is_none() {
+                            let defaulted = self.get_temp_var_name();
+                            self.write(", ");
+                            self.write(&defaulted);
+                            self.write(" = ");
+                            self.write(&pattern_temp);
+                            self.write(" === void 0 ? ");
+                            self.emit_expression(elem.initializer);
+                            self.write(" : ");
+                            self.write(&pattern_temp);
+                            defaulted
+                        } else {
+                            pattern_temp
+                        };
+
+                        self.emit_es5_destructuring_pattern_idx(unwrapped_name, &target_temp);
+                    }
+                } else {
+                    // no-op
+                }
+            }
+        }
+    }
+
+    fn emit_es5_destructuring_with_read_tail(&mut self, pattern_idx: NodeIndex, source_expr: &str) {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        for (index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                continue;
+            };
+
+            if elem.name.is_none() || elem.dot_dot_dot_token {
+                continue;
+            }
+
+            let elem_source = format!("{}[{}]", source_expr, index);
+            let Some(elem_node) = self.arena.get(elem.name) else {
+                continue;
+            };
+
+            if elem_node.kind == SyntaxKind::Identifier as u16 {
+                self.write(", ");
+                self.emit(elem.name);
+                self.write(" = ");
+                if !elem.initializer.is_none() {
+                    let value_name = self.get_temp_var_name();
+                    self.write(&value_name);
+                    self.write(" = ");
+                    self.write(&elem_source);
+                    self.write(", ");
+                    self.emit(elem.name);
+                    self.write(" = ");
+                    self.write(&value_name);
+                    self.write(" === void 0 ? ");
+                    self.emit_expression(elem.initializer);
+                    self.write(" : ");
+                    self.write(&value_name);
+                } else {
+                    self.write(&elem_source);
+                }
+            } else if self.is_binding_pattern(elem.name) {
+                let nested_name = self.unwrap_parenthesized_binding_pattern(elem.name);
+                let Some(nested_node) = self.arena.get(nested_name) else {
+                    continue;
+                };
+
+                if nested_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                    let nested_count = self.binding_pattern_non_rest_count(nested_node);
+                    let nested_temp = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&nested_temp);
+                    self.write(" = __read(");
+                    self.write(&elem_source);
+                    if nested_count > 0 {
+                        self.write(", ");
+                        self.write(&nested_count.to_string());
+                    }
+                    self.write(")");
+                    self.emit_es5_destructuring_with_read_tail(nested_name, &nested_temp);
+                } else {
+                    let pattern_temp = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&pattern_temp);
+                    self.write(" = ");
+                    self.write(&elem_source);
+
+                    let target_temp = if !elem.initializer.is_none() {
+                        let defaulted = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&defaulted);
+                        self.write(" = ");
+                        self.write(&pattern_temp);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(elem.initializer);
+                        self.write(" : ");
+                        self.write(&pattern_temp);
+                        defaulted
+                    } else {
+                        pattern_temp
+                    };
+                    self.emit_es5_destructuring_pattern_idx(nested_name, &target_temp);
+                }
+            }
+        }
+    }
+
     fn emit_es5_destructuring_with_read(
         &mut self,
         pattern_idx: NodeIndex,
@@ -548,9 +1320,11 @@ impl<'a> Printer<'a> {
 
         // Only handle array binding patterns for now
         if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            // Fall back to regular destructuring for object patterns
             let temp_name = self.get_temp_var_name();
-            // Note: caller has already handled the comma and set first=false
+            if !*_first {
+                self.write(", ");
+            }
+            *_first = false;
             self.write(&temp_name);
             self.write(" = ");
             self.write(source_expr);
@@ -646,7 +1420,19 @@ impl<'a> Printer<'a> {
                     } else {
                         elem_temp
                     };
-                    self.emit_es5_destructuring_pattern_idx(elem.name, &nested_temp);
+                    let nested_node = self.unwrap_parenthesized_binding_pattern(elem.name);
+                    if let Some(nested_pattern_node) = self.arena.get(nested_node)
+                        && nested_pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    {
+                        let mut first = false;
+                        self.emit_es5_destructuring_with_read(
+                            nested_node,
+                            &nested_temp,
+                            &mut first,
+                        );
+                    } else {
+                        self.emit_es5_destructuring_pattern_idx(elem.name, &nested_temp);
+                    }
                 }
             }
         }
