@@ -487,11 +487,13 @@ impl<'a> FoldingRangeProvider<'a> {
             if trimmed.starts_with("/*") && !trimmed.contains("*/") {
                 let start_line = i as u32;
                 let mut end_line = start_line;
-                for j in (i + 1)..lines.len() {
-                    if lines[j].contains("*/") {
-                        end_line = j as u32;
-                        break;
-                    }
+                if let Some((j, _)) = lines
+                    .iter()
+                    .enumerate()
+                    .skip(i + 1)
+                    .find(|(_, line)| line.contains("*/"))
+                {
+                    end_line = j as u32;
                 }
                 if end_line > start_line {
                     let so = self.line_start_offset(start_line);

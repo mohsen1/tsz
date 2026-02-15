@@ -822,8 +822,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
 
-                for i in target_fixed_count..source_fixed_count {
-                    let s_param = &source_params_unpacked[i];
+                for s_param in source_params_unpacked
+                    .iter()
+                    .skip(target_fixed_count)
+                    .take(source_fixed_count - target_fixed_count)
+                {
                     if !self.are_parameters_compatible_impl(
                         s_param.type_id,
                         rest_elem_type,
@@ -859,8 +862,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let rest_is_top = self.allow_bivariant_rest && rest_elem_type.is_any_or_unknown();
 
                 if !rest_is_top {
-                    for i in source_fixed_count..target_fixed_count {
-                        let t_param = &target_params_unpacked[i];
+                    for t_param in target_params_unpacked
+                        .iter()
+                        .skip(source_fixed_count)
+                        .take(target_fixed_count - source_fixed_count)
+                    {
                         if !self.are_parameters_compatible_impl(
                             rest_elem_type,
                             t_param.type_id,
