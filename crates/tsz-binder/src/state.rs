@@ -1,7 +1,7 @@
-//! Binder - Binder implementation using NodeArena.
+//! Binder - Binder implementation using `NodeArena`.
 //!
 //! This is a clean implementation of the binder that works directly with
-//! Node and NodeArena, avoiding the old Node enum pattern matching.
+//! Node and `NodeArena`, avoiding the old Node enum pattern matching.
 
 use crate::lib_loader;
 use crate::module_resolution_debug::ModuleResolutionDebugger;
@@ -44,6 +44,7 @@ impl FileFeatures {
     pub const AWAIT_USING: Self = Self(1 << 4);
 
     #[inline]
+    #[must_use]
     pub fn has(self, flag: Self) -> bool {
         (self.0 & flag.0) != 0
     }
@@ -66,7 +67,7 @@ pub struct BinderOptions {
 }
 
 /// Lib file context for global type resolution.
-/// This mirrors the definition in checker::context to avoid circular dependencies.
+/// This mirrors the definition in `checker::context` to avoid circular dependencies.
 #[derive(Clone)]
 pub struct LibContext {
     /// The AST arena for this lib file.
@@ -77,13 +78,13 @@ pub struct LibContext {
 
 /// Represents a module augmentation with arena context.
 ///
-/// This structure ensures that NodeIndex values remain valid across files by
+/// This structure ensures that `NodeIndex` values remain valid across files by
 /// storing the source arena along with the augmentation declaration.
 ///
 /// # Arena Context
 ///
-/// NodeIndex is only valid within its specific NodeArena. When augmentations from
-/// multiple files are merged, we need to preserve which arena each NodeIndex belongs to.
+/// `NodeIndex` is only valid within its specific `NodeArena`. When augmentations from
+/// multiple files are merged, we need to preserve which arena each `NodeIndex` belongs to.
 ///
 /// # Example
 ///
@@ -117,11 +118,13 @@ pub struct GlobalAugmentation {
 
 impl GlobalAugmentation {
     /// Create a new global augmentation without arena context (during binding).
+    #[must_use]
     pub fn new(node: NodeIndex) -> Self {
         Self { node, arena: None }
     }
 
     /// Create a new global augmentation with arena context (during merge).
+    #[must_use]
     pub fn with_arena(node: NodeIndex, arena: Arc<NodeArena>) -> Self {
         Self {
             node,
@@ -142,6 +145,7 @@ pub struct ModuleAugmentation {
 
 impl ModuleAugmentation {
     /// Create a new module augmentation without arena context (during binding).
+    #[must_use]
     pub fn new(name: String, node: NodeIndex) -> Self {
         Self {
             name,
@@ -151,6 +155,7 @@ impl ModuleAugmentation {
     }
 
     /// Create a new module augmentation with arena context (during merge).
+    #[must_use]
     pub fn with_arena(name: String, node: NodeIndex, arena: Arc<NodeArena>) -> Self {
         Self {
             name,
@@ -160,7 +165,7 @@ impl ModuleAugmentation {
     }
 }
 
-/// Binder state using NodeArena.
+/// Binder state using `NodeArena`.
 pub struct BinderState {
     /// Binder options (ES target, etc.)
     pub options: BinderOptions,
@@ -187,14 +192,14 @@ pub struct BinderState {
     pub(crate) unreachable_flow: FlowNodeId,
     /// Scope chain - stack of scope contexts (legacy, for hoisting)
     pub(crate) scope_chain: Vec<ScopeContext>,
-    /// Current scope index in scope_chain
+    /// Current scope index in `scope_chain`
     pub(crate) current_scope_idx: usize,
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    /// Key: (SymbolId, NodeIndex of declaration) -> Arena containing that declaration
+    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena containing that declaration
     /// This is needed when a symbol (like Array) is declared across multiple lib files
     pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
@@ -212,9 +217,9 @@ pub struct BinderState {
     // ===== Persistent Scope System (for stateless checking) =====
     /// Persistent scopes - enables querying scope information without traversal order
     pub scopes: Vec<Scope>,
-    /// Map from AST node (that creates a scope) to its ScopeId
+    /// Map from AST node (that creates a scope) to its `ScopeId`
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
-    /// Current active ScopeId during binding
+    /// Current active `ScopeId` during binding
     pub current_scope_id: ScopeId,
 
     // ===== Module Resolution Debugging =====
@@ -237,21 +242,21 @@ pub struct BinderState {
     /// Flag indicating we're currently binding inside a module augmentation block
     pub(crate) in_module_augmentation: bool,
 
-    /// The module specifier being augmented (set when in_module_augmentation is true)
+    /// The module specifier being augmented (set when `in_module_augmentation` is true)
     pub(crate) current_augmented_module: Option<String>,
 
     /// Lib binders for automatic lib symbol resolution.
-    /// When get_symbol() doesn't find a symbol locally, it checks these lib binders.
+    /// When `get_symbol()` doesn't find a symbol locally, it checks these lib binders.
     pub lib_binders: Vec<Arc<Self>>,
 
     /// Symbol IDs that originated from lib files.
-    /// Used by get_symbol() to check lib_binders first for these IDs,
+    /// Used by `get_symbol()` to check `lib_binders` first for these IDs,
     /// avoiding collision with local symbols at the same index.
     pub lib_symbol_ids: FxHashSet<SymbolId>,
 
-    /// Reverse mapping from user-local lib symbol IDs to (lib_binder_ptr, original_local_id).
-    /// This allows Phase 2 of merge_bind_results to find the Phase 1 global ID for each
-    /// user-local lib symbol. Built during merge_lib_contexts_into_binder.
+    /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`).
+    /// This allows Phase 2 of `merge_bind_results` to find the Phase 1 global ID for each
+    /// user-local lib symbol. Built during `merge_lib_contexts_into_binder`.
     pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
 
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
@@ -259,23 +264,23 @@ pub struct BinderState {
     pub module_exports: FxHashMap<String, SymbolTable>,
 
     /// Re-exports: tracks `export { x } from 'module'` declarations
-    /// Maps (current_file, exported_name) -> (source_module, original_name)
+    /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
     /// Example: ("./a.ts", "foo", "./b.ts") means a.ts re-exports "foo" from b.ts
     pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
 
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
-    /// Maps current_file -> Vec of source_modules
+    /// Maps `current_file` -> Vec of `source_modules`
     /// A file can have multiple wildcard re-exports (e.g., `export * from 'a'; export * from 'b'`)
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
 
     /// Cache for resolved exports to avoid repeated lookups through re-export chains.
-    /// Key: (module_specifier, export_name) -> resolved SymbolId (or None if not found)
+    /// Key: (`module_specifier`, `export_name`) -> resolved `SymbolId` (or None if not found)
     /// This cache dramatically speeds up barrel file imports where the same export
     /// is looked up multiple times across different files.
-    /// Uses RwLock for thread-safety in parallel compilation.
+    /// Uses `RwLock` for thread-safety in parallel compilation.
     resolved_export_cache: std::sync::RwLock<FxHashMap<(String, String), Option<SymbolId>>>,
     /// Cache for identifier resolution by AST node.
-    /// Key: (arena_pointer, node_index) -> resolved SymbolId (or None if not found).
+    /// Key: (`arena_pointer`, `node_index`) -> resolved `SymbolId` (or None if not found).
     /// This avoids repeated scope walks for hot checker paths that ask for the same
     /// identifier symbol many times (e.g. large switch/flow analysis files).
     resolved_identifier_cache: std::sync::RwLock<FxHashMap<(usize, u32), Option<SymbolId>>>,
@@ -292,7 +297,7 @@ pub struct BinderState {
     pub module_export_equals_non_module: FxHashMap<String, bool>,
 
     /// Flag indicating lib symbols have been merged into this binder's symbol arena.
-    /// When true, get_symbol() should prefer local symbols over lib_binders lookups,
+    /// When true, `get_symbol()` should prefer local symbols over `lib_binders` lookups,
     /// since all lib symbols now have unique IDs in the local arena.
     pub(crate) lib_symbols_merged: bool,
 
@@ -312,7 +317,7 @@ pub enum ValidationError {
     BrokenSymbolLink { node_index: u32, symbol_id: u32 },
     /// A symbol exists but has no declarations (orphaned)
     OrphanedSymbol { symbol_id: u32, name: String },
-    /// A symbol's value_declaration points to a non-existent node
+    /// A symbol's `value_declaration` points to a non-existent node
     InvalidValueDeclaration { symbol_id: u32, name: String },
 }
 
@@ -323,9 +328,9 @@ pub struct ResolutionStats {
     pub attempts: u64,
     /// Number of successful resolutions in scopes
     pub scope_hits: u64,
-    /// Number of successful resolutions in file_locals
+    /// Number of successful resolutions in `file_locals`
     pub file_local_hits: u64,
-    /// Number of successful resolutions in lib_binders
+    /// Number of successful resolutions in `lib_binders`
     pub lib_binder_hits: u64,
     /// Number of failed resolutions
     pub failures: u64,
@@ -361,10 +366,12 @@ impl BinderStateScopeInputs {
 }
 
 impl BinderState {
+    #[must_use]
     pub fn new() -> Self {
         Self::with_options(BinderOptions::default())
     }
 
+    #[must_use]
     pub fn with_options(options: BinderOptions) -> Self {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
@@ -419,6 +426,12 @@ impl BinderState {
         binder
     }
 
+    /// Reset binder state to its initial values.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the resolved identifier/export caches are poisoned when clearing
+    /// their locks.
     pub fn reset(&mut self) {
         self.symbols.clear();
         self.current_scope.clear();
@@ -498,18 +511,20 @@ impl BinderState {
         self.symbol_arenas.get(&sym_id)
     }
 
-    /// Create a BinderState from pre-parsed lib data.
+    /// Create a `BinderState` from pre-parsed lib data.
     ///
     /// This is used for loading pre-parsed lib files where we only have
-    /// symbols and file_locals (no node_symbols or other binding state).
+    /// symbols and `file_locals` (no `node_symbols` or other binding state).
+    #[must_use]
     pub fn from_preparsed(symbols: SymbolArena, file_locals: SymbolTable) -> Self {
         Self::from_bound_state(symbols, file_locals, FxHashMap::default())
     }
 
-    /// Create a BinderState from existing bound state.
+    /// Create a `BinderState` from existing bound state.
     ///
     /// This is used for type checking after parallel binding and symbol merging.
-    /// The symbols and node_symbols come from the merged program state.
+    /// The symbols and `node_symbols` come from the merged program state.
+    #[must_use]
     pub fn from_bound_state(
         symbols: SymbolArena,
         file_locals: SymbolTable,
@@ -523,7 +538,8 @@ impl BinderState {
         )
     }
 
-    /// Create a BinderState from existing bound state with options.
+    /// Create a `BinderState` from existing bound state with options.
+    #[must_use]
     pub fn from_bound_state_with_options(
         options: BinderOptions,
         symbols: SymbolArena,
@@ -583,7 +599,8 @@ impl BinderState {
         binder
     }
 
-    /// Create a BinderState from existing bound state, preserving scopes.
+    /// Create a `BinderState` from existing bound state, preserving scopes.
+    #[must_use]
     pub fn from_bound_state_with_scopes(
         symbols: SymbolArena,
         file_locals: SymbolTable,
@@ -600,13 +617,14 @@ impl BinderState {
         )
     }
 
-    /// Create a BinderState from existing bound state, preserving scopes and global augmentations.
+    /// Create a `BinderState` from existing bound state, preserving scopes and global augmentations.
     ///
     /// This is used for type checking after parallel binding and symbol merging.
     /// Global augmentations are interface/type declarations inside `declare global` blocks
     /// that should merge with lib.d.ts symbols during type resolution.
     /// Module augmentations are interface/type declarations inside `declare module 'x'` blocks
     /// that should merge with the target module's symbols.
+    #[must_use]
     pub fn from_bound_state_with_scopes_and_augmentations(
         options: BinderOptions,
         symbols: SymbolArena,
@@ -691,18 +709,22 @@ impl BinderState {
     /// This method enables stateless checking - the checker can query scope information
     /// without maintaining a traversal-order-dependent stack.
     ///
-    /// Returns the SymbolId for the identifier, or None if not found.
+    /// Returns the `SymbolId` for the identifier, or None if not found.
     ///
     /// Debug logging (P1 Task):
     /// When debug mode is enabled, logs:
     /// - Scope chain traversal
-    /// - Falls through to file_locals
-    /// - Falls through to lib_binders
+    /// - Falls through to `file_locals`
+    /// - Falls through to `lib_binders`
     /// - Resolution failures
+    ///
+    /// # Panics
+    ///
+    /// Panics if the resolved identifier cache lock is poisoned.
     pub fn resolve_identifier(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<SymbolId> {
         // Fast path: identifier resolution is pure for a fixed binder + arena.
         // Cache both hits and misses to avoid repeated scope walks in checker hot paths.
-        let cache_key = (arena as *const NodeArena as usize, node_idx.0);
+        let cache_key = (std::ptr::from_ref::<NodeArena>(arena) as usize, node_idx.0);
         if let Some(&cached) = self
             .resolved_identifier_cache
             .read()
@@ -881,7 +903,7 @@ impl BinderState {
     }
 
     /// Collect visible symbol names for diagnostics and suggestions.
-    /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with meaning_flags.
+    /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with `meaning_flags`.
     pub fn collect_visible_symbol_names(
         &self,
         arena: &NodeArena,
@@ -891,7 +913,7 @@ impl BinderState {
     }
 
     /// Collect visible symbol names filtered by meaning flags.
-    /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with meaning_flags.
+    /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with `meaning_flags`.
     pub fn collect_visible_symbol_names_filtered(
         &self,
         arena: &NodeArena,
@@ -938,7 +960,7 @@ impl BinderState {
 
     /// Resolve private identifiers (#foo) across class scopes.
     ///
-    /// Returns (symbols_found, saw_class_scope).
+    /// Returns (`symbols_found`, `saw_class_scope`).
     pub fn resolve_private_identifier_symbols(
         &self,
         arena: &NodeArena,
@@ -1012,7 +1034,7 @@ impl BinderState {
     /// alias to the actual exported symbol from the source module by looking up `module_exports`
     /// and following re-export chains.
     ///
-    /// Returns the resolved SymbolId, or the original sym_id if it's not an import or resolution fails.
+    /// Returns the resolved `SymbolId`, or the original `sym_id` if it's not an import or resolution fails.
     pub(crate) fn resolve_import_if_needed(&self, sym_id: SymbolId) -> Option<SymbolId> {
         // Get the symbol to check if it's an import
         let sym = self.symbols.get(sym_id)?;
@@ -1030,7 +1052,7 @@ impl BinderState {
     /// Resolve an import by name from a module, following re-export chains.
     ///
     /// This function handles:
-    /// - Direct exports: `export { foo }` - looks up in module_exports
+    /// - Direct exports: `export { foo }` - looks up in `module_exports`
     /// - Named re-exports: `export { foo } from 'bar'` - follows the re-export mapping
     /// - Wildcard re-exports: `export * from 'bar'` - searches the re-exported module
     ///
@@ -1144,13 +1166,13 @@ impl BinderState {
     /// following both named re-exports (`export { foo } from 'bar'`) and wildcard re-exports
     /// (`export * from 'bar'`).
     ///
-    /// Returns the resolved SymbolId if found, None otherwise.
+    /// Returns the resolved `SymbolId` if found, None otherwise.
     pub fn resolve_import_symbol(&self, sym_id: SymbolId) -> Option<SymbolId> {
         self.resolve_import_if_needed(sym_id)
     }
 
     /// Find the enclosing scope for a given node by walking up the AST.
-    /// Returns the ScopeId of the nearest scope-creating ancestor node.
+    /// Returns the `ScopeId` of the nearest scope-creating ancestor node.
     pub fn find_enclosing_scope(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<ScopeId> {
         let mut current = node_idx;
 
@@ -1181,7 +1203,8 @@ impl BinderState {
     /// This method is called when binding begins for a scope-creating node.
     pub(crate) fn enter_persistent_scope(&mut self, kind: ContainerKind, node: NodeIndex) {
         // Create new scope linked to current
-        let new_scope_id = ScopeId(self.scopes.len() as u32);
+        let new_scope_id =
+            ScopeId(u32::try_from(self.scopes.len()).expect("persistent scope count exceeds u32"));
         let new_scope = Scope::new(self.current_scope_id, kind, node);
         self.scopes.push(new_scope);
 
@@ -1224,11 +1247,7 @@ impl BinderState {
         }
     }
 
-    pub(crate) fn source_file_is_external_module(
-        &self,
-        arena: &NodeArena,
-        root: NodeIndex,
-    ) -> bool {
+    pub(crate) fn source_file_is_external_module(arena: &NodeArena, root: NodeIndex) -> bool {
         let Some(source) = arena.get_source_file_at(root) else {
             return false;
         };
@@ -1249,7 +1268,7 @@ impl BinderState {
                 }
                 _ => {}
             }
-            if self.is_node_exported(arena, stmt_idx) {
+            if Self::is_node_exported(arena, stmt_idx) {
                 return true;
             }
         }
@@ -1368,15 +1387,19 @@ impl BinderState {
 
     /// Merge lib contexts into this binder's symbol arena with remapped IDs.
     ///
-    /// This is the core fix for SymbolId collisions across lib binders. Instead of
-    /// storing raw lib SymbolIds (which collide), we:
+    /// This is the core fix for `SymbolId` collisions across lib binders. Instead of
+    /// storing raw lib `SymbolIds` (which collide), we:
     /// 1. Clone each lib symbol into our local symbol arena with a new unique ID
     /// 2. Remap internal references (parent, exports, members) to use new IDs
-    /// 3. Update file_locals to use the new IDs
+    /// 3. Update `file_locals` to use the new IDs
     /// 4. Track which arena each symbol's declarations belong to
     ///
     /// After this method, all symbol lookups can use our local arena directly,
     /// avoiding cross-binder ID collisions.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the resolved identifier cache lock is poisoned.
     pub fn merge_lib_contexts_into_binder(&mut self, lib_contexts: &[LibContext]) {
         // Visible globals can change after merge; invalidate identifier resolutions.
         self.resolved_identifier_cache.write().unwrap().clear();
@@ -1397,7 +1420,10 @@ impl BinderState {
 
             // Process all symbols in this lib binder
             for i in 0..lib_ctx.binder.symbols.len() {
-                let local_id = SymbolId(i as u32);
+                let Ok(local_idx) = u32::try_from(i) else {
+                    continue;
+                };
+                let local_id = SymbolId(local_idx);
                 let Some(lib_sym) = lib_ctx.binder.symbols.get(local_id) else {
                     continue;
                 };
@@ -1483,7 +1509,10 @@ impl BinderState {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
             for i in 0..lib_ctx.binder.symbols.len() {
-                let local_id = SymbolId(i as u32);
+                let Ok(local_idx) = u32::try_from(i) else {
+                    continue;
+                };
+                let local_id = SymbolId(local_idx);
                 let Some(&new_id) = lib_symbol_remap.get(&(lib_binder_ptr, local_id)) else {
                     continue;
                 };
@@ -1572,14 +1601,19 @@ impl BinderState {
         self.lib_symbols_merged = true;
     }
 
+    /// Return the current length of the resolved identifier cache.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the resolved identifier cache lock is poisoned.
     pub fn resolved_identifier_cache_len(&self) -> usize {
         self.resolved_identifier_cache.read().unwrap().len()
     }
 
-    /// Inject lib file symbols into file_locals for global symbol resolution.
+    /// Inject lib file symbols into `file_locals` for global symbol resolution.
     ///
     /// This method now delegates to `merge_lib_contexts_into_binder` which properly
-    /// remaps SymbolIds to avoid collisions across lib binders.
+    /// remaps `SymbolIds` to avoid collisions across lib binders.
     ///
     /// # Arguments
     /// * `lib_contexts` - Vector of lib file contexts (arena + binder pairs)
@@ -1587,7 +1621,10 @@ impl BinderState {
         self.merge_lib_contexts_into_binder(lib_contexts);
     }
 
-    /// Bind a source file using NodeArena.
+    /// Bind a source file using `NodeArena`.
+    /// # Panics
+    ///
+    /// Panics if the resolved identifier cache lock is poisoned.
     pub fn bind_source_file(&mut self, arena: &NodeArena, root: NodeIndex) {
         // Binding mutates scope/symbol tables, so stale identifier resolution entries
         // from prior passes must be dropped.
@@ -1639,7 +1676,7 @@ impl BinderState {
         // Create START flow node for the file
         let start_flow = self.flow_nodes.alloc(flow_flags::START);
         self.current_flow = start_flow;
-        self.is_external_module = self.source_file_is_external_module(arena, root);
+        self.is_external_module = Self::source_file_is_external_module(arena, root);
 
         if let Some(node) = arena.get(root)
             && let Some(sf) = arena.get_source_file(node)
@@ -1716,15 +1753,15 @@ impl BinderState {
         }
     }
 
-    /// Populate module_exports from file-level module symbols.
+    /// Populate `module_exports` from file-level module symbols.
     ///
     /// This enables cross-file import resolution and type-only import elision.
     /// After binding a source file, we collect all module-level exports and
-    /// add them to the module_exports table keyed by the file name.
+    /// add them to the `module_exports` table keyed by the file name.
     ///
     /// # Arguments
-    /// * `arena` - The NodeArena containing the AST
-    /// * `file_name` - The name of the file being bound (used as the key in module_exports)
+    /// * `arena` - The `NodeArena` containing the AST
+    /// * `file_name` - The name of the file being bound (used as the key in `module_exports`)
     fn populate_module_exports_from_file_symbols(&mut self, _arena: &NodeArena, file_name: &str) {
         use crate::symbol_flags;
 
@@ -1942,7 +1979,7 @@ impl BinderState {
     /// during type checking.
     ///
     /// This method now uses `merge_lib_contexts_into_binder` which properly
-    /// remaps SymbolIds to avoid collisions across lib binders.
+    /// remaps `SymbolIds` to avoid collisions across lib binders.
     ///
     /// # Parameters
     /// - `lib_files`: Slice of Arc<LibFile> containing parsed and bound lib files
@@ -1953,6 +1990,9 @@ impl BinderState {
     /// binder.bind_source_file(arena, root);
     /// binder.merge_lib_symbols(&lib_files);
     /// ```
+    /// # Panics
+    ///
+    /// Panics if the resolved identifier cache lock is poisoned.
     pub fn merge_lib_symbols(&mut self, lib_files: &[Arc<lib_loader::LibFile>]) {
         // Merging lib globals changes visible symbols, so invalidate identifier cache.
         self.resolved_identifier_cache.write().unwrap().clear();
@@ -2005,9 +2045,12 @@ impl BinderState {
     /// If we bind first, the binder will emit TS2304 errors for these symbols.
     ///
     /// # Parameters
-    /// - `arena`: The NodeArena containing the AST
+    /// - `arena`: The `NodeArena` containing the AST
     /// - `root`: The root node index of the source file
     /// - `lib_files`: Optional slice of Arc<LibFile> containing lib files
+    /// # Panics
+    ///
+    /// Panics if the resolved identifier cache lock is poisoned.
     pub fn bind_source_file_with_libs(
         &mut self,
         arena: &NodeArena,
@@ -2022,6 +2065,9 @@ impl BinderState {
     }
 
     /// Incrementally bind new statements after a prefix without rebinding the entire file.
+    /// # Panics
+    ///
+    /// Panics if the resolved identifier cache lock is poisoned.
     pub fn bind_source_file_incremental(
         &mut self,
         arena: &NodeArena,
@@ -2046,7 +2092,7 @@ impl BinderState {
             return false;
         }
 
-        self.is_external_module = self.source_file_is_external_module(arena, root);
+        self.is_external_module = Self::source_file_is_external_module(arena, root);
 
         // Detect strict mode for incremental rebinding
         if let Some(node) = arena.get(root)
@@ -2297,17 +2343,17 @@ impl BinderState {
             && let Some(list) = arena.get_variable(node)
         {
             // Check if this is a var declaration (not let/const)
-            let is_var = (node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0;
+            let is_var = (u32::from(node.flags) & (node_flags::LET | node_flags::CONST)) == 0;
             if is_var {
                 for &decl_idx in &list.declarations.nodes {
                     if let Some(decl) = arena.get_variable_declaration_at(decl_idx) {
-                        if let Some(name) = self.get_identifier_name(arena, decl.name) {
+                        if let Some(name) = Self::get_identifier_name(arena, decl.name) {
                             self.hoisted_vars.push((name.to_string(), decl_idx));
                         } else {
                             let mut names = Vec::new();
-                            self.collect_binding_identifiers(arena, decl.name, &mut names);
+                            Self::collect_binding_identifiers(arena, decl.name, &mut names);
                             for ident_idx in names {
-                                if let Some(name) = self.get_identifier_name(arena, ident_idx) {
+                                if let Some(name) = Self::get_identifier_name(arena, ident_idx) {
                                     self.hoisted_vars.push((name.to_string(), ident_idx));
                                 }
                             }
@@ -2344,9 +2390,9 @@ impl BinderState {
         for func_idx in functions {
             if let Some(node) = arena.get(func_idx)
                 && let Some(func) = arena.get_function(node)
-                && let Some(name) = self.get_identifier_name(arena, func.name)
+                && let Some(name) = Self::get_identifier_name(arena, func.name)
             {
-                let is_exported = self.has_export_modifier(arena, &func.modifiers);
+                let is_exported = Self::has_export_modifier(arena, func.modifiers.as_ref());
                 let sym_id =
                     self.declare_symbol(name, symbol_flags::FUNCTION, func_idx, is_exported);
 
@@ -2363,7 +2409,7 @@ impl BinderState {
         for (name, decl_idx) in hoisted_vars {
             // Declare the var symbol with FUNCTION_SCOPED_VARIABLE flag
             // This makes it accessible before its actual declaration point
-            let is_exported = self.is_node_exported(arena, decl_idx);
+            let is_exported = Self::is_node_exported(arena, decl_idx);
             let sym_id = self.declare_symbol(
                 &name,
                 symbol_flags::FUNCTION_SCOPED_VARIABLE,
@@ -2392,6 +2438,11 @@ impl BinderState {
             tracing::debug!(idx = idx.0, kind = node.kind, "bind_node called");
         }
 
+        self.bind_node_by_node_kind(arena, node, idx);
+    }
+
+    #[inline]
+    fn bind_node_by_node_kind(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 self.record_flow(idx);
@@ -2402,7 +2453,7 @@ impl BinderState {
                     // Track using/await-using features for TS2318 diagnostics
                     if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first() {
                         if let Some(list_node) = arena.get(decl_list_idx) {
-                            let flags = list_node.flags as u32;
+                            let flags = u32::from(list_node.flags);
                             if (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING {
                                 self.file_features.set(FileFeatures::AWAIT_USING);
                             } else if (flags & node_flags::USING) != 0 {
@@ -2519,7 +2570,14 @@ impl BinderState {
                     );
 
                     // Handle else branch if present
-                    let after_else_flow = if !if_stmt.else_statement.is_none() {
+                    let after_else_flow = if if_stmt.else_statement.is_none() {
+                        // No else branch - false condition goes directly to merge
+                        self.create_flow_condition(
+                            flow_flags::FALSE_CONDITION,
+                            pre_condition_flow,
+                            if_stmt.expression,
+                        )
+                    } else {
                         // Create FALSE_CONDITION flow for the else branch
                         let false_flow = self.create_flow_condition(
                             flow_flags::FALSE_CONDITION,
@@ -2538,13 +2596,6 @@ impl BinderState {
                         let result = self.current_flow;
                         trace!(result = result.0, "if statement: after_else_flow",);
                         result
-                    } else {
-                        // No else branch - false condition goes directly to merge
-                        self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            pre_condition_flow,
-                            if_stmt.expression,
-                        )
                     };
 
                     // Create merge point for branches
@@ -2562,7 +2613,7 @@ impl BinderState {
             // While/do statement
             k if k == syntax_kind_ext::WHILE_STATEMENT || k == syntax_kind_ext::DO_STATEMENT => {
                 if let Some(loop_data) = arena.get_loop(node) {
-                    let _pre_loop_flow = self.current_flow;
+                    let _ = self.current_flow;
                     let loop_label = self.create_loop_label();
                     if !self.current_flow.is_none() {
                         self.add_antecedent(loop_label, self.current_flow);
@@ -2627,7 +2678,7 @@ impl BinderState {
                     self.enter_scope(ContainerKind::Block, idx);
                     self.bind_node(arena, loop_data.initializer);
 
-                    let _pre_loop_flow = self.current_flow;
+                    let _ = self.current_flow;
                     let loop_label = self.create_loop_label();
                     if !self.current_flow.is_none() {
                         self.add_antecedent(loop_label, self.current_flow);
@@ -2638,7 +2689,13 @@ impl BinderState {
                     let post_loop = self.create_branch_label();
                     self.break_targets.push(post_loop);
 
-                    if !loop_data.condition.is_none() {
+                    if loop_data.condition.is_none() {
+                        self.bind_node(arena, loop_data.statement);
+                        self.bind_expression(arena, loop_data.incrementor);
+                        self.add_antecedent(loop_label, self.current_flow);
+                        self.add_antecedent(post_loop, loop_label);
+                        self.add_antecedent(post_loop, self.current_flow);
+                    } else {
                         self.bind_expression(arena, loop_data.condition);
                         let pre_condition_flow = self.current_flow;
                         let true_flow = self.create_flow_condition(
@@ -2659,12 +2716,6 @@ impl BinderState {
                         // FIX: Don't add pre_loop_flow as antecedent to merge_label
                         // The exit path must go through false_flow to preserve narrowing
                         self.add_antecedent(post_loop, false_flow);
-                    } else {
-                        self.bind_node(arena, loop_data.statement);
-                        self.bind_expression(arena, loop_data.incrementor);
-                        self.add_antecedent(loop_label, self.current_flow);
-                        self.add_antecedent(post_loop, loop_label);
-                        self.add_antecedent(post_loop, self.current_flow);
                     }
 
                     self.break_targets.pop();
@@ -2754,7 +2805,7 @@ impl BinderState {
                     self.bind_node(arena, assign.expression);
 
                     // If the expression is an identifier, resolve it and copy its exports
-                    if let Some(name) = self.get_identifier_name(arena, assign.expression)
+                    if let Some(name) = Self::get_identifier_name(arena, assign.expression)
                         && let Some(sym_id) = self
                             .current_scope
                             .get(name)
@@ -2777,7 +2828,15 @@ impl BinderState {
                     }
                 }
             }
+            _ => {
+                self.bind_node_by_node_kind_tail(arena, node, idx);
+            }
+        }
+    }
 
+    #[inline]
+    fn bind_node_by_node_kind_tail(&mut self, arena: &NodeArena, node: &Node, idx: NodeIndex) {
+        match node.kind {
             // Module/namespace declarations
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 self.bind_module_declaration(arena, node, idx);
@@ -2791,7 +2850,6 @@ impl BinderState {
                     }
                 }
             }
-
             // Expression statements - record flow and traverse into the expression
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 self.record_flow(idx);
@@ -2830,7 +2888,7 @@ impl BinderState {
             // Binary expressions - traverse into operands
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = arena.get_binary_expr(node)
-                    && self.is_assignment_operator(bin.operator_token)
+                    && Self::is_assignment_operator(bin.operator_token)
                 {
                     self.bind_node(arena, bin.left);
                     self.bind_node(arena, bin.right);
@@ -3027,7 +3085,7 @@ impl BinderState {
                     }
                     let flow = self.create_flow_call(idx);
                     self.current_flow = flow;
-                    if self.is_array_mutation_call(arena, idx) {
+                    if Self::is_array_mutation_call(arena, idx) {
                         let flow = self.create_flow_array_mutation(idx);
                         self.current_flow = flow;
                     }
@@ -3085,11 +3143,6 @@ impl BinderState {
                 }
             }
 
-            // Identifier references - record current flow for type narrowing queries
-            k if k == SyntaxKind::Identifier as u16 => {
-                self.record_flow(idx);
-            }
-
             _ => {
                 // For other node types, no symbols to create
             }
@@ -3097,11 +3150,7 @@ impl BinderState {
     }
 
     /// Get identifier name from a node index.
-    pub(crate) fn get_identifier_name<'a>(
-        &self,
-        arena: &'a NodeArena,
-        idx: NodeIndex,
-    ) -> Option<&'a str> {
+    pub(crate) fn get_identifier_name(arena: &NodeArena, idx: NodeIndex) -> Option<&str> {
         if let Some(node) = arena.get(idx)
             && let Some(id) = arena.get_identifier(node)
         {
@@ -3111,7 +3160,6 @@ impl BinderState {
     }
 
     pub(crate) fn collect_binding_identifiers(
-        &self,
         arena: &NodeArena,
         idx: NodeIndex,
         out: &mut Vec<NodeIndex>,
@@ -3130,7 +3178,7 @@ impl BinderState {
             }
             k if k == syntax_kind_ext::BINDING_ELEMENT => {
                 if let Some(binding) = arena.get_binding_element(node) {
-                    self.collect_binding_identifiers(arena, binding.name, out);
+                    Self::collect_binding_identifiers(arena, binding.name, out);
                 }
             }
             k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
@@ -3141,7 +3189,7 @@ impl BinderState {
                         if elem.is_none() {
                             continue;
                         }
-                        self.collect_binding_identifiers(arena, elem, out);
+                        Self::collect_binding_identifiers(arena, elem, out);
                     }
                 }
             }
@@ -3174,58 +3222,58 @@ impl BinderState {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = arena.get_variable(node) {
                     for &decl_list_idx in &var_stmt.declarations.nodes {
-                        self.collect_variable_decl_names(arena, decl_list_idx, true, out);
+                        Self::collect_variable_decl_names(arena, decl_list_idx, true, out);
                     }
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node)
-                    && let Some(name) = self.get_identifier_name(arena, func.name)
+                    && let Some(name) = Self::get_identifier_name(arena, func.name)
                 {
                     out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = arena.get_class(node)
-                    && let Some(name) = self.get_identifier_name(arena, class.name)
+                    && let Some(name) = Self::get_identifier_name(arena, class.name)
                 {
                     out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                 if let Some(iface) = arena.get_interface(node)
-                    && let Some(name) = self.get_identifier_name(arena, iface.name)
+                    && let Some(name) = Self::get_identifier_name(arena, iface.name)
                 {
                     out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 if let Some(alias) = arena.get_type_alias(node)
-                    && let Some(name) = self.get_identifier_name(arena, alias.name)
+                    && let Some(name) = Self::get_identifier_name(arena, alias.name)
                 {
                     out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = arena.get_enum(node)
-                    && let Some(name) = self.get_identifier_name(arena, enum_decl.name)
+                    && let Some(name) = Self::get_identifier_name(arena, enum_decl.name)
                 {
                     out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = arena.get_module(node)
-                    && let Some(name) = self.get_identifier_name(arena, module.name)
+                    && let Some(name) = Self::get_identifier_name(arena, module.name)
                 {
                     out.insert(name.to_string());
                 }
             }
             k if k == syntax_kind_ext::IMPORT_DECLARATION => {
-                self.collect_import_names(arena, node, out);
+                Self::collect_import_names(arena, node, out);
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                 if let Some(import) = arena.get_import_decl(node)
-                    && let Some(name) = self.get_identifier_name(arena, import.import_clause)
+                    && let Some(name) = Self::get_identifier_name(arena, import.import_clause)
                 {
                     out.insert(name.to_string());
                 }
@@ -3238,14 +3286,14 @@ impl BinderState {
                     let Some(clause_node) = arena.get(export.export_clause) else {
                         return;
                     };
-                    if self.is_declaration(clause_node.kind) {
+                    if Self::is_declaration(clause_node.kind) {
                         self.collect_file_scope_names_for_statement(
                             arena,
                             export.export_clause,
                             out,
                         );
                     } else if clause_node.kind == SyntaxKind::Identifier as u16
-                        && let Some(name) = self.get_identifier_name(arena, export.export_clause)
+                        && let Some(name) = Self::get_identifier_name(arena, export.export_clause)
                     {
                         out.insert(name.to_string());
                     }
@@ -3278,12 +3326,12 @@ impl BinderState {
                 if let Some(var_stmt) = arena.get_variable(node)
                     && let Some(&decl_list_idx) = var_stmt.declarations.nodes.first()
                 {
-                    self.collect_variable_decl_names(arena, decl_list_idx, false, out);
+                    Self::collect_variable_decl_names(arena, decl_list_idx, false, out);
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node)
-                    && let Some(name) = self.get_identifier_name(arena, func.name)
+                    && let Some(name) = Self::get_identifier_name(arena, func.name)
                 {
                     out.insert(name.to_string());
                 }
@@ -3336,7 +3384,6 @@ impl BinderState {
     }
 
     pub(crate) fn collect_variable_decl_names(
-        &self,
         arena: &NodeArena,
         decl_list_idx: NodeIndex,
         include_block_scoped: bool,
@@ -3348,20 +3395,20 @@ impl BinderState {
         let Some(list) = arena.get_variable(node) else {
             return;
         };
-        let is_var = (node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0;
+        let is_var = (u32::from(node.flags) & (node_flags::LET | node_flags::CONST)) == 0;
         if !include_block_scoped && !is_var {
             return;
         }
 
         for &decl_idx in &list.declarations.nodes {
             if let Some(decl) = arena.get_variable_declaration_at(decl_idx) {
-                if let Some(name) = self.get_identifier_name(arena, decl.name) {
+                if let Some(name) = Self::get_identifier_name(arena, decl.name) {
                     out.insert(name.to_string());
                 } else {
                     let mut names = Vec::new();
-                    self.collect_binding_identifiers(arena, decl.name, &mut names);
+                    Self::collect_binding_identifiers(arena, decl.name, &mut names);
                     for ident_idx in names {
-                        if let Some(name) = self.get_identifier_name(arena, ident_idx) {
+                        if let Some(name) = Self::get_identifier_name(arena, ident_idx) {
                             out.insert(name.to_string());
                         }
                     }
@@ -3371,7 +3418,6 @@ impl BinderState {
     }
 
     pub(crate) fn collect_import_names(
-        &self,
         arena: &NodeArena,
         node: &Node,
         out: &mut FxHashSet<String>,
@@ -3381,7 +3427,7 @@ impl BinderState {
             && let Some(clause) = arena.get_import_clause(clause_node)
         {
             if !clause.name.is_none()
-                && let Some(name) = self.get_identifier_name(arena, clause.name)
+                && let Some(name) = Self::get_identifier_name(arena, clause.name)
             {
                 out.insert(name.to_string());
             }
@@ -3389,7 +3435,7 @@ impl BinderState {
                 && let Some(bindings_node) = arena.get(clause.named_bindings)
             {
                 if bindings_node.kind == SyntaxKind::Identifier as u16 {
-                    if let Some(name) = self.get_identifier_name(arena, clause.named_bindings) {
+                    if let Some(name) = Self::get_identifier_name(arena, clause.named_bindings) {
                         out.insert(name.to_string());
                     }
                 } else if let Some(named) = arena.get_named_imports(bindings_node) {
@@ -3397,12 +3443,12 @@ impl BinderState {
                         if let Some(spec_node) = arena.get(spec_idx)
                             && let Some(spec) = arena.get_specifier(spec_node)
                         {
-                            let local_ident = if !spec.name.is_none() {
-                                spec.name
-                            } else {
+                            let local_ident = if spec.name.is_none() {
                                 spec.property_name
+                            } else {
+                                spec.name
                             };
-                            if let Some(name) = self.get_identifier_name(arena, local_ident) {
+                            if let Some(name) = Self::get_identifier_name(arena, local_ident) {
                                 out.insert(name.to_string());
                             }
                         }
@@ -3426,7 +3472,7 @@ impl BinderState {
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                     if let Some(var_stmt) = arena.get_variable(node) {
                         for &decl_list_idx in &var_stmt.declarations.nodes {
-                            self.collect_variable_decl_symbol_nodes(arena, decl_list_idx, out);
+                            Self::collect_variable_decl_symbol_nodes(arena, decl_list_idx, out);
                         }
                     }
                 }
@@ -3440,7 +3486,7 @@ impl BinderState {
                     out.push(stmt_idx);
                 }
                 k if k == syntax_kind_ext::IMPORT_DECLARATION => {
-                    self.collect_import_symbol_nodes(arena, node, out);
+                    Self::collect_import_symbol_nodes(arena, node, out);
                 }
                 k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                     out.push(stmt_idx);
@@ -3454,7 +3500,6 @@ impl BinderState {
     }
 
     pub(crate) fn collect_variable_decl_symbol_nodes(
-        &self,
         arena: &NodeArena,
         decl_list_idx: NodeIndex,
         out: &mut Vec<NodeIndex>,
@@ -3466,11 +3511,11 @@ impl BinderState {
         for &decl_idx in &list.declarations.nodes {
             out.push(decl_idx);
             if let Some(decl) = arena.get_variable_declaration_at(decl_idx) {
-                if let Some(_name) = self.get_identifier_name(arena, decl.name) {
+                if let Some(_name) = Self::get_identifier_name(arena, decl.name) {
                     out.push(decl.name);
                 } else {
                     let mut names = Vec::new();
-                    self.collect_binding_identifiers(arena, decl.name, &mut names);
+                    Self::collect_binding_identifiers(arena, decl.name, &mut names);
                     out.extend(names);
                 }
             }
@@ -3478,7 +3523,6 @@ impl BinderState {
     }
 
     pub(crate) fn collect_import_symbol_nodes(
-        &self,
         arena: &NodeArena,
         node: &Node,
         out: &mut Vec<NodeIndex>,
@@ -3501,10 +3545,10 @@ impl BinderState {
                         if let Some(spec_node) = arena.get(spec_idx)
                             && let Some(spec) = arena.get_specifier(spec_node)
                         {
-                            let local_ident = if !spec.name.is_none() {
-                                spec.name
-                            } else {
+                            let local_ident = if spec.name.is_none() {
                                 spec.property_name
+                            } else {
+                                spec.name
                             };
                             if !local_ident.is_none() {
                                 out.push(local_ident);
@@ -3533,7 +3577,7 @@ impl BinderState {
                 for &spec_idx in &named.elements.nodes {
                     out.push(spec_idx);
                 }
-            } else if self.is_declaration(clause_node.kind) {
+            } else if Self::is_declaration(clause_node.kind) {
                 self.collect_statement_symbol_nodes(arena, &[export.export_clause], out);
             } else if clause_node.kind == SyntaxKind::Identifier as u16 {
                 out.push(export.export_clause);
@@ -3542,11 +3586,7 @@ impl BinderState {
     }
 
     /// Check if modifiers list contains the 'abstract' keyword.
-    pub(crate) fn has_abstract_modifier(
-        &self,
-        arena: &NodeArena,
-        modifiers: &Option<NodeList>,
-    ) -> bool {
+    pub(crate) fn has_abstract_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -3562,11 +3602,7 @@ impl BinderState {
     }
 
     /// Check if modifiers list contains the 'static' keyword.
-    pub(crate) fn has_static_modifier(
-        &self,
-        arena: &NodeArena,
-        modifiers: &Option<NodeList>,
-    ) -> bool {
+    pub(crate) fn has_static_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -3582,11 +3618,7 @@ impl BinderState {
     }
 
     /// Check if modifiers list contains the 'export' keyword.
-    pub(crate) fn has_export_modifier(
-        &self,
-        arena: &NodeArena,
-        modifiers: &Option<NodeList>,
-    ) -> bool {
+    pub(crate) fn has_export_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -3602,11 +3634,7 @@ impl BinderState {
     }
 
     /// Check if modifiers list contains the 'private' keyword.
-    pub(crate) fn has_private_modifier(
-        &self,
-        arena: &NodeArena,
-        modifiers: &Option<NodeList>,
-    ) -> bool {
+    pub(crate) fn has_private_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -3622,11 +3650,7 @@ impl BinderState {
     }
 
     /// Check if modifiers list contains the 'declare' keyword.
-    pub(crate) fn has_declare_modifier(
-        &self,
-        arena: &NodeArena,
-        modifiers: &Option<NodeList>,
-    ) -> bool {
+    pub(crate) fn has_declare_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -3642,11 +3666,7 @@ impl BinderState {
     }
 
     /// Check if modifiers list contains the 'const' keyword.
-    pub(crate) fn has_const_modifier(
-        &self,
-        arena: &NodeArena,
-        modifiers: &Option<NodeList>,
-    ) -> bool {
+    pub(crate) fn has_const_modifier(arena: &NodeArena, modifiers: Option<&NodeList>) -> bool {
         use tsz_scanner::SyntaxKind;
 
         if let Some(mods) = modifiers {
@@ -3662,8 +3682,8 @@ impl BinderState {
     }
 
     /// Check if a node is exported.
-    /// Handles walking up the tree for VariableDeclaration -> VariableStatement.
-    pub(crate) fn is_node_exported(&self, arena: &NodeArena, idx: NodeIndex) -> bool {
+    /// Handles walking up the tree for `VariableDeclaration` -> `VariableStatement`.
+    pub(crate) fn is_node_exported(arena: &NodeArena, idx: NodeIndex) -> bool {
         let Some(node) = arena.get(idx) else {
             return false;
         };
@@ -3672,32 +3692,32 @@ impl BinderState {
         match node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node) {
-                    return self.has_export_modifier(arena, &func.modifiers);
+                    return Self::has_export_modifier(arena, func.modifiers.as_ref());
                 }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = arena.get_class(node) {
-                    return self.has_export_modifier(arena, &class.modifiers);
+                    return Self::has_export_modifier(arena, class.modifiers.as_ref());
                 }
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                 if let Some(iface) = arena.get_interface(node) {
-                    return self.has_export_modifier(arena, &iface.modifiers);
+                    return Self::has_export_modifier(arena, iface.modifiers.as_ref());
                 }
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 if let Some(alias) = arena.get_type_alias(node) {
-                    return self.has_export_modifier(arena, &alias.modifiers);
+                    return Self::has_export_modifier(arena, alias.modifiers.as_ref());
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = arena.get_enum(node) {
-                    return self.has_export_modifier(arena, &enum_decl.modifiers);
+                    return Self::has_export_modifier(arena, enum_decl.modifiers.as_ref());
                 }
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = arena.get_module(node) {
-                    return self.has_export_modifier(arena, &module.modifiers);
+                    return Self::has_export_modifier(arena, module.modifiers.as_ref());
                 }
             }
             // 2. Handle VariableDeclaration (walk up to VariableStatement)
@@ -3711,7 +3731,7 @@ impl BinderState {
                             && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                             && let Some(var_stmt) = arena.get_variable(stmt_node)
                         {
-                            return self.has_export_modifier(arena, &var_stmt.modifiers);
+                            return Self::has_export_modifier(arena, var_stmt.modifiers.as_ref());
                         }
                     }
                 }
@@ -3831,6 +3851,7 @@ impl BinderState {
 
     /// Check if two symbol flag sets can be merged.
     /// Made public for use in checker to detect duplicate identifiers (TS2300).
+    #[must_use]
     pub fn can_merge_flags(existing_flags: u32, new_flags: u32) -> bool {
         if (existing_flags & symbol_flags::INTERFACE) != 0
             && (new_flags & symbol_flags::INTERFACE) != 0
@@ -3982,7 +4003,8 @@ impl BinderState {
                                         || name_node.kind
                                             == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                                 });
-                                self.has_declare_modifier(arena, &module.modifiers) || is_external
+                                Self::has_declare_modifier(arena, module.modifiers.as_ref())
+                                    || is_external
                             });
 
                         // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag

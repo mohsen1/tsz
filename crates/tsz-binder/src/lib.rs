@@ -26,7 +26,7 @@ pub use state::{
 // =============================================================================
 
 /// Flags that describe the kind and properties of a symbol.
-/// Matches TypeScript's SymbolFlags enum in src/compiler/types.ts
+/// Matches TypeScript's `SymbolFlags` enum in src/compiler/types.ts
 pub mod symbol_flags {
     pub const NONE: u32 = 0;
     pub const FUNCTION_SCOPED_VARIABLE: u32 = 1 << 0; // Variable (var) or parameter
@@ -123,6 +123,7 @@ pub struct SymbolId(pub u32);
 impl SymbolId {
     pub const NONE: Self = Self(u32::MAX);
 
+    #[must_use]
     pub fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
@@ -154,18 +155,19 @@ pub struct Symbol {
     pub is_type_only: bool,
     /// File index for cross-file resolution (set during multi-file merge)
     /// This indicates which file's arena contains this symbol's declarations.
-    /// Value of u32::MAX means single-file mode (use current arena).
+    /// Value of `u32::MAX` means single-file mode (use current arena).
     pub decl_file_idx: u32,
     /// Import module specifier for ES6 imports (e.g., './file' for `import { X } from './file'`)
     /// This enables resolving imported symbols to their actual exports from other files.
     pub import_module: Option<String>,
     /// Original export name for imports with renamed imports (e.g., 'foo' for `import { foo as bar }`)
-    /// If None, the import name matches the escaped_name.
+    /// If None, the import name matches the `escaped_name`.
     pub import_name: Option<String>,
 }
 
 impl Symbol {
     /// Create a new symbol with the given flags and name.
+    #[must_use]
     pub fn new(id: SymbolId, flags: u32, name: String) -> Self {
         Self {
             flags,
@@ -185,11 +187,13 @@ impl Symbol {
     }
 
     /// Check if symbol has all specified flags.
+    #[must_use]
     pub fn has_flags(&self, flags: u32) -> bool {
         (self.flags & flags) == flags
     }
 
     /// Check if symbol has any of specified flags.
+    #[must_use]
     pub fn has_any_flags(&self, flags: u32) -> bool {
         (self.flags & flags) != 0
     }
@@ -203,11 +207,12 @@ impl Symbol {
 /// Used for scope management and name resolution.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SymbolTable {
-    /// Symbols indexed by their escaped name (using FxHashMap for faster hashing)
+    /// Symbols indexed by their escaped name (using `FxHashMap` for faster hashing)
     symbols: FxHashMap<String, SymbolId>,
 }
 
 impl SymbolTable {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             symbols: FxHashMap::default(),
@@ -215,6 +220,7 @@ impl SymbolTable {
     }
 
     /// Get a symbol by name.
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<SymbolId> {
         self.symbols.get(name).copied()
     }
@@ -230,16 +236,19 @@ impl SymbolTable {
     }
 
     /// Check if a name exists in the table.
+    #[must_use]
     pub fn has(&self, name: &str) -> bool {
         self.symbols.contains_key(name)
     }
 
     /// Get number of symbols.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.symbols.len()
     }
 
     /// Check if empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.symbols.is_empty()
     }
@@ -269,10 +278,11 @@ pub struct SymbolArena {
 
 impl SymbolArena {
     /// Base offset for checker-local symbols to avoid ID collisions.
-    pub const CHECKER_SYMBOL_BASE: u32 = 0x10000000;
+    pub const CHECKER_SYMBOL_BASE: u32 = 0x1000_0000;
     /// Maximum pre-allocation to avoid capacity overflow.
     const MAX_SYMBOL_PREALLOC: usize = 1_000_000;
 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             symbols: Vec::new(),
@@ -282,6 +292,7 @@ impl SymbolArena {
 
     /// Create a new symbol arena with a base offset for symbol IDs.
     /// Used for checker-local symbols to avoid collisions with binder symbols.
+    #[must_use]
     pub fn new_with_base(base: u32) -> Self {
         Self {
             symbols: Vec::new(),
@@ -290,6 +301,7 @@ impl SymbolArena {
     }
 
     /// Create a new symbol arena with pre-allocated capacity.
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         let safe_capacity = capacity.min(Self::MAX_SYMBOL_PREALLOC);
         Self {
@@ -299,16 +311,32 @@ impl SymbolArena {
     }
 
     /// Allocate a new symbol and return its ID.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of allocated symbols would overflow a `u32` when
+    /// converted from arena length and added to `base_offset`.
     pub fn alloc(&mut self, flags: u32, name: String) -> SymbolId {
-        let id = SymbolId(self.base_offset + self.symbols.len() as u32);
+        let id = SymbolId(
+            self.base_offset
+                + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+        );
         self.symbols.push(Symbol::new(id, flags, name));
         id
     }
 
     /// Allocate a new symbol by cloning from an existing one, with a new ID.
     /// This copies all symbol data including declarations, exports, members, etc.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of allocated symbols would overflow a `u32` when
+    /// converted from arena length and added to `base_offset`.
     pub fn alloc_from(&mut self, source: &Symbol) -> SymbolId {
-        let id = SymbolId(self.base_offset + self.symbols.len() as u32);
+        let id = SymbolId(
+            self.base_offset
+                + u32::try_from(self.symbols.len()).expect("symbol arena length exceeds u32"),
+        );
         let mut cloned = source.clone();
         cloned.id = id;
         self.symbols.push(cloned);
@@ -316,6 +344,7 @@ impl SymbolArena {
     }
 
     /// Get a symbol by ID.
+    #[must_use]
     pub fn get(&self, id: SymbolId) -> Option<&Symbol> {
         if id.is_none() {
             None
@@ -340,11 +369,13 @@ impl SymbolArena {
     }
 
     /// Get the number of symbols.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.symbols.len()
     }
 
     /// Check if empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.symbols.is_empty()
     }
@@ -358,7 +389,8 @@ impl SymbolArena {
     ///
     /// This is a fallback for when scope chain lookup is not available.
     /// Note: This doesn't handle shadowing correctly - it returns the first match.
-    /// For proper scoping, use the SymbolTable scope chain instead.
+    /// For proper scoping, use the `SymbolTable` scope chain instead.
+    #[must_use]
     pub fn find_by_name(&self, name: &str) -> Option<SymbolId> {
         for symbol in &self.symbols {
             if symbol.escaped_name == name {
@@ -372,6 +404,7 @@ impl SymbolArena {
     ///
     /// Returns all symbol IDs that have the specified name, which can happen
     /// when declarations shadow each other or when there are conflicts.
+    #[must_use]
     pub fn find_all_by_name(&self, name: &str) -> Vec<SymbolId> {
         self.symbols
             .iter()
@@ -385,15 +418,20 @@ impl SymbolArena {
         self.symbols.iter()
     }
 
-    /// Reserve SymbolIds in this arena by pre-allocating placeholder symbols.
+    /// Reserve `SymbolIds` in this arena by pre-allocating placeholder symbols.
     ///
-    /// This is used when copying lib file_locals into a user binder:
+    /// This is used when copying lib `file_locals` into a user binder:
     /// - Lib has symbols 0..N (Array, String, etc.)
-    /// - We copy those SymbolIds into user's file_locals
-    /// - We need to reserve SymbolIds 0..N in user's arena so new allocations
+    /// - We copy those `SymbolIds` into user's `file_locals`
+    /// - We need to reserve `SymbolIds` 0..N in user's arena so new allocations
     ///   don't overwrite lib symbols
     ///
     /// After calling this, new allocations start at N (after the reserved range).
+    ///
+    /// # Panics
+    ///
+    /// Panics if any index in `current_len..count` cannot be converted into a
+    /// `u32`.
     pub fn reserve_symbol_ids(&mut self, count: usize) {
         let current_len = self.symbols.len();
         if count > current_len {
@@ -401,7 +439,7 @@ impl SymbolArena {
             self.symbols.reserve(count);
             for id in current_len..count {
                 self.symbols.push(Symbol::new(
-                    SymbolId(id as u32),
+                    SymbolId(u32::try_from(id).expect("symbol ID exceeds u32")),
                     0,
                     String::new(), // Empty placeholder
                 ));
@@ -415,7 +453,7 @@ impl SymbolArena {
 // =============================================================================
 
 /// Flags for flow nodes describing their type and properties.
-/// Matches TypeScript's FlowFlags in src/compiler/types.ts
+/// Matches TypeScript's `FlowFlags` in src/compiler/types.ts
 pub mod flow_flags {
     pub const UNREACHABLE: u32 = 1 << 0; // Unreachable code
     pub const START: u32 = 1 << 1; // Start of flow graph
@@ -444,6 +482,7 @@ pub struct FlowNodeId(pub u32);
 impl FlowNodeId {
     pub const NONE: Self = Self(u32::MAX);
 
+    #[must_use]
     pub fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
@@ -463,6 +502,7 @@ pub struct FlowNode {
 }
 
 impl FlowNode {
+    #[must_use]
     pub fn new(id: FlowNodeId, flags: u32) -> Self {
         Self {
             flags,
@@ -472,10 +512,12 @@ impl FlowNode {
         }
     }
 
+    #[must_use]
     pub fn has_flags(&self, flags: u32) -> bool {
         (self.flags & flags) == flags
     }
 
+    #[must_use]
     pub fn has_any_flags(&self, flags: u32) -> bool {
         (self.flags & flags) != 0
     }
@@ -488,18 +530,27 @@ pub struct FlowNodeArena {
 }
 
 impl FlowNodeArena {
+    #[must_use]
     pub fn new() -> Self {
         Self { nodes: Vec::new() }
     }
 
     /// Allocate a new flow node.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of flow nodes would overflow a `u32` when converted
+    /// from arena length.
     pub fn alloc(&mut self, flags: u32) -> FlowNodeId {
-        let id = FlowNodeId(self.nodes.len() as u32);
+        let id = FlowNodeId(
+            u32::try_from(self.nodes.len()).expect("flow node arena length exceeds u32"),
+        );
         self.nodes.push(FlowNode::new(id, flags));
         id
     }
 
     /// Get a flow node by ID.
+    #[must_use]
     pub fn get(&self, id: FlowNodeId) -> Option<&FlowNode> {
         if id.is_none() {
             None
@@ -517,10 +568,12 @@ impl FlowNodeArena {
         }
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -530,11 +583,20 @@ impl FlowNodeArena {
     }
 
     /// Find the unreachable flow node in the arena.
-    /// This is used when reconstructing a BinderState from serialized flow data.
+    /// This is used when reconstructing a `BinderState` from serialized flow data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a matching flow node index cannot be represented as `u32` while
+    /// constructing the returned `FlowNodeId`. This implies arena state is
+    /// inconsistent with the internal `u32` IDs.
+    #[must_use]
     pub fn find_unreachable(&self) -> Option<FlowNodeId> {
         for (idx, node) in self.nodes.iter().enumerate() {
             if node.has_any_flags(flow_flags::UNREACHABLE) {
-                return Some(FlowNodeId(idx as u32));
+                return Some(FlowNodeId(
+                    u32::try_from(idx).expect("flow node index exceeds u32"),
+                ));
             }
         }
         None
@@ -552,6 +614,7 @@ pub struct ScopeId(pub u32);
 impl ScopeId {
     pub const NONE: Self = Self(u32::MAX);
 
+    #[must_use]
     pub fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
@@ -588,6 +651,7 @@ pub struct Scope {
 }
 
 impl Scope {
+    #[must_use]
     pub fn new(parent: ScopeId, kind: ContainerKind, node: NodeIndex) -> Self {
         Self {
             parent,
@@ -598,6 +662,7 @@ impl Scope {
     }
 
     /// Check if this scope is a function scope (where var hoisting happens)
+    #[must_use]
     pub fn is_function_scope(&self) -> bool {
         matches!(
             self.kind,
@@ -606,7 +671,7 @@ impl Scope {
     }
 }
 
-/// Scope context - tracks scope chain and hoisting (used by BinderState).
+/// Scope context - tracks scope chain and hoisting (used by `BinderState`).
 #[derive(Clone, Debug)]
 pub struct ScopeContext {
     /// The symbol table for this scope
@@ -624,6 +689,7 @@ pub struct ScopeContext {
 }
 
 impl ScopeContext {
+    #[must_use]
     pub fn new(kind: ContainerKind, node: NodeIndex, parent: Option<usize>) -> Self {
         Self {
             locals: SymbolTable::new(),
@@ -636,6 +702,7 @@ impl ScopeContext {
     }
 
     /// Check if this scope is a function scope (where var hoisting happens)
+    #[must_use]
     pub fn is_function_scope(&self) -> bool {
         matches!(
             self.container_kind,
