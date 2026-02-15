@@ -555,10 +555,7 @@ mod tests {
             max_memory_mb: Some(128),
             ..limits
         };
-        assert_eq!(
-            ResourceLimits::with_memory_mb(256).max_memory_mb,
-            Some(256)
-        );
+        assert_eq!(ResourceLimits::with_memory_mb(256).max_memory_mb, Some(256));
         assert_eq!(limits.max_memory_mb, Some(128));
         assert_eq!(limits.timeout, Duration::from_secs(9));
         assert_eq!(limits.max_file_descriptors, Some(1024));
@@ -586,7 +583,10 @@ mod tests {
         let test_result = monitored.to_test_result();
         assert!(matches!(
             test_result,
-            TestResult::Failed { message: _, duration: _ }
+            TestResult::Failed {
+                message: _,
+                duration: _
+            }
         ));
 
         assert!(!monitored.was_killed());

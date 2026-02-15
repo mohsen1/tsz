@@ -464,7 +464,8 @@ mod tests {
         assert_eq!(parser_test_timeout(), Duration::from_secs(120));
         assert_eq!(checker_test_timeout(), Duration::from_secs(180));
 
-        let result = run_result_with_timeout(Duration::from_millis(10), || Ok::<(), &'static str>(()));
+        let result =
+            run_result_with_timeout(Duration::from_millis(10), || Ok::<(), &'static str>(()));
         assert!(matches!(result, TestResult::Passed { .. }));
         assert!(result.duration().is_some());
         assert!(!result.is_failed());
@@ -504,7 +505,12 @@ mod tests {
         }
 
         let mut report = TestReport::default();
-        report.add("missing", TestResult::Passed { duration: Duration::from_millis(1) });
+        report.add(
+            "missing",
+            TestResult::Passed {
+                duration: Duration::from_millis(1),
+            },
+        );
         report.print_summary();
     }
 }
