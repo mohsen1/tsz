@@ -646,7 +646,20 @@ impl<'a> CheckerState<'a> {
 
         // Check if there's a default value (initializer)
         if !element_data.initializer.is_none() && element_type != TypeId::ANY {
+            // Set contextual type when the initializer is a function expression or arrow
+            // so that parameter types can be inferred from the expected element type.
+            // Only do this for function-like initializers to avoid changing how non-function
+            // defaults (object literals, primitives) are typed.
+            let prev_context = self.ctx.contextual_type;
+            if let Some(init_node) = self.ctx.arena.get(element_data.initializer) {
+                let k = init_node.kind;
+                if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                {
+                    self.ctx.contextual_type = Some(element_type);
+                }
+            }
             let default_value_type = self.get_type_of_node(element_data.initializer);
+            self.ctx.contextual_type = prev_context;
             let _ = self.check_assignable_or_report(
                 default_value_type,
                 element_type,

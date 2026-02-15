@@ -159,26 +159,29 @@ impl<'a> CheckerState<'a> {
         let this_atom = self.ctx.types.intern_string("this");
 
         // Setup contextual typing context if available
-        // IMPORTANT: Evaluate Application and Lazy types before creating context
+        // IMPORTANT: Evaluate compound types before creating context to resolve:
         // - Application types: fix TS2571 false positives (see: docs/TS2571_INVESTIGATION.md)
         // - Lazy types (type aliases): fix TS7006 false positives for contextual parameter typing
+        // - IndexedAccess/KeyOf types: fix TS7006 when parameter type is e.g. Type["a"]
         let mut contextual_signature_type_params = None;
         let ctx_helper = if let Some(ctx_type) = self.ctx.contextual_type {
-            use tsz_solver::type_queries::{get_lazy_def_id, get_type_application};
+            use tsz_solver::type_queries::{
+                EvaluationNeeded, classify_for_evaluation, get_lazy_def_id, get_type_application,
+            };
 
             // Evaluate the contextual type to resolve type aliases and generic applications
             let evaluated_type = if get_type_application(self.ctx.types, ctx_type).is_some() {
-                // Evaluate Application type to get the actual function signature
-                // This fixes cases like: Destructuring<TFuncs1, T> where the contextual type
-                // is a generic type alias that needs to be instantiated
                 self.evaluate_application_type(ctx_type)
             } else if get_lazy_def_id(self.ctx.types, ctx_type).is_some() {
-                // Evaluate Lazy type (type alias) to get the underlying function signature
-                // This fixes cases like: type Handler = (e: string) => void
-                // where contextual typing should infer parameter types from the alias
+                self.judge_evaluate(ctx_type)
+            } else if matches!(
+                classify_for_evaluation(self.ctx.types, ctx_type),
+                EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
+            ) {
+                // Evaluate IndexedAccess (e.g., Type["a"]) and KeyOf types so they
+                // resolve to concrete function types usable for parameter typing.
                 self.judge_evaluate(ctx_type)
             } else {
-                // Not an Application or Lazy type, use as-is
                 ctx_type
             };
 

@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
     /// full resolver to evaluate. The solver's default `contextual_property_type` uses
     /// `NoopResolver` and can't resolve these. This method uses the Judge (which has access
     /// to the TypeEnvironment resolver) to evaluate such types into concrete object types.
-    fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
+    pub(crate) fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
         use tsz_solver::type_queries::{
             EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
         };
