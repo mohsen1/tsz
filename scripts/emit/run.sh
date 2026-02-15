@@ -148,7 +148,7 @@ build_runner() {
     log_step "Building emit runner..."
     (
         cd "$SCRIPT_DIR"
-        "$SCRIPT_DIR/ensure-pinned-typescript.sh" "$SCRIPT_DIR"
+        "$ROOT_DIR/scripts/ensure-pinned-typescript.sh" "$SCRIPT_DIR"
         if [[ ! -d "node_modules" ]]; then
             npm install --silent 2>/dev/null || npm install
         fi
