@@ -939,6 +939,59 @@ impl<'a> ContextualTypeContext<'a> {
     /// ```
     pub fn get_array_element_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
+
+        // Handle Union explicitly - collect element types from all array members
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let elem_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_array_element_type()
+                })
+                .collect();
+            return collect_single_or_union(self.interner, elem_types);
+        }
+
+        // Handle Application explicitly - evaluate to resolve type aliases
+        if let Some(TypeData::Application(_)) = self.interner.lookup(expected) {
+            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_array_element_type();
+            }
+        }
+
+        // Handle Mapped/Conditional types
+        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_)) = self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_array_element_type();
+            }
+        }
+
+        // Handle TypeParameter - use its constraint for element extraction
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+            return ctx.get_array_element_type();
+        }
+
+        // Handle Intersection - pick the first array member's element type
+        if let Some(TypeData::Intersection(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            for &m in members.iter() {
+                let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                if let Some(elem_type) = ctx.get_array_element_type() {
+                    return Some(elem_type);
+                }
+            }
+            return None;
+        }
+
         let mut extractor = ArrayElementExtractor::new(self.interner);
         extractor.extract(expected)
     }
@@ -946,6 +999,37 @@ impl<'a> ContextualTypeContext<'a> {
     /// Get the contextual type for a specific tuple element.
     pub fn get_tuple_element_type(&self, index: usize) -> Option<TypeId> {
         let expected = self.expected?;
+
+        // Handle Union explicitly - collect tuple element types from all members
+        if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
+            let members = self.interner.type_list(members);
+            let elem_types: Vec<TypeId> = members
+                .iter()
+                .filter_map(|&m| {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, m);
+                    ctx.get_tuple_element_type(index)
+                })
+                .collect();
+            return collect_single_or_union(self.interner, elem_types);
+        }
+
+        // Handle Application explicitly - evaluate to resolve type aliases
+        if let Some(TypeData::Application(_)) = self.interner.lookup(expected) {
+            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_tuple_element_type(index);
+            }
+        }
+
+        // Handle TypeParameter - use its constraint
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+            return ctx.get_tuple_element_type(index);
+        }
+
         let mut extractor = TupleElementExtractor::new(self.interner, index);
         extractor.extract(expected)
     }
