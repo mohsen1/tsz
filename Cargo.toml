@@ -117,7 +117,6 @@ mem_replace_with_default = "allow"
 mixed_read_write_in_expression = "allow"
 useless_conversion = "allow"
 comparison_chain = "allow"
-unnecessary_unwrap = "allow"
 clone_on_ref_ptr = "allow"
 needless_pass_by_value = "allow"
 

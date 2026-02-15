@@ -347,11 +347,12 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 {
                     // Nested pattern - create temp and recurse
                     let nested_temp = self.next_temp_var();
-                    let access = if is_computed && computed_temp.is_some() {
-                        IRNode::elem(
-                            IRNode::id(source),
-                            IRNode::id(computed_temp.as_ref().unwrap()),
-                        )
+                    let access = if is_computed {
+                        if let Some(computed_temp) = computed_temp.as_ref() {
+                            IRNode::elem(IRNode::id(source), IRNode::id(computed_temp))
+                        } else {
+                            IRNode::prop(IRNode::id(source), &prop_name)
+                        }
                     } else {
                         IRNode::prop(IRNode::id(source), &prop_name)
                     };
@@ -367,11 +368,12 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 }
 
                 // Create property access (computed or regular)
-                let access = if is_computed && computed_temp.is_some() {
-                    IRNode::elem(
-                        IRNode::id(source),
-                        IRNode::id(computed_temp.as_ref().unwrap()),
-                    )
+                let access = if is_computed {
+                    if let Some(computed_temp) = computed_temp.as_ref() {
+                        IRNode::elem(IRNode::id(source), IRNode::id(computed_temp))
+                    } else {
+                        IRNode::prop(IRNode::id(source), &prop_name)
+                    }
                 } else {
                     IRNode::prop(IRNode::id(source), &prop_name)
                 };
@@ -515,11 +517,12 @@ impl<'a> ES5DestructuringTransformer<'a> {
                                 || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
                         {
                             let nested_temp = self.next_temp_var();
-                            let access = if is_computed && computed_temp.is_some() {
-                                IRNode::elem(
-                                    IRNode::id(source),
-                                    IRNode::id(computed_temp.as_ref().unwrap()),
-                                )
+                            let access = if is_computed {
+                                if let Some(computed_temp) = computed_temp.as_ref() {
+                                    IRNode::elem(IRNode::id(source), IRNode::id(computed_temp))
+                                } else {
+                                    IRNode::prop(IRNode::id(source), &prop_name)
+                                }
                             } else {
                                 IRNode::prop(IRNode::id(source), &prop_name)
                             };
@@ -533,11 +536,12 @@ impl<'a> ES5DestructuringTransformer<'a> {
                         }
 
                         if let Some(target) = self.transform_expression(prop.initializer) {
-                            let access = if is_computed && computed_temp.is_some() {
-                                IRNode::elem(
-                                    IRNode::id(source),
-                                    IRNode::id(computed_temp.as_ref().unwrap()),
-                                )
+                            let access = if is_computed {
+                                if let Some(computed_temp) = computed_temp.as_ref() {
+                                    IRNode::elem(IRNode::id(source), IRNode::id(computed_temp))
+                                } else {
+                                    IRNode::prop(IRNode::id(source), &prop_name)
+                                }
                             } else {
                                 IRNode::prop(IRNode::id(source), &prop_name)
                             };
