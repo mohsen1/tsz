@@ -2212,8 +2212,12 @@ impl<'a> CheckerState<'a> {
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
 
+            // Skip backtick-quoted sections to find real @-tags.
+            // Lines like `` `@param` @param {string} z `` have a real @param after backticks.
+            let effective = Self::skip_backtick_quoted(trimmed);
+
             // Check if this line starts a new @tag
-            if trimmed.starts_with('@') {
+            if effective.starts_with('@') {
                 // Process any accumulated @param text
                 if in_param {
                     if Self::check_param_text(&param_text, param_name) {
@@ -2221,7 +2225,7 @@ impl<'a> CheckerState<'a> {
                     }
                     param_text.clear();
                 }
-                if let Some(rest) = trimmed.strip_prefix("@param") {
+                if let Some(rest) = effective.strip_prefix("@param") {
                     in_param = true;
                     param_text = rest.to_string();
                 } else {
@@ -2238,6 +2242,27 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         false
+    }
+
+    /// Skip leading backtick-quoted sections in a JSDoc line.
+    ///
+    /// Lines like `` `@param` @param {string} z `` contain backtick-quoted text
+    /// before the real `@param` tag. This function strips those leading quoted
+    /// sections so the real tag can be detected.
+    fn skip_backtick_quoted(s: &str) -> &str {
+        let mut rest = s;
+        loop {
+            rest = rest.trim_start();
+            if rest.starts_with('`') {
+                // Find matching closing backtick
+                if let Some(end) = rest[1..].find('`') {
+                    rest = &rest[end + 2..];
+                    continue;
+                }
+            }
+            break;
+        }
+        rest
     }
 
     /// Helper to check if a @param text (after "@param") matches a parameter name.

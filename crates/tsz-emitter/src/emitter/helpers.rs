@@ -127,38 +127,30 @@ impl<'a> Printer<'a> {
             std::mem::take(&mut self.preallocated_logical_assignment_value_temps);
         let saved_hoisted = std::mem::take(&mut self.hoisted_assignment_temps);
         let saved_value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
-        self.temp_scope_stack.push((
-            saved_counter,
-            saved_names,
-            saved_for_of,
-            saved_preallocated,
-            saved_preallocated_logical_value_temps,
-            saved_value_temps,
-            saved_hoisted,
-        ));
+        self.temp_scope_stack.push(super::TempScopeState {
+            temp_var_counter: saved_counter,
+            generated_temp_names: saved_names,
+            first_for_of_emitted: saved_for_of,
+            preallocated_temp_names: saved_preallocated,
+            preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
+            hoisted_assignment_value_temps: saved_value_temps,
+            hoisted_assignment_temps: saved_hoisted,
+        });
         self.ctx.destructuring_state.temp_var_counter = 0;
         self.first_for_of_emitted = false;
     }
 
     /// Restore the previous temp naming state when leaving a function scope.
     pub(super) fn pop_temp_scope(&mut self) {
-        if let Some((
-            counter,
-            names,
-            for_of,
-            preallocated,
-            preallocated_logical,
-            value_temps,
-            hoisted,
-        )) = self.temp_scope_stack.pop()
-        {
-            self.ctx.destructuring_state.temp_var_counter = counter;
-            self.generated_temp_names = names;
-            self.first_for_of_emitted = for_of;
-            self.preallocated_temp_names = preallocated;
-            self.preallocated_logical_assignment_value_temps = preallocated_logical;
-            self.hoisted_assignment_value_temps = value_temps;
-            self.hoisted_assignment_temps = hoisted;
+        if let Some(state) = self.temp_scope_stack.pop() {
+            self.ctx.destructuring_state.temp_var_counter = state.temp_var_counter;
+            self.generated_temp_names = state.generated_temp_names;
+            self.first_for_of_emitted = state.first_for_of_emitted;
+            self.preallocated_temp_names = state.preallocated_temp_names;
+            self.preallocated_logical_assignment_value_temps =
+                state.preallocated_logical_assignment_value_temps;
+            self.hoisted_assignment_value_temps = state.hoisted_assignment_value_temps;
+            self.hoisted_assignment_temps = state.hoisted_assignment_temps;
         }
     }
 
@@ -344,9 +336,12 @@ impl<'a> Printer<'a> {
             if c.pos >= from_pos && c.end <= to_pos {
                 // Found a comment in our range - emit it
                 let comment_text = safe_slice::slice(text, c.pos as usize, c.end as usize);
+                let has_trailing_new_line = c.has_trailing_new_line;
                 if !comment_text.is_empty() {
                     self.write(comment_text);
-                    self.write_space();
+                    if !has_trailing_new_line {
+                        self.write_space();
+                    }
                 }
                 // Advance the main index past this comment
                 self.comment_emit_idx = scan_idx + 1;
@@ -490,7 +485,7 @@ impl<'a> Printer<'a> {
     pub(super) fn has_trailing_comma_in_source(
         &self,
         container: &tsz_parser::parser::node::Node,
-        _elements: &[NodeIndex],
+        elements: &[NodeIndex],
     ) -> bool {
         let Some(text) = self.source_text else {
             return false;
@@ -540,7 +535,10 @@ impl<'a> Printer<'a> {
             }
 
             // Skip line comments by rewinding to the start of the line.
-            if bytes[pos] == b'/' && pos + 1 < bytes.len() && bytes[pos + 1] == b'/' {
+            // When scanning backwards we usually land on the second `/`.
+            if (bytes[pos] == b'/' && pos > 0 && bytes[pos - 1] == b'/')
+                || (bytes[pos] == b'/' && pos + 1 < bytes.len() && bytes[pos + 1] == b'/')
+            {
                 while pos > 0 && bytes[pos - 1] != b'\n' {
                     pos -= 1;
                 }
@@ -549,6 +547,19 @@ impl<'a> Printer<'a> {
 
             return bytes[pos] == b',';
         }
+
+        // Fallback for recovery/edge cases: if source between the last element
+        // and the container close contains a comma, treat it as trailing comma.
+        if let Some(&last_idx) = elements.last()
+            && let Some(last_node) = self.arena.get(last_idx)
+        {
+            let start = std::cmp::min(last_node.end as usize, text.len());
+            let end = std::cmp::min(container.end as usize, text.len());
+            if start < end && text[start..end].contains(',') {
+                return true;
+            }
+        }
+
         false
     }
 }

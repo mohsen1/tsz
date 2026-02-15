@@ -3342,7 +3342,6 @@ impl<'a> InferenceContext<'a> {
         (covariant, contravariant, invariant, bivariant)
     }
 
-    #[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
     fn compute_variance_helper(
         &self,
         ty: TypeId,

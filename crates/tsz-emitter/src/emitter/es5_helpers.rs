@@ -37,7 +37,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let wrap_spread_with_read = self.destructuring_read_depth > 0;
+        let wrap_spread_with_read = false;
 
         // Split array into segments by spread elements
         let mut segments: Vec<ArraySegment> = Vec::new();

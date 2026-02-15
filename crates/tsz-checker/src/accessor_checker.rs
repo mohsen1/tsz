@@ -111,6 +111,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         parameters: &[NodeIndex],
         has_paired_getter: bool,
+        accessor_jsdoc: Option<&str>,
     ) {
         for &param_idx in parameters {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -141,8 +142,14 @@ impl<'a> CheckerState<'a> {
             // Check for implicit any (error 7006)
             // When a setter has a paired getter, the parameter type is inferred from
             // the getter return type, so it's contextually typed (suppress TS7006).
-            // Also check for inline JSDoc @param/@type annotations.
-            let has_jsdoc = has_paired_getter || self.param_has_inline_jsdoc_type(param_idx);
+            // Also check for inline JSDoc @param/@type annotations and accessor-level
+            // JSDoc @param annotations (e.g., `/** @param {string} value */ set p(value)`).
+            let has_jsdoc = has_paired_getter
+                || self.param_has_inline_jsdoc_type(param_idx)
+                || accessor_jsdoc.is_some_and(|jsdoc| {
+                    let pname = self.parameter_name_for_error(param.name);
+                    Self::jsdoc_has_param_type(jsdoc, &pname) || Self::jsdoc_has_type_tag(jsdoc)
+                });
             self.maybe_report_implicit_any_parameter(param, has_jsdoc);
         }
     }

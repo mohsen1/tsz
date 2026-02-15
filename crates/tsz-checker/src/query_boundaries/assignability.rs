@@ -52,7 +52,6 @@ pub(crate) fn are_types_overlapping_with_env(
     .is_related()
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
@@ -221,7 +220,6 @@ pub(crate) struct AssignabilityGateResult {
     pub analysis: Option<AssignabilityFailureAnalysis>,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
     inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::AssignabilityOverrideProvider,

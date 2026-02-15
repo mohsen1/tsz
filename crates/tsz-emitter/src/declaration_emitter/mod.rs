@@ -474,6 +474,10 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_statement(stmt_idx);
         }
 
+        if self.needs_empty_export_marker(source_file) {
+            self.write("export {};");
+        }
+
         self.writer.get_output().to_string()
     }
 
@@ -1381,7 +1385,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let is_exported = self.has_export_modifier(&alias.modifiers);
-        if !self.should_emit_public_api_member(&alias.modifiers) {
+        if !self.should_emit_public_api_member(&alias.modifiers)
+            && !self.should_emit_public_api_dependency(alias.name)
+        {
             return;
         }
 
@@ -3452,6 +3458,124 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         is_exported
+    }
+
+    /// Return true when we need `export {};` to preserve module-ness in `.d.ts`.
+    fn needs_empty_export_marker(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        self.has_public_api_exports(source_file) && !self.has_public_api_value_exports(source_file)
+    }
+
+    /// Return true if exported declarations include at least one value-side export.
+    fn has_public_api_value_exports(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if let Some(func) = self.arena.get_function(stmt_node)
+                        && self.has_export_modifier(&func.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if let Some(class) = self.arena.get_class(stmt_node)
+                        && self.has_export_modifier(&class.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    if let Some(enum_data) = self.arena.get_enum(stmt_node)
+                        && self.has_export_modifier(&enum_data.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if let Some(var_stmt) = self.arena.get_variable(stmt_node)
+                        && self.has_export_modifier(&var_stmt.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    if let Some(module) = self.arena.get_module(stmt_node)
+                        && self.has_export_modifier(&module.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                    return true;
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    if let Some(export_decl) = self.arena.get_export_decl(stmt_node) {
+                        if export_decl.is_type_only {
+                            continue;
+                        }
+
+                        if export_decl.export_clause.is_none() {
+                            // `export * from "x"` is value-affecting by default.
+                            return true;
+                        }
+
+                        if let Some(clause_node) = self.arena.get(export_decl.export_clause)
+                            && (clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+                        {
+                            continue;
+                        }
+
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Return true when a declaration symbol is referenced by the exported API surface.
+    fn should_emit_public_api_dependency(&self, name_idx: NodeIndex) -> bool {
+        if !self.public_api_filter_enabled() {
+            return true;
+        }
+
+        let Some(used) = &self.used_symbols else {
+            // Usage analysis unavailable: preserve dependent declarations
+            // rather than over-pruning and producing unresolved names.
+            return true;
+        };
+        let Some(binder) = self.binder else {
+            return true;
+        };
+        let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) else {
+            // Some declaration name nodes are not mapped directly; fall back
+            // to root-scope lookup by identifier text.
+            let Some(name_node) = self.arena.get(name_idx) else {
+                return false;
+            };
+            let Some(name_ident) = self.arena.get_identifier(name_node) else {
+                return false;
+            };
+            let Some(root_scope) = binder.scopes.first() else {
+                return false;
+            };
+            let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text) else {
+                return false;
+            };
+            return used.contains_key(&scope_sym_id);
+        };
+
+        used.contains_key(&sym_id)
     }
 
     /// Get the function/method name as a string for overload tracking

@@ -652,7 +652,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Target type hole consuming source text characters.
-    #[allow(clippy::too_many_arguments)]
     fn match_tt_target_type_consumes_text(
         &mut self,
         t_type: TypeId,

@@ -2266,22 +2266,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =======================================================================
         // DefId-level cycle detection (before evaluation!)
         // Catches cycles in recursive type aliases BEFORE they expand.
-        // CRITICAL: Only for non-generic types (not Application types).
+        //
+        // For non-Application types: extract DefId directly from Lazy/Enum.
+        // For Application types (e.g., List<T>): extract the BASE DefId from
+        // the Application's base type. This enables coinductive cycle detection
+        // for recursive generic interfaces like List<T> extends Sequence<T>
+        // where method return types create infinite expansion chains
+        // (e.g., List<Pair<T,S>> <: Seq<Pair<T,S>> → List<Pair<...>> <: ...).
+        //
+        // For Application types with the SAME base DefId (e.g., Array<number>
+        // vs Array<string>), we skip cycle detection because these are legitimate
+        // comparisons that should not be treated as cycles.
         // =======================================================================
 
-        let is_safe_for_defid_check =
-            |type_id: TypeId| -> bool { application_id(self.interner, type_id).is_none() };
-
-        let def_pair = if is_safe_for_defid_check(source) && is_safe_for_defid_check(target) {
-            if let (Some(s_def), Some(t_def)) = (
-                lazy_def_id(self.interner, source)
-                    .or_else(|| enum_components(self.interner, source).map(|(def_id, _)| def_id)),
-                lazy_def_id(self.interner, target)
-                    .or_else(|| enum_components(self.interner, target).map(|(def_id, _)| def_id)),
-            ) {
-                Some((s_def, t_def))
-            } else {
+        let extract_def_id =
+            |interner: &dyn crate::TypeDatabase, type_id: TypeId| -> Option<DefId> {
+                // First try direct Lazy/Enum DefId
+                if let Some(def) = lazy_def_id(interner, type_id) {
+                    return Some(def);
+                }
+                if let Some((def, _)) = enum_components(interner, type_id) {
+                    return Some(def);
+                }
+                // For Application types, extract the base DefId
+                if let Some(app_id) = application_id(interner, type_id) {
+                    let app = interner.type_application(app_id);
+                    if let Some(def) = lazy_def_id(interner, app.base) {
+                        return Some(def);
+                    }
+                }
                 None
+            };
+
+        let s_def_id = extract_def_id(self.interner, source);
+        let t_def_id = extract_def_id(self.interner, target);
+
+        let def_pair = if let (Some(s_def), Some(t_def)) = (s_def_id, t_def_id) {
+            // Skip same-base Application cycle detection to avoid false positives
+            // (e.g., Array<number> vs Array<string> share the same base)
+            if s_def == t_def
+                && application_id(self.interner, source).is_some()
+                && application_id(self.interner, target).is_some()
+            {
+                None
+            } else {
+                Some((s_def, t_def))
             }
         } else {
             None

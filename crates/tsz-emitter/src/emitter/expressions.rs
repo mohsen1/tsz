@@ -1141,15 +1141,51 @@ impl<'a> Printer<'a> {
         // Check if source had a trailing comma after the last element
         let has_trailing_comma = self.has_trailing_comma_in_source(node, &obj.elements.nodes);
 
-        // Preserve single-line formatting from source
+        // Preserve single-line formatting from source by looking only at separators
+        // between properties (not inside member bodies).
         let source_single_line = self.source_text.is_some_and(|text| {
-            let start = node.pos as usize;
-            let end = node.end as usize;
-            if start >= end || end > text.len() {
-                // Synthesized/invalid range: don't force compact object literal formatting.
+            let start = std::cmp::min(node.pos as usize, text.len());
+            let end = std::cmp::min(node.end as usize, text.len());
+            if start >= end || obj.elements.nodes.is_empty() {
                 return false;
             }
-            !text[start..end].contains('\n')
+
+            let Some(first_node) = self.arena.get(obj.elements.nodes[0]) else {
+                return false;
+            };
+            let first_pos = std::cmp::min(first_node.pos as usize, text.len());
+            if start < first_pos && text[start..first_pos].contains('\n') {
+                return false;
+            }
+
+            for pair in obj.elements.nodes.windows(2) {
+                let Some(curr) = self.arena.get(pair[0]) else {
+                    continue;
+                };
+                let Some(next) = self.arena.get(pair[1]) else {
+                    continue;
+                };
+                let curr_end = std::cmp::min(curr.end as usize, text.len());
+                let next_pos = std::cmp::min(next.pos as usize, text.len());
+                if curr_end < next_pos && text[curr_end..next_pos].contains('\n') {
+                    return false;
+                }
+            }
+
+            let Some(last_node) = obj
+                .elements
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+            else {
+                return false;
+            };
+            let last_end = std::cmp::min(last_node.end as usize, text.len());
+            if last_end < end && text[last_end..end].contains('\n') {
+                return false;
+            }
+
+            true
         });
         let has_multiline_object_member = if obj.elements.nodes.len() == 1 {
             false
@@ -1192,6 +1228,82 @@ impl<'a> Printer<'a> {
             })
         };
 
+        if obj.elements.nodes.len() == 1 {
+            let prop = obj.elements.nodes[0];
+            let Some(prop_node) = self.arena.get(prop) else {
+                return;
+            };
+            let is_callable_member = prop_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || prop_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || prop_node.kind == syntax_kind_ext::SET_ACCESSOR;
+            if !is_callable_member {
+                // Fall through to the regular object-literal formatter so comments/trailing
+                // commas on property assignments are preserved.
+            } else {
+                let newline_before_prop = self.source_text.is_some_and(|text| {
+                    let start = std::cmp::min(node.pos as usize, text.len());
+                    let prop_start = std::cmp::min(prop_node.pos as usize, text.len());
+                    start < prop_start && text[start..prop_start].contains('\n')
+                });
+                let mut newline_before_close = self.source_text.is_some_and(|text| {
+                    let bytes = text.as_bytes();
+                    let mut close = std::cmp::min(node.end as usize, text.len());
+                    while close > 0 {
+                        close -= 1;
+                        if bytes[close] == b'}' {
+                            break;
+                        }
+                    }
+                    let prop_end = std::cmp::min(prop_node.end as usize, close);
+                    prop_end < close && text[prop_end..close].contains('\n')
+                });
+                if !newline_before_close {
+                    newline_before_close = self.source_text.is_some_and(|text| {
+                        let start = std::cmp::min(node.pos as usize, text.len());
+                        let mut close = std::cmp::min(node.end as usize, text.len());
+                        let bytes = text.as_bytes();
+                        while close > 0 {
+                            close -= 1;
+                            if bytes[close] == b'}' {
+                                break;
+                            }
+                        }
+                        if close <= start {
+                            return false;
+                        }
+                        text[start..close].contains('\n')
+                    });
+                }
+
+                self.write("{");
+                if newline_before_prop {
+                    self.write_line();
+                    self.increase_indent();
+                } else {
+                    self.write(" ");
+                }
+
+                self.increase_indent();
+                self.emit(prop);
+                self.decrease_indent();
+                if has_trailing_comma {
+                    self.write(",");
+                }
+
+                if newline_before_prop {
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("}");
+                } else if newline_before_close {
+                    self.write_line();
+                    self.write("}");
+                } else {
+                    self.write(" }");
+                }
+                return;
+            }
+        }
+
         let should_emit_single_line = source_single_line && !has_multiline_object_member;
         if should_emit_single_line {
             self.write("{ ");
@@ -1215,8 +1327,21 @@ impl<'a> Printer<'a> {
                 self.emit(prop);
 
                 let is_last = i == obj.elements.nodes.len() - 1;
-                if !is_last || has_trailing_comma {
-                    self.write(",");
+                let has_trailing_line_comment = if is_last {
+                    self.source_text.is_some_and(|text| {
+                        let start = std::cmp::min(prop_node.end as usize, text.len());
+                        let end = std::cmp::min(node.end as usize, text.len());
+                        start < end && text[start..end].contains("//")
+                    })
+                } else {
+                    false
+                };
+                if !is_last || has_trailing_comma || has_trailing_line_comment {
+                    if is_last && has_trailing_line_comment {
+                        self.write(", ");
+                    } else {
+                        self.write(",");
+                    }
                 }
 
                 // Check if next property is on the same line in source

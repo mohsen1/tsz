@@ -29,7 +29,7 @@ use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use tracing::warn;
+use tracing::{debug, warn};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -112,6 +112,17 @@ impl Default for PrinterOptions {
 struct ParamTransformPlan {
     params: Vec<ParamTransform>,
     rest: Option<RestParamTransform>,
+}
+
+#[derive(Default)]
+struct TempScopeState {
+    temp_var_counter: u32,
+    generated_temp_names: FxHashSet<String>,
+    first_for_of_emitted: bool,
+    preallocated_temp_names: VecDeque<String>,
+    preallocated_logical_assignment_value_temps: VecDeque<String>,
+    hoisted_assignment_value_temps: Vec<String>,
+    hoisted_assignment_temps: Vec<String>,
 }
 
 impl ParamTransformPlan {
@@ -202,16 +213,6 @@ enum EmitDirective {
     Chain(Vec<Self>),
 }
 
-type TempScopeSnapshot = (
-    u32,
-    FxHashSet<String>,
-    bool,
-    VecDeque<String>,
-    VecDeque<String>,
-    Vec<String>,
-    Vec<String>,
-);
-
 // =============================================================================
 // Printer
 // =============================================================================
@@ -270,8 +271,7 @@ pub struct Printer<'a> {
     pub(super) generated_temp_names: FxHashSet<String>,
 
     /// Stack for saving/restoring temp naming state when entering function scopes.
-    /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted, preallocated names, preallocated logical value names, value temps, reference temps).
-    pub(super) temp_scope_stack: Vec<TempScopeSnapshot>,
+    temp_scope_stack: Vec<TempScopeState>,
 
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
@@ -320,8 +320,8 @@ pub struct Printer<'a> {
     /// Current nesting depth for iterator for-of emission.
     pub(super) iterator_for_of_depth: usize,
 
-    /// Active nesting depth for downlevel destructuring read initialization.
-    pub(super) destructuring_read_depth: usize,
+    /// Current nesting depth for destructuring emission that should wrap spread inputs with `__read`.
+    pub(super) destructuring_read_depth: u32,
 }
 
 impl<'a> Printer<'a> {
@@ -710,7 +710,6 @@ impl<'a> Printer<'a> {
         };
 
         let directive = Self::emit_directive_from_transform(directive);
-        let debug_emit = std::env::var_os("TSZ_DEBUG_EMIT").is_some();
 
         match directive {
             EmitDirective::Identity => {
@@ -719,12 +718,10 @@ impl<'a> Printer<'a> {
             }
 
             EmitDirective::ES5Class { class_node } => {
-                if debug_emit {
-                    println!(
-                        "TSZ_DEBUG_EMIT: Printer ES5Class start (idx={}, class_node={})",
-                        idx.0, class_node.0
-                    );
-                }
+                debug!(
+                    "Printer ES5Class start (idx={}, class_node={})",
+                    idx.0, class_node.0
+                );
                 // Delegate to existing ClassES5Emitter
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
@@ -738,14 +735,12 @@ impl<'a> Printer<'a> {
                     }
                 }
                 let es5_output = es5_emitter.emit_class(class_node);
-                if debug_emit {
-                    println!(
-                        "TSZ_DEBUG_EMIT: Printer ES5Class end (idx={}, class_node={}, output_len={})",
-                        idx.0,
-                        class_node.0,
-                        es5_output.len()
-                    );
-                }
+                debug!(
+                    "Printer ES5Class end (idx={}, class_node={}, output_len={})",
+                    idx.0,
+                    class_node.0,
+                    es5_output.len()
+                );
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");

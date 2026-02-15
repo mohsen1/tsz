@@ -1,4 +1,5 @@
 use super::{ParamTransformPlan, Printer};
+use tracing::debug;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{BindingElementData, BindingPatternData, ForInOfData, Node};
 use tsz_parser::parser::syntax_kind_ext;
@@ -1033,7 +1034,7 @@ impl<'a> Printer<'a> {
         _first: &mut bool,
     ) {
         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-            tracing::debug!("emit_es5_destructuring_with_read_node entered");
+            debug!("emit_es5_destructuring_with_read_node entered");
         }
 
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
@@ -1101,7 +1102,7 @@ impl<'a> Printer<'a> {
                     self.emit_es5_destructuring_pattern_idx(elem.name, &rest_temp);
                 } else if self.has_identifier_text(elem.name) {
                     self.write(", ");
-                    self.emit(elem.name);
+                    self.emit_expression(elem.name);
                     self.write(" = ");
                     self.write(&read_temp);
                     self.write(".slice(");
@@ -1114,14 +1115,11 @@ impl<'a> Printer<'a> {
             let unwrapped_name = self.unwrap_parenthesized_binding_pattern(elem.name);
             if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
                 let elem_kind = self.arena.get(elem.name).map(|n| n.kind).unwrap_or(0);
-                tracing::debug!(
+                debug!(
                     "downlevel-bp-element index={} elem_name={:?} unwrapped={:?} kind={}",
-                    index,
-                    elem.name,
-                    unwrapped_name,
-                    elem_kind
+                    index, elem.name, unwrapped_name, elem_kind
                 );
-                tracing::debug!(
+                debug!(
                     "downlevel-bp-kind-bytes: elem={} unwrapped={}",
                     self.arena.get(unwrapped_name).map(|n| n.kind).unwrap_or(0),
                     SyntaxKind::Identifier as u16
@@ -1132,7 +1130,7 @@ impl<'a> Printer<'a> {
                     let elem_source = format!("{}[{}]", read_temp, index);
                     if elem.initializer.is_none() {
                         self.write(", ");
-                        self.emit(elem.name);
+                        self.emit_expression(elem.name);
                         self.write(" = ");
                         self.write(&elem_source);
                     } else {
@@ -1142,7 +1140,7 @@ impl<'a> Printer<'a> {
                         self.write(" = ");
                         self.write(&elem_source);
                         self.write(", ");
-                        self.emit(elem.name);
+                        self.emit_expression(elem.name);
                         self.write(" = ");
                         self.write(&value_name);
                         self.write(" === void 0 ? ");
@@ -1157,11 +1155,9 @@ impl<'a> Printer<'a> {
                     let elem_source = format!("{}[{}]", read_temp, index);
                     if unwrapped_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
                         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-                            tracing::debug!(
+                            debug!(
                                 "downlevel-nested-array index={} unwrapped={} source={}",
-                                index,
-                                unwrapped_name.0,
-                                elem_source
+                                index, unwrapped_name.0, elem_source
                             );
                         }
                         self.write(", ");
