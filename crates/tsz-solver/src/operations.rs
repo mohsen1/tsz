@@ -889,7 +889,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // 2.5. Seed contextual constraints from return type BEFORE argument processing
         // This enables downward inference: `let x: string = id(...)` should infer T = string
         // Contextual hints use lower priority so explicit arguments can override
-        if let Some(ctx_type) = self.contextual_type {
+        // Skip `any` and `unknown` contextual types — they carry no inference information
+        // and can interfere with constraint-based inference (e.g., causing T to resolve to
+        // `any` instead of using its constraint like `(arg: string) => any`).
+        if let Some(ctx_type) = self.contextual_type
+            && ctx_type != TypeId::ANY
+            && ctx_type != TypeId::UNKNOWN
+        {
             let return_type_with_placeholders =
                 instantiate_type(self.interner, func.return_type, &substitution);
             // CORRECT: return_type <: ctx_type
@@ -1408,7 +1414,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .collect();
 
         // 2.5. Seed contextual constraints from return type
-        if let Some(ctx_type) = self.contextual_type {
+        // Skip `any` and `unknown` — they don't contribute useful inference constraints
+        if let Some(ctx_type) = self.contextual_type
+            && ctx_type != TypeId::ANY
+            && ctx_type != TypeId::UNKNOWN
+        {
             let return_type_with_placeholders =
                 instantiate_type(self.interner, func.return_type, &substitution);
             self.constrain_types(
