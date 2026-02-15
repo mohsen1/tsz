@@ -1310,7 +1310,9 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         // Set ambient context flag for declare namespace/module body only
+        // Clear IN_BLOCK flag since module body allows export/declare
         let saved_flags = self.context_flags;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_IN_BLOCK;
         if is_ambient {
             self.context_flags |= crate::parser::state::CONTEXT_FLAG_AMBIENT;
         }
