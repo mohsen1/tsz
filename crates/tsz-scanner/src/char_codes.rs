@@ -1,4 +1,4 @@
-//! Character codes matching TypeScript's CharacterCodes enum.
+//! Character codes matching TypeScript's `CharacterCodes` enum.
 //!
 //! This module provides character code constants used by the scanner.
 

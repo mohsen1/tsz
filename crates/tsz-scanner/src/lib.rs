@@ -1,6 +1,6 @@
 //! Scanner types and utilities for TypeScript lexical analysis.
 //!
-//! This module contains the SyntaxKind enum, scanner implementation,
+//! This module contains the `SyntaxKind` enum, scanner implementation,
 //! and character code constants for TypeScript lexical analysis.
 
 // Scanner implementation - tokenization logic
@@ -16,7 +16,7 @@ use wasm_bindgen::prelude::*;
 // SyntaxKind Enum - Token Types (Scanner Output)
 // =============================================================================
 
-/// Syntax kind enum matching TypeScript's SyntaxKind.
+/// Syntax kind enum matching TypeScript's `SyntaxKind`.
 /// This enum contains only the token types produced by the scanner (0-186).
 /// AST node types are not included here.
 #[wasm_bindgen]
@@ -220,8 +220,10 @@ impl SyntaxKind {
     pub const FIRST_FUTURE_RESERVED_WORD: SyntaxKind = SyntaxKind::ImplementsKeyword;
     pub const LAST_FUTURE_RESERVED_WORD: SyntaxKind = SyntaxKind::YieldKeyword;
 
-    /// Safely convert a u16 to SyntaxKind if it's a valid token kind.
+    /// Safely convert a u16 to `SyntaxKind` if it's a valid token kind.
     /// Returns None for extended syntax kinds (AST nodes > 166).
+    #[allow(clippy::too_many_lines)]
+    #[must_use]
     pub fn try_from_u16(value: u16) -> Option<SyntaxKind> {
         // Static assertion: SyntaxKind must be repr(u16) and same size as u16
         const _: () = assert!(
@@ -414,6 +416,7 @@ impl SyntaxKind {
 
 /// Check if a token is a keyword.
 #[wasm_bindgen(js_name = tokenIsKeyword)]
+#[must_use]
 pub fn token_is_keyword(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::BreakKeyword as u16 && t <= SyntaxKind::DeferKeyword as u16
@@ -421,12 +424,14 @@ pub fn token_is_keyword(token: SyntaxKind) -> bool {
 
 /// Check if a token is an identifier or keyword.
 #[wasm_bindgen(js_name = tokenIsIdentifierOrKeyword)]
+#[must_use]
 pub fn token_is_identifier_or_keyword(token: SyntaxKind) -> bool {
     token as u16 >= SyntaxKind::Identifier as u16
 }
 
 /// Check if a token is a reserved word (strict reserved words).
 #[wasm_bindgen(js_name = tokenIsReservedWord)]
+#[must_use]
 pub fn token_is_reserved_word(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::BreakKeyword as u16 && t <= SyntaxKind::WithKeyword as u16
@@ -434,6 +439,7 @@ pub fn token_is_reserved_word(token: SyntaxKind) -> bool {
 
 /// Check if a token is a strict mode reserved word.
 #[wasm_bindgen(js_name = tokenIsStrictModeReservedWord)]
+#[must_use]
 pub fn token_is_strict_mode_reserved_word(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::ImplementsKeyword as u16 && t <= SyntaxKind::YieldKeyword as u16
@@ -441,6 +447,7 @@ pub fn token_is_strict_mode_reserved_word(token: SyntaxKind) -> bool {
 
 /// Check if a token is a literal (number, string, etc.).
 #[wasm_bindgen(js_name = tokenIsLiteral)]
+#[must_use]
 pub fn token_is_literal(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::NumericLiteral as u16 && t <= SyntaxKind::NoSubstitutionTemplateLiteral as u16
@@ -448,6 +455,7 @@ pub fn token_is_literal(token: SyntaxKind) -> bool {
 
 /// Check if a token is a template literal token.
 #[wasm_bindgen(js_name = tokenIsTemplateLiteral)]
+#[must_use]
 pub fn token_is_template_literal(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::NoSubstitutionTemplateLiteral as u16 && t <= SyntaxKind::TemplateTail as u16
@@ -455,6 +463,7 @@ pub fn token_is_template_literal(token: SyntaxKind) -> bool {
 
 /// Check if a token is punctuation.
 #[wasm_bindgen(js_name = tokenIsPunctuation)]
+#[must_use]
 pub fn token_is_punctuation(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::OpenBraceToken as u16 && t <= SyntaxKind::CaretEqualsToken as u16
@@ -462,6 +471,7 @@ pub fn token_is_punctuation(token: SyntaxKind) -> bool {
 
 /// Check if a token is an assignment operator.
 #[wasm_bindgen(js_name = tokenIsAssignmentOperator)]
+#[must_use]
 pub fn token_is_assignment_operator(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::EqualsToken as u16 && t <= SyntaxKind::CaretEqualsToken as u16
@@ -469,6 +479,7 @@ pub fn token_is_assignment_operator(token: SyntaxKind) -> bool {
 
 /// Check if a token is trivia (whitespace, comments).
 #[wasm_bindgen(js_name = tokenIsTrivia)]
+#[must_use]
 pub fn token_is_trivia(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::SingleLineCommentTrivia as u16
@@ -481,6 +492,7 @@ pub fn token_is_trivia(token: SyntaxKind) -> bool {
 
 /// Internal non-allocating version - returns static str reference.
 /// Use this for Rust-internal code to avoid allocations.
+#[must_use]
 pub fn keyword_to_text_static(token: SyntaxKind) -> Option<&'static str> {
     match token {
         SyntaxKind::BreakKeyword => Some("break"),
@@ -576,12 +588,14 @@ pub fn keyword_to_text_static(token: SyntaxKind) -> Option<&'static str> {
 /// Get the text representation of a keyword token.
 /// WASM-exported version that allocates a String for JS compatibility.
 #[wasm_bindgen(js_name = keywordToText)]
+#[must_use]
 pub fn keyword_to_text(token: SyntaxKind) -> Option<String> {
-    keyword_to_text_static(token).map(|s| s.into())
+    keyword_to_text_static(token).map(std::convert::Into::into)
 }
 
 /// Internal non-allocating version - returns static str reference.
 /// Use this for Rust-internal code to avoid allocations.
+#[must_use]
 pub fn punctuation_to_text_static(token: SyntaxKind) -> Option<&'static str> {
     match token {
         SyntaxKind::OpenBraceToken => Some("{"),
@@ -653,17 +667,19 @@ pub fn punctuation_to_text_static(token: SyntaxKind) -> Option<&'static str> {
 /// Get the text representation of a punctuation token.
 /// WASM-exported version that allocates a String for JS compatibility.
 #[wasm_bindgen(js_name = punctuationToText)]
+#[must_use]
 pub fn punctuation_to_text(token: SyntaxKind) -> Option<String> {
-    punctuation_to_text_static(token).map(|s| s.into())
+    punctuation_to_text_static(token).map(std::convert::Into::into)
 }
 
 // =============================================================================
 // Text to Keyword Lookup
 // =============================================================================
 
-/// Convert a string to its keyword SyntaxKind, if it's a keyword.
+/// Convert a string to its keyword `SyntaxKind`, if it's a keyword.
 /// Returns None if the text is not a keyword.
 #[wasm_bindgen(js_name = textToKeyword)]
+#[must_use]
 pub fn text_to_keyword(text: &str) -> Option<SyntaxKind> {
     match text {
         // Reserved words
@@ -758,8 +774,9 @@ pub fn text_to_keyword(text: &str) -> Option<SyntaxKind> {
 }
 
 /// Get the token kind for a given text, including identifiers and keywords.
-/// Returns Identifier if the text is not a keyword.
+/// Returns `Identifier` if the text is not a keyword.
 #[wasm_bindgen(js_name = stringToToken)]
+#[must_use]
 pub fn string_to_token(text: &str) -> SyntaxKind {
     text_to_keyword(text).unwrap_or(SyntaxKind::Identifier)
 }
