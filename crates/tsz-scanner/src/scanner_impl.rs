@@ -141,6 +141,7 @@ impl ScannerState {
     /// Create a new scanner state with the given text.
     /// ZERO-COPY: No Vec<char> allocation, works directly with UTF-8 bytes.
     #[wasm_bindgen(constructor)]
+    #[must_use]
     pub fn new(text: String, skip_trivia: bool) -> ScannerState {
         let end = text.len(); // byte length
         // Common keywords are interned on-demand for faster startup
@@ -167,6 +168,7 @@ impl ScannerState {
 
     /// Get the current position (end position of current token).
     #[wasm_bindgen(js_name = getPos)]
+    #[must_use]
     pub fn get_pos(&self) -> usize {
         self.pos
     }
@@ -179,60 +181,70 @@ impl ScannerState {
 
     /// Get the full start position (including leading trivia).
     #[wasm_bindgen(js_name = getTokenFullStart)]
+    #[must_use]
     pub fn get_token_full_start(&self) -> usize {
         self.full_start_pos
     }
 
     /// Get the start position of the current token (excluding trivia).
     #[wasm_bindgen(js_name = getTokenStart)]
+    #[must_use]
     pub fn get_token_start(&self) -> usize {
         self.token_start
     }
 
     /// Get the end position of the current token.
     #[wasm_bindgen(js_name = getTokenEnd)]
+    #[must_use]
     pub fn get_token_end(&self) -> usize {
         self.pos
     }
 
     /// Get the current token kind.
     #[wasm_bindgen(js_name = getToken)]
+    #[must_use]
     pub fn get_token(&self) -> SyntaxKind {
         self.token
     }
 
     /// Get the current token's string value.
-    /// Note: Prefer get_token_value_ref() to avoid allocation when possible.
+    /// Note: Prefer `get_token_value_ref()` to avoid allocation when possible.
+    #[must_use]
     #[wasm_bindgen(js_name = getTokenValue)]
     pub fn get_token_value(&self) -> String {
         self.get_token_value_ref().to_string()
     }
 
     /// Get the current token's text from the source.
+    #[must_use]
     #[wasm_bindgen(js_name = getTokenText)]
     pub fn get_token_text(&self) -> String {
         self.source[self.token_start..self.pos].to_string()
     }
 
     /// Get the token flags.
+    #[must_use]
     #[wasm_bindgen(js_name = getTokenFlags)]
     pub fn get_token_flags(&self) -> u32 {
         self.token_flags
     }
 
     /// Check if there was a preceding line break.
+    #[must_use]
     #[wasm_bindgen(js_name = hasPrecedingLineBreak)]
     pub fn has_preceding_line_break(&self) -> bool {
         (self.token_flags & TokenFlags::PrecedingLineBreak as u32) != 0
     }
 
     /// Check if the token is unterminated.
+    #[must_use]
     #[wasm_bindgen(js_name = isUnterminated)]
     pub fn is_unterminated(&self) -> bool {
         (self.token_flags & TokenFlags::Unterminated as u32) != 0
     }
 
     /// Check if the current token is an identifier.
+    #[must_use]
     #[wasm_bindgen(js_name = isIdentifier)]
     pub fn is_identifier(&self) -> bool {
         self.token == SyntaxKind::Identifier
@@ -240,6 +252,7 @@ impl ScannerState {
     }
 
     /// Check if the current token is a reserved word.
+    #[must_use]
     #[wasm_bindgen(js_name = isReservedWord)]
     pub fn is_reserved_word(&self) -> bool {
         let t = self.token as u16;
@@ -274,6 +287,7 @@ impl ScannerState {
     }
 
     /// Get the source text.
+    #[must_use]
     #[wasm_bindgen(js_name = getText)]
     pub fn get_text(&self) -> String {
         self.source.to_string()
@@ -285,21 +299,18 @@ impl ScannerState {
 
     /// Get byte at index as u32 char code. Returns 0 if out of bounds.
     /// FAST PATH: For ASCII bytes (0-127), this is the character code.
-    #[inline(always)]
+    #[inline]
+    #[must_use]
     fn char_code_unchecked(&self, index: usize) -> u32 {
         let bytes = self.source.as_bytes();
         if index < bytes.len() {
             let b = bytes[index];
             if b < 128 {
                 // ASCII: byte value == char code
-                b as u32
+                u32::from(b)
             } else {
                 // Non-ASCII: decode UTF-8 char
-                self.source[index..]
-                    .chars()
-                    .next()
-                    .map(|c| c as u32)
-                    .unwrap_or(0)
+                self.source[index..].chars().next().map_or(0, |c| c as u32)
             }
         } else {
             0
@@ -314,7 +325,7 @@ impl ScannerState {
         if index < bytes.len() {
             let b = bytes[index];
             if b < 128 {
-                Some(b as u32)
+                Some(u32::from(b))
             } else {
                 self.source[index..].chars().next().map(|c| c as u32)
             }
@@ -324,7 +335,7 @@ impl ScannerState {
     }
 
     /// Get byte length of character at position (1 for ASCII, 1-4 for UTF-8)
-    #[inline(always)]
+    #[inline]
     fn char_len_at(&self, index: usize) -> usize {
         let bytes = self.source.as_bytes();
         if index >= bytes.len() {
@@ -360,6 +371,7 @@ impl ScannerState {
 
     /// Scan the next token.
     #[wasm_bindgen]
+    #[allow(clippy::too_many_lines)]
     pub fn scan(&mut self) -> SyntaxKind {
         self.full_start_pos = self.pos;
         self.token_flags = 0;
@@ -392,18 +404,17 @@ impl ScannerState {
                             self.pos += 1;
                         }
                         continue;
-                    } else {
-                        if ch == CharacterCodes::CARRIAGE_RETURN
-                            && self.pos + 1 < self.end
-                            && self.char_code_unchecked(self.pos + 1) == CharacterCodes::LINE_FEED
-                        {
-                            self.pos += 2;
-                        } else {
-                            self.pos += 1;
-                        }
-                        self.token = SyntaxKind::NewLineTrivia;
-                        return self.token;
                     }
+                    if ch == CharacterCodes::CARRIAGE_RETURN
+                        && self.pos + 1 < self.end
+                        && self.char_code_unchecked(self.pos + 1) == CharacterCodes::LINE_FEED
+                    {
+                        self.pos += 2;
+                    } else {
+                        self.pos += 1;
+                    }
+                    self.token = SyntaxKind::NewLineTrivia;
+                    return self.token;
                 }
 
                 // Whitespace - ASCII single-byte chars and NON_BREAKING_SPACE (2 bytes in UTF-8)
@@ -421,15 +432,14 @@ impl ScannerState {
                             self.pos += self.char_len_at(self.pos);
                         }
                         continue;
-                    } else {
-                        while self.pos < self.end
-                            && is_white_space_single_line(self.char_code_unchecked(self.pos))
-                        {
-                            self.pos += self.char_len_at(self.pos);
-                        }
-                        self.token = SyntaxKind::WhitespaceTrivia;
-                        return self.token;
                     }
+                    while self.pos < self.end
+                        && is_white_space_single_line(self.char_code_unchecked(self.pos))
+                    {
+                        self.pos += self.char_len_at(self.pos);
+                    }
+                    self.token = SyntaxKind::WhitespaceTrivia;
+                    return self.token;
                 }
 
                 // BOM (Byte Order Mark) - 3 bytes in UTF-8
@@ -442,16 +452,15 @@ impl ScannerState {
                             self.pos += self.char_len_at(self.pos);
                         }
                         continue;
-                    } else {
-                        self.pos += 3; // BOM is 3 bytes in UTF-8
-                        while self.pos < self.end
-                            && is_white_space_single_line(self.char_code_unchecked(self.pos))
-                        {
-                            self.pos += self.char_len_at(self.pos);
-                        }
-                        self.token = SyntaxKind::WhitespaceTrivia;
-                        return self.token;
                     }
+                    self.pos += 3; // BOM is 3 bytes in UTF-8
+                    while self.pos < self.end
+                        && is_white_space_single_line(self.char_code_unchecked(self.pos))
+                    {
+                        self.pos += self.char_len_at(self.pos);
+                    }
+                    self.token = SyntaxKind::WhitespaceTrivia;
+                    return self.token;
                 }
 
                 // Punctuation - Single characters
@@ -553,10 +562,9 @@ impl ScannerState {
                         self.scan_conflict_marker_trivia();
                         if self.skip_trivia {
                             continue;
-                        } else {
-                            self.token = SyntaxKind::ConflictMarkerTrivia;
-                            return self.token;
                         }
+                        self.token = SyntaxKind::ConflictMarkerTrivia;
+                        return self.token;
                     }
                     if self.char_code_at(self.pos + 1) == Some(CharacterCodes::EQUALS) {
                         if self.char_code_at(self.pos + 2) == Some(CharacterCodes::EQUALS) {
@@ -674,10 +682,9 @@ impl ScannerState {
                         self.scan_conflict_marker_trivia();
                         if self.skip_trivia {
                             continue;
-                        } else {
-                            self.token = SyntaxKind::ConflictMarkerTrivia;
-                            return self.token;
                         }
+                        self.token = SyntaxKind::ConflictMarkerTrivia;
+                        return self.token;
                     }
                     if self.char_code_at(self.pos + 1) == Some(CharacterCodes::BAR) {
                         if self.char_code_at(self.pos + 2) == Some(CharacterCodes::EQUALS) {
@@ -743,10 +750,9 @@ impl ScannerState {
                         self.scan_conflict_marker_trivia();
                         if self.skip_trivia {
                             continue;
-                        } else {
-                            self.token = SyntaxKind::ConflictMarkerTrivia;
-                            return self.token;
                         }
+                        self.token = SyntaxKind::ConflictMarkerTrivia;
+                        return self.token;
                     }
                     if self.char_code_at(self.pos + 1) == Some(CharacterCodes::LESS_THAN) {
                         if self.char_code_at(self.pos + 2) == Some(CharacterCodes::EQUALS) {
@@ -776,10 +782,9 @@ impl ScannerState {
                         self.scan_conflict_marker_trivia();
                         if self.skip_trivia {
                             continue;
-                        } else {
-                            self.token = SyntaxKind::ConflictMarkerTrivia;
-                            return self.token;
                         }
+                        self.token = SyntaxKind::ConflictMarkerTrivia;
+                        return self.token;
                     }
                     self.pos += 1;
                     self.token = SyntaxKind::GreaterThanToken;
@@ -802,10 +807,9 @@ impl ScannerState {
                         }
                         if self.skip_trivia {
                             continue;
-                        } else {
-                            self.token = SyntaxKind::SingleLineCommentTrivia;
-                            return self.token;
                         }
+                        self.token = SyntaxKind::SingleLineCommentTrivia;
+                        return self.token;
                     }
                     if self.char_code_at(self.pos + 1) == Some(CharacterCodes::ASTERISK) {
                         self.pos += 2;
@@ -831,10 +835,9 @@ impl ScannerState {
                         }
                         if self.skip_trivia {
                             continue;
-                        } else {
-                            self.token = SyntaxKind::MultiLineCommentTrivia;
-                            return self.token;
                         }
+                        self.token = SyntaxKind::MultiLineCommentTrivia;
+                        return self.token;
                     }
                     if self.char_code_at(self.pos + 1) == Some(CharacterCodes::EQUALS) {
                         self.pos += 2;
@@ -913,11 +916,10 @@ impl ScannerState {
                         if self.skip_trivia {
                             self.pos += self.char_len_at(self.pos);
                             continue;
-                        } else {
-                            self.pos += self.char_len_at(self.pos);
-                            self.token = SyntaxKind::NewLineTrivia;
-                            return self.token;
                         }
+                        self.pos += self.char_len_at(self.pos);
+                        self.token = SyntaxKind::NewLineTrivia;
+                        return self.token;
                     }
                     // Handle additional Unicode whitespace characters not in the fast path above
                     if ch > 127 && is_white_space_single_line(ch) {
@@ -929,16 +931,15 @@ impl ScannerState {
                                 self.pos += self.char_len_at(self.pos);
                             }
                             continue;
-                        } else {
-                            self.pos += self.char_len_at(self.pos);
-                            while self.pos < self.end
-                                && is_white_space_single_line(self.char_code_unchecked(self.pos))
-                            {
-                                self.pos += self.char_len_at(self.pos);
-                            }
-                            self.token = SyntaxKind::WhitespaceTrivia;
-                            return self.token;
                         }
+                        self.pos += self.char_len_at(self.pos);
+                        while self.pos < self.end
+                            && is_white_space_single_line(self.char_code_unchecked(self.pos))
+                        {
+                            self.pos += self.char_len_at(self.pos);
+                        }
+                        self.token = SyntaxKind::WhitespaceTrivia;
+                        return self.token;
                     }
                     if is_identifier_start(ch) {
                         self.scan_identifier();
@@ -954,6 +955,7 @@ impl ScannerState {
     }
 
     /// Scan a string literal.
+    #[allow(clippy::too_many_lines)]
     fn scan_string(&mut self, quote: u32) {
         self.pos += 1; // Skip opening quote
         let mut result = String::new();
@@ -1136,6 +1138,7 @@ impl ScannerState {
     }
 
     /// Scan a template literal (simplified).
+    #[allow(clippy::too_many_lines)]
     fn scan_template_literal(&mut self) {
         self.pos += 1; // Skip backtick
         let mut result = String::new();
@@ -1306,6 +1309,7 @@ impl ScannerState {
     }
 
     /// Scan a number literal (simplified).
+    #[allow(clippy::too_many_lines)]
     fn scan_number(&mut self) {
         let start = self.pos;
 
@@ -1402,10 +1406,9 @@ impl ScannerState {
                     }
                     self.token = SyntaxKind::NumericLiteral;
                     return;
-                } else {
-                    // NonOctalDecimalIntegerLiteral: 09, 0789 — fall through to decimal scanning
-                    self.token_flags |= TokenFlags::ContainsLeadingZero as u32;
                 }
+                // NonOctalDecimalIntegerLiteral: 09, 0789 — fall through to decimal scanning
+                self.token_flags |= TokenFlags::ContainsLeadingZero as u32;
             }
         }
 
@@ -1532,7 +1535,7 @@ impl ScannerState {
     }
 
     /// Continue scanning an identifier that has a unicode escape mid-identifier.
-    /// Called when scan_identifier() encounters a valid unicode escape.
+    /// Called when `scan_identifier()` encounters a valid unicode escape.
     /// This switches to allocation mode since escapes require building a String.
     fn continue_identifier_with_escapes(&mut self, start: usize) {
         // Copy the already-scanned part into a String
@@ -1585,7 +1588,7 @@ impl ScannerState {
         if bytes.get(self.pos + 2).copied() == Some(b'{') {
             let start = self.pos + 3;
             let mut end = start;
-            while end < self.end && bytes.get(end).is_some_and(|b| b.is_ascii_hexdigit()) {
+            while end < self.end && bytes.get(end).is_some_and(u8::is_ascii_hexdigit) {
                 end += 1;
             }
             if end == start || bytes.get(end).copied() != Some(b'}') {
@@ -1594,7 +1597,7 @@ impl ScannerState {
             let hex = &self.source[start..end];
             u32::from_str_radix(hex, 16)
                 .ok()
-                .filter(|&cp| cp <= 0x10FFFF)
+                .filter(|&cp| cp <= 0x0010_FFFF)
         } else {
             // \uXXXX form (exactly 4 hex digits)
             if self.pos + 5 >= self.end {
@@ -1669,7 +1672,7 @@ impl ScannerState {
                     .source
                     .as_bytes()
                     .get(self.pos)
-                    .is_some_and(|b| b.is_ascii_hexdigit())
+                    .is_some_and(u8::is_ascii_hexdigit)
             {
                 self.pos += 1;
             }
@@ -1984,6 +1987,7 @@ impl ScannerState {
 
     /// Scan an escape sequence in a template literal.
     /// Returns the resulting string and advances self.pos.
+    #[allow(clippy::too_many_lines)]
     fn scan_template_escape_sequence(&mut self) -> String {
         // Skip the backslash
         self.pos += 1;
@@ -2022,7 +2026,7 @@ impl ScannerState {
                 self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
                 // Return the raw escape sequence for tagged templates
                 let digit = char::from_u32(ch).unwrap_or('?');
-                format!("\\{}", digit)
+                format!("\\{digit}")
             }
             CharacterCodes::LOWER_N => String::from("\n"),
             CharacterCodes::LOWER_R => String::from("\r"),
@@ -2297,7 +2301,7 @@ impl ScannerState {
     }
 
     /// Re-scan a `<` token in JSX context.
-    /// Returns LessThanSlashToken if followed by `/`, otherwise LessThanToken.
+    /// Returns `LessThanSlashToken` if followed by `/`, otherwise `LessThanToken`.
     #[wasm_bindgen(js_name = reScanLessThanToken)]
     pub fn re_scan_less_than_token(&mut self) -> SyntaxKind {
         if self.token == SyntaxKind::LessThanToken
@@ -2336,7 +2340,7 @@ impl ScannerState {
             if ch == Some(CharacterCodes::DOT) {
                 // Check it's not ?. followed by a digit
                 let next = self.char_code_at(self.pos + 1);
-                if !next.map(is_digit).unwrap_or(false) {
+                if !next.is_some_and(is_digit) {
                     self.pos += 1;
                     self.token = SyntaxKind::QuestionDotToken;
                 }
@@ -2357,9 +2361,10 @@ impl ScannerState {
     // JSDoc Scanning Methods
     // =========================================================================
 
-    /// Scan a JSDoc token.
-    /// Used when parsing JSDoc comments.
+    /// Scan a `JSDoc` token.
+    /// Used when parsing `JSDoc` comments.
     #[wasm_bindgen(js_name = scanJsDocToken)]
+    #[allow(clippy::too_many_lines)]
     pub fn scan_jsdoc_token(&mut self) -> SyntaxKind {
         self.full_start_pos = self.pos;
         self.token_flags = 0;
@@ -2491,8 +2496,8 @@ impl ScannerState {
         self.token
     }
 
-    /// Scan JSDoc comment text token.
-    /// Used for scanning the text content within JSDoc comments.
+    /// Scan `JSDoc` comment text token.
+    /// Used for scanning the text content within `JSDoc` comments.
     #[wasm_bindgen(js_name = scanJsDocCommentTextToken)]
     pub fn scan_jsdoc_comment_text_token(&mut self, in_backticks: bool) -> SyntaxKind {
         self.full_start_pos = self.pos;
@@ -2515,7 +2520,9 @@ impl ScannerState {
                     break;
                 }
                 // Stop on @ unless in backticks
-                CharacterCodes::AT if !in_backticks => {
+                CharacterCodes::AT | CharacterCodes::OPEN_BRACE | CharacterCodes::CLOSE_BRACE
+                    if !in_backticks =>
+                {
                     break;
                 }
                 // Stop on backtick - it toggles the mode
@@ -2527,10 +2534,6 @@ impl ScannerState {
                     self.pos += 1;
                     self.token = SyntaxKind::Unknown; // Use Unknown to signal backtick
                     return self.token;
-                }
-                // Stop on { and } for type expressions
-                CharacterCodes::OPEN_BRACE | CharacterCodes::CLOSE_BRACE if !in_backticks => {
-                    break;
                 }
                 _ => {
                     // Properly handle multi-byte UTF-8 characters
@@ -2633,6 +2636,7 @@ impl ScannerState {
 
 impl ScannerState {
     /// Save the current scanner state for look-ahead.
+    #[must_use]
     pub fn save_state(&self) -> ScannerSnapshot {
         ScannerSnapshot {
             pos: self.pos,
@@ -2664,26 +2668,31 @@ impl ScannerState {
     }
 
     /// Get the interned atom for the current identifier token.
-    /// Returns Atom::NONE if the current token is not an identifier.
+    /// Returns `Atom::NONE` if the current token is not an identifier.
     /// This enables O(1) string comparison for identifiers.
+    #[must_use]
     pub fn get_token_atom(&self) -> Atom {
         self.token_atom
     }
 
+    #[must_use]
     pub fn get_invalid_separator_pos(&self) -> Option<usize> {
         self.token_invalid_separator_pos
     }
 
+    #[must_use]
     pub fn invalid_separator_is_consecutive(&self) -> bool {
         self.token_invalid_separator_is_consecutive
     }
 
     /// Get the regex flag errors detected during scanning.
+    #[must_use]
     pub fn get_regex_flag_errors(&self) -> &[RegexFlagError] {
         &self.regex_flag_errors
     }
 
     /// Get general scanner diagnostics (e.g., conflict marker errors).
+    #[must_use]
     pub fn get_scanner_diagnostics(&self) -> &[ScannerDiagnostic] {
         &self.scanner_diagnostics
     }
@@ -2756,11 +2765,13 @@ impl ScannerState {
 
     /// Resolve an atom back to its string value.
     /// Panics if the atom is invalid.
+    #[must_use]
     pub fn resolve_atom(&self, atom: Atom) -> &str {
         self.interner.resolve(atom)
     }
 
     /// Get a reference to the interner for direct use by the parser.
+    #[must_use]
     pub fn interner(&self) -> &Interner {
         &self.interner
     }
@@ -2771,16 +2782,17 @@ impl ScannerState {
     }
 
     /// Take ownership of the interner, replacing it with a new empty one.
-    /// Used to transfer the interner to NodeArena after parsing.
+    /// Used to transfer the interner to `NodeArena` after parsing.
     pub fn take_interner(&mut self) -> Interner {
         std::mem::take(&mut self.interner)
     }
 
     /// ZERO-COPY: Get the current token value as a reference.
     /// For identifiers/keywords, returns the interned string.
-    /// For other tokens, returns the token_value or raw source slice.
-    /// This avoids allocation compared to get_token_value().
+    /// For other tokens, returns the `token_value` or raw source slice.
+    /// This avoids allocation compared to `get_token_value()`.
     #[inline]
+    #[must_use]
     pub fn get_token_value_ref(&self) -> &str {
         // 1. Fast path: Interned atom (identifiers, keywords)
         // When token_atom is set, we can always resolve from interner
@@ -2804,20 +2816,23 @@ impl ScannerState {
     }
 
     /// ZERO-COPY: Get the raw token text directly from source.
-    /// This is the unprocessed text from token_start to current pos.
+    /// This is the unprocessed text from `token_start` to current pos.
     #[inline]
+    #[must_use]
     pub fn get_token_text_ref(&self) -> &str {
         &self.source[self.token_start..self.pos]
     }
 
     /// ZERO-COPY: Get a slice of the source text by positions.
     #[inline]
+    #[must_use]
     pub fn source_slice(&self, start: usize, end: usize) -> &str {
         &self.source[start..end]
     }
 
     /// Get the source text reference.
     #[inline]
+    #[must_use]
     pub fn source_text(&self) -> &str {
         &self.source
     }
@@ -2826,6 +2841,7 @@ impl ScannerState {
 impl ScannerState {
     /// Get a cloned handle to the shared source text.
     #[inline]
+    #[must_use]
     pub fn source_text_arc(&self) -> Arc<str> {
         self.source.clone()
     }
