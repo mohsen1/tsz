@@ -2530,6 +2530,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
 
+            // Discriminated union check: if the source has discriminant properties
+            // that distinguish between target union members, check each discriminant
+            // value against the matching target members with a narrowed source.
+            // See TypeScript's typeRelatedToDiscriminatedType.
+            if self
+                .type_related_to_discriminated_type(source, &member_list)
+                .is_true()
+            {
+                return SubtypeResult::True;
+            }
+
             // Trace: Source is not a subtype of any union member
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
