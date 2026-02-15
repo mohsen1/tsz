@@ -399,9 +399,9 @@ impl<'a> CheckerState<'a> {
     /// Computes the type of unary expressions like `!x`, `+x`, `-x`, `~x`, `++x`, `--x`, `typeof x`.
     /// Returns boolean for `!`, number for arithmetic operators, string for `typeof`.
     pub(crate) fn get_type_of_prefix_unary(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_scanner::SyntaxKind;
-        use tsz_solver::type_queries::{classify_literal_type, LiteralTypeKind};
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_scanner::SyntaxKind;
+        use tsz_solver::type_queries::{LiteralTypeKind, classify_literal_type};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -430,34 +430,34 @@ impl<'a> CheckerState<'a> {
                 self.get_type_of_node(unary.operand);
 
                 if let Some(literal_type) = self.literal_type_from_initializer(idx) {
-                if self.contextual_literal_type(literal_type).is_some() {
-                    return literal_type;
-                }
-
-                if matches!(
-                    classify_literal_type(self.ctx.types, literal_type),
-                    LiteralTypeKind::BigInt(_)
-                ) {
-                    if unary.operator == SyntaxKind::PlusToken as u16 {
-                        if let Some(node) = self.ctx.arena.get(idx) {
-                            let message = format_message(
-                                diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                                &["+","bigint"],
-                            );
-                            self.ctx.error(
-                                node.pos,
-                                node.end.saturating_sub(node.pos),
-                                message,
-                                diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                            );
-                        }
-                        return TypeId::ERROR;
+                    if self.contextual_literal_type(literal_type).is_some() {
+                        return literal_type;
                     }
 
-                    // Preserve bigint literals for unary +/- to avoid widening to number in
-                    // numeric-literal assignments (`const negZero: 0n = -0n`).
-                    return literal_type;
-                }
+                    if matches!(
+                        classify_literal_type(self.ctx.types, literal_type),
+                        LiteralTypeKind::BigInt(_)
+                    ) {
+                        if unary.operator == SyntaxKind::PlusToken as u16 {
+                            if let Some(node) = self.ctx.arena.get(idx) {
+                                let message = format_message(
+                                    diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                                    &["+", "bigint"],
+                                );
+                                self.ctx.error(
+                                    node.pos,
+                                    node.end.saturating_sub(node.pos),
+                                    message,
+                                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                                );
+                            }
+                            return TypeId::ERROR;
+                        }
+
+                        // Preserve bigint literals for unary +/- to avoid widening to number in
+                        // numeric-literal assignments (`const negZero: 0n = -0n`).
+                        return literal_type;
+                    }
                 }
 
                 TypeId::NUMBER
