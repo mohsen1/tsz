@@ -84,6 +84,24 @@ impl ParserState {
             self.make_node_list(vec![clause])
         });
 
+        // TS1176: Interface declaration cannot have 'implements' clause.
+        // Parse the clause for recovery, treating it like extends.
+        if self.is_token(SyntaxKind::ImplementsKeyword) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Interface declaration cannot have 'implements' clause.",
+                diagnostic_codes::INTERFACE_DECLARATION_CANNOT_HAVE_IMPLEMENTS_CLAUSE,
+            );
+            // Parse the implements types for error recovery (reuse extends parsing)
+            self.next_token();
+            while self.is_identifier_or_keyword() || self.is_token(SyntaxKind::CommaToken) {
+                self.next_token();
+                if self.is_token(SyntaxKind::LessThanToken) {
+                    let _ = self.parse_type_arguments();
+                }
+            }
+        }
+
         // Check for duplicate extends clause: interface I extends A extends B { }
         if self.is_token(SyntaxKind::ExtendsKeyword) {
             use tsz_common::diagnostics::diagnostic_codes;
