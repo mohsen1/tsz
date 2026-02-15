@@ -1,4 +1,4 @@
-//! Lib Loader - Load and merge lib.d.ts symbols into the binder.
+//! `LibLoader` - Load and merge `lib.d.ts` symbols into the binder.
 //!
 //! This module provides types and utilities for working with TypeScript library files.
 //! Lib files (like lib.d.ts, lib.es2015.d.ts) must be provided externally - either
@@ -28,7 +28,8 @@ pub struct LibLoader {
 }
 
 impl LibLoader {
-    /// Create a new LibLoader with the given lib directory.
+    /// Create a new `LibLoader` with the given lib directory.
+    #[must_use]
     pub fn new(lib_dir: PathBuf) -> Self {
         Self {
             lib_dir,
@@ -42,15 +43,15 @@ impl LibLoader {
     pub fn load_lib(&mut self, lib_name: &str) -> Option<&str> {
         let normalized = lib_name.trim().to_lowercase();
 
-        // Check cache first
+        // Check cache first.
         if self.cache.contains_key(&normalized) {
             return self.cache.get(&normalized).map(std::string::String::as_str);
         }
 
         // Try to load from disk
         let candidates = [
-            self.lib_dir.join(format!("lib.{}.d.ts", normalized)),
-            self.lib_dir.join(format!("{}.d.ts", normalized)),
+            self.lib_dir.join(format!("lib.{normalized}.d.ts")),
+            self.lib_dir.join(format!("{normalized}.d.ts")),
         ];
 
         for candidate in &candidates {
@@ -71,6 +72,7 @@ impl LibLoader {
     }
 
     /// Get the number of cached lib files.
+    #[must_use]
     pub fn cache_size(&self) -> usize {
         self.cache.len()
     }
@@ -102,7 +104,8 @@ pub struct LibFile {
 }
 
 impl LibFile {
-    /// Create a new LibFile from a parsed and bound lib file.
+    /// Create a new `LibFile` from a parsed and bound lib file.
+    #[must_use]
     pub fn new(file_name: String, arena: Arc<NodeArena>, binder: Arc<BinderState>) -> Self {
         Self {
             file_name,
@@ -112,13 +115,15 @@ impl LibFile {
     }
 
     /// Get the file locals (global symbols) from this lib file.
+    #[must_use]
     pub fn file_locals(&self) -> &SymbolTable {
         &self.binder.file_locals
     }
 
     /// Parse and bind a lib file from source content.
     ///
-    /// This is the standard way to create a LibFile from .d.ts content.
+    /// This is the standard way to create a `LibFile` from `.d.ts` content.
+    #[must_use]
     pub fn from_source(file_name: String, content: String) -> Self {
         let mut parser = ParserState::new(file_name.clone(), content);
         let source_file_idx = parser.parse_source_file();
@@ -135,9 +140,10 @@ impl LibFile {
 
 /// Merge multiple lib files into a single lib file with a unified binder.
 ///
-/// This function takes multiple LibFile instances (each with its own BinderState)
-/// and merges them into a single LibFile where all symbols are in one binder
-/// with remapped SymbolIds to avoid collisions.
+/// This function takes multiple `LibFile` instances (each with its own `BinderState`)
+/// and merges them into a single `LibFile` where all symbols are in one binder
+/// with remapped `SymbolIds` to avoid collisions.
+#[must_use]
 pub fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
     use crate::state::LibContext as BinderLibContext;
 
@@ -145,7 +151,7 @@ pub fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
         return lib_files;
     }
 
-    // Create a single merged binder from all lib files
+    // Create a single merged binder from all lib files.
     let mut merged_binder = BinderState::new();
     let lib_contexts: Vec<_> = lib_files
         .iter()
@@ -157,11 +163,10 @@ pub fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
 
     merged_binder.merge_lib_contexts_into_binder(&lib_contexts);
 
-    // Create a single merged LibFile
-    let merged_arena = lib_files
-        .first()
-        .map(|lib| Arc::clone(&lib.arena))
-        .expect("lib_files is non-empty, guaranteed by caller");
+    let merged_arena = match lib_files.first() {
+        Some(lib_file) => Arc::clone(&lib_file.arena),
+        None => return lib_files,
+    };
     let merged_binder = Arc::new(merged_binder);
     let merged_file = Arc::new(LibFile::new(
         "merged-libs".to_string(),
@@ -176,7 +181,7 @@ pub fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
 ///
 /// **DEPRECATED**: This function copies raw SymbolIds from lib binders, which can
 /// collide across different lib files. Use `BinderState::merge_lib_contexts_into_binder`
-/// instead, which properly remaps SymbolIds to avoid collisions.
+/// instead, which properly remaps `SymbolIds` to avoid collisions.
 #[deprecated(note = "Use BinderState::merge_lib_contexts_into_binder instead")]
 pub fn merge_lib_symbols(target: &mut SymbolTable, lib_files: &[Arc<LibFile>]) {
     for lib in lib_files {
@@ -193,6 +198,7 @@ pub fn merge_lib_symbols(target: &mut SymbolTable, lib_files: &[Arc<LibFile>]) {
 // =============================================================================
 
 /// Create a TS2318 error for a missing global type.
+#[must_use]
 pub fn emit_error_global_type_missing(
     name: &str,
     file_name: String,
@@ -203,12 +209,13 @@ pub fn emit_error_global_type_missing(
         file_name,
         start,
         length,
-        format!("Cannot find global type '{}'.", name),
+        format!("Cannot find global type '{name}'."),
         CANNOT_FIND_GLOBAL_TYPE,
     )
 }
 
 /// Create a TS2583 error when a type is missing due to insufficient lib support.
+#[must_use]
 pub fn emit_error_lib_target_mismatch(
     name: &str,
     file_name: String,
@@ -220,8 +227,7 @@ pub fn emit_error_lib_target_mismatch(
         start,
         length,
         format!(
-            "Cannot find name '{}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.",
-            name
+            "Cannot find name '{name}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later."
         ),
         MISSING_ES2015_LIB_SUPPORT,
     )
@@ -305,6 +311,7 @@ const ES2015_PLUS_TYPES: &[&str] = &[
 ];
 
 /// Check if a type name is an ES2015+ feature that requires specific lib support.
+#[must_use]
 pub fn is_es2015_plus_type(name: &str) -> bool {
     // PromiseLike should follow regular unresolved-name behavior (TS2304) in noLib tests.
     if name == "PromiseLike" {

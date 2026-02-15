@@ -1595,6 +1595,7 @@ impl ParserState {
     /// export function `f()` {}
     /// export class C {}
     pub(crate) fn parse_export_declaration(&mut self) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ExportKeyword);
 
@@ -1636,7 +1637,6 @@ impl ParserState {
                 return self.parse_export_import_equals(start_pos);
             }
             // ES6 import with export modifier — emit TS1191 and parse as import
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An import declaration cannot have modifiers.",
                 diagnostic_codes::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,

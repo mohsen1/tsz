@@ -4,11 +4,11 @@ use crate::parser::state::ParserState;
 
 #[test]
 fn test_duplicate_label_nested() {
-    let source = r#"
+    let source = r"
 target:
 target:
 while (true) {}
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -27,13 +27,13 @@ while (true) {}
 
 #[test]
 fn test_duplicate_label_sequential_allowed() {
-    let source = r#"
+    let source = r"
 target:
 while (true) {}
 
 target:
 while (true) {}
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -52,7 +52,7 @@ while (true) {}
 
 #[test]
 fn test_duplicate_label_function_scoped() {
-    let source = r#"
+    let source = r"
 target:
 while (true) {
   function f() {
@@ -60,7 +60,7 @@ while (true) {
     while (true) {}
   }
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -79,7 +79,7 @@ while (true) {
 
 #[test]
 fn test_duplicate_label_arrow_function_scoped() {
-    let source = r#"
+    let source = r"
 target:
 for (;;) {
   const f = () => {
@@ -87,7 +87,7 @@ for (;;) {
     while (true) {}
   };
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -106,14 +106,14 @@ for (;;) {
 
 #[test]
 fn test_duplicate_label_in_nested_blocks() {
-    let source = r#"
+    let source = r"
 {
   target: while (true) {}
 }
 {
   target: while (true) {}
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 

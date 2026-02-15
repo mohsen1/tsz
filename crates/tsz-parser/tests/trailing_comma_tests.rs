@@ -13,11 +13,11 @@ fn parse_code(code: &str) -> Vec<crate::parser::ParseDiagnostic> {
 
 #[test]
 fn test_trailing_comma_in_parameter_list() {
-    let code = r#"
+    let code = r"
 function foo(a: string, b: number,) {
 return a + b;
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // Should not emit any errors - trailing comma is allowed
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -29,13 +29,13 @@ return a + b;
 
 #[test]
 fn test_trailing_comma_in_enum() {
-    let code = r#"
+    let code = r"
 enum Color {
 Red,
 Green,
 Blue,
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // Should not emit any errors - trailing comma is allowed
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -47,9 +47,9 @@ Blue,
 
 #[test]
 fn test_trailing_comma_in_array_literal() {
-    let code = r#"
+    let code = r"
 const arr = [1, 2, 3,];
-"#;
+";
     let diagnostics = parse_code(code);
     // Should not emit any errors - trailing comma is allowed
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -61,9 +61,9 @@ const arr = [1, 2, 3,];
 
 #[test]
 fn test_trailing_comma_in_object_literal() {
-    let code = r#"
+    let code = r"
 const obj = { a: 1, b: 2, };
-"#;
+";
     let diagnostics = parse_code(code);
     // Should not emit any errors - trailing comma is allowed
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -75,11 +75,11 @@ const obj = { a: 1, b: 2, };
 
 #[test]
 fn test_trailing_comma_in_type_parameters() {
-    let code = r#"
+    let code = r"
 function foo<T, U,>() {
 // ...
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // Should not emit any errors - trailing comma is allowed
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -91,9 +91,9 @@ function foo<T, U,>() {
 
 #[test]
 fn test_trailing_comma_in_type_arguments() {
-    let code = r#"
+    let code = r"
 const arr: Array<string, number,> = [1, 2];
-"#;
+";
     let diagnostics = parse_code(code);
     // Should not emit any errors - trailing comma is allowed
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -105,11 +105,11 @@ const arr: Array<string, number,> = [1, 2];
 
 #[test]
 fn test_no_trailing_comma() {
-    let code = r#"
+    let code = r"
 function foo(a: string, b: number) {
 return a + b;
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // Should not emit any errors - no trailing comma is fine too
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -118,12 +118,12 @@ return a + b;
 
 #[test]
 fn test_asi_after_return() {
-    let code = r#"
+    let code = r"
 function foo() {
 return
 42;
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // TypeScript applies ASI here, so this parses as `return; 42;`
     // The expression `42` is never returned, but this is valid syntax
@@ -133,12 +133,12 @@ return
 
 #[test]
 fn test_asi_after_break() {
-    let code = r#"
+    let code = r"
 while (true) {
 break
 // some comment
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // ASI applies after break
     let ts1005_count = diagnostics.iter().filter(|d| d.code == 1005).count();
@@ -147,13 +147,13 @@ break
 
 #[test]
 fn test_function_overloads_no_duplicate_error() {
-    let code = r#"
+    let code = r"
 function foo(x: string): void;
 function foo(x: number): void;
 function foo(x: string | number): void {
 console.log(x);
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // Function overloads should not emit TS2300
     let ts2300_count = diagnostics.iter().filter(|d| d.code == 2300).count();
@@ -162,14 +162,14 @@ console.log(x);
 
 #[test]
 fn test_interface_merging_no_duplicate_error() {
-    let code = r#"
+    let code = r"
 interface Box {
 width: number;
 }
 interface Box {
 height: number;
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // Interface merging should not emit TS2300
     let ts2300_count = diagnostics.iter().filter(|d| d.code == 2300).count();
@@ -178,14 +178,14 @@ height: number;
 
 #[test]
 fn test_namespace_function_merging_no_duplicate_error() {
-    let code = r#"
+    let code = r"
 namespace Utils {
 export function helper(): void {}
 }
 function Utils() {
 // Implementation
 }
-"#;
+";
     let diagnostics = parse_code(code);
     // Namespace + function merging should not emit TS2300
     let ts2300_count = diagnostics.iter().filter(|d| d.code == 2300).count();
