@@ -103,6 +103,19 @@ impl ParserState {
 
     /// Parse return type, which may be a type predicate (x is T) or a regular type
     pub(crate) fn parse_return_type(&mut self) -> NodeIndex {
+        // Re-enable conditional types for return type parsing.
+        // Return types are nested type contexts where conditional types should be allowed
+        // even if disabled by an outer `infer T extends X` or conditional extends.
+        let saved_flags = self.context_flags;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+
+        let result = self.parse_return_type_inner();
+
+        self.context_flags = saved_flags;
+        result
+    }
+
+    fn parse_return_type_inner(&mut self) -> NodeIndex {
         if self.is_asserts_type_predicate_start() {
             return self.parse_asserts_type_predicate();
         }
@@ -198,14 +211,27 @@ impl ParserState {
         // Check for extends keyword to form conditional type.
         // A line break before `extends` prevents conditional type parsing (ASI).
         // This matches tsc's behavior: `!scanner.hasPrecedingLineBreak()`.
-        if !self.is_token(SyntaxKind::ExtendsKeyword) || self.scanner.has_preceding_line_break() {
+        // Also, when DISALLOW_CONDITIONAL_TYPES is set (inside `infer T extends X` parsing),
+        // don't parse as conditional type.
+        if !self.is_token(SyntaxKind::ExtendsKeyword)
+            || self.scanner.has_preceding_line_break()
+            || (self.context_flags & crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES)
+                != 0
+        {
             return check_type;
         }
 
         self.next_token(); // consume extends
 
-        // Parse the extends type (right side of extends)
-        let extends_type = self.parse_union_type();
+        // Parse the extends type (right side of extends) with conditional types disabled.
+        // This matches tsc's `disallowConditionalTypesAnd(parseType)` — nested conditional types
+        // are not allowed in the extends position. This is critical for `infer T extends U`
+        // disambiguation: `T extends infer U extends number ? 1 : 0` should parse the
+        // infer constraint as `extends number` and the `?` belongs to the outer conditional.
+        let saved_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+        let extends_type = self.parse_type();
+        self.context_flags = saved_flags;
 
         // Expect ?
         self.parse_expected(SyntaxKind::QuestionToken);
@@ -447,7 +473,13 @@ impl ParserState {
         }
 
         self.next_token();
+        // Re-enable conditional types inside parentheses, even if they were disabled
+        // for an outer `infer T extends X` disambiguation. Matches tsc's
+        // `allowConditionalTypesAnd(parseType)` in `parseParenthesizedType`.
+        let saved_flags = self.context_flags;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
         let inner = self.parse_type();
+        self.context_flags = saved_flags;
         self.parse_expected(SyntaxKind::CloseParenToken);
         inner
     }
@@ -869,12 +901,20 @@ impl ParserState {
     }
 
     /// Parse infer type: infer T (used in conditional types)
+    ///
+    /// Handles the `infer T extends U` disambiguation:
+    /// - `infer U extends number ? 1 : 0` → parsed as conditional (U has no constraint)
+    /// - `infer U extends number` → parsed as infer with constraint
+    ///
+    /// Uses speculative lookahead: parse `extends Type` with conditional types disabled,
+    /// then check if `?` follows. If so, the extends belongs to the outer conditional type,
+    /// not to the infer constraint.
     pub(crate) fn parse_infer_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::InferKeyword);
 
-        // Parse the type parameter to infer
-        let type_parameter = self.parse_type_parameter();
+        // Parse the type parameter with speculative infer-extends handling
+        let type_parameter = self.parse_type_parameter_of_infer_type();
 
         let end_pos = self.token_end();
 
@@ -883,6 +923,70 @@ impl ParserState {
             start_pos,
             end_pos,
             crate::parser::node::InferTypeData { type_parameter },
+        )
+    }
+
+    /// Parse a type parameter specifically for `infer` types.
+    /// Handles the `infer T extends U ?` disambiguation by using speculative parsing.
+    fn parse_type_parameter_of_infer_type(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        // Parse the type parameter name (no modifiers for infer type params)
+        let name = self.parse_identifier();
+
+        // Try to parse constraint with speculative lookahead.
+        // Save state before consuming `extends`, so we can backtrack if
+        // the `extends` actually belongs to an outer conditional type.
+        let constraint = if self.is_token(SyntaxKind::ExtendsKeyword) {
+            let already_disallowed = (self.context_flags
+                & crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES)
+                != 0;
+
+            // Save full parser state for backtracking
+            let snapshot = self.scanner.save_state();
+            let saved_token = self.current_token;
+            let arena_len = self.arena.nodes.len();
+            let diag_len = self.parse_diagnostics.len();
+
+            self.next_token(); // consume `extends`
+
+            // Parse the constraint type with conditional types disallowed.
+            // This prevents `number ? 1 : 0` from being parsed as a conditional type
+            // within the constraint itself.
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+            let constraint_type = self.parse_type();
+            self.context_flags = saved_flags;
+
+            // Now check: if `?` follows and we're not already in a no-conditional context,
+            // then this `extends` belongs to an outer conditional type, not the infer constraint.
+            // Backtrack in that case.
+            if !already_disallowed && self.is_token(SyntaxKind::QuestionToken) {
+                // Backtrack: restore scanner, token, arena, and diagnostics
+                self.scanner.restore_state(snapshot);
+                self.current_token = saved_token;
+                self.arena.nodes.truncate(arena_len);
+                self.parse_diagnostics.truncate(diag_len);
+                NodeIndex::NONE
+            } else {
+                constraint_type
+            }
+        } else {
+            NodeIndex::NONE
+        };
+
+        let end_pos = self.token_end();
+
+        self.arena.add_type_parameter(
+            crate::parser::syntax_kind_ext::TYPE_PARAMETER,
+            start_pos,
+            end_pos,
+            crate::parser::node::TypeParameterData {
+                modifiers: None,
+                name,
+                constraint,
+                default: NodeIndex::NONE,
+            },
         )
     }
 
@@ -1110,6 +1214,11 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::InKeyword);
 
+        // Re-enable conditional types inside mapped type bracket.
+        // The outer `T extends { [P in ...] }` may have disabled them,
+        // but inside the mapped type we need them again.
+        let saved_flags = self.context_flags;
+        self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
         let constraint = self.parse_type();
 
         // Parse optional 'as' clause for key remapping: [K in T as NewKey]
@@ -1118,6 +1227,7 @@ impl ParserState {
         } else {
             NodeIndex::NONE
         };
+        self.context_flags = saved_flags;
 
         let type_param_end = self.token_end();
 
