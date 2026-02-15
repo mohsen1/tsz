@@ -105,6 +105,9 @@ mod conformance_issues;
 #[path = "../tests/control_flow_tests.rs"]
 mod control_flow_tests;
 #[cfg(test)]
+#[path = "../tests/definite_assignment_tests.rs"]
+mod definite_assignment_tests;
+#[cfg(test)]
 #[path = "../tests/enum_member_cache_tests.rs"]
 mod enum_member_cache_tests;
 #[cfg(test)]

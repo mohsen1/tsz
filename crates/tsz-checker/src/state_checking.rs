@@ -6,6 +6,9 @@
 use crate::EnclosingClassInfo;
 use crate::error_handler::ErrorHandler;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
+use crate::query_boundaries::definite_assignment::{
+    check_constructor_property_use_before_assignment, constructor_assigned_properties,
+};
 use crate::query_boundaries::state_checking as query;
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
@@ -1690,6 +1693,17 @@ impl<'a> CheckerState<'a> {
                 // When strictNullChecks is off, undefined and null widen to any
                 // (TypeScript treats `var x = undefined` as `any` without strict)
                 if !checker.ctx.strict_null_checks()
+                    && (init_type == TypeId::UNDEFINED || init_type == TypeId::NULL)
+                {
+                    return TypeId::ANY;
+                }
+
+                // Under noImplicitAny, mutable unannotated bindings initialized with
+                // `undefined`/`null` should behave like evolving-any variables so later
+                // assignments don't produce TS2322 (TypeScript reports implicit-any diagnostics).
+                if checker.ctx.no_implicit_any()
+                    && !checker.is_const_variable_declaration(decl_idx)
+                    && var_decl.type_annotation.is_none()
                     && (init_type == TypeId::UNDEFINED || init_type == TypeId::NULL)
                 {
                     return TypeId::ANY;
@@ -4598,7 +4612,7 @@ impl<'a> CheckerState<'a> {
         let requires_super = self.class_has_base(class);
         let constructor_body = self.find_constructor_body(&class.members);
         let assigned = if let Some(body_idx) = constructor_body {
-            self.analyze_constructor_assignments(body_idx, &tracked, requires_super)
+            constructor_assigned_properties(self, body_idx, &tracked, requires_super)
         } else {
             FxHashSet::default()
         };
@@ -4622,7 +4636,12 @@ impl<'a> CheckerState<'a> {
 
         // Check for TS2565 (Property used before being assigned in constructor)
         if let Some(body_idx) = constructor_body {
-            self.check_properties_used_before_assigned(body_idx, &tracked, requires_super);
+            check_constructor_property_use_before_assignment(
+                self,
+                body_idx,
+                &tracked,
+                requires_super,
+            );
         }
     }
 

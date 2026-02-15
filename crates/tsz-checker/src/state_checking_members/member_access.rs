@@ -2,6 +2,7 @@
 //!
 //! Extracted from state_checking.rs: class/interface/member utilities.
 
+use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
 use crate::state::CheckerState;
 use crate::statements::StatementCheckCallbacks;
 use tsz_parser::parser::NodeIndex;
@@ -45,7 +46,7 @@ impl<'a> CheckerState<'a> {
             if ctor.body.is_none() {
                 return false;
             }
-            self.analyze_constructor_assignments(ctor.body, &tracked, requires_super)
+            constructor_assigned_properties(self, ctor.body, &tracked, requires_super)
                 .contains(&key)
         })
     }

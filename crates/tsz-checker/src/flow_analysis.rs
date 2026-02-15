@@ -27,6 +27,7 @@
 
 use crate::FlowAnalyzer;
 use crate::diagnostics::Diagnostic;
+use crate::query_boundaries::definite_assignment::should_report_variable_use_before_assignment;
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype_with_env, object_shape_for_type, tuple_elements_for_type,
     union_members_for_type,
@@ -1292,9 +1293,28 @@ impl<'a> CheckerState<'a> {
 
         // Get the flow node for this expression usage FIRST
         // If there's no flow info, no narrowing is possible regardless of node type
-        let flow_node = match self.ctx.binder.get_node_flow(idx) {
-            Some(flow) => flow,
-            None => return declared_type, // No flow info - use declared type
+        let flow_node = if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
+            flow
+        } else {
+            // Some nodes in type positions (e.g. `typeof x` inside a type alias)
+            // don't carry direct flow links. Fall back to the nearest parent that
+            // has flow information so narrowing can still apply at that site.
+            let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+            let mut found = None;
+            while let Some(parent) = current {
+                if parent.is_none() {
+                    break;
+                }
+                if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                    found = Some(flow);
+                    break;
+                }
+                current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+            }
+            match found {
+                Some(flow) => flow,
+                None => return declared_type, // No flow info - use declared type
+            }
         };
 
         // Fast path: `any` and `error` types cannot be meaningfully narrowed.
@@ -1901,10 +1921,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check definite assignment for block-scoped variables without initializers
-        if self.should_check_definite_assignment(sym_id, idx)
-            && !self.skip_definite_assignment_for_type(declared_type)
-            && !self.is_definitely_assigned_at(idx)
-        {
+        if should_report_variable_use_before_assignment(self, idx, declared_type, sym_id) {
             // Report TS2454 error: Variable used before assignment
             self.emit_definite_assignment_error(idx, sym_id);
             // Return declared type to avoid cascading errors
