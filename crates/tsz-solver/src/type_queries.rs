@@ -2788,6 +2788,22 @@ pub fn classify_for_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Lit
     }
 }
 
+/// Check if a type is suitable as a narrowing literal value.
+///
+/// Returns `Some(type_id)` for types that can be used as the comparand in
+/// discriminant or literal equality narrowing:
+/// - Literal types (string, number, boolean, bigint)
+/// - Enum member types (nominal enum values like `Types.Str`)
+///
+/// Returns `None` for all other types.
+pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let key = db.lookup(type_id)?;
+    match key {
+        TypeData::Literal(_) | TypeData::Enum(_, _) => Some(type_id),
+        _ => None,
+    }
+}
+
 /// Extracts the return type from a callable type for declaration emit.
 ///
 /// For overloaded functions (Callable), returns the return type of the first signature.
