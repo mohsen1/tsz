@@ -187,7 +187,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut candidate_targets: Option<Vec<bool>> = None;
 
         for &(prop_name, source_prop_type) in &disc_props {
-            let source_values = get_type_constituents(self.interner, source_prop_type);
+            let source_values = get_discriminant_values(self.interner, source_prop_type);
             if source_values.len() > MAX_DISCRIMINANT_COMBINATIONS {
                 return SubtypeResult::False;
             }
@@ -232,7 +232,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // must be assignable to at least one matching target member.
         // Use the first discriminant for per-value checking.
         let (disc_name, disc_source_type) = disc_props[0];
-        let source_values = get_type_constituents(self.interner, disc_source_type);
+        let source_values = get_discriminant_values(self.interner, disc_source_type);
 
         for &value in &source_values {
             let narrowed = narrow_object_property(self.interner, source_shape_id, disc_name, value);
@@ -270,6 +270,20 @@ fn get_type_constituents(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> 
     } else {
         vec![type_id]
     }
+}
+
+/// Get discriminant values from a source property type.
+///
+/// This expands `boolean` to `true | false` to enable discriminated union matching,
+/// since TypeScript treats `boolean` as equivalent to `true | false` for this purpose.
+/// For other types, returns constituents as-is.
+fn get_discriminant_values(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    // Special case: boolean is equivalent to true | false for discriminated union matching
+    if type_id == TypeId::BOOLEAN {
+        return vec![TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE];
+    }
+
+    get_type_constituents(db, type_id)
 }
 
 /// Get a property type from an object-like type by atom name.
