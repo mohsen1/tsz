@@ -2634,7 +2634,23 @@ impl ParserState {
         loop {
             let type_ref = self.parse_heritage_type_reference();
             types.push(type_ref);
-            if !self.parse_optional(SyntaxKind::CommaToken) {
+            if self.is_token(SyntaxKind::CommaToken) {
+                let comma_pos = self.token_pos();
+                let comma_end = self.token_end();
+                self.next_token();
+                // Trailing comma before { — emit TS1009 like the extends clause does
+                if self.is_token(SyntaxKind::OpenBraceToken)
+                    || self.is_token(SyntaxKind::ExtendsKeyword)
+                {
+                    self.parse_error_at(
+                        comma_pos,
+                        comma_end - comma_pos,
+                        tsz_common::diagnostics::diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
+                        diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
+                    );
+                    break;
+                }
+            } else {
                 break;
             }
         }
