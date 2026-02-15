@@ -1234,7 +1234,7 @@ impl<'a> CheckerState<'a> {
                         lowering.lower_merged_interface_declarations(&decls_with_arenas);
                     ty
                 } else {
-                    lowering.lower_interface_declarations(&symbol.declarations)
+                    lowering.lower_interface_declarations_with_symbol(&symbol.declarations, sym_id)
                 };
                 let merged =
                     self.merge_interface_heritage_types(&symbol.declarations, interface_type);
