@@ -1107,9 +1107,9 @@ impl<'a> FlowAnalyzer<'a> {
 
         loop {
             let current_node = self.arena.get(current)?;
-            let access = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                self.arena.get_access_expr(current_node)?
-            } else if current_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let access = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || current_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
                 self.arena.get_access_expr(current_node)?
             } else {
                 // Not a property/element access - we've reached the base
@@ -1212,12 +1212,9 @@ impl<'a> FlowAnalyzer<'a> {
             return false;
         };
 
-        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let Some(access) = self.arena.get_access_expr(target_node) else {
-                return false;
-            };
-            self.is_matching_reference(base, access.expression)
-        } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
             let Some(access) = self.arena.get_access_expr(target_node) else {
                 return false;
             };

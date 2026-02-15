@@ -1179,9 +1179,9 @@ impl Project {
                 let text = &source_text[start..end];
 
                 // Remove quotes to get just the path
-                let path = if text.starts_with('"') && text.ends_with('"') && text.len() > 1 {
-                    &text[1..text.len() - 1]
-                } else if text.starts_with('\'') && text.ends_with('\'') && text.len() > 1 {
+                let path = if (text.starts_with('"') && text.ends_with('"') && text.len() > 1)
+                    || (text.starts_with('\'') && text.ends_with('\'') && text.len() > 1)
+                {
                     &text[1..text.len() - 1]
                 } else {
                     continue;

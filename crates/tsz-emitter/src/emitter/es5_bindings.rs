@@ -2304,17 +2304,10 @@ impl<'a> Printer<'a> {
             }
         }
         // Destructuring patterns: extract all binding identifiers
-        else if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
-                for &elem_idx in &pattern.elements.nodes {
-                    if let Some(elem_node) = self.arena.get(elem_idx)
-                        && let Some(elem) = self.arena.get_binding_element(elem_node)
-                    {
-                        self.pre_register_binding_name(elem.name);
-                    }
-                }
-            }
-        } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+        else if matches!(
+            name_node.kind,
+            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
+        ) {
             if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
                 for &elem_idx in &pattern.elements.nodes {
                     if let Some(elem_node) = self.arena.get(elem_idx)
@@ -2345,7 +2338,10 @@ impl<'a> Printer<'a> {
                     .block_scope_state
                     .register_var_declaration(original_name);
             }
-        } else if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+        } else if matches!(
+            name_node.kind,
+            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
+        ) {
             if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
                 for &elem_idx in &pattern.elements.nodes {
                     if let Some(elem_node) = self.arena.get(elem_idx)
@@ -2355,7 +2351,6 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-        } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
                 for &elem_idx in &pattern.elements.nodes {
                     if let Some(elem_node) = self.arena.get(elem_idx)
