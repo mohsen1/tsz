@@ -216,7 +216,7 @@ fn test_prepare_test_dir_copies_absolute_tsconfig_to_root() {
     ];
     let options: HashMap<String, String> = HashMap::new();
 
-    let prepared = prepare_test_dir(content, &filenames, &options).unwrap();
+    let prepared = prepare_test_dir(content, &filenames, &options, None).unwrap();
     let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
     assert!(
         root_tsconfig.is_file(),
@@ -370,7 +370,7 @@ fn test_prepare_test_dir_preserves_tsconfig() {
         ),
     ];
 
-    let prepared = prepare_test_dir("", &filenames, &HashMap::new()).unwrap();
+    let prepared = prepare_test_dir("", &filenames, &HashMap::new(), None).unwrap();
     let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
     let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
