@@ -52,7 +52,7 @@ pub mod type_queries;
 pub mod type_queries_extended;
 pub mod types;
 pub mod unsoundness_audit;
-mod utils;
+pub mod utils;
 pub mod variance;
 pub mod visitor;
 pub mod widening;

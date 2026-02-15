@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat \"$CLAUDE_PROJECT_DIR/AGENTS.md\""
+            "command": "git pull --rebase origin main 2>/dev/null; cat \"$CLAUDE_PROJECT_DIR/AGENTS.md\""
           }
         ]
       }
