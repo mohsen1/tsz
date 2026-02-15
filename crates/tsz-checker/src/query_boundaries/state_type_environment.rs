@@ -1,7 +1,6 @@
-use tsz_solver::MappedTypeId;
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::{MappedTypeId, TypeDatabase, TypeId};
 
-pub(crate) use tsz_solver::type_queries::{
+pub(crate) use tsz_solver::type_queries_extended::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
 

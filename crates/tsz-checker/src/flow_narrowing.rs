@@ -16,10 +16,8 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver as solver_narrowing;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{
-    LiteralTypeKind, UnionMembersKind, classify_for_union_members, classify_literal_type,
-    get_object_shape,
-};
+use tsz_solver::type_queries::{UnionMembersKind, classify_for_union_members, get_object_shape};
+use tsz_solver::type_queries_extended::{LiteralTypeKind, classify_literal_type};
 
 // =============================================================================
 // Flow Narrowing Utilities

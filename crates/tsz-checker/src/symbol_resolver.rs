@@ -30,6 +30,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::is_compiler_managed_type;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TypeSymbolResolution {
@@ -1340,8 +1341,6 @@ impl<'a> CheckerState<'a> {
     /// Returns the symbol ID if the resolved symbol has the TYPE flag set.
     /// Returns None for built-in types that have special handling in TypeLowering.
     pub(crate) fn resolve_type_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
-        use tsz_solver::is_compiler_managed_type;
-
         // Skip built-in types that have special handling in TypeLowering
         // These types use built-in TypeData representations instead of Refs
         if let Some(node) = self.ctx.arena.get(idx)

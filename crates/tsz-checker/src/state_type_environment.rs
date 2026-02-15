@@ -10,6 +10,8 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::MappedTypeId;
+use tsz_solver::SourceLocation;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::visitor::{
@@ -288,7 +290,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn evaluate_mapped_type_with_resolution_inner(
         &mut self,
         type_id: TypeId,
-        mapped_id: tsz_solver::MappedTypeId,
+        mapped_id: MappedTypeId,
     ) -> TypeId {
         use tsz_solver::{PropertyInfo, TypeSubstitution, instantiate_type};
         let factory = self.ctx.types.factory();
@@ -1634,10 +1636,10 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Get a source location for a node.
-    pub fn get_source_location(&self, idx: NodeIndex) -> Option<tsz_solver::SourceLocation> {
+    pub fn get_source_location(&self, idx: NodeIndex) -> Option<SourceLocation> {
         let node = self.ctx.arena.get(idx)?;
-        Some(tsz_solver::SourceLocation::new(
-            self.ctx.file_name.as_str(),
+        Some(SourceLocation::new(
+            self.ctx.file_name.clone(),
             node.pos,
             node.end,
         ))

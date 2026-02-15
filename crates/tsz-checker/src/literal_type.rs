@@ -14,7 +14,7 @@
 
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
-use tsz_solver::type_queries::{
+use tsz_solver::type_queries_extended::{
     LiteralTypeKind, classify_literal_type, create_boolean_literal_type,
     create_number_literal_type, create_string_literal_type,
     get_boolean_literal_value as solver_get_boolean_literal_value,

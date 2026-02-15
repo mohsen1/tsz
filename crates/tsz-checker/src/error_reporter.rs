@@ -3531,7 +3531,7 @@ impl<'a> CheckerState<'a> {
             tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), loc.start, loc.length());
 
         for failure in failures {
-            let pending = PendingDiagnostic {
+            let pending: PendingDiagnostic = PendingDiagnostic {
                 span: Some(span.clone()),
                 ..failure.clone()
             };
@@ -4290,7 +4290,8 @@ impl<'a> CheckerState<'a> {
                     let start = usize::try_from(loc.start).ok()?;
                     let src = sf.text.as_ref();
                     let pattern = format!("{name}[]");
-                    src.get(start..).map(|tail| tail.starts_with(&pattern))
+                    src.get(start..)
+                        .map(|tail: &str| tail.starts_with(pattern.as_str()))
                 })
                 .unwrap_or(false);
             let allow_any_in_parse_recovery = name == "any";
