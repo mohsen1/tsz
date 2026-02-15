@@ -425,6 +425,7 @@ pub struct CheckerContext<'a> {
     ///
     /// Key invariant: all specifier lookups should use
     /// `module_resolution::module_specifier_candidates` for canonical variants.
+    #[allow(clippy::type_complexity)]
     pub resolved_module_paths: Option<Arc<FxHashMap<(usize, String), usize>>>,
 
     /// Current file index in multi-file mode (index into all_arenas/all_binders).
@@ -449,6 +450,7 @@ pub struct CheckerContext<'a> {
     ///
     /// Diagnostic-source invariant: module-not-found-family code/message selection
     /// should come from resolver outcomes when present.
+    #[allow(clippy::type_complexity)]
     pub resolved_module_errors: Option<Arc<FxHashMap<(usize, String), ResolutionError>>>,
 
     /// Import resolution stack for circular import detection.
