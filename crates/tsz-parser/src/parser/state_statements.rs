@@ -3489,36 +3489,10 @@ impl ParserState {
             );
         }
 
-        // Recovery: Handle stray statements in class bodies (common copy-paste error)
-        // Users often accidentally leave statements like `if`, `while`, `return` in class bodies
-        let is_statement_keyword = matches!(
-            self.token(),
-            SyntaxKind::IfKeyword         // if (x) { }
-            | SyntaxKind::WhileKeyword     // while (x) { }
-            | SyntaxKind::DoKeyword        // do { } while (x)
-            | SyntaxKind::ForKeyword       // for (...) { }
-            | SyntaxKind::SwitchKeyword    // switch (x) { }
-            | SyntaxKind::ReturnKeyword    // return x;
-            | SyntaxKind::ThrowKeyword     // throw x;
-            | SyntaxKind::TryKeyword       // try { } catch { }
-            | SyntaxKind::WithKeyword      // with (x) { }
-            | SyntaxKind::DebuggerKeyword // debugger;
-        );
-
-        if is_statement_keyword {
-            // Only emit error if we haven't already emitted one at this position
-            if self.token_pos() != self.last_error_pos {
-                self.parse_error_at_current_token(
-                    "Declaration or statement expected.",
-                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                );
-            }
-            // Parse the statement to consume it and balance braces
-            // This maintains parsing sync so we can continue parsing the rest of the class
-            let _ = self.parse_statement();
-            // Return NONE to indicate this is not a valid class member
-            return NodeIndex::NONE;
-        }
+        // Note: Reserved keywords like `if`, `for`, `delete`, `function`, etc. are valid
+        // property names in class bodies (e.g., `class C { delete; for; if() {} }`).
+        // We do NOT reject them here — they flow through to normal class member parsing
+        // where is_property_name() correctly accepts them.
 
         // Parse decorators if present
         let decorators = self.parse_decorators();
@@ -3616,13 +3590,24 @@ impl ParserState {
             return self.parse_index_signature_with_modifiers(modifiers, start_pos);
         }
 
-        // Recovery: Handle 'function' keyword in class members
-        // Note: 'var', 'let', 'const' are allowed as property/method names (e.g., `var() {}`)
-        // 'function' is invalid as a class member keyword, but we recover gracefully
-        // by silently consuming it and parsing the rest as a method
+        // Recovery: Handle 'function' keyword used as a modifier in class members
+        // `function foo() {}` is invalid in a class (the `function` keyword is not a modifier).
+        // But `function;` or `function(){}` are valid property/method names.
+        // Only consume `function` as a modifier when followed by an identifier on the same line.
         if self.is_token(SyntaxKind::FunctionKeyword) {
-            // Silently consume 'function' without emitting TS1068
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
             self.next_token();
+            let next_is_identifier =
+                self.is_identifier_or_keyword() && !self.scanner.has_preceding_line_break();
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+
+            if next_is_identifier {
+                // `function foo(){}` — consume `function` and let it parse as a method
+                self.next_token();
+            }
+            // Otherwise, `function` will be parsed as a property/method name below
         }
 
         // Recovery: Handle 'const'/'let'/'var' used as modifiers in class members
