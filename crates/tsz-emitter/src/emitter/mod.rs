@@ -324,7 +324,6 @@ pub struct Printer<'a> {
     pub(super) iterator_for_of_depth: usize,
 
     /// Current nesting depth for destructuring emission that should wrap spread inputs with `__read`.
-    #[allow(dead_code)]
     pub(super) destructuring_read_depth: u32,
 }
 
