@@ -326,7 +326,7 @@ impl LspServer {
                 Some(self.make_response(id, Ok(Value::Null)))
             }
             Some("exit") => {
-                std::process::exit(if self.shutdown_requested { 0 } else { 1 });
+                std::process::exit(i32::from(!self.shutdown_requested));
             }
             Some("textDocument/didOpen") => {
                 self.handle_did_open(msg.params);

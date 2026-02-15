@@ -410,9 +410,7 @@ impl<'a> EnumES5Transformer<'a> {
                 match op {
                     o if o == SyntaxKind::MinusToken as u16 => Some(operand.checked_neg()?),
                     o if o == SyntaxKind::TildeToken as u16 => Some(!operand),
-                    o if o == SyntaxKind::ExclamationToken as u16 => {
-                        Some(if operand == 0 { 1 } else { 0 })
-                    }
+                    o if o == SyntaxKind::ExclamationToken as u16 => Some(i64::from(operand == 0)),
                     o if o == SyntaxKind::PlusToken as u16 => Some(operand),
                     _ => None,
                 }

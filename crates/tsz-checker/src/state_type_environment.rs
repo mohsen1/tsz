@@ -1025,7 +1025,7 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::NAMESPACE_MODULE
                     | symbol_flags::VALUE_MODULE)
                 != 0;
-            (if is_type_defining { 0u8 } else { 1u8 }, sym_id.0)
+            (u8::from(!is_type_defining), sym_id.0)
         });
 
         // Resolve each symbol and add to the environment.

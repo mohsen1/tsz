@@ -1187,7 +1187,7 @@ impl<'a> CheckerState<'a> {
             } else if property_count > 0 && method_count > 0 {
                 // Mixed properties and methods: check if first is property
                 let first_is_property = info.is_property.first().copied().unwrap_or(false);
-                let skip_count = if first_is_property { 0 } else { 1 };
+                let skip_count = usize::from(!first_is_property);
 
                 for &idx in info.indices.iter().skip(skip_count) {
                     self.report_duplicate_class_member_ts2300(idx);
