@@ -2341,7 +2341,7 @@ impl<'a> CheckerState<'a> {
                     resolver.has_index_signature(declared_type, IndexKind::String)
                         || resolver.has_index_signature(declared_type, IndexKind::Number)
                 };
-                if has_index_sig {
+                if has_index_sig && (flow_type == declared_type || flow_type == TypeId::ERROR) {
                     declared_type
                 } else if flow_type != declared_type && flow_type != TypeId::ERROR {
                     // Flow narrowed the type - but check if this is just the initializer
