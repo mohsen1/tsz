@@ -357,7 +357,7 @@ impl ParserState {
 
     /// Check if we're parsing inside a class body.
     #[inline]
-    pub(crate) fn in_class_body(&self) -> bool {
+    pub(crate) const fn in_class_body(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_IN_CLASS) != 0
     }
 

@@ -202,44 +202,43 @@ class C21 {
 
     let mut found_expression = None;
     for (idx, node) in parser.get_arena().nodes.iter().enumerate() {
-        if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(text) = parser
+        if node.kind == SyntaxKind::Identifier as u16
+            && let Some(text) = parser
                 .get_arena()
                 .get_identifier_text(NodeIndex(idx as u32))
-                && text == "yield"
-            {
-                let t = checker.get_type_of_node(NodeIndex(idx as u32));
-                println!(
-                    "identifier node={} pos={}..{} type={} text={}",
-                    idx, node.pos, node.end, node.kind, t.0
-                );
-                if let Some(symbol) = checker.resolve_identifier_symbol(NodeIndex(idx as u32)) {
-                    let flags = checker.ctx.binder.get_symbol(symbol).unwrap().flags;
-                    println!("  symbol={} flags={}", symbol.0, flags);
-                }
-
-                if let Some(en) = parser
-                    .get_arena()
-                    .get(NodeIndex(idx as u32))
-                    .and_then(|_| parser.get_arena().get_extended(NodeIndex(idx as u32)))
-                {
-                    println!(
-                        "  parent={} kind={}",
-                        en.parent.0,
-                        parser
-                            .get_arena()
-                            .get(en.parent)
-                            .map(|n| n.kind)
-                            .unwrap_or(0)
-                    );
-                }
-
-                found_expression = Some(NodeIndex(idx as u32));
+            && text == "yield"
+        {
+            let t = checker.get_type_of_node(NodeIndex(idx as u32));
+            println!(
+                "identifier node={} pos={}..{} type={} text={}",
+                idx, node.pos, node.end, node.kind, t.0
+            );
+            if let Some(symbol) = checker.resolve_identifier_symbol(NodeIndex(idx as u32)) {
+                let flags = checker.ctx.binder.get_symbol(symbol).unwrap().flags;
+                println!("  symbol={} flags={}", symbol.0, flags);
             }
+
+            if let Some(en) = parser
+                .get_arena()
+                .get(NodeIndex(idx as u32))
+                .and_then(|_| parser.get_arena().get_extended(NodeIndex(idx as u32)))
+            {
+                println!(
+                    "  parent={} kind={}",
+                    en.parent.0,
+                    parser
+                        .get_arena()
+                        .get(en.parent)
+                        .map(|n| n.kind)
+                        .unwrap_or(0)
+                );
+            }
+
+            found_expression = Some(NodeIndex(idx as u32));
         }
     }
 
-    println!("found expression={:?}", found_expression);
+    println!("found expression={found_expression:?}");
     assert!(
         count_2693 > 0,
         "expected TS2693 for async generator computed yield member"
@@ -344,63 +343,58 @@ fn repro_async_generator_class_methods_ast_shape() {
                 .get(ext.parent)
                 .map(|n| n.kind)
                 .unwrap_or(0);
-            if node.kind == SyntaxKind::Identifier as u16 {
-                if let Some(text) = parser.get_arena().get_identifier_text(idx) {
-                    if text == "yield" {
-                        let pos = parser
-                            .get_arena()
-                            .get(idx)
-                            .map(|n| (n.pos, n.end))
-                            .unwrap_or((0, 0));
-                        let (line, column) = lookup_line(pos.0);
-                        let mut has_parent_computed = false;
-                        let mut has_method_ancestor = false;
-                        let mut parent_chain = Vec::new();
-                        let mut cursor = ext.parent;
-                        let mut depth = 0;
-                        while cursor.0 != 0 && depth < 12 {
-                            if let Some(parent_node) = parser.get_arena().get(cursor) {
-                                parent_chain.push(parent_node.kind);
-                                if parent_node.kind
-                                    == tsz_parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
-                                {
-                                    has_parent_computed = true;
-                                }
-                                if parent_node.kind
-                                    == tsz_parser::syntax_kind_ext::METHOD_DECLARATION
-                                {
-                                    has_method_ancestor = true;
-                                }
+            if node.kind == SyntaxKind::Identifier as u16
+                && let Some(text) = parser.get_arena().get_identifier_text(idx)
+                && text == "yield"
+            {
+                let pos = parser
+                    .get_arena()
+                    .get(idx)
+                    .map(|n| (n.pos, n.end))
+                    .unwrap_or((0, 0));
+                let (line, column) = lookup_line(pos.0);
+                let mut has_parent_computed = false;
+                let mut has_method_ancestor = false;
+                let mut parent_chain = Vec::new();
+                let mut cursor = ext.parent;
+                let mut depth = 0;
+                while cursor.0 != 0 && depth < 12 {
+                    if let Some(parent_node) = parser.get_arena().get(cursor) {
+                        parent_chain.push(parent_node.kind);
+                        if parent_node.kind == tsz_parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                            has_parent_computed = true;
+                        }
+                        if parent_node.kind == tsz_parser::syntax_kind_ext::METHOD_DECLARATION {
+                            has_method_ancestor = true;
+                        }
 
-                                if let Some(parent_ext) = parser.get_arena().get_extended(cursor) {
-                                    cursor = parent_ext.parent;
-                                } else {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                            depth += 1;
+                        if let Some(parent_ext) = parser.get_arena().get_extended(cursor) {
+                            cursor = parent_ext.parent;
+                        } else {
+                            break;
                         }
-                        let value_type = checker.get_type_of_node(idx).0;
-                        println!(
-                            "id={:?} pos={:?}..{:?} line={}:{} parent={:?} kind={:?} computed_parent={has_parent_computed} method_ancestor={has_method_ancestor} type={}",
-                            idx, pos.0, pos.1, line, column, ext.parent, parent_kind, value_type
-                        );
-                        println!("  ancestor kinds: {:?}", parent_chain);
-                        if let Some(symbol) = checker.resolve_identifier_symbol(idx) {
-                            println!("  symbol={}", symbol.0);
-                        }
-                        if checker.get_source_location(idx).is_some() {
-                            println!(
-                                "  diag_flags: has_parse_errors={} has_syntax_parse_errors={}",
-                                checker.has_parse_errors(),
-                                checker.has_syntax_parse_errors()
-                            );
-                        }
+                    } else {
+                        break;
                     }
+                    depth += 1;
                 }
-            } else if node.kind == tsz_parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME as u16 {
+                let value_type = checker.get_type_of_node(idx).0;
+                println!(
+                    "id={:?} pos={:?}..{:?} line={}:{} parent={:?} kind={:?} computed_parent={has_parent_computed} method_ancestor={has_method_ancestor} type={}",
+                    idx, pos.0, pos.1, line, column, ext.parent, parent_kind, value_type
+                );
+                println!("  ancestor kinds: {parent_chain:?}");
+                if let Some(symbol) = checker.resolve_identifier_symbol(idx) {
+                    println!("  symbol={}", symbol.0);
+                }
+                if checker.get_source_location(idx).is_some() {
+                    println!(
+                        "  diag_flags: has_parse_errors={} has_syntax_parse_errors={}",
+                        checker.has_parse_errors(),
+                        checker.has_syntax_parse_errors()
+                    );
+                }
+            } else if node.kind == tsz_parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                 let pos = parser
                     .get_arena()
                     .get(idx)
@@ -460,7 +454,7 @@ fn repro_async_generator_class_methods_cross_file() {
     let iface_binder = std::sync::Arc::new(iface_binder);
     let class_binder = std::sync::Arc::new(class_binder);
     let all_arenas = std::sync::Arc::new(vec![iface_arena.clone(), class_arena.clone()]);
-    let all_binders = std::sync::Arc::new(vec![iface_binder.clone(), class_binder.clone()]);
+    let all_binders = std::sync::Arc::new(vec![iface_binder, class_binder.clone()]);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -487,7 +481,6 @@ fn repro_async_generator_class_methods_cross_file() {
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
             && class_arena
                 .get_identifier_text(tsz_parser::NodeIndex(idx as u32))
-                .as_deref()
                 .is_some_and(|t| t == "yield")
         {
             let idx = tsz_parser::NodeIndex(idx as u32);
@@ -505,22 +498,32 @@ fn repro_async_generator_class_methods_cross_file() {
                     .get_symbol(sym)
                     .map(|s| s.flags)
                     .unwrap_or(0);
-                eprintln!("yield symbol={} flags={}", sym_name, sym_flags);
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "yield symbol={sym_name} flags={sym_flags}"
+                );
             }
         }
     }
 
     for d in checker.ctx.diagnostics.iter() {
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr(),
             "diag code={} start={} len={} msg={}",
-            d.code, d.start, d.length, d.message_text
+            d.code,
+            d.start,
+            d.length,
+            d.message_text
         );
         if d.code == diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE {
             has_2693 = true;
         }
     }
 
-    eprintln!("found_in_class={found_in_class} has_2693={has_2693}");
+    let _ = writeln!(
+        std::io::stderr(),
+        "found_in_class={found_in_class} has_2693={has_2693}"
+    );
     assert!(found_in_class);
     assert!(has_2693);
 }
