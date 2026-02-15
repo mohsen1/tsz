@@ -567,10 +567,12 @@ impl ParserState {
             self.next_token();
             true
         } else {
-            // Special case: Force error emission for missing ) when we see {
-            // This is a common error pattern that should always be reported
-            let force_emit =
-                kind == SyntaxKind::CloseParenToken && self.is_token(SyntaxKind::OpenBraceToken);
+            // Force error emission for missing ) in common patterns.
+            // This bypasses the should_report_error() distance check.
+            let force_emit = kind == SyntaxKind::CloseParenToken
+                && (self.is_token(SyntaxKind::OpenBraceToken)
+                    || self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken));
 
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
@@ -583,23 +585,10 @@ impl ParserState {
                     false // Never suppress forced errors
                 } else {
                     match kind {
-                        SyntaxKind::CloseBraceToken
-                        | SyntaxKind::CloseParenToken
-                        | SyntaxKind::CloseBracketToken => {
+                        SyntaxKind::CloseBraceToken | SyntaxKind::CloseBracketToken => {
                             // At EOF, the file ended before this closing token. TypeScript reports
                             // these missing closing delimiters, so do not suppress at EOF.
                             if self.is_token(SyntaxKind::EndOfFileToken) {
-                                false
-                            }
-                            // For closing parentheses, be more strict when we see {, }, or if
-                            // These are common cases of missing ) in conditions/parameters
-                            else if kind == SyntaxKind::CloseParenToken
-                                && (self.is_token(SyntaxKind::OpenBraceToken)
-                                    || self.is_token(SyntaxKind::CloseBraceToken)
-                                    || self.is_token(SyntaxKind::IfKeyword))
-                            {
-                                // { = start of block body, } = end of enclosing block, if = chained
-                                // All indicate the ) was genuinely missing
                                 false
                             }
                             // If next token starts a statement, the user has clearly moved on
@@ -610,6 +599,20 @@ impl ParserState {
                             // If there's a line break, give the user benefit of doubt
                             else {
                                 self.scanner.has_preceding_line_break()
+                            }
+                        }
+                        SyntaxKind::CloseParenToken => {
+                            // Missing ) is almost always a genuine error — don't suppress
+                            // at EOF, statement boundaries, or block delimiters.
+                            // Only suppress if on same line with no clear boundary.
+                            if self.is_token(SyntaxKind::EndOfFileToken) {
+                                false
+                            } else if self.scanner.has_preceding_line_break() {
+                                // At a line break, suppress unless it's a clear boundary
+                                !self.is_statement_start()
+                                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                            } else {
+                                false
                             }
                         }
                         _ => false,
