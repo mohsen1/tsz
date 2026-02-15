@@ -165,10 +165,6 @@ impl DiagnosticTracer {
     }
 
     /// Get a reference to the collected failure reason (if any).
-    pub fn get_failure(&self) -> Option<&SubtypeFailureReason> {
-        self.failure.as_ref()
-    }
-
     /// Check if any failure was collected.
     pub fn has_failure(&self) -> bool {
         self.failure.is_some()
@@ -528,10 +524,6 @@ pub mod codes {
     pub use dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
 
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
-
-    #[cfg(test)]
-    /// Same code as TYPE_NOT_ASSIGNABLE (TS2322) — used for nested property elaboration.
-    pub const NESTED_TYPE_MISMATCH: u32 = dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
 
     // Function/call errors
     pub use dc::CANNOT_FIND_NAME;
