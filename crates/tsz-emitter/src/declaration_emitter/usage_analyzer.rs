@@ -202,33 +202,77 @@ impl<'a> UsageAnalyzer<'a> {
                 // Check if export_clause contains a declaration we need to analyze
                 if let Some(export_node) = self.arena.get(stmt_idx)
                     && let Some(export) = self.arena.get_export_decl(export_node)
-                    && !export.export_clause.is_none()
-                    && let Some(clause_node) = self.arena.get(export.export_clause)
                 {
-                    match clause_node.kind {
-                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                            self.analyze_function_declaration(export.export_clause);
+                    if !export.export_clause.is_none() && let Some(clause_node) = self.arena.get(export.export_clause) {
+                        match clause_node.kind {
+                            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                                self.analyze_function_declaration(export.export_clause);
+                            }
+                            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                                self.analyze_class_declaration(export.export_clause);
+                            }
+                            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                                self.analyze_interface_declaration(export.export_clause);
+                            }
+                            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                                self.analyze_type_alias_declaration(export.export_clause);
+                            }
+                            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                                self.analyze_enum_declaration(export.export_clause);
+                            }
+                            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                                self.analyze_variable_statement(export.export_clause);
+                            }
+                            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                                self.analyze_import_equals_declaration(export.export_clause);
+                            }
+                            _ => {}
                         }
-                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                            self.analyze_class_declaration(export.export_clause);
-                        }
-                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                            self.analyze_interface_declaration(export.export_clause);
-                        }
-                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                            self.analyze_type_alias_declaration(export.export_clause);
-                        }
-                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                            self.analyze_enum_declaration(export.export_clause);
-                        }
-                        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                            self.analyze_variable_statement(export.export_clause);
-                        }
-                        _ => {}
                     }
                 }
             }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.analyze_module_declaration(stmt_idx);
+            }
             _ => {}
+        }
+    }
+
+    fn analyze_module_declaration(&mut self, module_idx: NodeIndex) {
+        let Some(module_node) = self.arena.get(module_idx) else {
+            return;
+        };
+        let Some(module) = self.arena.get_module(module_node) else {
+            return;
+        };
+
+        if let Some(body_node) = self.arena.get(module.body) {
+            if let Some(module_block) = self.arena.get_module_block(body_node) {
+                if let Some(ref stmts) = module_block.statements {
+                    for &stmt_idx in &stmts.nodes {
+                        self.analyze_statement(stmt_idx);
+                    }
+                }
+            } else if let Some(_nested_module) = self.arena.get_module(body_node) {
+                self.analyze_module_declaration(module.body);
+            }
+        }
+    }
+
+    fn analyze_import_equals_declaration(&mut self, import_idx: NodeIndex) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+
+        // Mark the RHS namespace/type/value as used by this declaration.
+        if !import.module_specifier.is_none() {
+            let old = self.in_value_pos;
+            self.in_value_pos = true;
+            self.analyze_entity_name(import.module_specifier);
+            self.in_value_pos = old;
         }
     }
 

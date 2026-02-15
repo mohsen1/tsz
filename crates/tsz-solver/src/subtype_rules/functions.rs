@@ -663,6 +663,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // When both sides are generic but have different type parameter counts,
+        // erase both signatures by replacing type params with their constraints
+        // (or `unknown` if unconstrained). This matches tsc's `getCanonicalSignature`
+        // behavior in `signatureRelatedTo` when `eraseGenerics` is true.
+        // Example: `<T, U>(x: T, y: U) => void` vs `<T>(x: T, y: T) => void`
+        //   → erased: `(x: unknown, y: unknown) => void` vs `(x: unknown, y: unknown) => void`
+        if !source_instantiated.type_params.is_empty()
+            && !target_instantiated.type_params.is_empty()
+            && source_instantiated.type_params.len() != target_instantiated.type_params.len()
+        {
+            let mut source_canonical = TypeSubstitution::new();
+            for tp in &source_instantiated.type_params {
+                source_canonical.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+            }
+            source_instantiated =
+                self.instantiate_function_shape(&source_instantiated, &source_canonical);
+
+            let mut target_canonical = TypeSubstitution::new();
+            for tp in &target_instantiated.type_params {
+                target_canonical.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+            }
+            target_instantiated =
+                self.instantiate_function_shape(&target_instantiated, &target_canonical);
+        }
+
         // Contextual signature instantiation for generic source -> non-generic target.
         // This is key for non-strict assignability cases where a generic function expression
         // is contextually typed by a concrete callback/function type.

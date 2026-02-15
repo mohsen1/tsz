@@ -19,6 +19,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if pattern.elements.nodes.is_empty() {
+            self.write("{}");
+            return;
+        }
+
         self.write("{ ");
         self.emit_comma_separated(&pattern.elements.nodes);
         self.write(" }");

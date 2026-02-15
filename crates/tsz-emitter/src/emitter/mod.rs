@@ -260,14 +260,25 @@ pub struct Printer<'a> {
     pub(super) generated_temp_names: FxHashSet<String>,
 
     /// Stack for saving/restoring temp naming state when entering function scopes.
-    /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted).
-    pub(super) temp_scope_stack: Vec<(u32, FxHashSet<String>, bool, VecDeque<String>)>,
+    /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted, preallocated names, preallocated logical value names, value temps, reference temps).
+    pub(super) temp_scope_stack: Vec<(
+        u32,
+        FxHashSet<String>,
+        bool,
+        VecDeque<String>,
+        VecDeque<String>,
+        Vec<String>,
+        Vec<String>,
+    )>,
 
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
 
     /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
     pub(super) in_namespace_iife: bool,
+
+    /// Marker that the next block emission is a function body.
+    pub(super) emitting_function_body_block: bool,
 
     /// The name of the current namespace we're emitting inside (if any).
     /// Used for nested exported namespaces to emit proper IIFE parameters.
@@ -280,8 +291,16 @@ pub struct Printer<'a> {
     /// Each entry is (field_name, initializer_node_index).
     pub(super) pending_class_field_inits: Vec<(String, NodeIndex)>,
 
+    /// Temp names for assignment target values that need to be hoisted as `var _a, _b, ...;`.
+    /// These are emitted on a separate declaration list before reference temps.
+    pub(super) hoisted_assignment_value_temps: Vec<String>,
+
+    /// Temp names for assignment target values that must be reserved before references.
+    /// These are used by `make_unique_name_hoisted_value`.
+    pub(super) preallocated_logical_assignment_value_temps: VecDeque<String>,
+
     /// Temp variable names that need to be hoisted to the top of the current scope
-    /// as `var _a, _b, ...;`. Used for assignment destructuring in ES5 mode.
+    /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(super) hoisted_assignment_temps: Vec<String>,
 
     /// Temp names reserved ahead-of-time and consumed before generating new names.
@@ -346,9 +365,12 @@ impl<'a> Printer<'a> {
             temp_scope_stack: Vec::new(),
             first_for_of_emitted: false,
             in_namespace_iife: false,
+            emitting_function_body_block: false,
             current_namespace_name: None,
             declared_namespace_names: FxHashSet::default(),
             pending_class_field_inits: Vec::new(),
+            hoisted_assignment_value_temps: Vec::new(),
+            preallocated_logical_assignment_value_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
             preallocated_temp_names: VecDeque::new(),
             hoisted_for_of_temps: Vec::new(),
@@ -2402,10 +2424,15 @@ impl<'a> Printer<'a> {
         // Save position for hoisted temp var declarations (assignment destructuring).
         // After emitting all statements, we'll insert `var _a, _b, ...;` here if needed.
         self.hoisted_assignment_temps.clear();
+        self.hoisted_assignment_value_temps.clear();
+        self.preallocated_logical_assignment_value_temps.clear();
         self.hoisted_for_of_temps.clear();
         self.preallocated_temp_names.clear();
         self.reserved_iterator_return_temps.clear();
         self.iterator_for_of_depth = 0;
+
+        self.prepare_logical_assignment_value_temps(source_idx);
+
         let hoisted_var_byte_offset = self.writer.len();
         let hoisted_var_line = self.writer.current_line();
 
@@ -2547,11 +2574,18 @@ impl<'a> Printer<'a> {
         }
 
         // Insert hoisted temp declarations (for-of iterator lowering + assignment destructuring).
-        let mut hoisted_vars = Vec::new();
-        hoisted_vars.extend(self.hoisted_for_of_temps.iter().cloned());
-        hoisted_vars.extend(self.hoisted_assignment_temps.iter().cloned());
-        if !hoisted_vars.is_empty() {
-            let var_decl = format!("var {};", hoisted_vars.join(", "));
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+
+        if !ref_vars.is_empty() {
+            let var_decl = format!("var {};", ref_vars.join(", "));
+            self.writer
+                .insert_line_at(hoisted_var_byte_offset, hoisted_var_line, &var_decl);
+        }
+
+        if !self.hoisted_assignment_value_temps.is_empty() {
+            let var_decl = format!("var {};", self.hoisted_assignment_value_temps.join(", "));
             self.writer
                 .insert_line_at(hoisted_var_byte_offset, hoisted_var_line, &var_decl);
         }

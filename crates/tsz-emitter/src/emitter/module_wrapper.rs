@@ -1,6 +1,8 @@
 use super::Printer;
 use crate::emitter::ModuleKind;
+use std::collections::HashSet;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> Printer<'a> {
     pub(super) fn emit_module_wrapper(
@@ -101,8 +103,12 @@ impl<'a> Printer<'a> {
         &mut self,
         dependencies: &[String],
         source_node: &tsz_parser::parser::node::Node,
-        source_idx: NodeIndex,
+        _source_idx: NodeIndex,
     ) {
+        let Some(source) = self.arena.get_source_file(source_node) else {
+            return;
+        };
+
         self.write("System.register([");
         for (i, dep) in dependencies.iter().enumerate() {
             if i > 0 {
@@ -115,6 +121,17 @@ impl<'a> Printer<'a> {
         self.write("], function (exports_1, context_1) {");
         self.write_line();
         self.increase_indent();
+        self.write("\"use strict\";");
+        self.write_line();
+        let hoisted_names = self.collect_system_hoisted_names(source);
+        if !hoisted_names.is_empty() {
+            self.write("var ");
+            self.write(&hoisted_names.join(", "));
+            self.write(";");
+            self.write_line();
+        }
+        self.write("var __moduleName = context_1 && context_1.id;");
+        self.write_line();
         self.write("return {");
         self.write_line();
         self.increase_indent();
@@ -124,7 +141,7 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.emit_module_wrapper_body(source_node, source_idx);
+        self.emit_system_execute_body(source_node);
 
         self.decrease_indent();
         self.write("}");
@@ -156,5 +173,124 @@ impl<'a> Printer<'a> {
         self.ctx.options.module = prev_module;
         self.ctx.auto_detect_module = prev_auto_detect;
         self.ctx.original_module_kind = prev_original;
+    }
+
+    fn collect_system_hoisted_names(
+        &mut self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut seen = HashSet::new();
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+
+                    let mut binding_names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut binding_names);
+                    for name in binding_names {
+                        if !name.is_empty() && seen.insert(name.clone()) {
+                            names.push(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        names
+    }
+
+    fn emit_system_execute_body(&mut self, source_node: &tsz_parser::parser::node::Node) {
+        let prev_module = self.ctx.options.module;
+        let prev_auto_detect = self.ctx.auto_detect_module;
+        let prev_original = self.ctx.original_module_kind;
+
+        self.ctx.original_module_kind = Some(prev_module);
+        self.ctx.options.module = ModuleKind::CommonJS;
+        self.ctx.auto_detect_module = false;
+
+        let Some(source) = self.arena.get_source_file(source_node) else {
+            self.ctx.options.module = prev_module;
+            self.ctx.auto_detect_module = prev_auto_detect;
+            self.ctx.original_module_kind = prev_original;
+            return;
+        };
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let before_len = self.writer.len();
+
+            if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                self.emit_system_variable_initializers(stmt_node);
+            } else {
+                self.emit(stmt_idx);
+            }
+
+            if self.writer.len() > before_len {
+                self.write_line();
+            }
+        }
+
+        self.ctx.options.module = prev_module;
+        self.ctx.auto_detect_module = prev_auto_detect;
+        self.ctx.original_module_kind = prev_original;
+    }
+
+    fn emit_system_variable_initializers(&mut self, node: &tsz_parser::parser::node::Node) {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return;
+        };
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+
+                if decl.initializer.is_none() {
+                    continue;
+                }
+
+                self.emit(decl.name);
+                self.write(" = ");
+                self.emit_expression(decl.initializer);
+                self.write_semicolon();
+            }
+        }
     }
 }

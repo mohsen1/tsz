@@ -126,9 +126,13 @@ impl ParserState {
     /// Uses resynchronization to recover from errors and continue parsing.
     pub(crate) fn parse_source_file_statements(&mut self) -> NodeList {
         let mut statements = Vec::new();
+        let mut skip_after_binary_payload = false;
 
         while !self.is_token(SyntaxKind::EndOfFileToken) {
             let pos_before = self.token_pos();
+            if skip_after_binary_payload {
+                break;
+            }
 
             // Handle Unknown tokens (invalid characters) - must be checked FIRST
             if self.is_token(SyntaxKind::Unknown) {
@@ -137,7 +141,7 @@ impl ParserState {
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
                 );
-                self.next_token();
+                self.resync_after_error_with_statement_starts(false);
                 continue;
             }
 
@@ -157,6 +161,34 @@ impl ParserState {
                 continue;
             }
 
+            if self.is_token(SyntaxKind::AtToken) {
+                let snapshot = self.scanner.save_state();
+                let at_token = self.current_token;
+                self.next_token();
+                if self.is_token(SyntaxKind::Unknown) {
+                    self.current_token = at_token;
+                    self.next_token();
+                    self.parse_error_at_current_token(
+                        "Invalid character.",
+                        tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+                    );
+
+                    self.next_token();
+                    if !self.is_token(SyntaxKind::EndOfFileToken) {
+                        self.parse_error_at_current_token(
+                            "Declaration or statement expected.",
+                            tsz_common::diagnostics::diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                        );
+                    }
+
+                    skip_after_binary_payload = true;
+                    continue;
+                }
+                self.scanner.restore_state(snapshot);
+                self.current_token = at_token;
+            }
+
+            let statement_start_token = self.token();
             let stmt = self.parse_statement();
             if stmt.is_none() {
                 // Statement parsing failed, resync to recover
@@ -172,7 +204,12 @@ impl ParserState {
                     );
                 }
                 // Resync to next statement boundary to continue parsing
-                self.resync_after_error();
+                let allow_statement_starts = if statement_start_token == SyntaxKind::AtToken {
+                    false
+                } else {
+                    !self.is_statement_start()
+                };
+                self.resync_after_error_with_statement_starts(allow_statement_starts);
             } else {
                 statements.push(stmt);
             }
@@ -206,10 +243,11 @@ impl ParserState {
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
                 );
-                self.next_token();
+                self.resync_after_error_with_statement_starts(false);
                 continue;
             }
 
+            let statement_start_token = self.token();
             let stmt = self.parse_statement();
             if stmt.is_none() {
                 // Statement parsing failed, resync to recover
@@ -226,7 +264,12 @@ impl ParserState {
                     );
                 }
                 // Resync to next statement boundary to continue parsing
-                self.resync_after_error();
+                let allow_statement_starts = if statement_start_token == SyntaxKind::AtToken {
+                    false
+                } else {
+                    !self.is_statement_start()
+                };
+                self.resync_after_error_with_statement_starts(allow_statement_starts);
             } else {
                 statements.push(stmt);
             }
@@ -2319,7 +2362,14 @@ impl ParserState {
         }
 
         let start_pos = self.token_pos();
+        let snapshot = self.scanner.save_state();
+        let at_token = self.current_token;
         self.next_token(); // consume @
+        if self.is_token(SyntaxKind::Unknown) {
+            self.scanner.restore_state(snapshot);
+            self.current_token = at_token;
+            return None;
+        }
 
         // Parse the decorator expression (identifier, member access, or call)
         // Set CONTEXT_FLAG_IN_DECORATOR so that '[' is NOT treated as element access
@@ -3056,11 +3106,24 @@ impl ParserState {
                 }
                 // Handle 'export' - not valid as class member modifier
                 SyntaxKind::ExportKeyword => {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Unexpected modifier.",
-                        diagnostic_codes::UNEXPECTED_TOKEN,
-                    );
+                    // Skip emitting generic unexpected modifier for export when it
+                    // introduces a constructor declaration. Constructor-specific
+                    // validation emits TS1031.
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+                    let next_is_constructor = self.current_token == SyntaxKind::ConstructorKeyword
+                        && !self.scanner.has_preceding_line_break();
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+
+                    if !next_is_constructor {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "Unexpected modifier.",
+                            diagnostic_codes::UNEXPECTED_TOKEN,
+                        );
+                    }
                     self.next_token();
                     self.arena
                         .create_modifier(SyntaxKind::ExportKeyword, start_pos)
@@ -3559,6 +3622,33 @@ impl ParserState {
             })
         });
 
+        let has_static_modifier = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena
+                    .nodes
+                    .get(idx.0 as usize)
+                    .is_some_and(|node| node.kind == SyntaxKind::StaticKeyword as u16)
+            })
+        });
+
+        let has_export_modifier = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena
+                    .nodes
+                    .get(idx.0 as usize)
+                    .is_some_and(|node| node.kind == SyntaxKind::ExportKeyword as u16)
+            })
+        });
+
+        let has_declare_modifier = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena
+                    .nodes
+                    .get(idx.0 as usize)
+                    .is_some_and(|node| node.kind == SyntaxKind::DeclareKeyword as u16)
+            })
+        });
+
         if self.is_token(SyntaxKind::ConstructorKeyword) && !has_var_let_modifier {
             // TS1206: Decorators are not valid on constructors
             if has_decorators {
@@ -3569,6 +3659,28 @@ impl ParserState {
                     diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
             }
+
+            use tsz_common::diagnostics::diagnostic_codes;
+
+            if has_static_modifier {
+                self.parse_error_at_current_token(
+                    "'static' modifier cannot appear on a constructor declaration.",
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                );
+            }
+
+            if has_export_modifier {
+                self.parse_error_at_current_token(
+                    "'export' modifier cannot appear on class elements of this kind.",
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
+                );
+            } else if has_declare_modifier {
+                self.parse_error_at_current_token(
+                    "'declare' modifier cannot appear on class elements of this kind.",
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
+                );
+            }
+
             return self.parse_constructor_with_modifiers(modifiers);
         }
 

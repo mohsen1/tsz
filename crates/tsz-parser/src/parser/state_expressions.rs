@@ -281,18 +281,15 @@ impl ParserState {
         } else if self.is_token(SyntaxKind::ColonToken) {
             let in_conditional_true = (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0;
             if in_conditional_true {
-                let after_colon_snapshot = self.scanner.save_state();
-                let after_colon_token = {
-                    self.next_token();
-                    self.token()
-                };
-                self.scanner.restore_state(after_colon_snapshot);
-                self.current_token = SyntaxKind::ColonToken;
-                if after_colon_token == SyntaxKind::Identifier {
-                    self.scanner.restore_state(snapshot);
-                    self.current_token = current;
-                    return false;
-                }
+                // When inside the true branch of a conditional expression (a ? ... : ...),
+                // the `:` after `)` is almost always the conditional's else separator,
+                // not a return type annotation for an arrow function.
+                // Speculatively parsing a return type here can incorrectly consume the
+                // false branch (e.g., `(a, function() {})`) and conclude this is an arrow
+                // function when it isn't. Return false to let the conditional parser handle `:`.
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                return false;
             }
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();

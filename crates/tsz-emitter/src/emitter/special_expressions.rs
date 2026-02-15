@@ -23,7 +23,14 @@ impl<'a> Printer<'a> {
         };
 
         self.write("yield");
+
         if unary.asterisk_token {
+            if let Some(expr) = self.arena.get(unary.expression) {
+                self.emit_unemitted_comments_between(node.pos, expr.pos);
+            } else {
+                self.emit_unemitted_comments_between(node.pos, node.end);
+            }
+
             if self.ctx.flags.in_generator {
                 self.write("*");
             } else {
@@ -35,7 +42,10 @@ impl<'a> Printer<'a> {
                 self.write(" ");
                 return;
             };
-            if !self.is_expression_parenthesized(expr_node) {
+            if !unary.asterisk_token {
+                self.emit_unemitted_comments_between(node.pos, expr_node.pos);
+            }
+            if !self.is_expression_parenthesized(expr_node) || self.ctx.flags.in_generator {
                 self.write(" ");
             }
             self.emit_expression(unary.expression);
