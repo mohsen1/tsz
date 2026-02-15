@@ -866,6 +866,11 @@ impl<'a> DocumentHighlightProvider<'a> {
     /// Find a keyword string within a byte range of the source text.
     fn find_keyword_in_range(&self, start: usize, end: usize, keyword: &str) -> Option<usize> {
         let src = self.source_text;
+        let start = start.min(src.len());
+        let end = end.min(src.len());
+        if start >= end {
+            return None;
+        }
         let search_area = src.get(start..end)?;
         let kw_len = keyword.len();
 

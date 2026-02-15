@@ -876,9 +876,9 @@ fn test_debug_if_statement_positions() {
                 {
                     assert!(else_node.pos < else_node.end);
                     assert_eq!(else_node.kind, syntax_kind_ext::BLOCK);
-                    if let Some(then_node) = arena.get(if_data.then_statement) {
-                        let search_start = then_node.end as usize;
-                        let search_end = else_node.end as usize;
+                    if arena.get(if_data.then_statement).is_some() {
+                        let search_end = else_node.pos as usize;
+                        let search_start = search_end.saturating_sub(20);
                         let _ = &source[search_start..search_end.min(source.len())];
                         assert!(
                             provider
