@@ -158,46 +158,44 @@ fn run_and_print_source_line(
 
     if let Some(ast_path_class_sym) =
         find_symbol_id_by_text(&checker, parser.get_arena(), "AstPath")
+        && let Some(ast_path_instance) = checker.class_instance_type_from_symbol(ast_path_class_sym)
     {
-        if let Some(ast_path_instance) = checker.class_instance_type_from_symbol(ast_path_class_sym)
+        println!(
+            "class_instance_type_from_symbol(AstPath) => {}",
+            ast_path_instance.0
+        );
+        if let TypeData::ObjectWithIndex(shape_id) =
+            checker.ctx.types.lookup(ast_path_instance).unwrap()
         {
+            let shape = checker.ctx.types.object_shape(shape_id);
             println!(
-                "class_instance_type_from_symbol(AstPath) => {}",
-                ast_path_instance.0
+                "AstPath shape: symbol={:?} props={} string_index={:?} number_index={:?}",
+                shape.symbol,
+                shape.properties.len(),
+                shape.string_index,
+                shape.number_index
             );
-            if let TypeData::ObjectWithIndex(shape_id) =
-                checker.ctx.types.lookup(ast_path_instance).unwrap()
-            {
-                let shape = checker.ctx.types.object_shape(shape_id);
-                println!(
-                    "AstPath shape: symbol={:?} props={} string_index={:?} number_index={:?}",
-                    shape.symbol,
-                    shape.properties.len(),
-                    shape.string_index,
-                    shape.number_index
-                );
-            }
         }
     }
 
-    if let Some(dataset_sym) = find_symbol_id_by_text(&checker, parser.get_arena(), "Dataset") {
-        if let Some(dataset_instance) = checker.class_instance_type_from_symbol(dataset_sym) {
+    if let Some(dataset_sym) = find_symbol_id_by_text(&checker, parser.get_arena(), "Dataset")
+        && let Some(dataset_instance) = checker.class_instance_type_from_symbol(dataset_sym)
+    {
+        println!(
+            "class_instance_type_from_symbol(Dataset) => {}",
+            dataset_instance.0
+        );
+        if let TypeData::ObjectWithIndex(shape_id) =
+            checker.ctx.types.lookup(dataset_instance).unwrap()
+        {
+            let shape = checker.ctx.types.object_shape(shape_id);
             println!(
-                "class_instance_type_from_symbol(Dataset) => {}",
-                dataset_instance.0
+                "Dataset shape: symbol={:?} props={} string_index={:?} number_index={:?}",
+                shape.symbol,
+                shape.properties.len(),
+                shape.string_index,
+                shape.number_index
             );
-            if let TypeData::ObjectWithIndex(shape_id) =
-                checker.ctx.types.lookup(dataset_instance).unwrap()
-            {
-                let shape = checker.ctx.types.object_shape(shape_id);
-                println!(
-                    "Dataset shape: symbol={:?} props={} string_index={:?} number_index={:?}",
-                    shape.symbol,
-                    shape.properties.len(),
-                    shape.string_index,
-                    shape.number_index
-                );
-            }
         }
     }
 
