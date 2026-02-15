@@ -57,13 +57,14 @@ export function parseBaseline(content: string): BaselineContent {
   };
 
   // Split by file markers: //// [filename]
-  const fileMarkerRegex = /^\/\/\/\/ \[([^\]]+)\]/gm;
-  const segments: { name: string; start: number; end: number }[] = [];
+  const fileMarkerRegex = /^\/\/\/\/ \[([^\]]+)\](?:\s*[\/]{4})?/gm;
+  const segments: { name: string; markerStart: number; start: number; end: number }[] = [];
 
   let match: RegExpExecArray | null;
   while ((match = fileMarkerRegex.exec(content)) !== null) {
     segments.push({
       name: match[1],
+      markerStart: match.index,
       start: match.index + match[0].length,
       end: content.length, // Will be updated
     });
@@ -71,7 +72,8 @@ export function parseBaseline(content: string): BaselineContent {
 
   // Update end positions
   for (let i = 0; i < segments.length - 1; i++) {
-    segments[i].end = segments[i + 1].start - segments[i + 1].name.length - 7; // 7 = "//// [".length (6) + "]".length (1)
+    // Next marker start marks the end of the current segment content.
+    segments[i].end = segments[i + 1].markerStart;
   }
 
   const isSourceLike = (name: string): boolean => {
