@@ -1182,110 +1182,97 @@ impl ScannerState {
     }
 
     /// Scan a number literal (simplified).
-    #[allow(clippy::too_many_lines)]
     fn scan_number(&mut self) {
         let start = self.pos;
 
         // Check for hex, octal, binary
         if self.char_code_unchecked(self.pos) == CharacterCodes::_0 {
             let next = self.char_code_at(self.pos + 1).unwrap_or(0);
-            if next == CharacterCodes::LOWER_X || next == CharacterCodes::UPPER_X {
-                // Hex number
-                self.pos += 2;
-                self.token_flags |= TokenFlags::HexSpecifier as u32;
-                self.scan_digits_with_separators(is_hex_digit);
-                if self.pos < self.end
-                    && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N
-                {
-                    self.pos += 1;
-                    self.token_value = self.substring(start, self.pos);
-                    self.token = SyntaxKind::BigIntLiteral;
-                    return;
-                }
-                // OPTIMIZATION: Only allocate if separators present
-                if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
-                    self.token_value = self.substring(start, self.pos);
-                } else {
-                    self.token_value.clear();
-                }
-                self.token = SyntaxKind::NumericLiteral;
-                return;
-            }
-            if next == CharacterCodes::LOWER_B || next == CharacterCodes::UPPER_B {
-                // Binary number
-                self.pos += 2;
-                self.token_flags |= TokenFlags::BinarySpecifier as u32;
-                self.scan_digits_with_separators(is_binary_digit);
-                if self.pos < self.end
-                    && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N
-                {
-                    self.pos += 1;
-                    self.token_value = self.substring(start, self.pos);
-                    self.token = SyntaxKind::BigIntLiteral;
-                    return;
-                }
-                // OPTIMIZATION: Only allocate if separators present
-                if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
-                    self.token_value = self.substring(start, self.pos);
-                } else {
-                    self.token_value.clear();
-                }
-                self.token = SyntaxKind::NumericLiteral;
-                return;
-            }
-            if next == CharacterCodes::LOWER_O || next == CharacterCodes::UPPER_O {
-                // Octal number (0o777)
-                self.pos += 2;
-                self.token_flags |= TokenFlags::OctalSpecifier as u32;
-                self.scan_digits_with_separators(is_octal_digit);
-                if self.pos < self.end
-                    && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N
-                {
-                    self.pos += 1;
-                    self.token_value = self.substring(start, self.pos);
-                    self.token = SyntaxKind::BigIntLiteral;
-                    return;
-                }
-                // OPTIMIZATION: Only allocate if separators present
-                if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
-                    self.token_value = self.substring(start, self.pos);
-                } else {
-                    self.token_value.clear();
-                }
-                self.token = SyntaxKind::NumericLiteral;
+            if self.scan_prefixed_number(start, next) {
                 return;
             }
 
             // After leading 0, scan all consecutive digits and check if all are octal.
             // This matches tsc's scanDigits(): scan 0-9, return whether all were 0-7.
-            if is_digit(next) {
-                let mut all_octal = true;
-                let digit_start = self.pos + 1; // skip the leading 0
-                let mut scan_pos = digit_start;
-                while scan_pos < self.end && is_digit(self.char_code_unchecked(scan_pos)) {
-                    if !is_octal_digit(self.char_code_unchecked(scan_pos)) {
-                        all_octal = false;
-                    }
-                    scan_pos += 1;
-                }
-                if all_octal && scan_pos > digit_start {
-                    // LegacyOctalIntegerLiteral: 0777 — scan only digits, no decimal/exponent
-                    self.pos = scan_pos;
-                    self.token_flags |= TokenFlags::Octal as u32;
-                    if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
-                        self.token_value = self.substring(start, self.pos);
-                    } else {
-                        self.token_value.clear();
-                    }
-                    self.token = SyntaxKind::NumericLiteral;
-                    return;
-                }
-                // NonOctalDecimalIntegerLiteral: 09, 0789 — fall through to decimal scanning
-                self.token_flags |= TokenFlags::ContainsLeadingZero as u32;
+            if is_digit(next) && self.scan_legacy_octal_number(start) {
+                return;
             }
         }
 
         // Decimal number
+        self.scan_decimal_number(start);
+    }
+
+    fn scan_prefixed_number(&mut self, start: usize, next: u32) -> bool {
+        match next {
+            CharacterCodes::LOWER_X | CharacterCodes::UPPER_X => {
+                self.scan_integer_base_literal(start, is_hex_digit, TokenFlags::HexSpecifier);
+                true
+            }
+            CharacterCodes::LOWER_B | CharacterCodes::UPPER_B => {
+                self.scan_integer_base_literal(start, is_binary_digit, TokenFlags::BinarySpecifier);
+                true
+            }
+            CharacterCodes::LOWER_O | CharacterCodes::UPPER_O => {
+                self.scan_integer_base_literal(start, is_octal_digit, TokenFlags::OctalSpecifier);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn scan_integer_base_literal(
+        &mut self,
+        start: usize,
+        is_valid_digit: fn(u32) -> bool,
+        specifier_flag: TokenFlags,
+    ) {
+        self.pos += 2;
+        self.token_flags |= specifier_flag as u32;
+        self.scan_digits_with_separators(is_valid_digit);
+
+        if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N {
+            self.pos += 1;
+            self.token_value = self.substring(start, self.pos);
+            self.token = SyntaxKind::BigIntLiteral;
+            return;
+        }
+
+        self.set_numeric_token_value(start);
+        self.token = SyntaxKind::NumericLiteral;
+    }
+
+    fn scan_legacy_octal_number(&mut self, start: usize) -> bool {
+        let mut all_octal = true;
+        let digit_start = self.pos + 1; // skip the leading 0
+        let mut scan_pos = digit_start;
+        while scan_pos < self.end && is_digit(self.char_code_unchecked(scan_pos)) {
+            if !is_octal_digit(self.char_code_unchecked(scan_pos)) {
+                all_octal = false;
+            }
+            scan_pos += 1;
+        }
+        if all_octal && scan_pos > digit_start {
+            self.pos = scan_pos;
+            self.token_flags |= TokenFlags::Octal as u32;
+            self.set_numeric_token_value(start);
+            self.token = SyntaxKind::NumericLiteral;
+            true
+        } else {
+            self.token_flags |= TokenFlags::ContainsLeadingZero as u32;
+            false
+        }
+    }
+
+    fn set_numeric_token_value(&mut self, start: usize) {
+        if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
+            self.token_value = self.substring(start, self.pos);
+        } else {
+            self.token_value.clear();
+        }
+    }
+
+    fn scan_decimal_number(&mut self, start: usize) {
         self.scan_digits_with_separators(is_digit);
 
         // Decimal point
@@ -1320,11 +1307,7 @@ impl ScannerState {
 
         // OPTIMIZATION: Only allocate token_value if number contains separators
         // Plain numbers (no underscores) can use source slice via get_token_value_ref()
-        if (self.token_flags & TokenFlags::ContainsSeparator as u32) != 0 {
-            self.token_value = self.substring(start, self.pos);
-        } else {
-            self.token_value.clear();
-        }
+        self.set_numeric_token_value(start);
         self.token = SyntaxKind::NumericLiteral;
     }
 
