@@ -1,99 +1,146 @@
 # Conformance Recovery Plan (Step-by-Step)
 
-Status: 2026-02-15 (analysis + plan, pre-fix)
-Base branch: synced to `origin/main` (`d55dff00e`) before plan refresh.
+## 1) Current baseline (after syncing to latest `main`)
 
-## 1) Current conformance snapshot (this run)
-
-Command run:
+Commands executed in this session:
+- `git fetch origin main`
+- `git rebase origin/main`
 - `./scripts/conformance.sh analyze`
+- `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability`
+- `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability`
+- `./scripts/conformance.sh analyze --error-code 2741 --filter assignmentCompatability`
 
-Output excerpt:
-- Total failing tests analyzed: `5356`
-- False positives (we emit errors): `743`
-- All missing (we emit nothing): `2448`
-- Wrong code: `2165`
-- Close-to-passing (diff <= 2): `1415`
+### Snapshot
 
-TS2322 slice:
-- `./scripts/conformance.sh analyze --error-code 2322`
-  - `missing=506`
-  - `extra=95`
-  - `both=51`
+- Total conformance failures analyzed: `5356`
+- False positives: `743`
+- Missing diagnostics: `2448`
+- Wrong-code: `2165`
+- Close-to-passing (<=2 code diff): `1416`
 
-## 2) Highest-signal failure cluster
+`TS2322` status (from current baseline):
+- Missing: `506`
+- Extra: `44` (`TS2322` among extra causes)
+- Partially implemented aggregate still: `327` single-code tests missing only `TS2322`
 
-- `assignmentCompatability*.ts` family (TypeScript compiler suite) is a concentrated, high-value cluster.
+### Assignment compatibility focused slice (`--error-code 2322 --filter assignmentCompatability`)
+
+- Total failures in slice: `33`
+- Missing `[TS2322]`: `31`
+- Wrong-code (diff=1, missing `TS2741`): `2`
+
+Missing files (all expected `TS2322`, actual `[]`):
+- `TypeScript/tests/cases/compiler/assignmentCompatability11.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability12.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability13.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability14.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability15.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability16.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability17.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability18.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability19.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability20.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability21.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability22.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability23.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability24.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability25.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability26.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability27.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability28.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability29.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability30.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability31.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability32.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability33.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability34.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability35.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability37.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability38.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability39.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability43.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability44.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability45.ts`
+
+Close-to-pass files (diff=1, missing `TS2741`):
+- `TypeScript/tests/cases/compiler/assignmentCompatability_checking-apply-member-off-of-function-interface.ts`
+- `TypeScript/tests/cases/compiler/assignmentCompatability_checking-call-member-off-of-function-interface.ts`
+
+Representative expected/actual sample (`assignmentCompatability11.ts`) confirms the pattern:
+- Namespace exports + object assignment from a richer interface to a literal-shape object
+- `expected [TS2322]`, `actual []`
+
+## 2) Failure interpretation (current best hypothesis)
+
+The current failure cluster is narrowly consistent with a relation-level object mismatch being over-accepted. Prior inspection indicates these assignments follow the same semantic shape:
+
+- Source has required and optional members (interface with required `one`, optional `two?: ...`)
+- Target is a narrow object-type value in another namespace
+- Checker flow reaches solver assignment path
+- Actual result is permissive despite required/optional incompatibility in source/target relation
+
+Most likely fault sites:
+1. Object property compatibility in solver subtype path (especially required-member enforcement and optional-handling)
+2. Namespace/value-member retrieval producing a target/source `TypeId` shape that accidentally drops requiredness/flags before relation
+3. Compatibility path not flowing through the expected assignability failure reason branch before returning success
+
+## 3) Plan of record (step-by-step)
+
+### Step 1 – Evidence freeze and reproducibility
+- Commit after adding/reconfirming this report.
+- Artifacts / verification commands:
+  - `./scripts/conformance.sh analyze`
   - `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability`
-  - `31` tests with:
-    - `missing: [TS2322]` each
-  - This aligns with a previously observed broad `TS2322` break and is likely where first high-value recovery should land.
+  - `./scripts/conformance.sh analyze --error-code 2741 --filter assignmentCompatability`
+- No code changes yet in this step.
 
-Notable members in this cluster include (non-exhaustive):
-`assignmentCompatability11.ts`, `assignmentCompatability12.ts`, `assignmentCompatability13.ts`, `...`, `assignmentCompatability45.ts` and variants.
+### Step 2 – Trace the active path on 1–2 canonical files
+- Reproduce with a tight trace command on:
+  - `TypeScript/tests/cases/compiler/assignmentCompatability11.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability21.ts`
+- Track:
+  - resolved namespace member symbols
+  - checker-provided source/target `TypeId`
+  - solver relation result and failure reasons
+- Confirm whether drop happens in checker type retrieval or solver object compatibility.
 
-Also visible:
-- `assignmentCompatability_checking-apply-member-off-of-function-interface.ts`
-- `assignmentCompatability_checking-call-member-off-of-function-interface.ts`
-  - both now `expected [TS2322, TS2345, TS2741]` with `actual [TS2322, TS2345]` (`TS2741` missing only)
+### Step 3 – Add regression fixture to isolate relation behavior
+- Create/adjust a tiny solver-focused assignment test if absent:
+  - interface with required/optional member assignment to object-like target
+  - one variant using namespace/value member path
+- Keep this test in a narrowly scoped conformance/smoke file so we can validate before/after every change.
 
-## 3) Why this points at namespace/value-member assignability semantics
+### Step 4 – Fix targeted object compatibility condition (if trace points to solver relation)
+- Focus likely files:
+  - `crates/tsz-solver/src/subtype_rules/objects.rs`
+  - related compatibility helper in `crates/tsz-solver/src/compat.rs`
+- Keep change minimal and localized to required-property semantics for object-to-object checks.
+- Preserve architecture: checker remains orchestration-only and route through `assignability` boundary helpers.
 
-Observed runtime flow on `assignmentCompatability11.ts`:
-- `resolve_namespace_value_member` trace lines show successful lookup for:
-  - `__test2__.__val__obj`
-  - `__test1__.__val__obj4`
-- `get_type_of_assignment_target` for the namespace member path is the active target typing path (via non-identifier property access).
-- `assignment_checker` calls:
-  - `check_assignable_or_report_at(source_type = RHS, target_type = LHS)` (direction is correct)
-- Yet `assignability_checker` reports:
-  - `is_assignable_to source=475 target=435 result=true` and a second successful assignability check later in same file.
+### Step 5 – If trace points to namespace member typing
+- Localize to symbol/value-member resolution path in checker layer where namespace exports are projected into `TypeId`.
+- Do not modify flow semantics unless trace proves this is the only broken path.
 
-Inference:
-- Path plumbing is invoked, but one of these stages is over-accepting:
-  1) namespace/value member type retrieval may produce a target type that drops required-property constraints, or
-  2) assignability relation is not preserving required/optional property semantics for this namespace-driven value-object path.
+### Step 6 – Acceptance and promotion
+- Re-run:
+  - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability`
+  - `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability`
+  - `./scripts/conformance.sh analyze`
+- Target: reduce assignmentCompatability TS2322 misses to 0; then defer broader `TS2322` sweep.
 
-Given file pattern, this is most likely a `TypeId`-resolved namespace member + object-assignability interaction, not an arbitrary parser or syntax-path issue.
+## 4) Commit and sync protocol
 
-## 4) Step-by-step recovery plan (with commit boundaries)
+For each step above:
+1. Make only the smallest meaningful edits.
+2. Commit with a scoped message.
+3. `git fetch origin main && git rebase origin/main`
+4. Continue only after rebase is clean.
 
-### Step 0 — Freeze this evidence slice (done)
-- Keep `analyze` and `assignmentCompatability` reports as baselines (file artifacts retained under `/tmp/...`).
-- Confirm branch sync state before each cycle.
+## 5) Risk gate (mandatory)
 
-### Step 1 — Narrow by owning pipeline stage (2 commits)
-- 1.1 Add minimal logging in existing paths for one failing case:
-  - `resolve_namespace_value_member` input/output types
-  - `get_type_of_symbol` for `__val__obj` and `__val__obj4`
-  - `check_assignment_compatibility` arguments in `assignment_checker`
-  - `assignability_checker::is_assignable_to` source/target pre/post-evaluation IDs
-- 1.2 Re-run one-file traces (`TSZ_LOG=...`, assignmentCompatability11.ts).
-- 1.3 Decide if the fault is in namespace member type construction vs Solver compare.
-
-### Step 2 — Namespace/member resolution validation in checker
-- 2.1 Trace the `SymbolId` path for namespace exports:
-  - ensure member symbol comes from the expected namespace-export table entry (not from import/module shim tables)
-  - ensure `value_declaration`/initializer-based symbol type is used for exported `var` members.
-- 2.2 Verify alias handling is not accidentally converting to `type-only` or erased value members.
-
-### Step 3 — Solver object assignability validation
-- 3.1 Create a tiny TS fixture harness for just:
-  - optional-property source vs required-property target assignment through namespace exports.
-- 3.2 In `tsz-solver`, add/extend a regression for object subtype path covering optional-required mismatch on namespace-exported values.
-- 3.3 Confirm whether this path is going through object structural subtype or short-circuit that bypasses required checks.
-
-### Step 4 — Targeted fix + regression lock-in
-- 4.1 Patch only the failing layer identified in steps 1–3.
-- 4.2 Re-run:
-  - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability` (all 33 tests)
-  - `./scripts/conformance.sh analyze --error-code 2322`
-- 4.3 Expand to neighboring regression families once fixed.
-
-## 5) Success criteria
-
-Per checkpoint, require:
-- `assignmentCompatability*.ts` family: TS2322 miss count decreases before moving on.
-- No regression in close-to-pass / quick-win TS2322 families outside the namespace bucket (or explicit justification).
-- Any change remains on assignability gateway (`query_boundaries` + `assignability_checker`) with no new checker-side structural type-shape logic.
-
+- Must keep TSZ architecture invariant:
+  - no checker type-algorithm ownership
+  - relation logic in `tsz-solver`
+  - `TypeKey` private boundaries preserved
+- No broad parser/checker rewrites before object relation fault is confirmed with trace.
+- If any step unexpectedly increases unrelated failures, pause and branch into a narrower diagnostic slice before further code changes.
