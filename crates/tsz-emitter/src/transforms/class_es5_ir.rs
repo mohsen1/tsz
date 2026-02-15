@@ -2640,25 +2640,17 @@ impl<'a> AstToIr<'a> {
             let name = get_identifier_text(self.arena, idx)?;
             Some(IRPropertyKey::Identifier(name))
         } else if node.kind == SyntaxKind::StringLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(node) {
-                Some(IRPropertyKey::StringLiteral(lit.text.clone()))
-            } else {
-                None
-            }
+            self.arena
+                .get_literal(node)
+                .map(|lit| IRPropertyKey::StringLiteral(lit.text.clone()))
         } else if node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(node) {
-                Some(IRPropertyKey::NumericLiteral(lit.text.clone()))
-            } else {
-                None
-            }
+            self.arena
+                .get_literal(node)
+                .map(|lit| IRPropertyKey::NumericLiteral(lit.text.clone()))
         } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            if let Some(computed) = self.arena.get_computed_property(node) {
-                Some(IRPropertyKey::Computed(Box::new(
-                    self.convert_expression(computed.expression),
-                )))
-            } else {
-                None
-            }
+            self.arena.get_computed_property(node).map(|computed| {
+                IRPropertyKey::Computed(Box::new(self.convert_expression(computed.expression)))
+            })
         } else {
             None
         }
