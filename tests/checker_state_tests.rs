@@ -12384,10 +12384,11 @@ Foo;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let type_only_count = codes.iter().filter(|&&code| code == 2693).count();
+    // TS1361: cannot be used as a value because it was imported using 'import type'
+    let type_only_count = codes.iter().filter(|&&code| code == 1361).count();
     assert_eq!(
         type_only_count, 1,
-        "Expected error 2693 for using import type as value, got: {:?}",
+        "Expected error 1361 for using import type as value, got: {:?}",
         codes
     );
 }

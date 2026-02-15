@@ -29,6 +29,12 @@ use tsz_solver::TypeId;
 // These methods directly create and emit diagnostics. They are the foundation
 // for all error reporting in the type checker.
 
+/// Whether a type-only symbol came from `import type` or `export type`.
+enum TypeOnlyKind {
+    Import,
+    Export,
+}
+
 impl<'a> CheckerState<'a> {
     fn unresolved_unused_renaming_property_in_type_query(
         &self,
@@ -4282,6 +4288,23 @@ impl<'a> CheckerState<'a> {
                         &[name],
                     ),
                 )
+            } else if let Some(type_only_kind) = self.get_type_only_import_export_kind(idx) {
+                match type_only_kind {
+                    TypeOnlyKind::Import => (
+                        diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE,
+                        format_message(
+                            diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE,
+                            &[name],
+                        ),
+                    ),
+                    TypeOnlyKind::Export => (
+                        diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
+                        format_message(
+                            diagnostic_messages::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_EXPORTED_USING_EXPORT_TYPE,
+                            &[name],
+                        ),
+                    ),
+                }
             } else {
                 // TS2693: Generic type-only error
                 (
@@ -4303,6 +4326,50 @@ impl<'a> CheckerState<'a> {
                 related_information: Vec::new(),
             });
         }
+    }
+
+    /// Determine if the identifier at `idx` resolves to a symbol that was
+    /// explicitly imported with `import type` or exported with `export type`.
+    /// Returns `Some(TypeOnlyKind::Import)` for TS1361 or
+    /// `Some(TypeOnlyKind::Export)` for TS1362 when applicable.
+    fn get_type_only_import_export_kind(&self, idx: NodeIndex) -> Option<TypeOnlyKind> {
+        use tsz_binder::symbol_flags;
+
+        let sym_id = self.resolve_identifier_symbol(idx)?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+
+        // Only applies to alias symbols explicitly marked type-only
+        if (symbol.flags & symbol_flags::ALIAS) == 0 || !symbol.is_type_only {
+            return None;
+        }
+
+        // Walk up from the symbol's declaration to determine if it came from
+        // an import or export statement.
+        for &decl in &symbol.declarations {
+            if decl.is_none() {
+                continue;
+            }
+            let mut current = decl;
+            let mut guard = 0;
+            while guard < 16 {
+                guard += 1;
+                let node = self.ctx.arena.get(current)?;
+                if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                    return Some(TypeOnlyKind::Import);
+                }
+                if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    return Some(TypeOnlyKind::Export);
+                }
+                let ext = self.ctx.arena.get_extended(current)?;
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+            }
+        }
+
+        None
     }
 
     /// Parser-recovery exceptions for TS2693/TS2585.
