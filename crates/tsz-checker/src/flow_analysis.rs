@@ -2084,8 +2084,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Only check block-scoped variables (let/const)
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+        // Check both block-scoped (let/const) and function-scoped (var) variables.
+        // Parameters are excluded downstream (PARAMETER nodes ≠ VARIABLE_DECLARATION).
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
             return false;
         }
 

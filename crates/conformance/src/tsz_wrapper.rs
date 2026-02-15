@@ -515,13 +515,12 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
     // not explicitly provided. Materialize those defaults so downstream option parsing
     // preserves both `strict: true` and `strict: false` behavior.
     //
-    // When `strict` is NOT specified, tsc defaults all strict-family flags to false.
-    // We must explicitly materialize `false` for any unset strict flags, because tsz's
-    // internal defaults are "strict by default" — without this, unset flags would be
-    // treated as `true` by the checker, causing false positive TS7006 etc.
+    // TypeScript 6.0 changed the default: `strict` is now ON by default unless explicitly
+    // set to `false`. This means all strict-family flags (strictNullChecks, noImplicitAny,
+    // etc.) default to `true` when not specified.
     let strict_value = match opts.get("strict") {
         Some(serde_json::Value::Bool(strict)) => *strict,
-        _ => false, // tsc defaults to strict: false when not specified
+        _ => true, // tsc 6.0+ defaults to strict: true when not specified
     };
     for key in [
         "noImplicitAny",
