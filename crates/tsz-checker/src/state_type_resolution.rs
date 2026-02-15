@@ -1109,8 +1109,33 @@ impl<'a> CheckerState<'a> {
                 return (instance_type, params);
             }
 
+            // When a symbol has both TYPE_ALIAS and INTERFACE flags (e.g., local
+            // `type Request<T> = ...` merged with lib's `interface Request`), the
+            // local type alias should take precedence. Check whether the TYPE_ALIAS
+            // declaration lives in the current arena and skip the INTERFACE path if so.
+            let prefer_type_alias_over_interface = symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                && symbol.flags & symbol_flags::INTERFACE != 0
+                && symbol.declarations.iter().any(|&d| {
+                    self.ctx
+                        .arena
+                        .get(d)
+                        .and_then(|n| {
+                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                                let type_alias = self.ctx.arena.get_type_alias(n)?;
+                                let name = self.ctx.arena.get_identifier_text(type_alias.name)?;
+                                Some(name == symbol.escaped_name.as_str())
+                            } else {
+                                Some(false)
+                            }
+                        })
+                        .unwrap_or(false)
+                });
+
             // For interfaces, lower with type parameters and return both
-            if symbol.flags & symbol_flags::INTERFACE != 0 && !symbol.declarations.is_empty() {
+            if symbol.flags & symbol_flags::INTERFACE != 0
+                && !symbol.declarations.is_empty()
+                && !prefer_type_alias_over_interface
+            {
                 // Build per-declaration arena pairs for multi-arena support
                 // (e.g. Promise has declarations in lib.es5.d.ts, lib.es2018.promise.d.ts, etc.)
                 let fallback_arena: &NodeArena = self
