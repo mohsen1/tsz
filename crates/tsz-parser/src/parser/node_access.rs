@@ -1680,7 +1680,6 @@ pub trait NodeAccess {
 }
 
 /// Implementation of `NodeAccess` for `NodeArena`
-#[allow(clippy::too_many_lines)]
 impl NodeAccess for NodeArena {
     fn node_info(&self, index: NodeIndex) -> Option<NodeInfo> {
         if index.is_none() {
@@ -1718,6 +1717,7 @@ impl NodeAccess for NodeArena {
         Some(&data.text)
     }
 
+    #[allow(clippy::too_many_lines)]
     fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex> {
         if index.is_none() {
             return Vec::new();
