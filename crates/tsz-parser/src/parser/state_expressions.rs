@@ -2756,9 +2756,15 @@ impl ParserState {
                     // Emit the comma error and continue parsing for better recovery
                     // This handles cases like: {a: 1 b: 2} instead of {a: 1, b: 2}
                     self.error_comma_expected();
-                } else {
-                    // Not followed by a property, so we're really done
+                } else if self.is_token(SyntaxKind::EndOfFileToken)
+                    || self.is_token(SyntaxKind::CloseBraceToken)
+                {
                     break;
+                } else {
+                    // Unexpected token (e.g., `.` in `{ m.x }`). Emit ',' expected
+                    // and skip to resync, matching tsc's delimited list recovery.
+                    self.error_comma_expected();
+                    self.next_token();
                 }
             }
         }
