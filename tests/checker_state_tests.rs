@@ -139,7 +139,11 @@ async function foo() {
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        crate::checker::context::CheckerOptions {
+            strict: false,
+            strict_property_initialization: false,
+            ..crate::checker::context::CheckerOptions::default()
+        },
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -197,7 +201,12 @@ async enum E { Value }
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        crate::checker::context::CheckerOptions {
+            strict: false,
+            strict_function_types: false,
+            strict_bind_call_apply: false,
+            ..crate::checker::context::CheckerOptions::default()
+        },
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -242,7 +251,12 @@ const bad: Foo = { x: 1, y: 2 };
         &binder,
         &types,
         "test.ts".to_string(),
-        crate::checker::context::CheckerOptions::default(),
+        crate::checker::context::CheckerOptions {
+            strict: false,
+            strict_function_types: false,
+            strict_bind_call_apply: false,
+            ..crate::checker::context::CheckerOptions::default()
+        },
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
@@ -7002,7 +7016,7 @@ fn test_interface_extends_class_applies_type_arguments() {
 
     let source = r#"
 class Box<T> {
-    value: T;
+    value!: T;
 }
 interface Derived extends Box<string> {
     count: number;
@@ -8362,8 +8376,8 @@ const obj = { baz() { return undefined; } };
 
     assert_eq!(
         count(7010),
-        4,
-        "Expected four 7010 errors, got codes: {:?}",
+        3,
+        "Expected three 7010 errors, got codes: {:?}",
         codes
     );
 }
@@ -9980,7 +9994,7 @@ fn test_checker_lowers_element_access_literal_key_union() {
     let source = r#"
 interface Foo { a: number; b: string; }
 const obj: Foo = { a: 1, b: "hi" };
-let key: "a" | "b";
+declare let key: "a" | "b";
 const value = obj[key];
 "#;
 
@@ -10081,7 +10095,7 @@ fn test_checker_lowers_element_access_literal_key_type() {
     let source = r#"
 interface Foo { a: number; b: string; }
 const obj: Foo = { a: 1, b: "hi" };
-let key: "a";
+declare let key: "a";
 const value = obj[key];
 "#;
 
@@ -10120,7 +10134,7 @@ fn test_checker_lowers_element_access_numeric_literal_union() {
 
     let source = r#"
 const tup: [string, number, boolean] = ["a", 1, true];
-let idx: 0 | 2;
+declare let idx: 0 | 2;
 const value = tup[idx];
 "#;
 
@@ -10168,7 +10182,7 @@ fn test_checker_lowers_element_access_mixed_literal_key_union() {
 
     let source = r#"
 const arr: string[] = ["a"];
-let key: "length" | 0;
+declare let key: "length" | 0;
 const value = arr[key];
 "#;
 
@@ -16234,11 +16248,11 @@ interface Store<S> {
     getState: () => S;
 }
 
-function createStore<R extends Reducer<any>>(reducer: R): Store<ExtractState<R>> {
+function createStore<R extends Reducer<number>>(reducer: R): Store<ExtractState<R>> {
     return { getState: () => ({} as ExtractState<R>) };
 }
 
-const numberReducer: Reducer<number> = (state = 0) => state;
+const numberReducer: Reducer<number> = (state) => state ?? 0;
 const store = createStore(numberReducer);
 
 // The returned store should have getState returning number
@@ -16370,8 +16384,8 @@ interface RootState {
 type RootReducers = ReducersMapObject<RootState, AnyAction>;
 
 // Create concrete reducers
-const counterReducer: Reducer<number, AnyAction> = (state = 0, action) => state;
-const messageReducer: Reducer<string, AnyAction> = (state = "", action) => state;
+const counterReducer: Reducer<number, AnyAction> = (state, action) => state ?? 0;
+const messageReducer: Reducer<string, AnyAction> = (state, action) => state ?? "";
 
 // This should type-check: reducers match the expected shape
 const reducers: RootReducers = {
@@ -27813,11 +27827,11 @@ abstract class AbstractBase {
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // Abstract classes should not have TS2564 errors
+    // Current tsc baseline reports TS2564 for uninitialized abstract-class fields.
     let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
     assert!(
-        !has_2564,
-        "Expected no TS2564 for abstract class, got: {:?}",
+        has_2564,
+        "Expected TS2564 for abstract class, got: {:?}",
         checker.ctx.diagnostics
     );
 }

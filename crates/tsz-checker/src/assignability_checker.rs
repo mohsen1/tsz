@@ -187,8 +187,8 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        matches!(source, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
-            || matches!(target, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
+        matches!(source, TypeId::ERROR | TypeId::ANY)
+            || matches!(target, TypeId::ERROR | TypeId::ANY)
     }
 
     /// Suppress assignability diagnostics when they are likely parser-recovery artifacts.
@@ -385,10 +385,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Save original types for cache key before evaluation
-        let original_source = source;
-        let original_target = target;
-
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
@@ -401,8 +397,7 @@ impl<'a> CheckerState<'a> {
         let flags = self.ctx.pack_relation_flags();
 
         if is_cacheable {
-            let cache_key =
-                RelationCacheKey::assignability(original_source, original_target, flags, 0);
+            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
 
             if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
                 return cached;
@@ -426,8 +421,7 @@ impl<'a> CheckerState<'a> {
         );
 
         if is_cacheable {
-            let cache_key =
-                RelationCacheKey::assignability(original_source, original_target, flags, 0);
+            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
 
             self.ctx.types.insert_assignability_cache(cache_key, result);
         }
@@ -480,10 +474,6 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(source);
         self.ensure_relation_input_ready(target);
 
-        // Save original types for cache key before evaluation
-        let original_source = source;
-        let original_target = target;
-
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
@@ -500,8 +490,7 @@ impl<'a> CheckerState<'a> {
         if is_cacheable {
             // Note: For assignability checks, we use AnyPropagationMode::All (0)
             // since the checker doesn't track depth like SubtypeChecker does
-            let cache_key =
-                RelationCacheKey::assignability(original_source, original_target, flags, 0);
+            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
 
             if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
                 return cached;
@@ -523,8 +512,7 @@ impl<'a> CheckerState<'a> {
         // Cache the result for non-inference types
         // Use ORIGINAL types for cache key (not evaluated types)
         if is_cacheable {
-            let cache_key =
-                RelationCacheKey::assignability(original_source, original_target, flags, 0);
+            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
 
             self.ctx.types.insert_assignability_cache(cache_key, result);
         }

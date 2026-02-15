@@ -1419,6 +1419,7 @@ pub fn classify_for_contains_traversal(db: &dyn TypeDatabase, type_id: TypeId) -
 #[derive(Debug, Clone)]
 pub enum NamespaceMemberKind {
     Lazy(DefId),
+    ModuleNamespace(crate::types::SymbolRef),
     Callable(crate::types::CallableShapeId),
     // TSZ-4: Added Enum variant to handle enum member property access (E.A)
     Enum(DefId),
@@ -1430,6 +1431,7 @@ pub fn classify_namespace_member(db: &dyn TypeDatabase, type_id: TypeId) -> Name
     match db.lookup(type_id) {
         Some(TypeData::Callable(shape_id)) => NamespaceMemberKind::Callable(shape_id),
         Some(TypeData::Lazy(def_id)) => NamespaceMemberKind::Lazy(def_id),
+        Some(TypeData::ModuleNamespace(sym_ref)) => NamespaceMemberKind::ModuleNamespace(sym_ref),
         // TSZ-4: Handle TypeData::Enum for enum member property access (E.A)
         Some(TypeData::Enum(def_id, _)) => NamespaceMemberKind::Enum(def_id),
         _ => NamespaceMemberKind::Other,

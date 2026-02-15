@@ -901,11 +901,13 @@ impl<'a> CheckerState<'a> {
             is_method: false,
         };
 
+        let function_type = self.ctx.types.factory().function(shape);
+
         self.pop_type_parameters(jsdoc_type_param_updates);
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_type_param_updates);
 
-        return_with_cleanup!(self.ctx.types.factory().function(shape))
+        return_with_cleanup!(function_type)
     }
 
     fn contextual_type_params_from_expected(&self, expected: TypeId) -> Option<Vec<TypeParamInfo>> {
@@ -1476,6 +1478,28 @@ impl<'a> CheckerState<'a> {
             {
                 return self.apply_flow_narrowing(idx, member_type);
             }
+
+            // Fallback for namespace/export member accesses where type-only namespace
+            // classification misses the object form but symbol resolution can still
+            // identify `A.B` as a concrete exported value member.
+            if let Some(member_sym_id) = self.resolve_qualified_symbol(idx)
+                && let Some(member_symbol) = self
+                    .get_cross_file_symbol(member_sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
+            {
+                let parent_sym_id = member_symbol.parent;
+                if let Some(parent_symbol) = self
+                    .get_cross_file_symbol(parent_sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
+                    && (parent_symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+                {
+                    let member_type = self.get_type_of_symbol(member_sym_id);
+                    if member_type != TypeId::ERROR && member_type != TypeId::UNKNOWN {
+                        return self.apply_flow_narrowing(idx, member_type);
+                    }
+                }
+            }
+
             if self.namespace_has_type_only_member(object_type, property_name) {
                 if self.is_unresolved_import_symbol(access.expression) {
                     return TypeId::ERROR;

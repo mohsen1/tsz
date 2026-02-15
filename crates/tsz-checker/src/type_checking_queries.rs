@@ -3471,6 +3471,121 @@ impl<'a> CheckerState<'a> {
                 None
             }
 
+            // Handle ModuleNamespace types (import * as ns / namespace value bindings)
+            NamespaceMemberKind::ModuleNamespace(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                let symbol = self.get_cross_file_symbol(sym_id)?;
+                if symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM) == 0 {
+                    return None;
+                }
+
+                let direct_member_id = symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(property_name))
+                    .or_else(|| {
+                        symbol
+                            .members
+                            .as_ref()
+                            .and_then(|members| members.get(property_name))
+                    });
+
+                if let Some(member_id) = direct_member_id {
+                    let cross_file_idx = self
+                        .ctx
+                        .cross_file_symbol_targets
+                        .borrow()
+                        .get(&sym_id)
+                        .copied();
+                    if let Some(file_idx) = cross_file_idx {
+                        self.ctx
+                            .cross_file_symbol_targets
+                            .borrow_mut()
+                            .insert(member_id, file_idx);
+                    }
+
+                    let resolved_member_id = if let Some(member_symbol) =
+                        self.get_cross_file_symbol(member_id)
+                        && member_symbol.flags & symbol_flags::ALIAS != 0
+                    {
+                        let mut visited_aliases = Vec::new();
+                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                            .unwrap_or(member_id)
+                    } else {
+                        member_id
+                    };
+
+                    if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
+                        return None;
+                    }
+
+                    if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
+                        && member_symbol.flags & symbol_flags::VALUE == 0
+                        && member_symbol.flags & symbol_flags::ALIAS == 0
+                        && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
+                    {
+                        return None;
+                    }
+                    return Some(self.get_type_of_symbol(resolved_member_id));
+                }
+
+                // Fallback for namespace symbols whose export table is stored by module name.
+                let module_export_member_id = {
+                    let module_name = symbol.escaped_name.as_str();
+                    self.ctx
+                        .binder
+                        .module_exports
+                        .get(module_name)
+                        .and_then(|exports| exports.get(property_name))
+                        .or_else(|| {
+                            self.resolve_cross_file_namespace_exports(module_name)
+                                .and_then(|exports| exports.get(property_name))
+                        })
+                };
+
+                if let Some(member_id) = module_export_member_id {
+                    let cross_file_idx = self
+                        .ctx
+                        .cross_file_symbol_targets
+                        .borrow()
+                        .get(&sym_id)
+                        .copied();
+                    if let Some(file_idx) = cross_file_idx {
+                        self.ctx
+                            .cross_file_symbol_targets
+                            .borrow_mut()
+                            .insert(member_id, file_idx);
+                    }
+
+                    let resolved_member_id = if let Some(member_symbol) =
+                        self.get_cross_file_symbol(member_id)
+                        && member_symbol.flags & symbol_flags::ALIAS != 0
+                    {
+                        let mut visited_aliases = Vec::new();
+                        self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                            .unwrap_or(member_id)
+                    } else {
+                        member_id
+                    };
+
+                    if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
+                        return None;
+                    }
+
+                    if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
+                        && member_symbol.flags & symbol_flags::VALUE == 0
+                        && member_symbol.flags & symbol_flags::ALIAS == 0
+                        && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
+                    {
+                        return None;
+                    }
+
+                    return Some(self.get_type_of_symbol(resolved_member_id));
+                }
+
+                None
+            }
+
             // Handle Callable types from merged class+namespace or function+namespace symbols
             // When a class/function merges with a namespace, the type is a Callable with
             // properties containing the namespace exports
@@ -3799,6 +3914,55 @@ impl<'a> CheckerState<'a> {
                 has_type && !has_value
             }
 
+            NamespaceMemberKind::ModuleNamespace(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+                    return false;
+                };
+
+                if symbol.flags & symbol_flags::MODULE == 0 {
+                    return false;
+                }
+
+                let member_id = match symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(property_name))
+                    .or_else(|| {
+                        symbol
+                            .members
+                            .as_ref()
+                            .and_then(|members| members.get(property_name))
+                    }) {
+                    Some(member_id) => member_id,
+                    None => return false,
+                };
+
+                let resolved_member_id = if let Some(member_symbol) =
+                    self.get_cross_file_symbol(member_id)
+                    && member_symbol.flags & symbol_flags::ALIAS != 0
+                {
+                    let mut visited_aliases = Vec::new();
+                    self.resolve_alias_symbol(member_id, &mut visited_aliases)
+                        .unwrap_or(member_id)
+                } else {
+                    member_id
+                };
+
+                if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
+                    return true;
+                }
+
+                let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id) else {
+                    return false;
+                };
+
+                let has_value =
+                    (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
+                let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+                has_type && !has_value
+            }
+
             // Handle Callable types from merged class+namespace or function+namespace symbols
             // For merged symbols, the namespace exports are stored as properties on the Callable
             NamespaceMemberKind::Callable(shape_id) => {
@@ -3983,6 +4147,13 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
                 let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    return false;
+                };
+                (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+            }
+            NamespaceMemberKind::ModuleNamespace(sym_ref) => {
+                let sym_id = SymbolId(sym_ref.0);
+                let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
                     return false;
                 };
                 (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
