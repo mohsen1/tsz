@@ -2214,9 +2214,8 @@ impl Project {
 
             if clause.name == node_idx {
                 ImportKind::Default
-            } else if clause.named_bindings == node_idx {
-                ImportKind::Namespace
-            } else if import_decl.module_specifier == node_idx {
+            } else if clause.named_bindings == node_idx || import_decl.module_specifier == node_idx
+            {
                 ImportKind::Namespace
             } else {
                 return None;

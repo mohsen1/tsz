@@ -601,10 +601,10 @@ impl<'a> SemanticTokensProvider<'a> {
             SemanticTokenType::Function
         } else if flags & symbol_flags::METHOD != 0 {
             SemanticTokenType::Method
-        } else if flags & symbol_flags::GET_ACCESSOR != 0 || flags & symbol_flags::SET_ACCESSOR != 0
+        } else if flags & symbol_flags::GET_ACCESSOR != 0
+            || flags & symbol_flags::SET_ACCESSOR != 0
+            || flags & symbol_flags::PROPERTY != 0
         {
-            SemanticTokenType::Property
-        } else if flags & symbol_flags::PROPERTY != 0 {
             SemanticTokenType::Property
         } else if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             // Check if it's a parameter

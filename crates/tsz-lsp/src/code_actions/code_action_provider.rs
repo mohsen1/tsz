@@ -1682,9 +1682,7 @@ impl<'a> CodeActionProvider<'a> {
                 None
             };
             let had_trailing_comma = matches!(last_char, Some(b','));
-            let prefix = if elements.is_empty() {
-                " "
-            } else if had_trailing_comma {
+            let prefix = if elements.is_empty() || had_trailing_comma {
                 " "
             } else {
                 ", "

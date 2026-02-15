@@ -141,9 +141,9 @@ impl<'a> FileRenameProvider<'a> {
 
         // Extract the string content (without quotes)
         // Handle both single and double quotes
-        let content = if text.starts_with('"') && text.ends_with('"') && text.len() > 1 {
-            &text[1..text.len() - 1]
-        } else if text.starts_with('\'') && text.ends_with('\'') && text.len() > 1 {
+        let content = if (text.starts_with('"') && text.ends_with('"') && text.len() > 1)
+            || (text.starts_with('\'') && text.ends_with('\'') && text.len() > 1)
+        {
             &text[1..text.len() - 1]
         } else {
             // Not a quoted string, skip
