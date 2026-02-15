@@ -174,13 +174,13 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
 
     /// Evaluate a type and return the result, falling back to the original type.
     ///
-    /// This is a convenience method that unwraps the ApplicationResult.
+    /// This is a convenience method that unwraps the `ApplicationResult`.
     pub fn evaluate_or_original(&self, type_id: TypeId) -> TypeId {
         match self.evaluate(type_id) {
-            ApplicationResult::Resolved(t) => t,
-            ApplicationResult::NotApplication(t) => t,
-            ApplicationResult::DepthExceeded(t) => t,
-            ApplicationResult::ResolutionFailed(t) => t,
+            ApplicationResult::Resolved(t)
+            | ApplicationResult::NotApplication(t)
+            | ApplicationResult::DepthExceeded(t)
+            | ApplicationResult::ResolutionFailed(t) => t,
         }
     }
 }

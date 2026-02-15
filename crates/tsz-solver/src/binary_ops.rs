@@ -57,13 +57,13 @@ pub enum PrimitiveClass {
 /// - `$lit_pat`: Pattern to match `LiteralValue` against (use `_` for always-false)
 /// - `$lit_result`: Value to return when the pattern matches
 /// - Optional feature flags:
-///   - `check_union_all` — visit_union returns true when ALL members match
-///   - `check_constraint` — visit_type_parameter/visit_infer recurse into constraint
-///   - `recurse_enum`    — visit_enum recurses into the member type
-///   - `ref_conservative`— visit_ref returns true (conservative for unresolved enums)
-///   - `match_template_literal` — visit_template_literal returns true
-///   - `match_unique_symbol`    — visit_unique_symbol returns true
-///   - `check_intersection_any` — visit_intersection returns true when ANY member matches
+///   - `check_union_all` — `visit_union` returns true when ALL members match
+///   - `check_constraint` — `visit_type_parameter/visit_infer` recurse into constraint
+///   - `recurse_enum`    — `visit_enum` recurses into the member type
+///   - `ref_conservative`— `visit_ref` returns true (conservative for unresolved enums)
+///   - `match_template_literal` — `visit_template_literal` returns true
+///   - `match_unique_symbol`    — `visit_unique_symbol` returns true
+///   - `check_intersection_any` — `visit_intersection` returns true when ANY member matches
 macro_rules! primitive_visitor {
     ($name:ident, $ik:expr, $lit_pat:pat => $lit_result:expr $(, $feat:ident)*) => {
         struct $name<'a> { _db: &'a dyn TypeDatabase }
@@ -325,7 +325,9 @@ impl<'a> BinaryOpEvaluator<'a> {
     pub fn evaluate(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
         match op {
             "+" => self.evaluate_plus(left, right),
-            "-" | "*" | "/" | "%" | "**" => self.evaluate_arithmetic(left, right, op),
+            "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>" => {
+                self.evaluate_arithmetic(left, right, op)
+            }
             "==" | "!=" | "===" | "!==" => {
                 if self.has_overlap(left, right) {
                     BinaryOpResult::Success(TypeId::BOOLEAN)
@@ -335,8 +337,6 @@ impl<'a> BinaryOpEvaluator<'a> {
             }
             "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right),
             "&&" | "||" => self.evaluate_logical(left, right),
-            // Bitwise operators behave like arithmetic operators
-            "&" | "|" | "^" | "<<" | ">>" | ">>>" => self.evaluate_arithmetic(left, right, op),
             _ => BinaryOpResult::TypeError { left, right, op },
         }
     }
