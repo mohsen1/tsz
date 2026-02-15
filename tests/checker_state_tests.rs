@@ -29064,6 +29064,104 @@ class Foo {
     );
 }
 
+/// Test that strictPropertyInitialization: false suppresses TS2564 even when strict: true
+/// Regression test: apply_strict_defaults was clobbering individual overrides
+#[test]
+fn test_ts2564_strict_property_init_false_suppresses_error() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+class Foo {
+    name: string;
+    value: number;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            strict_property_initialization: false,
+            ..Default::default()
+        },
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
+    assert!(
+        !has_2564,
+        "Expected no TS2564 when strictPropertyInitialization is false, got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
+/// Test that strictNullChecks: false suppresses TS2564 even when strict: true
+/// tsc requires both strictNullChecks AND strictPropertyInitialization for TS2564
+#[test]
+fn test_ts2564_strict_null_checks_false_suppresses_error() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+class Foo {
+    name: string;
+    value: number;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions {
+            strict: true,
+            strict_null_checks: false,
+            strict_property_initialization: true,
+            ..Default::default()
+        },
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let has_2564 = checker.ctx.diagnostics.iter().any(|d| d.code == 2564);
+    assert!(
+        !has_2564,
+        "Expected no TS2564 when strictNullChecks is false, got: {:?}",
+        checker.ctx.diagnostics
+    );
+}
+
 /// Test that global types from lib.d.ts (Promise, Array, console, etc.) resolve correctly
 /// This verifies the fix for TS2304 errors where global symbols were undefined
 #[test]
