@@ -2353,7 +2353,7 @@ fn collect_diagnostics(
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<Vec<Diagnostic>> = {
             use rayon::iter::{
-                IntoParallelIterator, IntoParallelRefIterator, IndexedParallelIterator,
+                IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
             };
             work_items
