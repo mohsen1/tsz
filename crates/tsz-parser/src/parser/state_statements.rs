@@ -3909,6 +3909,7 @@ impl ParserState {
         if asterisk_token {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
+        let has_modifiers = modifiers.is_some();
         let name = if self.is_property_name() {
             self.parse_property_name()
         } else if asterisk_token {
@@ -3929,10 +3930,15 @@ impl ParserState {
                 },
             )
         } else {
-            self.parse_error_at_current_token(
-                "Unexpected token. A constructor, method, accessor, or property was expected.",
-                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-            );
+            if has_modifiers {
+                self.error_declaration_expected();
+                self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            } else {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                );
+            }
             self.context_flags = name_saved_flags;
             self.next_token();
             return NodeIndex::NONE;
