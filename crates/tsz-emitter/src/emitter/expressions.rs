@@ -1287,9 +1287,7 @@ impl<'a> Printer<'a> {
                     self.write(" ");
                 }
 
-                self.increase_indent();
                 self.emit(prop);
-                self.decrease_indent();
                 if has_trailing_comma {
                     self.write(",");
                 }

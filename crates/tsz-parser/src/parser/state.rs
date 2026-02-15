@@ -36,16 +36,16 @@ pub const CONTEXT_FLAG_STATIC_BLOCK: u32 = 4;
 pub const CONTEXT_FLAG_PARAMETER_DEFAULT: u32 = 8;
 /// Context flag: disallow 'in' as a binary operator (for for-statement initializers)
 pub const CONTEXT_FLAG_DISALLOW_IN: u32 = 16;
+/// Context flag: parsing the `true` branch of a conditional expression.
+/// Suppresses type-annotated single-parameter arrow lookahead while
+/// that colon belongs to the surrounding conditional operator.
+pub const CONTEXT_FLAG_IN_CONDITIONAL_TRUE: u32 = 64;
 /// Context flag: parsing a class member name.
 pub const CONTEXT_FLAG_CLASS_MEMBER_NAME: u32 = 2048;
 /// Context flag: inside an ambient context (declare namespace/module)
 pub const CONTEXT_FLAG_AMBIENT: u32 = 32;
 /// Context flag: parsing a class body
 pub const CONTEXT_FLAG_IN_CLASS: u32 = 4096;
-/// Context flag: inside the 'true' branch of a conditional expression (a ? [here] : c)
-/// When set, arrow function lookahead should not treat ':' as a return type annotation
-/// because the ':' belongs to the enclosing conditional expression
-pub const CONTEXT_FLAG_IN_CONDITIONAL_TRUE: u32 = 64;
 /// Context flag: inside a decorator expression (@expr)
 /// When set, `[` should not be treated as element access (it starts a computed property name)
 pub const CONTEXT_FLAG_IN_DECORATOR: u32 = 128;
