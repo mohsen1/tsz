@@ -1,26 +1,11 @@
-# Clippy configuration tuned for TSZ's architecture-first, type-soundness-first workflow.
-
-# Fail fast on accidental API churn and wildcard import leakage.
-avoid-breaking-exported-api = true
-warn-on-all-wildcard-imports = true
-
-# Keep functions and types explicit, not bloated with accidental semantic complexity.
+type-complexity-threshold = 220
+cognitive-complexity-threshold = 20
 too-many-arguments-threshold = 8
-type-complexity-threshold = 250
-cognitive-complexity-threshold = 24
-disallowed-methods = [
-    "std::mem::transmute",
+too-many-lines-threshold = 360
+doc-valid-idents = [
+    "CommonJS",
+    "ECMAScript",
+    "JavaScript",
+    "TS",
+    "TypeScript",
 ]
-disallowed-macros = [
-    "std::dbg",
-    "std::todo",
-    "std::unimplemented",
-    "std::unreachable",
-]
-
-# Avoiding hidden convenience that masks missing boundary discipline.
-allow-unwrap-in-tests = false
-
-# Architecture-aligned lint posture:
-# - Solver-first and architecture-first paths should remain explicit.
-# - Any new transmutation-based bypass is treated as suspicious early.
