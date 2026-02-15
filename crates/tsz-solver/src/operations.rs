@@ -2993,6 +2993,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Enum(_, s_mem)), Some(TypeData::Enum(_, t_mem))) => {
                 self.constrain_types(ctx, var_map, s_mem, t_mem, priority);
             }
+            // Application on source side (not matched by Application-Application above):
+            // evaluate and recurse
+            (Some(TypeData::Application(_)), _) => {
+                let evaluated = crate::evaluate::evaluate_type(self.interner, source);
+                if evaluated != source {
+                    self.constrain_types(ctx, var_map, evaluated, target, priority);
+                }
+            }
+            // Application on target side (not matched by Application-Application above):
+            // evaluate and recurse. This handles inference from object literal against
+            // generic types like Options<T, U>.
+            (_, Some(TypeData::Application(_))) => {
+                let evaluated = crate::evaluate::evaluate_type(self.interner, target);
+                if evaluated != target {
+                    self.constrain_types(ctx, var_map, source, evaluated, priority);
+                }
+            }
             _ => {}
         }
     }
@@ -3044,11 +3061,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     source_idx += 1;
                 }
                 std::cmp::Ordering::Greater => {
-                    // Target property is missing from source
-                    // For optional properties, we still need to collect constraints
-                    // to properly infer type parameters (e.g., {} satisfies {a?: T})
-                    if target.optional {
-                        // Use undefined as the lower bound for missing optional properties
+                    // Target property is missing from source.
+                    // For optional properties, only constrain to `undefined` when the
+                    // target type is NOT a direct inference variable.  Constraining an
+                    // inference placeholder to `undefined` from a missing optional
+                    // property would incorrectly fix `T = undefined` during partial
+                    // Round 1 inference (where context-sensitive properties are
+                    // intentionally omitted from the source).
+                    if target.optional && !var_map.contains_key(&target.type_id) {
                         self.constrain_types(
                             ctx,
                             var_map,
@@ -3065,8 +3085,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Handle remaining target properties that are missing from source
         while target_idx < target_props.len() {
             let target = &target_props[target_idx];
-            if target.optional {
-                // Use undefined as the lower bound for missing optional properties
+            if target.optional && !var_map.contains_key(&target.type_id) {
                 self.constrain_types(ctx, var_map, TypeId::UNDEFINED, target.type_id, priority);
             }
             target_idx += 1;
