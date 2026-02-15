@@ -16,15 +16,14 @@ impl<'a> Printer<'a> {
         };
 
         // ES5: lower assignment destructuring patterns
-        if self.ctx.target_es5 && binary.operator_token == SyntaxKind::EqualsToken as u16 {
-            if let Some(left_node) = self.arena.get(binary.left) {
-                if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                    || left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                {
-                    self.emit_assignment_destructuring_es5(left_node, binary.right);
-                    return;
-                }
-            }
+        if self.ctx.target_es5
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && let Some(left_node) = self.arena.get(binary.left)
+            && (left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        {
+            self.emit_assignment_destructuring_es5(left_node, binary.right);
+            return;
         }
 
         // ES2015-ES2020: lower logical assignment and nullish-coalescing operators.
@@ -683,13 +682,13 @@ impl<'a> Printer<'a> {
         if let Some(ref args) = call.arguments {
             // For the first argument, emit any comments between '(' and the argument
             // This handles: func(/*comment*/ arg)
-            if let Some(first_arg) = args.nodes.first() {
-                if let Some(arg_node) = self.arena.get(*first_arg) {
-                    // Use node.end of the call expression to approximate '(' position
-                    // Actually, we need to find the '(' position more carefully
-                    let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                    self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
-                }
+            if let Some(first_arg) = args.nodes.first()
+                && let Some(arg_node) = self.arena.get(*first_arg)
+            {
+                // Use node.end of the call expression to approximate '(' position
+                // Actually, we need to find the '(' position more carefully
+                let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
+                self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&args.nodes);
         }
@@ -798,40 +797,39 @@ impl<'a> Printer<'a> {
         // reproduce the original layout:
         // - If dot is before newline: `expr.\n    name` -> emit ".\n    name"
         // - If dot is after newline: `expr\n    .name` -> emit "\n    .name"
-        if let Some(text) = self.source_text {
-            if let Some(expr_node) = self.arena.get(access.expression) {
-                if let Some(name_node) = self.arena.get(access.name_or_argument) {
-                    let expr_end = expr_node.end as usize;
-                    let name_start = name_node.pos as usize;
-                    let between_end = std::cmp::min(name_start, text.len());
-                    let between_start = std::cmp::min(expr_end, between_end);
-                    let between = &text[between_start..between_end];
-                    if between.contains('\n') {
-                        // Find where the dot is relative to the newline
-                        if let Some(dot_pos) = between.find('.') {
-                            let after_dot = &between[dot_pos + 1..];
-                            if after_dot.contains('\n') {
-                                // Dot before newline: `expr.\n    name`
-                                self.write(".");
-                                self.write_line();
-                                self.increase_indent();
-                                self.emit(access.name_or_argument);
-                                self.decrease_indent();
-                            } else {
-                                // Newline before dot: `expr\n    .name`
-                                self.write_line();
-                                self.increase_indent();
-                                self.write(".");
-                                self.emit(access.name_or_argument);
-                                self.decrease_indent();
-                            }
-                        } else {
-                            self.write(".");
-                            self.emit(access.name_or_argument);
-                        }
-                        return;
+        if let Some(text) = self.source_text
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+        {
+            let expr_end = expr_node.end as usize;
+            let name_start = name_node.pos as usize;
+            let between_end = std::cmp::min(name_start, text.len());
+            let between_start = std::cmp::min(expr_end, between_end);
+            let between = &text[between_start..between_end];
+            if between.contains('\n') {
+                // Find where the dot is relative to the newline
+                if let Some(dot_pos) = between.find('.') {
+                    let after_dot = &between[dot_pos + 1..];
+                    if after_dot.contains('\n') {
+                        // Dot before newline: `expr.\n    name`
+                        self.write(".");
+                        self.write_line();
+                        self.increase_indent();
+                        self.emit(access.name_or_argument);
+                        self.decrease_indent();
+                    } else {
+                        // Newline before dot: `expr\n    .name`
+                        self.write_line();
+                        self.increase_indent();
+                        self.write(".");
+                        self.emit(access.name_or_argument);
+                        self.decrease_indent();
                     }
+                } else {
+                    self.write(".");
+                    self.emit(access.name_or_argument);
                 }
+                return;
             }
         }
 
@@ -963,15 +961,14 @@ impl<'a> Printer<'a> {
         // If the inner expression is a type assertion/as/satisfies expression,
         // the parens were only needed for the TS syntax (e.g., `(<Type>x).foo`).
         // In JS emit, the type assertion is stripped, making the parens unnecessary.
-        if let Some(inner) = self.arena.get(paren.expression) {
-            if inner.kind == syntax_kind_ext::TYPE_ASSERTION
+        if let Some(inner) = self.arena.get(paren.expression)
+            && (inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner.kind == syntax_kind_ext::AS_EXPRESSION
-                || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
-            {
-                // Emit the inner expression directly, without parens
-                self.emit(paren.expression);
-                return;
-            }
+                || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+        {
+            // Emit the inner expression directly, without parens
+            self.emit(paren.expression);
+            return;
         }
 
         self.write("(");
@@ -1062,10 +1059,10 @@ impl<'a> Printer<'a> {
             self.emit_comma_separated(&array.elements.nodes);
             // Preserve trailing comma for elisions: [,,] must keep both commas
             // Elided elements are represented as NodeIndex::NONE, not OMITTED_EXPRESSION nodes
-            if let Some(&last_idx) = array.elements.nodes.last() {
-                if last_idx.is_none() {
-                    self.write(",");
-                }
+            if let Some(&last_idx) = array.elements.nodes.last()
+                && last_idx.is_none()
+            {
+                self.write(",");
             }
             self.decrease_indent();
             self.write("]");
@@ -1102,10 +1099,10 @@ impl<'a> Printer<'a> {
                     self.emit(elem);
                 }
                 // Trailing comma for elisions
-                if let Some(&last_idx) = array.elements.nodes.last() {
-                    if last_idx.is_none() {
-                        self.write(",");
-                    }
+                if let Some(&last_idx) = array.elements.nodes.last()
+                    && last_idx.is_none()
+                {
+                    self.write(",");
                 }
                 self.write_line();
                 self.decrease_indent();
@@ -1121,10 +1118,10 @@ impl<'a> Printer<'a> {
                     self.emit(elem);
                 }
                 // Trailing comma for elisions
-                if let Some(&last_idx) = array.elements.nodes.last() {
-                    if last_idx.is_none() {
-                        self.write(",");
-                    }
+                if let Some(&last_idx) = array.elements.nodes.last()
+                    && last_idx.is_none()
+                {
+                    self.write(",");
                 }
                 self.decrease_indent();
                 self.write("]");

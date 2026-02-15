@@ -62,10 +62,10 @@ impl<'a> GoToImplementationProvider<'a> {
         }
 
         // Strategy 2: Parent lookup - the node is the name identifier of a declaration
-        if let Some(ext) = self.arena.get_extended(node_idx) {
-            if let Some(&sym_id) = self.binder.node_symbols.get(&ext.parent.0) {
-                return Some(sym_id);
-            }
+        if let Some(ext) = self.arena.get_extended(node_idx)
+            && let Some(&sym_id) = self.binder.node_symbols.get(&ext.parent.0)
+        {
+            return Some(sym_id);
         }
 
         // Strategy 3: Name-based lookup in file_locals using escaped_text
@@ -133,10 +133,10 @@ impl<'a> GoToImplementationProvider<'a> {
         if symbol.flags & symbol_flags::CLASS != 0 {
             // Check if the class is abstract by examining its declarations
             for &decl_idx in &symbol.declarations {
-                if let Some(ext) = self.arena.get_extended(decl_idx) {
-                    if ext.modifier_flags & modifier_flags::ABSTRACT != 0 {
-                        return Some(TargetKind::AbstractClass);
-                    }
+                if let Some(ext) = self.arena.get_extended(decl_idx)
+                    && ext.modifier_flags & modifier_flags::ABSTRACT != 0
+                {
+                    return Some(TargetKind::AbstractClass);
                 }
             }
             return Some(TargetKind::ConcreteClass);
@@ -161,26 +161,21 @@ impl<'a> GoToImplementationProvider<'a> {
                 k if k == syntax_kind_ext::CLASS_DECLARATION
                     || k == syntax_kind_ext::CLASS_EXPRESSION =>
                 {
-                    if let Some(class) = self.arena.get_class(node) {
-                        if self.class_implements_or_extends(class, target_name, target_kind) {
-                            if let Some(loc) = self.location_for_declaration(node_idx, class.name) {
-                                locations.push(loc);
-                            }
-                        }
+                    if let Some(class) = self.arena.get_class(node)
+                        && self.class_implements_or_extends(class, target_name, target_kind)
+                        && let Some(loc) = self.location_for_declaration(node_idx, class.name)
+                    {
+                        locations.push(loc);
                     }
                 }
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                     // An interface can extend another interface
-                    if target_kind == TargetKind::Interface {
-                        if let Some(iface) = self.arena.get_interface(node) {
-                            if self.interface_extends(iface, target_name) {
-                                if let Some(loc) =
-                                    self.location_for_declaration(node_idx, iface.name)
-                                {
-                                    locations.push(loc);
-                                }
-                            }
-                        }
+                    if target_kind == TargetKind::Interface
+                        && let Some(iface) = self.arena.get_interface(node)
+                        && self.interface_extends(iface, target_name)
+                        && let Some(loc) = self.location_for_declaration(node_idx, iface.name)
+                    {
+                        locations.push(loc);
                     }
                 }
                 _ => {}
@@ -277,10 +272,10 @@ impl<'a> GoToImplementationProvider<'a> {
             };
 
             // Case 1: ExpressionWithTypeArguments wraps an expression child
-            if let Some(expr_data) = self.arena.get_expr_type_args(type_node) {
-                if self.expression_matches_name(expr_data.expression, target_name) {
-                    return true;
-                }
+            if let Some(expr_data) = self.arena.get_expr_type_args(type_node)
+                && self.expression_matches_name(expr_data.expression, target_name)
+            {
+                return true;
             }
 
             // Case 2: The type entry is directly an Identifier or expression node
@@ -305,17 +300,17 @@ impl<'a> GoToImplementationProvider<'a> {
         };
 
         // Simple identifier: `Foo`
-        if expr_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(text) = self.get_identifier_escaped_text(expr_idx) {
-                return text == target_name;
-            }
+        if expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(text) = self.get_identifier_escaped_text(expr_idx)
+        {
+            return text == target_name;
         }
 
         // Property access: `Ns.Foo` - check the rightmost name
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(expr_node) {
-                return self.expression_matches_name(access.name_or_argument, target_name);
-            }
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+        {
+            return self.expression_matches_name(access.name_or_argument, target_name);
         }
 
         false
@@ -373,40 +368,29 @@ impl<'a> GoToImplementationProvider<'a> {
                 k if k == syntax_kind_ext::CLASS_DECLARATION
                     || k == syntax_kind_ext::CLASS_EXPRESSION =>
                 {
-                    if let Some(class) = self.arena.get_class(node) {
-                        if self.class_implements_or_extends(class, target_name, target_kind) {
-                            if let Some(class_name) = self.get_identifier_escaped_text(class.name) {
-                                if let Some(loc) =
-                                    self.location_for_declaration(node_idx, class.name)
-                                {
-                                    results.push(ImplementationResult {
-                                        name: class_name.to_string(),
-                                        location: loc,
-                                    });
-                                }
-                            }
-                        }
+                    if let Some(class) = self.arena.get_class(node)
+                        && self.class_implements_or_extends(class, target_name, target_kind)
+                        && let Some(class_name) = self.get_identifier_escaped_text(class.name)
+                        && let Some(loc) = self.location_for_declaration(node_idx, class.name)
+                    {
+                        results.push(ImplementationResult {
+                            name: class_name.to_string(),
+                            location: loc,
+                        });
                     }
                 }
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                     // An interface can extend another interface
-                    if target_kind == TargetKind::Interface {
-                        if let Some(iface) = self.arena.get_interface(node) {
-                            if self.interface_extends(iface, target_name) {
-                                if let Some(iface_name) =
-                                    self.get_identifier_escaped_text(iface.name)
-                                {
-                                    if let Some(loc) =
-                                        self.location_for_declaration(node_idx, iface.name)
-                                    {
-                                        results.push(ImplementationResult {
-                                            name: iface_name.to_string(),
-                                            location: loc,
-                                        });
-                                    }
-                                }
-                            }
-                        }
+                    if target_kind == TargetKind::Interface
+                        && let Some(iface) = self.arena.get_interface(node)
+                        && self.interface_extends(iface, target_name)
+                        && let Some(iface_name) = self.get_identifier_escaped_text(iface.name)
+                        && let Some(loc) = self.location_for_declaration(node_idx, iface.name)
+                    {
+                        results.push(ImplementationResult {
+                            name: iface_name.to_string(),
+                            location: loc,
+                        });
                     }
                 }
                 _ => {}

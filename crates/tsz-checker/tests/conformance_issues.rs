@@ -938,8 +938,10 @@ const fn2: <T>(x: T) => void = function test(t) { };
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_implicit_any = true;
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -987,8 +989,10 @@ f(t => { });
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_implicit_any = true;
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -1045,8 +1049,10 @@ const fn2: <T>(x: T) => void = function test(t) {
 };
 "#;
 
-    let mut options = CheckerOptions::default();
-    options.strict = true;
+    let options = CheckerOptions {
+        strict: true,
+        ..Default::default()
+    };
     let diagnostics = compile_and_get_diagnostics_with_options(source, options);
 
     let relevant: Vec<_> = diagnostics
@@ -1156,8 +1162,10 @@ var f = function(x) { };
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_implicit_any = true;
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -1227,8 +1235,10 @@ good2({ when: value => false });
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_implicit_any = true;
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,

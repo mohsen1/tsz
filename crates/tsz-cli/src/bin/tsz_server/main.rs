@@ -528,6 +528,17 @@ struct RunCheckResult {
     relation_cache_stats: RelationCacheStats,
 }
 
+struct DiagnosticFormatInput<'a> {
+    start_offset: u32,
+    length: u32,
+    message: &'a str,
+    code: u32,
+    category: DiagnosticCategory,
+    line_map: &'a LineMap,
+    content: &'a str,
+    include_line_position: bool,
+}
+
 impl Server {
     fn new(args: &ServerArgs) -> Result<Self> {
         let lib_dir = Self::find_lib_dir()?;
@@ -1015,16 +1026,16 @@ impl Server {
                 full_diags
                     .iter()
                     .map(|diag| {
-                        Self::format_diagnostic(
-                            diag.start,
-                            diag.length,
-                            &diag.message_text,
-                            diag.code,
-                            diag.category,
-                            &line_map,
-                            &content,
+                        Self::format_diagnostic(DiagnosticFormatInput {
+                            start_offset: diag.start,
+                            length: diag.length,
+                            message: &diag.message_text,
+                            code: diag.code,
+                            category: diag.category,
+                            line_map: &line_map,
+                            content: &content,
                             include_line_position,
-                        )
+                        })
                     })
                     .collect()
             } else {
@@ -1065,16 +1076,16 @@ impl Server {
                     .get_diagnostics()
                     .iter()
                     .map(|d| {
-                        Self::format_diagnostic(
-                            d.start,
-                            d.length,
-                            &d.message,
-                            d.code,
-                            DiagnosticCategory::Error,
-                            &line_map,
-                            &content,
+                        Self::format_diagnostic(DiagnosticFormatInput {
+                            start_offset: d.start,
+                            length: d.length,
+                            message: &d.message,
+                            code: d.code,
+                            category: DiagnosticCategory::Error,
+                            line_map: &line_map,
+                            content: &content,
                             include_line_position,
-                        )
+                        })
                     })
                     .collect()
             } else {
@@ -1101,25 +1112,20 @@ impl Server {
     /// the response includes 0-based `start`/`length` fields plus `startLocation`/
     /// `endLocation` with 1-based line/offset. When false, uses `start`/`end` as
     /// 1-based line/offset objects (the traditional tsserver format).
-    fn format_diagnostic(
-        start_offset: u32,
-        length: u32,
-        message: &str,
-        code: u32,
-        category: DiagnosticCategory,
-        line_map: &LineMap,
-        content: &str,
-        include_line_position: bool,
-    ) -> serde_json::Value {
-        let start_pos = line_map.offset_to_position(start_offset, content);
-        let end_pos = line_map.offset_to_position(start_offset + length, content);
-        let cat_str = match category {
+    fn format_diagnostic(input: DiagnosticFormatInput<'_>) -> serde_json::Value {
+        let start_pos = input
+            .line_map
+            .offset_to_position(input.start_offset, input.content);
+        let end_pos = input
+            .line_map
+            .offset_to_position(input.start_offset + input.length, input.content);
+        let cat_str = match input.category {
             DiagnosticCategory::Error => "error",
             DiagnosticCategory::Warning => "warning",
             _ => "suggestion",
         };
 
-        if include_line_position {
+        if input.include_line_position {
             // When includeLinePosition is true, the harness expects:
             // - start: 0-based byte offset (number)
             // - length: byte length (number)
@@ -1129,8 +1135,8 @@ impl Server {
             // - category: category string
             // - code: error code
             serde_json::json!({
-                "start": start_offset,
-                "length": length,
+                "start": input.start_offset,
+                "length": input.length,
                 "startLocation": {
                     "line": start_pos.line + 1,
                     "offset": start_pos.character + 1,
@@ -1139,8 +1145,8 @@ impl Server {
                     "line": end_pos.line + 1,
                     "offset": end_pos.character + 1,
                 },
-                "message": message,
-                "code": code,
+                "message": input.message,
+                "code": input.code,
                 "category": cat_str,
             })
         } else {
@@ -1154,8 +1160,8 @@ impl Server {
                     "line": end_pos.line + 1,
                     "offset": end_pos.character + 1,
                 },
-                "text": message,
-                "code": code,
+                "text": input.message,
+                "code": input.code,
                 "category": cat_str,
             })
         }
@@ -1751,66 +1757,66 @@ impl Server {
             (start < end).then(|| &source_text[start..end])
         });
 
-        if let Some(text) = decl_text {
-            if let Some(open) = text.find('(') {
-                let mut depth = 0;
-                let mut close = None;
-                for (i, ch) in text[open..].char_indices() {
-                    match ch {
-                        '(' => depth += 1,
-                        ')' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                close = Some(open + i);
-                                break;
-                            }
+        if let Some(text) = decl_text
+            && let Some(open) = text.find('(')
+        {
+            let mut depth = 0;
+            let mut close = None;
+            for (i, ch) in text[open..].char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(open + i);
+                            break;
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
-                if let Some(close_pos) = close {
-                    let params_text = &text[open + 1..close_pos];
-                    parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
-                    let params: Vec<&str> = if params_text.trim().is_empty() {
-                        vec![]
-                    } else {
-                        params_text.split(',').collect()
-                    };
-                    for (i, param) in params.iter().enumerate() {
-                        if i > 0 {
-                            parts.push(serde_json::json!({"text": ",", "kind": "punctuation"}));
-                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                        }
-                        let param = param.trim();
-                        if let Some(colon_pos) = param.find(':') {
-                            let pname = param[..colon_pos].trim();
-                            let ptype = param[colon_pos + 1..].trim();
-                            parts.push(serde_json::json!({"text": pname, "kind": "parameterName"}));
-                            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
-                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                            parts.push(serde_json::json!({"text": ptype, "kind": "keyword"}));
-                        } else {
-                            parts.push(serde_json::json!({"text": param, "kind": "parameterName"}));
-                        }
+            }
+            if let Some(close_pos) = close {
+                let params_text = &text[open + 1..close_pos];
+                parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
+                let params: Vec<&str> = if params_text.trim().is_empty() {
+                    vec![]
+                } else {
+                    params_text.split(',').collect()
+                };
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        parts.push(serde_json::json!({"text": ",", "kind": "punctuation"}));
+                        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                     }
-                    parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
-
-                    let after_close = text[close_pos + 1..].trim_start();
-                    if let Some(rest) = after_close.strip_prefix(':') {
-                        let ret_type = rest.trim_start();
-                        let ret_type = ret_type.split(['{', '\n']).next().unwrap_or("").trim();
-                        if !ret_type.is_empty() {
-                            parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
-                            parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                            parts.push(serde_json::json!({"text": ret_type, "kind": "keyword"}));
-                        }
-                    } else {
+                    let param = param.trim();
+                    if let Some(colon_pos) = param.find(':') {
+                        let pname = param[..colon_pos].trim();
+                        let ptype = param[colon_pos + 1..].trim();
+                        parts.push(serde_json::json!({"text": pname, "kind": "parameterName"}));
                         parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
                         parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                        parts.push(serde_json::json!({"text": "void", "kind": "keyword"}));
+                        parts.push(serde_json::json!({"text": ptype, "kind": "keyword"}));
+                    } else {
+                        parts.push(serde_json::json!({"text": param, "kind": "parameterName"}));
                     }
-                    return;
                 }
+                parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
+
+                let after_close = text[close_pos + 1..].trim_start();
+                if let Some(rest) = after_close.strip_prefix(':') {
+                    let ret_type = rest.trim_start();
+                    let ret_type = ret_type.split(['{', '\n']).next().unwrap_or("").trim();
+                    if !ret_type.is_empty() {
+                        parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                        parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                        parts.push(serde_json::json!({"text": ret_type, "kind": "keyword"}));
+                    }
+                } else {
+                    parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": "void", "kind": "keyword"}));
+                }
+                return;
             }
         }
 
@@ -1937,17 +1943,17 @@ impl Server {
                     let mut tags: Vec<serde_json::Value> = Vec::new();
                     // Add @param tags from parameter documentation
                     for p in &sig.parameters {
-                        if let Some(ref doc) = p.documentation {
-                            if !doc.is_empty() {
-                                tags.push(serde_json::json!({
-                                    "name": "param",
-                                    "text": [
-                                        {"text": &p.name, "kind": "parameterName"},
-                                        {"text": " ", "kind": "space"},
-                                        {"text": doc, "kind": "text"}
-                                    ]
-                                }));
-                            }
+                        if let Some(ref doc) = p.documentation
+                            && !doc.is_empty()
+                        {
+                            tags.push(serde_json::json!({
+                                "name": "param",
+                                "text": [
+                                    {"text": &p.name, "kind": "parameterName"},
+                                    {"text": " ", "kind": "space"},
+                                    {"text": doc, "kind": "text"}
+                                ]
+                            }));
                         }
                     }
                     // Add non-param tags (e.g. @returns, @mytag)
@@ -2468,17 +2474,16 @@ impl Server {
                         "end": Self::lsp_to_tsserver_position(ref_info.location.range.end),
                     });
                     // Add contextSpan for definition locations
-                    if ref_info.is_definition {
-                        if let Some(ref defs) = def_infos {
-                            for def in defs {
-                                if def.location.range == ref_info.location.range {
-                                    if let Some(ref ctx) = def.context_span {
-                                        loc["contextStart"] =
-                                            Self::lsp_to_tsserver_position(ctx.start);
-                                        loc["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
-                                        break;
-                                    }
-                                }
+                    if ref_info.is_definition
+                        && let Some(ref defs) = def_infos
+                    {
+                        for def in defs {
+                            if def.location.range == ref_info.location.range
+                                && let Some(ref ctx) = def.context_span
+                            {
+                                loc["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
+                                loc["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
+                                break;
                             }
                         }
                     }
@@ -2721,27 +2726,26 @@ impl Server {
 
                     // Add contextSpan for definition references
                     // Skip when contextSpan matches textSpan (e.g., catch clause variables)
-                    if ref_info.is_definition {
-                        if let Some(ref defs) = def_infos {
-                            for def in defs {
-                                if def.location.range == ref_info.location.range {
-                                    if let Some(ref ctx) = def.context_span {
-                                        let ctx_start =
-                                            line_map.position_to_offset(ctx.start, &source_text);
-                                        let ctx_end =
-                                            line_map.position_to_offset(ctx.end, &source_text);
-                                        let ctx_start_off = ctx_start.unwrap_or(0);
-                                        let ctx_end_off = ctx_end.unwrap_or(0);
-                                        // Only add contextSpan if it differs from the textSpan
-                                        if ctx_start_off != start_off || ctx_end_off != end_off {
-                                            ref_json["contextSpan"] = serde_json::json!({
-                                                "start": ctx_start_off,
-                                                "length": ctx_end_off.saturating_sub(ctx_start_off),
-                                            });
-                                        }
-                                        break;
-                                    }
+                    if ref_info.is_definition
+                        && let Some(ref defs) = def_infos
+                    {
+                        for def in defs {
+                            if def.location.range == ref_info.location.range
+                                && let Some(ref ctx) = def.context_span
+                            {
+                                let ctx_start =
+                                    line_map.position_to_offset(ctx.start, &source_text);
+                                let ctx_end = line_map.position_to_offset(ctx.end, &source_text);
+                                let ctx_start_off = ctx_start.unwrap_or(0);
+                                let ctx_end_off = ctx_end.unwrap_or(0);
+                                // Only add contextSpan if it differs from the textSpan
+                                if ctx_start_off != start_off || ctx_end_off != end_off {
+                                    ref_json["contextSpan"] = serde_json::json!({
+                                        "start": ctx_start_off,
+                                        "length": ctx_end_off.saturating_sub(ctx_start_off),
+                                    });
                                 }
+                                break;
                             }
                         }
                     }
@@ -2809,29 +2813,29 @@ impl Server {
         let s = display_string;
 
         // Check for parenthesized prefix like "(local var)" or "(parameter)"
-        if let Some(rest) = s.strip_prefix('(') {
-            if let Some(paren_end) = rest.find(')') {
-                let prefix = &rest[..paren_end];
-                let after_paren = rest[paren_end + 1..].trim_start();
+        if let Some(rest) = s.strip_prefix('(')
+            && let Some(paren_end) = rest.find(')')
+        {
+            let prefix = &rest[..paren_end];
+            let after_paren = rest[paren_end + 1..].trim_start();
 
-                let mut parts = vec![];
-                parts.push(serde_json::json!({ "text": "(", "kind": "punctuation" }));
+            let mut parts = vec![];
+            parts.push(serde_json::json!({ "text": "(", "kind": "punctuation" }));
 
-                // Split prefix words
-                let prefix_words: Vec<&str> = prefix.split_whitespace().collect();
-                for (i, word) in prefix_words.iter().enumerate() {
-                    if i > 0 {
-                        parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
-                    }
-                    parts.push(serde_json::json!({ "text": *word, "kind": "keyword" }));
+            // Split prefix words
+            let prefix_words: Vec<&str> = prefix.split_whitespace().collect();
+            for (i, word) in prefix_words.iter().enumerate() {
+                if i > 0 {
+                    parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
                 }
-                parts.push(serde_json::json!({ "text": ")", "kind": "punctuation" }));
-                parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
-
-                // Parse the rest: "name: type" or "name(sig): type"
-                Self::parse_name_and_type(after_paren, name_kind, &mut parts);
-                return parts;
+                parts.push(serde_json::json!({ "text": *word, "kind": "keyword" }));
             }
+            parts.push(serde_json::json!({ "text": ")", "kind": "punctuation" }));
+            parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+
+            // Parse the rest: "name: type" or "name(sig): type"
+            Self::parse_name_and_type(after_paren, name_kind, &mut parts);
+            return parts;
         }
 
         // Handle "keyword name: type" or "keyword name" patterns
@@ -2847,15 +2851,15 @@ impl Server {
             "namespace",
         ];
         for kw in &keywords {
-            if let Some(rest) = s.strip_prefix(kw) {
-                if rest.starts_with(' ') {
-                    let mut parts = vec![];
-                    parts.push(serde_json::json!({ "text": *kw, "kind": "keyword" }));
-                    parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
-                    let rest = rest.trim_start();
-                    Self::parse_name_and_type(rest, name_kind, &mut parts);
-                    return parts;
-                }
+            if let Some(rest) = s.strip_prefix(kw)
+                && rest.starts_with(' ')
+            {
+                let mut parts = vec![];
+                parts.push(serde_json::json!({ "text": *kw, "kind": "keyword" }));
+                parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+                let rest = rest.trim_start();
+                Self::parse_name_and_type(rest, name_kind, &mut parts);
+                return parts;
             }
         }
 
@@ -4111,10 +4115,10 @@ impl Server {
         lib_names.sort();
 
         // Check cache first
-        if let Some((cached_names, cached_lib)) = &self.unified_lib_cache {
-            if *cached_names == lib_names {
-                return Ok(vec![std::sync::Arc::clone(cached_lib)]);
-            }
+        if let Some((cached_names, cached_lib)) = &self.unified_lib_cache
+            && *cached_names == lib_names
+        {
+            return Ok(vec![std::sync::Arc::clone(cached_lib)]);
         }
 
         // Phase 1: Load all libs normally (each with its own binder)
@@ -4676,20 +4680,20 @@ fn find_angle_bracket_match(arena: &NodeArena, source: &str, pos: usize) -> Opti
 
     // Type assertions: <type>expr
     for node in &arena.nodes {
-        if node.kind == tsz::parser::syntax_kind_ext::TYPE_ASSERTION {
-            if let Some(ta) = arena.type_assertions.get(node.data_index as usize) {
-                let open_pos = node.pos as usize;
-                if bytes.get(open_pos) != Some(&b'<') {
-                    continue;
-                }
-                if let Some(type_node) = arena.nodes.get(ta.type_node.0 as usize) {
-                    // `>` might be at type_node.end - 1 or type_node.end
-                    let end = type_node.end as usize;
-                    if end > 0 && bytes.get(end - 1) == Some(&b'>') {
-                        pairs.push((open_pos, end - 1));
-                    } else if bytes.get(end) == Some(&b'>') {
-                        pairs.push((open_pos, end));
-                    }
+        if node.kind == tsz::parser::syntax_kind_ext::TYPE_ASSERTION
+            && let Some(ta) = arena.type_assertions.get(node.data_index as usize)
+        {
+            let open_pos = node.pos as usize;
+            if bytes.get(open_pos) != Some(&b'<') {
+                continue;
+            }
+            if let Some(type_node) = arena.nodes.get(ta.type_node.0 as usize) {
+                // `>` might be at type_node.end - 1 or type_node.end
+                let end = type_node.end as usize;
+                if end > 0 && bytes.get(end - 1) == Some(&b'>') {
+                    pairs.push((open_pos, end - 1));
+                } else if bytes.get(end) == Some(&b'>') {
+                    pairs.push((open_pos, end));
                 }
             }
         }

@@ -427,14 +427,13 @@ impl Reporter {
             let file_display = self.relative_path(&diag.file);
             if let std::collections::hash_map::Entry::Vacant(entry) =
                 first_error_lines.entry(file_display.clone())
-            {
-                if let Some((line, _)) = self.line_maps.get(&diag.file).and_then(|lm| {
+                && let Some((line, _)) = self.line_maps.get(&diag.file).and_then(|lm| {
                     let source = self.sources.get(&diag.file)?;
                     let pos = lm.offset_to_position(diag.start, source);
                     Some((pos.line + 1, pos.character + 1))
-                }) {
-                    entry.insert(line);
-                }
+                })
+            {
+                entry.insert(line);
             }
         }
 

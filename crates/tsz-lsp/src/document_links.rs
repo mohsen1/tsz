@@ -142,11 +142,11 @@ impl<'a> DocumentLinkProvider<'a> {
 
             // Module block: recurse into statements
             k if k == syntax_kind_ext::MODULE_BLOCK => {
-                if let Some(module_block) = self.arena.get_module_block(node) {
-                    if let Some(stmts) = &module_block.statements {
-                        for &stmt in &stmts.nodes {
-                            self.collect_links(stmt, links);
-                        }
+                if let Some(module_block) = self.arena.get_module_block(node)
+                    && let Some(stmts) = &module_block.statements
+                {
+                    for &stmt in &stmts.nodes {
+                        self.collect_links(stmt, links);
                     }
                 }
             }

@@ -23,8 +23,17 @@ use std::fmt::Write;
 use crate::transform_context::TransformContext;
 use crate::transforms::ir::*;
 use tsz_parser::parser::base::NodeIndex;
-use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::syntax_kind_ext;
+
+#[derive(Clone, Copy)]
+struct NamespaceIifeContext<'a> {
+    is_exported: bool,
+    attach_to_exports: bool,
+    should_declare_var: bool,
+    parent_name: Option<&'a str>,
+    param_name: Option<&'a str>,
+}
 
 /// IR Printer - converts IR nodes to JavaScript strings
 pub struct IRPrinter<'a> {
@@ -1055,70 +1064,48 @@ impl<'a> IRPrinter<'a> {
             }
             IRNode::ASTRef(idx) => {
                 // Check if this node has a transform directive that we should apply
-                if let Some(arena) = self.arena {
-                    if let Some(node) = arena.get(*idx) {
-                        // Get the directive for this node (clone to avoid borrow issues)
-                        let directive = self.transforms.as_ref().and_then(|t| t.get(*idx).cloned());
+                if let Some(arena) = self.arena
+                    && let Some(node) = arena.get(*idx)
+                {
+                    // Get the directive for this node (clone to avoid borrow issues)
+                    let directive = self.transforms.as_ref().and_then(|t| t.get(*idx).cloned());
 
-                        if let Some(directive) = directive {
-                            use tsz_parser::parser::syntax_kind_ext;
+                    if let Some(directive) = directive {
+                        use tsz_parser::parser::syntax_kind_ext;
 
-                            // Handle ES5ArrowFunction directive
-                            if matches!(
-                                directive,
-                                crate::transform_context::TransformDirective::ES5ArrowFunction { .. }
-                            ) && node.kind == syntax_kind_ext::ARROW_FUNCTION
-                            {
-                                if let Some(func_data) = arena.get_function(node) {
-                                    // Extract flags from directive before mutable borrow
-                                    let (captures_this, captures_arguments, class_alias) = match &directive {
-                                        crate::transform_context::TransformDirective::ES5ArrowFunction {
-                                            captures_this,
-                                            captures_arguments,
-                                            class_alias,
-                                            ..
-                                        } => (*captures_this, *captures_arguments, class_alias.as_deref().map(std::string::ToString::to_string)),
-                                        _ => (false, false, None),
-                                    };
-
-                                    self.emit_arrow_function_es5_with_flags(
-                                        arena,
-                                        node,
-                                        func_data,
-                                        *idx,
-                                        captures_this,
-                                        captures_arguments,
-                                        class_alias,
-                                    );
-                                    return;
-                                }
-                            }
-
-                            // Handle SubstituteThis directive
-                            if let crate::transform_context::TransformDirective::SubstituteThis {
-                                ref capture_name,
-                            } = directive
-                            {
-                                if let Some(_ident) = arena.get_identifier(node) {
-                                    self.write(capture_name);
-                                    return;
-                                }
-                            }
-
-                            // Handle SubstituteArguments directive
-                            if matches!(
-                                directive,
-                                crate::transform_context::TransformDirective::SubstituteArguments
-                            ) {
-                                if let Some(_ident) = arena.get_identifier(node) {
-                                    self.write("_arguments");
-                                    return;
-                                }
-                            }
-
-                            // Note: For other directive types, fall through to source text copy
-                            // This is intentional - we only handle directives that are ready
+                        // Handle ES5ArrowFunction directive
+                        if matches!(
+                            directive,
+                            crate::transform_context::TransformDirective::ES5ArrowFunction { .. }
+                        ) && node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            && let Some(func_data) = arena.get_function(node)
+                        {
+                            self.emit_arrow_function_es5_with_flags(arena, func_data);
+                            return;
                         }
+
+                        // Handle SubstituteThis directive
+                        if let crate::transform_context::TransformDirective::SubstituteThis {
+                            ref capture_name,
+                        } = directive
+                            && let Some(_ident) = arena.get_identifier(node)
+                        {
+                            self.write(capture_name);
+                            return;
+                        }
+
+                        // Handle SubstituteArguments directive
+                        if matches!(
+                            directive,
+                            crate::transform_context::TransformDirective::SubstituteArguments
+                        ) && let Some(_ident) = arena.get_identifier(node)
+                        {
+                            self.write("_arguments");
+                            return;
+                        }
+
+                        // Note: For other directive types, fall through to source text copy
+                        // This is intentional - we only handle directives that are ready
                     }
                 }
 
@@ -1289,11 +1276,13 @@ impl<'a> IRPrinter<'a> {
                     name_parts,
                     0,
                     body,
-                    *is_exported,
-                    *attach_to_exports,
-                    *should_declare_var,
-                    parent_name.as_deref(),
-                    param_name.as_deref(),
+                    NamespaceIifeContext {
+                        is_exported: *is_exported,
+                        attach_to_exports: *attach_to_exports,
+                        should_declare_var: *should_declare_var,
+                        parent_name: parent_name.as_deref(),
+                        param_name: param_name.as_deref(),
+                    },
                 );
             }
             IRNode::NamespaceExport {
@@ -1355,24 +1344,20 @@ impl<'a> IRPrinter<'a> {
         name_parts: &[String],
         index: usize,
         body: &[IRNode],
-        is_exported: bool,
-        attach_to_exports: bool,
-        should_declare_var: bool,
-        parent_name: Option<&str>,
-        param_name: Option<&str>,
+        context: NamespaceIifeContext<'_>,
     ) {
         let current_name = &name_parts[index];
         let is_last = index == name_parts.len() - 1;
         // Use renamed parameter name only at the innermost (last) level for collision avoidance.
         // Outer levels of qualified names (A.B.C) always use their original name.
         let iife_param = if is_last {
-            param_name.unwrap_or(current_name.as_str())
+            context.param_name.unwrap_or(current_name.as_str())
         } else {
             current_name.as_str()
         };
 
         // Emit var declaration only for the outermost namespace and if flag is true
-        if index == 0 && should_declare_var {
+        if index == 0 && context.should_declare_var {
             self.write("var ");
             self.write(current_name);
             self.write(";");
@@ -1414,12 +1399,12 @@ impl<'a> IRPrinter<'a> {
                 self.emit_node(&body[i]);
                 self.suppress_function_trailing_extraction = prev_suppress;
                 // Peek ahead for trailing comment
-                if i + 1 < body.len() {
-                    if let IRNode::TrailingComment(text) = &body[i + 1] {
-                        self.write(" ");
-                        self.write(text);
-                        i += 1; // consume the trailing comment
-                    }
+                if i + 1 < body.len()
+                    && let IRNode::TrailingComment(text) = &body[i + 1]
+                {
+                    self.write(" ");
+                    self.write(text);
+                    i += 1; // consume the trailing comment
                 }
                 self.write_line();
                 i += 1;
@@ -1439,11 +1424,13 @@ impl<'a> IRPrinter<'a> {
                 name_parts,
                 index + 1,
                 body,
-                is_exported,
-                attach_to_exports,
-                true,
-                None,
-                param_name,
+                NamespaceIifeContext {
+                    is_exported: context.is_exported,
+                    attach_to_exports: context.attach_to_exports,
+                    should_declare_var: true,
+                    parent_name: None,
+                    param_name: context.param_name,
+                },
             );
             self.write_line();
         }
@@ -1454,7 +1441,7 @@ impl<'a> IRPrinter<'a> {
 
         // Argument: emit the IIFE argument binding
         if index == 0 {
-            if let Some(parent) = parent_name {
+            if let Some(parent) = context.parent_name {
                 // Nested namespace with parent: Name = Parent.Name || (Parent.Name = {})
                 self.write(current_name);
                 self.write(" = ");
@@ -1466,7 +1453,7 @@ impl<'a> IRPrinter<'a> {
                 self.write(".");
                 self.write(current_name);
                 self.write(" = {})");
-            } else if is_exported && attach_to_exports {
+            } else if context.is_exported && context.attach_to_exports {
                 self.write(current_name);
                 self.write(" || (exports.");
                 self.write(current_name);
@@ -1703,14 +1690,13 @@ impl<'a> IRPrinter<'a> {
     fn emit_property(&mut self, prop: &IRProperty) {
         // Special case: spread property (key is "..." and value is SpreadElement)
         // Should emit as `...expr` not `"...": ...expr`
-        if let IRPropertyKey::Identifier(name) = &prop.key {
-            if name == "..." {
-                if let IRNode::SpreadElement(inner) = &prop.value {
-                    self.write("...");
-                    self.emit_node(inner);
-                    return;
-                }
-            }
+        if let IRPropertyKey::Identifier(name) = &prop.key
+            && name == "..."
+            && let IRNode::SpreadElement(inner) = &prop.value
+        {
+            self.write("...");
+            self.emit_node(inner);
+            return;
         }
 
         match &prop.key {
@@ -1869,12 +1855,7 @@ impl<'a> IRPrinter<'a> {
     fn emit_arrow_function_es5_with_flags(
         &mut self,
         arena: &NodeArena,
-        _node: &Node,
         func: &tsz_parser::parser::node::FunctionData,
-        _node_idx: NodeIndex,
-        _captures_this: bool,
-        _captures_arguments: bool,
-        _class_alias: Option<String>,
     ) {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -1892,12 +1873,11 @@ impl<'a> IRPrinter<'a> {
             if i > 0 {
                 self.write(", ");
             }
-            if let Some(param_node) = arena.get(param_idx) {
-                if let Some(_param) = arena.get_parameter(param_node) {
-                    if let Some(ident) = arena.get_identifier(param_node) {
-                        self.write(&ident.escaped_text);
-                    }
-                }
+            if let Some(param_node) = arena.get(param_idx)
+                && let Some(_param) = arena.get_parameter(param_node)
+                && let Some(ident) = arena.get_identifier(param_node)
+            {
+                self.write(&ident.escaped_text);
             }
         }
         self.write(") ");

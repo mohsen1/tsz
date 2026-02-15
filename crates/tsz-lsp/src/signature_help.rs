@@ -307,18 +307,18 @@ impl<'a> SignatureHelpProvider<'a> {
     /// for `new Foo(...)` returns "Foo".
     fn resolve_callee_name(&self, expr_idx: NodeIndex, _call_kind: CallKind) -> String {
         // Try to get identifier text directly (handles simple identifiers)
-        if let Some(name) = self.arena.get_identifier_text(expr_idx) {
-            if !name.is_empty() {
-                return name.to_string();
-            }
+        if let Some(name) = self.arena.get_identifier_text(expr_idx)
+            && !name.is_empty()
+        {
+            return name.to_string();
         }
         if let Some(node) = self.arena.get(expr_idx) {
             // Property access: obj.method(...)
             if let Some(access) = self.arena.get_access_expr(node) {
-                if let Some(name) = self.arena.get_identifier_text(access.name_or_argument) {
-                    if !name.is_empty() {
-                        return name.to_string();
-                    }
+                if let Some(name) = self.arena.get_identifier_text(access.name_or_argument)
+                    && !name.is_empty()
+                {
+                    return name.to_string();
                 }
                 // Source text fallback for property name
                 if let Some(pn) = self.arena.get(access.name_or_argument) {
@@ -413,26 +413,26 @@ impl<'a> SignatureHelpProvider<'a> {
                 }
 
                 // Check for tagged template expression
-                if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
-                    if let Some(data) = self.arena.get_tagged_template(node) {
-                        // Cursor must be strictly inside the template backticks.
-                        // tmpl_node.pos may include leading trivia, so find the
-                        // actual opening backtick position in the source text.
-                        if let Some(tmpl_node) = self.arena.get(data.template) {
-                            let tmpl_start = tmpl_node.pos as usize;
-                            let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
-                            let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
-                            if let Some(backtick_rel) = tmpl_text.find('`') {
-                                let backtick_pos = (tmpl_start + backtick_rel) as u32;
-                                // Cursor must be strictly after opening backtick
-                                // and strictly before closing backtick
-                                if cursor_offset > backtick_pos && cursor_offset < tmpl_node.end {
-                                    return Some((
-                                        current,
-                                        CallSite::TaggedTemplate(data),
-                                        CallKind::TaggedTemplate,
-                                    ));
-                                }
+                if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+                    && let Some(data) = self.arena.get_tagged_template(node)
+                {
+                    // Cursor must be strictly inside the template backticks.
+                    // tmpl_node.pos may include leading trivia, so find the
+                    // actual opening backtick position in the source text.
+                    if let Some(tmpl_node) = self.arena.get(data.template) {
+                        let tmpl_start = tmpl_node.pos as usize;
+                        let tmpl_end = (tmpl_node.end as usize).min(self.source_text.len());
+                        let tmpl_text = &self.source_text[tmpl_start..tmpl_end];
+                        if let Some(backtick_rel) = tmpl_text.find('`') {
+                            let backtick_pos = (tmpl_start + backtick_rel) as u32;
+                            // Cursor must be strictly after opening backtick
+                            // and strictly before closing backtick
+                            if cursor_offset > backtick_pos && cursor_offset < tmpl_node.end {
+                                return Some((
+                                    current,
+                                    CallSite::TaggedTemplate(data),
+                                    CallKind::TaggedTemplate,
+                                ));
                             }
                         }
                     }
@@ -573,20 +573,20 @@ impl<'a> SignatureHelpProvider<'a> {
         let after_paren = (call_start + paren_rel + 1) as u32;
 
         // If there are arguments, span from after '(' to before ')'
-        if let Some(ref args) = data.arguments {
-            if !args.nodes.is_empty() {
-                let first_start = args
-                    .nodes
-                    .first()
-                    .and_then(|&idx| self.arena.get(idx))
-                    .map_or(after_paren, |n| n.pos);
-                let last_end = args
-                    .nodes
-                    .last()
-                    .and_then(|&idx| self.arena.get(idx))
-                    .map_or(after_paren, |n| n.end);
-                return (first_start, last_end.saturating_sub(first_start));
-            }
+        if let Some(ref args) = data.arguments
+            && !args.nodes.is_empty()
+        {
+            let first_start = args
+                .nodes
+                .first()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(after_paren, |n| n.pos);
+            let last_end = args
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(after_paren, |n| n.end);
+            return (first_start, last_end.saturating_sub(first_start));
         }
 
         // No arguments - zero-length span at after-paren position
@@ -633,20 +633,20 @@ impl<'a> SignatureHelpProvider<'a> {
             let Some(span_node) = self.arena.get(span_idx) else {
                 continue;
             };
-            if let Some(span_data) = self.arena.get_template_span(span_node) {
-                if let Some(lit_node) = self.arena.get(span_data.literal) {
-                    // Cursor at or before the literal's `}` → in expression area → param i+1
-                    // The literal starts with `}` which closes the expression; cursor there
-                    // is still conceptually "at the expression" (matches TypeScript behavior).
-                    if cursor_offset <= lit_node.pos {
-                        return (i + 1) as u32;
-                    }
-                    // Cursor within the literal (template text after `}`) → param 0
-                    if cursor_offset < lit_node.end {
-                        return 0;
-                    }
-                    // Cursor past this literal → continue to next span
+            if let Some(span_data) = self.arena.get_template_span(span_node)
+                && let Some(lit_node) = self.arena.get(span_data.literal)
+            {
+                // Cursor at or before the literal's `}` → in expression area → param i+1
+                // The literal starts with `}` which closes the expression; cursor there
+                // is still conceptually "at the expression" (matches TypeScript behavior).
+                if cursor_offset <= lit_node.pos {
+                    return (i + 1) as u32;
                 }
+                // Cursor within the literal (template text after `}`) → param 0
+                if cursor_offset < lit_node.end {
+                    return 0;
+                }
+                // Cursor past this literal → continue to next span
             }
         }
 
@@ -987,10 +987,8 @@ impl<'a> SignatureHelpProvider<'a> {
         }
 
         // Copy non-param tags
-        if overwrite || sig.info.tags.is_empty() {
-            if !parsed.tags.is_empty() {
-                sig.info.tags = parsed.tags.clone();
-            }
+        if (overwrite || sig.info.tags.is_empty()) && !parsed.tags.is_empty() {
+            sig.info.tags = parsed.tags.clone();
         }
     }
 

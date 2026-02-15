@@ -724,19 +724,17 @@ impl<'a> TypeInstantiator<'a> {
                             // - A union of string literals
                             // - A single string literal
                             // - The string intrinsic type
-                            if let Some(key) = self.interner.lookup(inst_type) {
-                                match key {
-                                    TypeData::Union(_)
-                                    | TypeData::Literal(LiteralValue::String(_))
-                                    | TypeData::Literal(LiteralValue::Number(_))
-                                    | TypeData::Literal(LiteralValue::Boolean(_))
-                                    | TypeData::Intrinsic(IntrinsicKind::String)
-                                    | TypeData::Intrinsic(IntrinsicKind::Number)
-                                    | TypeData::Intrinsic(IntrinsicKind::Boolean) => {
-                                        needs_evaluation = true;
-                                    }
-                                    _ => {}
-                                }
+                            if let Some(
+                                TypeData::Union(_)
+                                | TypeData::Literal(LiteralValue::String(_))
+                                | TypeData::Literal(LiteralValue::Number(_))
+                                | TypeData::Literal(LiteralValue::Boolean(_))
+                                | TypeData::Intrinsic(IntrinsicKind::String)
+                                | TypeData::Intrinsic(IntrinsicKind::Number)
+                                | TypeData::Intrinsic(IntrinsicKind::Boolean),
+                            ) = self.interner.lookup(inst_type)
+                            {
+                                needs_evaluation = true;
                             }
                             instantiated.push(TemplateSpan::Type(inst_type));
                         }

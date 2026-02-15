@@ -241,10 +241,10 @@ impl<'a> GoToDefinition<'a> {
         };
 
         // 4. If primary resolution succeeded, use the symbol
-        if let Some(symbol_id) = symbol_id_opt {
-            if let Some(locations) = self.locations_from_symbol(symbol_id) {
-                return Some(locations);
-            }
+        if let Some(symbol_id) = symbol_id_opt
+            && let Some(locations) = self.locations_from_symbol(symbol_id)
+        {
+            return Some(locations);
         }
 
         // 5. Fallback: try member access resolution (obj.method, Class.staticProp)
@@ -306,10 +306,10 @@ impl<'a> GoToDefinition<'a> {
         };
 
         // If primary resolution succeeded, use the symbol
-        if let Some(symbol_id) = symbol_id_opt {
-            if let Some(locations) = self.locations_from_symbol(symbol_id) {
-                return Some(locations);
-            }
+        if let Some(symbol_id) = symbol_id_opt
+            && let Some(locations) = self.locations_from_symbol(symbol_id)
+        {
+            return Some(locations);
         }
 
         // Fallback: try file_locals
@@ -431,47 +431,44 @@ impl<'a> GoToDefinition<'a> {
         let expr_symbol = self.binder.symbols.get(expr_symbol_id)?;
 
         // Look up in members table (instance members)
-        if let Some(ref members) = expr_symbol.members {
-            if let Some(member_id) = members.get(member_name) {
-                return Some(member_id);
-            }
+        if let Some(ref members) = expr_symbol.members
+            && let Some(member_id) = members.get(member_name)
+        {
+            return Some(member_id);
         }
 
         // Look up in exports table (static members, namespace exports)
-        if let Some(ref exports) = expr_symbol.exports {
-            if let Some(member_id) = exports.get(member_name) {
-                return Some(member_id);
-            }
+        if let Some(ref exports) = expr_symbol.exports
+            && let Some(member_id) = exports.get(member_name)
+        {
+            return Some(member_id);
         }
 
         // For instances: resolve the variable's type by checking its declarations
         // If the expression resolves to a variable (e.g., var x = new Foo()),
         // look at the initializer to find the class and its members.
         for &decl_idx in &expr_symbol.declarations {
-            if let Some(decl_node) = self.arena.get(decl_idx) {
-                if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                    if let Some(var_data) = self.arena.get_variable_declaration(decl_node) {
-                        // Check if the initializer is `new ClassName()`
-                        if !var_data.initializer.is_none() {
-                            if let Some(init_node) = self.arena.get(var_data.initializer) {
-                                if init_node.kind == syntax_kind_ext::NEW_EXPRESSION {
-                                    // The new expression's first child is the class name
-                                    if let Some(new_data) = self.arena.get_call_expr(init_node) {
-                                        // Resolve the class name
-                                        let mut walker2 = ScopeWalker::new(self.arena, self.binder);
-                                        if let Some(class_symbol_id) =
-                                            walker2.resolve_node(root, new_data.expression)
-                                        {
-                                            let class_symbol =
-                                                self.binder.symbols.get(class_symbol_id)?;
-                                            if let Some(ref members) = class_symbol.members {
-                                                if let Some(member_id) = members.get(member_name) {
-                                                    return Some(member_id);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                && let Some(var_data) = self.arena.get_variable_declaration(decl_node)
+            {
+                // Check if the initializer is `new ClassName()`
+                if !var_data.initializer.is_none()
+                    && let Some(init_node) = self.arena.get(var_data.initializer)
+                    && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                {
+                    // The new expression's first child is the class name
+                    if let Some(new_data) = self.arena.get_call_expr(init_node) {
+                        // Resolve the class name
+                        let mut walker2 = ScopeWalker::new(self.arena, self.binder);
+                        if let Some(class_symbol_id) =
+                            walker2.resolve_node(root, new_data.expression)
+                        {
+                            let class_symbol = self.binder.symbols.get(class_symbol_id)?;
+                            if let Some(ref members) = class_symbol.members
+                                && let Some(member_id) = members.get(member_name)
+                            {
+                                return Some(member_id);
                             }
                         }
                     }
@@ -553,17 +550,17 @@ impl<'a> GoToDefinition<'a> {
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let symbol_id_opt = walker.resolve_node(root, node_idx);
 
-        if let Some(symbol_id) = symbol_id_opt {
-            if let Some(infos) = self.definition_infos_from_symbol(symbol_id) {
-                return Some(infos);
-            }
+        if let Some(symbol_id) = symbol_id_opt
+            && let Some(infos) = self.definition_infos_from_symbol(symbol_id)
+        {
+            return Some(infos);
         }
 
         // Fallback: try member access resolution
-        if let Some(member_symbol_id) = self.try_resolve_member_access(root, node_idx) {
-            if let Some(infos) = self.definition_infos_from_symbol(member_symbol_id) {
-                return Some(infos);
-            }
+        if let Some(member_symbol_id) = self.try_resolve_member_access(root, node_idx)
+            && let Some(infos) = self.definition_infos_from_symbol(member_symbol_id)
+        {
+            return Some(infos);
         }
 
         // Fallback: try file_locals
@@ -639,10 +636,11 @@ impl<'a> GoToDefinition<'a> {
         }
 
         // For function/method overloads, return only the implementation (the one with a body)
-        if infos.len() > 1 && self.has_function_overloads(symbol) {
-            if let Some(impl_info) = self.find_implementation_info(&infos, symbol) {
-                return Some(vec![impl_info]);
-            }
+        if infos.len() > 1
+            && self.has_function_overloads(symbol)
+            && let Some(impl_info) = self.find_implementation_info(&infos, symbol)
+        {
+            return Some(vec![impl_info]);
         }
 
         Some(infos)
@@ -692,10 +690,8 @@ impl<'a> GoToDefinition<'a> {
                         .is_some_and(|c| !c.body.is_none()),
                     _ => false,
                 };
-                if has_body {
-                    if let Some(info) = infos.get(i) {
-                        return Some(info.clone());
-                    }
+                if has_body && let Some(info) = infos.get(i) {
+                    return Some(info.clone());
                 }
             }
         }
@@ -741,18 +737,17 @@ impl<'a> GoToDefinition<'a> {
         let context_range = Range::new(context_start, context_end);
 
         // Try to find the identifier name node within the declaration
-        if let Some(name_idx) = self.get_declaration_name_idx(decl_idx) {
-            if !name_idx.is_none() {
-                if let Some(name_node) = self.arena.get(name_idx) {
-                    let name_start = self
-                        .line_map
-                        .offset_to_position(name_node.pos, self.source_text);
-                    let name_end = self
-                        .line_map
-                        .offset_to_position(name_node.end, self.source_text);
-                    return (Range::new(name_start, name_end), context_range);
-                }
-            }
+        if let Some(name_idx) = self.get_declaration_name_idx(decl_idx)
+            && !name_idx.is_none()
+            && let Some(name_node) = self.arena.get(name_idx)
+        {
+            let name_start = self
+                .line_map
+                .offset_to_position(name_node.pos, self.source_text);
+            let name_end = self
+                .line_map
+                .offset_to_position(name_node.end, self.source_text);
+            return (Range::new(name_start, name_end), context_range);
         }
 
         // If we can't find a name node, use the declaration span for both
@@ -851,19 +846,18 @@ impl<'a> GoToDefinition<'a> {
                     let parent_idx = ext.parent;
                     if !parent_idx.is_none() {
                         // Check if parent is a CatchClause - no contextSpan for catch vars
-                        if let Some(parent_node) = self.arena.get(parent_idx) {
-                            if parent_node.kind == syntax_kind_ext::CATCH_CLAUSE {
-                                return (decl_node.pos, decl_node.end);
-                            }
+                        if let Some(parent_node) = self.arena.get(parent_idx)
+                            && parent_node.kind == syntax_kind_ext::CATCH_CLAUSE
+                        {
+                            return (decl_node.pos, decl_node.end);
                         }
                         if let Some(parent_ext) = self.arena.get_extended(parent_idx) {
                             let grandparent_idx = parent_ext.parent;
-                            if !grandparent_idx.is_none() {
-                                if let Some(gp_node) = self.arena.get(grandparent_idx) {
-                                    if gp_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                                        return clean(gp_node.pos, gp_node.end);
-                                    }
-                                }
+                            if !grandparent_idx.is_none()
+                                && let Some(gp_node) = self.arena.get(grandparent_idx)
+                                && gp_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                            {
+                                return clean(gp_node.pos, gp_node.end);
                             }
                         }
                         if let Some(parent_node) = self.arena.get(parent_idx) {
@@ -913,10 +907,10 @@ impl<'a> GoToDefinition<'a> {
                 let start_pos = if let Some(mods) = modifiers {
                     let mut earliest = decl_node.pos;
                     for &mod_idx in &mods.nodes {
-                        if let Some(mod_node) = self.arena.get(mod_idx) {
-                            if mod_node.pos < earliest {
-                                earliest = mod_node.pos;
-                            }
+                        if let Some(mod_node) = self.arena.get(mod_idx)
+                            && mod_node.pos < earliest
+                        {
+                            earliest = mod_node.pos;
                         }
                     }
                     earliest
@@ -962,10 +956,10 @@ impl<'a> GoToDefinition<'a> {
                 let start_pos = if let Some(mods) = modifiers {
                     let mut earliest = decl_node.pos;
                     for &mod_idx in &mods.nodes {
-                        if let Some(mod_node) = self.arena.get(mod_idx) {
-                            if mod_node.pos < earliest {
-                                earliest = mod_node.pos;
-                            }
+                        if let Some(mod_node) = self.arena.get(mod_idx)
+                            && mod_node.pos < earliest
+                        {
+                            earliest = mod_node.pos;
                         }
                     }
                     earliest
@@ -1053,10 +1047,10 @@ impl<'a> GoToDefinition<'a> {
         use tsz_parser::parser::flags::node_flags;
 
         // Check if the declaration node is a parameter
-        if let Some(decl_node) = self.arena.get(decl_idx) {
-            if decl_node.kind == syntax_kind_ext::PARAMETER {
-                return "parameter".to_string();
-            }
+        if let Some(decl_node) = self.arena.get(decl_idx)
+            && decl_node.kind == syntax_kind_ext::PARAMETER
+        {
+            return "parameter".to_string();
         }
 
         // For block-scoped variables, check if const
@@ -1064,14 +1058,12 @@ impl<'a> GoToDefinition<'a> {
             // Walk up to VariableDeclarationList to check CONST flag
             if let Some(ext) = self.arena.get_extended(decl_idx) {
                 let parent_idx = ext.parent; // VariableDeclarationList
-                if !parent_idx.is_none() {
-                    if let Some(parent_node) = self.arena.get(parent_idx) {
-                        if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                            if parent_node.flags as u32 & node_flags::CONST != 0 {
-                                return "const".to_string();
-                            }
-                        }
-                    }
+                if !parent_idx.is_none()
+                    && let Some(parent_node) = self.arena.get(parent_idx)
+                    && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && parent_node.flags as u32 & node_flags::CONST != 0
+                {
+                    return "const".to_string();
                 }
             }
             return "let".to_string();
@@ -1080,10 +1072,10 @@ impl<'a> GoToDefinition<'a> {
         // For function-scoped variables, also check for parameter
         if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             // Check if this specific declaration is a parameter
-            if let Some(node) = self.arena.get(decl_idx) {
-                if node.kind == syntax_kind_ext::PARAMETER {
-                    return "parameter".to_string();
-                }
+            if let Some(node) = self.arena.get(decl_idx)
+                && node.kind == syntax_kind_ext::PARAMETER
+            {
+                return "parameter".to_string();
             }
             // Check if var is inside a function body -> "local var"
             if self.is_inside_function_body(decl_idx) {
@@ -1152,11 +1144,11 @@ impl<'a> GoToDefinition<'a> {
         };
 
         // First try symbol.parent (set by binder for enums, lib types)
-        if !symbol.parent.is_none() {
-            if let Some(parent_symbol) = self.binder.symbols.get(symbol.parent) {
-                let parent_kind = self.symbol_flags_to_kind_string(parent_symbol.flags);
-                return (parent_symbol.escaped_name.clone(), parent_kind);
-            }
+        if !symbol.parent.is_none()
+            && let Some(parent_symbol) = self.binder.symbols.get(symbol.parent)
+        {
+            let parent_kind = self.symbol_flags_to_kind_string(parent_symbol.flags);
+            return (parent_symbol.escaped_name.clone(), parent_kind);
         }
 
         // Fallback: walk AST from first declaration to find containing class/interface/enum
@@ -1243,10 +1235,10 @@ impl<'a> GoToDefinition<'a> {
     fn is_ambient_declaration(&self, decl_idx: NodeIndex) -> bool {
         let mut current = decl_idx;
         for _ in 0..15 {
-            if let Some(node) = self.arena.get(current) {
-                if self.node_has_declare_modifier(current, node) {
-                    return true;
-                }
+            if let Some(node) = self.arena.get(current)
+                && self.node_has_declare_modifier(current, node)
+            {
+                return true;
             }
             // Walk up to parent
             if let Some(ext) = self.arena.get_extended(current) {
@@ -1300,10 +1292,10 @@ impl<'a> GoToDefinition<'a> {
         };
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
-                        return true;
-                    }
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
                 }
             }
         }
@@ -1468,13 +1460,13 @@ impl<'a> GoToDefinition<'a> {
     fn is_class_or_interface_member(&self, decl_idx: NodeIndex) -> bool {
         if let Some(ext) = self.arena.get_extended(decl_idx) {
             let parent = ext.parent;
-            if !parent.is_none() {
-                if let Some(parent_node) = self.arena.get(parent) {
-                    let k = parent_node.kind;
-                    return k == syntax_kind_ext::CLASS_DECLARATION
-                        || k == syntax_kind_ext::CLASS_EXPRESSION
-                        || k == syntax_kind_ext::INTERFACE_DECLARATION;
-                }
+            if !parent.is_none()
+                && let Some(parent_node) = self.arena.get(parent)
+            {
+                let k = parent_node.kind;
+                return k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::CLASS_EXPRESSION
+                    || k == syntax_kind_ext::INTERFACE_DECLARATION;
             }
         }
         false

@@ -1134,12 +1134,11 @@ impl<'a> Printer<'a> {
                     // import equals: only `import x = require("mod")` makes this a module,
                     // NOT `import x = M.A` (namespace alias, not a module indicator)
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                        if let Some(import_data) = self.arena.get_import_decl(node) {
-                            if let Some(spec_node) = self.arena.get(import_data.module_specifier) {
-                                if spec_node.kind == SyntaxKind::StringLiteral as u16 {
-                                    return true;
-                                }
-                            }
+                        if let Some(import_data) = self.arena.get_import_decl(node)
+                            && let Some(spec_node) = self.arena.get(import_data.module_specifier)
+                            && spec_node.kind == SyntaxKind::StringLiteral as u16
+                        {
+                            return true;
                         }
                     }
                     // Check for export modifier on any declaration type
@@ -1398,12 +1397,11 @@ impl<'a> Printer<'a> {
                     }
                     // import equals: only `import x = require("mod")` is module syntax
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                        if let Some(import_data) = self.arena.get_import_decl(node) {
-                            if let Some(spec_node) = self.arena.get(import_data.module_specifier) {
-                                if spec_node.kind == SyntaxKind::StringLiteral as u16 {
-                                    return true;
-                                }
-                            }
+                        if let Some(import_data) = self.arena.get_import_decl(node)
+                            && let Some(spec_node) = self.arena.get(import_data.module_specifier)
+                            && spec_node.kind == SyntaxKind::StringLiteral as u16
+                        {
+                            return true;
                         }
                     }
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {

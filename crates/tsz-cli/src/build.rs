@@ -262,28 +262,27 @@ fn are_referenced_projects_uptodate(
                     let dts_absolute_path = project_dir.join(latest_dts);
 
                     // Get the modification time of the .d.ts file
-                    if let Ok(metadata) = std::fs::metadata(&dts_absolute_path) {
-                        if let Ok(dts_modified) = metadata.modified() {
-                            // Convert the .d.ts modification time to seconds since epoch
-                            if let Ok(dts_secs) = dts_modified.duration_since(std::time::UNIX_EPOCH)
-                            {
-                                let dts_timestamp = dts_secs.as_secs();
+                    if let Ok(metadata) = std::fs::metadata(&dts_absolute_path)
+                        && let Ok(dts_modified) = metadata.modified()
+                    {
+                        // Convert the .d.ts modification time to seconds since epoch
+                        if let Ok(dts_secs) = dts_modified.duration_since(std::time::UNIX_EPOCH) {
+                            let dts_timestamp = dts_secs.as_secs();
 
-                                // Compare with our build time
-                                if dts_timestamp > build_info.build_time {
-                                    if args.build_verbose {
-                                        let project_name = reference
-                                            .config_path
-                                            .file_stem()
-                                            .and_then(|s| s.to_str())
-                                            .unwrap_or("unknown");
-                                        info!(
-                                            "Referenced project's .d.ts is newer: {} ({} > {})",
-                                            project_name, dts_timestamp, build_info.build_time
-                                        );
-                                    }
-                                    return false;
+                            // Compare with our build time
+                            if dts_timestamp > build_info.build_time {
+                                if args.build_verbose {
+                                    let project_name = reference
+                                        .config_path
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("unknown");
+                                    info!(
+                                        "Referenced project's .d.ts is newer: {} ({} > {})",
+                                        project_name, dts_timestamp, build_info.build_time
+                                    );
                                 }
+                                return false;
                             }
                         }
                     }

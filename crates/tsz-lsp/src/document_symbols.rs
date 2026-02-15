@@ -689,26 +689,24 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let is_default = export.is_default_export;
                     let export_clause = export.export_clause;
 
-                    if !export_clause.is_none() {
-                        if let Some(clause_node) = self.arena.get(export_clause) {
-                            if self.is_declaration(clause_node.kind) {
-                                // Collect the inner declaration and add "export" modifier
-                                let mut symbols =
-                                    self.collect_symbols(export_clause, container_name);
-                                for sym in &mut symbols {
-                                    let mut mods = String::from("export");
-                                    if is_default {
-                                        append_modifier(&mut mods, "default");
-                                    }
-                                    if !sym.kind_modifiers.is_empty() {
-                                        mods.push(',');
-                                        mods.push_str(&sym.kind_modifiers);
-                                    }
-                                    sym.kind_modifiers = mods;
-                                }
-                                return symbols;
+                    if !export_clause.is_none()
+                        && let Some(clause_node) = self.arena.get(export_clause)
+                        && self.is_declaration(clause_node.kind)
+                    {
+                        // Collect the inner declaration and add "export" modifier
+                        let mut symbols = self.collect_symbols(export_clause, container_name);
+                        for sym in &mut symbols {
+                            let mut mods = String::from("export");
+                            if is_default {
+                                append_modifier(&mut mods, "default");
                             }
+                            if !sym.kind_modifiers.is_empty() {
+                                mods.push(',');
+                                mods.push_str(&sym.kind_modifiers);
+                            }
+                            sym.kind_modifiers = mods;
                         }
+                        return symbols;
                     }
 
                     // export default <expression> (non-declaration)

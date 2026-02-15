@@ -14,6 +14,16 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
+struct CallResultContext<'a> {
+    callee_expr: NodeIndex,
+    call_idx: NodeIndex,
+    args: &'a [NodeIndex],
+    arg_types: &'a [TypeId],
+    callee_type: TypeId,
+    is_super_call: bool,
+    is_optional_chain: bool,
+}
+
 /// Check if an AST node is contextually sensitive (requires contextual typing).
 ///
 /// A node is contextually sensitive if its type cannot be fully determined
@@ -1507,16 +1517,16 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        self.handle_call_result(
-            result,
-            call.expression,
-            idx,
+        let call_context = CallResultContext {
+            callee_expr: call.expression,
+            call_idx: idx,
             args,
-            &arg_types,
-            callee_type_for_call,
+            arg_types: &arg_types,
+            callee_type: callee_type_for_call,
             is_super_call,
-            nullish_cause.is_some(),
-        )
+            is_optional_chain: nullish_cause.is_some(),
+        };
+        self.handle_call_result(result, call_context)
     }
 
     /// Handle the result of a call evaluation, emitting diagnostics for errors
@@ -1524,15 +1534,19 @@ impl<'a> CheckerState<'a> {
     fn handle_call_result(
         &mut self,
         result: tsz_solver::CallResult,
-        callee_expr: NodeIndex,
-        call_idx: NodeIndex,
-        args: &[NodeIndex],
-        arg_types: &[TypeId],
-        callee_type: TypeId,
-        is_super_call: bool,
-        is_optional_chain: bool,
+        context: CallResultContext<'_>,
     ) -> TypeId {
         use tsz_solver::CallResult;
+        let CallResultContext {
+            callee_expr,
+            call_idx,
+            args,
+            arg_types,
+            callee_type,
+            is_super_call,
+            is_optional_chain,
+            ..
+        } = context;
         match result {
             CallResult::Success(return_type) => {
                 // super() calls always return void — they call the parent constructor
