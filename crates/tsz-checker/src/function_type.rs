@@ -369,8 +369,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
-                let skip_implicit_any =
-                    is_closure && !self.ctx.is_checking_statements && !has_contextual_type;
+                // Skip TS7006 for:
+                // 1. Closures during build_type_environment (no contextual type yet)
+                // 2. SET_ACCESSOR nodes — their TS7006 is handled by the caller
+                //    (type_computation.rs for object literals, ambient_signature_checks.rs
+                //    for class members) with proper paired-getter detection.
+                let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR;
+                let skip_implicit_any = is_setter
+                    || (is_closure && !self.ctx.is_checking_statements && !has_contextual_type);
                 if !skip_implicit_any {
                     self.maybe_report_implicit_any_parameter(
                         param,
