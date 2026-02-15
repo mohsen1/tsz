@@ -8422,16 +8422,20 @@ class C {
 fn test_ts7010_exactly_any_return() {
     use crate::parser::ParserState;
 
+    // TSC does NOT emit TS7010/TS7011 when a function body returns an `any`-typed
+    // expression.  The return type is validly *inferred* as `any` (not "implicit any").
+    // TS7010 only fires for bodyless declarations (interfaces, abstract methods) or
+    // when the return type widens from null/undefined to any.
     let source = r#"
 // @noImplicitAny: true
 declare var anyValue: any;
 
-// Should trigger TS7010 - return type is exactly 'any'
+// Should NOT trigger TS7010 - return type is inferred as 'any' from body
 function returnsAny() {
     return anyValue;
 }
 
-// Should trigger TS7010 - return type is exactly 'any'
+// Should NOT trigger TS7011 - return type is inferred as 'any' from body
 const arrowReturnsAny = () => anyValue;
 "#;
 
@@ -8463,14 +8467,14 @@ const arrowReturnsAny = () => anyValue;
 
     assert_eq!(
         count(7010),
-        1,
-        "Expected one TS7010 error for named function returning 'any', got codes: {:?}",
+        0,
+        "Expected no TS7010 errors for function returning inferred 'any', got codes: {:?}",
         codes
     );
     assert_eq!(
         count(7011),
-        1,
-        "Expected one TS7011 error for arrow function returning 'any', got codes: {:?}",
+        0,
+        "Expected no TS7011 errors for arrow function returning inferred 'any', got codes: {:?}",
         codes
     );
 }
