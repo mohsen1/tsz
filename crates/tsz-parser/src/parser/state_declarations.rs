@@ -1858,106 +1858,8 @@ impl ParserState {
     }
 
     /// Parse exported declaration (export function, export class, etc.)
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_export_declaration_or_statement(&mut self, start_pos: u32) -> NodeIndex {
-        // Parse the declaration and wrap it
-        let declaration = match self.token() {
-            SyntaxKind::FunctionKeyword => self.parse_function_declaration(),
-            SyntaxKind::AsyncKeyword => {
-                if self.look_ahead_is_async_function() {
-                    self.parse_async_function_declaration()
-                } else if self.look_ahead_is_async_declaration() {
-                    let start_pos = self.token_pos();
-                    // TS1042 is reported by the checker (checkGrammarModifiers), not the parser
-                    let async_start = self.token_pos();
-                    self.parse_expected(SyntaxKind::AsyncKeyword);
-                    let async_end = self.token_end();
-                    let async_modifier = self.arena.add_token(
-                        SyntaxKind::AsyncKeyword as u16,
-                        async_start,
-                        async_end,
-                    );
-                    let modifiers = Some(self.make_node_list(vec![async_modifier]));
-                    match self.token() {
-                        SyntaxKind::ClassKeyword => {
-                            self.parse_class_declaration_with_modifiers(start_pos, modifiers)
-                        }
-                        SyntaxKind::EnumKeyword => {
-                            self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
-                        }
-                        SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
-                        SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
-                            if self.look_ahead_is_module_declaration() {
-                                self.parse_module_declaration()
-                            } else {
-                                self.parse_expression_statement()
-                            }
-                        }
-                        _ => self.parse_expression_statement(),
-                    }
-                } else {
-                    self.parse_expression_statement()
-                }
-            }
-            SyntaxKind::ClassKeyword => self.parse_class_declaration(),
-            SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
-            SyntaxKind::TypeKeyword => self.parse_type_alias_declaration(),
-            SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
-            SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
-                self.parse_module_declaration()
-            }
-            SyntaxKind::AbstractKeyword => {
-                // export abstract class ...
-                self.parse_abstract_class_declaration()
-            }
-            SyntaxKind::DeclareKeyword => {
-                // export declare function/class/namespace/var/etc.
-                // Create an export modifier to pass to the ambient declaration
-                // The export keyword was already consumed in parse_export_declaration
-                // We need to create a token for it at the start_pos
-                let export_modifier = self.arena.add_token(
-                    SyntaxKind::ExportKeyword as u16,
-                    start_pos,
-                    start_pos + 6, // "export" is 6 characters
-                );
-                self.parse_ambient_declaration_with_modifiers(vec![export_modifier])
-            }
-            SyntaxKind::VarKeyword
-            | SyntaxKind::LetKeyword
-            | SyntaxKind::UsingKeyword
-            | SyntaxKind::AwaitKeyword => self.parse_variable_statement(),
-            SyntaxKind::ConstKeyword => {
-                // export const enum or export const variable
-                if self.look_ahead_is_const_enum() {
-                    self.parse_const_enum_declaration(self.token_pos(), Vec::new())
-                } else {
-                    self.parse_variable_statement()
-                }
-            }
-            SyntaxKind::AtToken => {
-                // export @decorator class Foo {}
-                let decorators = self.parse_decorators();
-                match self.token() {
-                    SyntaxKind::ClassKeyword => {
-                        self.parse_class_declaration_with_decorators(decorators, self.token_pos())
-                    }
-                    SyntaxKind::AbstractKeyword => self
-                        .parse_abstract_class_declaration_with_decorators(
-                            decorators,
-                            self.token_pos(),
-                        ),
-                    _ => {
-                        self.error_statement_expected();
-                        self.parse_expression_statement()
-                    }
-                }
-            }
-            _ => {
-                // Unsupported export
-                self.error_statement_expected();
-                self.parse_expression_statement()
-            }
-        };
+        let declaration = self.parse_exported_declaration(start_pos);
 
         let end_pos = self.token_end();
         self.arena.add_export_decl(
@@ -1973,6 +1875,104 @@ impl ParserState {
                 attributes: NodeIndex::NONE,
             },
         )
+    }
+
+    fn parse_exported_declaration(&mut self, start_pos: u32) -> NodeIndex {
+        match self.token() {
+            SyntaxKind::FunctionKeyword => self.parse_function_declaration(),
+            SyntaxKind::AsyncKeyword => self.parse_export_async_declaration_or_expression(),
+            SyntaxKind::ClassKeyword => self.parse_class_declaration(),
+            SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
+            SyntaxKind::TypeKeyword => self.parse_type_alias_declaration(),
+            SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
+            SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
+                self.parse_module_declaration()
+            }
+            SyntaxKind::AbstractKeyword => self.parse_abstract_class_declaration(),
+            SyntaxKind::DeclareKeyword => self.parse_export_declare_declaration(start_pos),
+            SyntaxKind::VarKeyword
+            | SyntaxKind::LetKeyword
+            | SyntaxKind::UsingKeyword
+            | SyntaxKind::AwaitKeyword => self.parse_variable_statement(),
+            SyntaxKind::ConstKeyword => self.parse_export_const_or_variable(),
+            SyntaxKind::AtToken => self.parse_export_decorated_declaration(),
+            _ => {
+                self.error_statement_expected();
+                self.parse_expression_statement()
+            }
+        }
+    }
+
+    fn parse_export_async_declaration_or_expression(&mut self) -> NodeIndex {
+        if self.look_ahead_is_async_function() {
+            self.parse_async_function_declaration()
+        } else if self.look_ahead_is_async_declaration() {
+            let async_start_pos = self.token_pos();
+            // TS1042 is reported by the checker (checkGrammarModifiers), not the parser
+            let async_start = self.token_pos();
+            self.parse_expected(SyntaxKind::AsyncKeyword);
+            let async_end = self.token_end();
+            let async_modifier =
+                self.arena
+                    .add_token(SyntaxKind::AsyncKeyword as u16, async_start, async_end);
+            let modifiers = Some(self.make_node_list(vec![async_modifier]));
+            match self.token() {
+                SyntaxKind::ClassKeyword => {
+                    self.parse_class_declaration_with_modifiers(async_start_pos, modifiers)
+                }
+                SyntaxKind::EnumKeyword => {
+                    self.parse_enum_declaration_with_modifiers(async_start_pos, modifiers)
+                }
+                SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
+                SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
+                    if self.look_ahead_is_module_declaration() {
+                        self.parse_module_declaration()
+                    } else {
+                        self.parse_expression_statement()
+                    }
+                }
+                _ => self.parse_expression_statement(),
+            }
+        } else {
+            self.parse_expression_statement()
+        }
+    }
+
+    fn parse_export_declare_declaration(&mut self, start_pos: u32) -> NodeIndex {
+        // export declare function/class/namespace/var/etc.
+        // Create an export modifier to pass to the ambient declaration
+        // The export keyword was already consumed in parse_export_declaration
+        // We need to create a token for it at the start_pos
+        let export_modifier =
+            self.arena
+                .add_token(SyntaxKind::ExportKeyword as u16, start_pos, start_pos + 6); // "export" is 6 chars
+        self.parse_ambient_declaration_with_modifiers(vec![export_modifier])
+    }
+
+    fn parse_export_const_or_variable(&mut self) -> NodeIndex {
+        // export const enum or export const variable
+        if self.look_ahead_is_const_enum() {
+            self.parse_const_enum_declaration(self.token_pos(), Vec::new())
+        } else {
+            self.parse_variable_statement()
+        }
+    }
+
+    fn parse_export_decorated_declaration(&mut self) -> NodeIndex {
+        // export @decorator class Foo {}
+        let decorators = self.parse_decorators();
+        match self.token() {
+            SyntaxKind::ClassKeyword => {
+                self.parse_class_declaration_with_decorators(decorators, self.token_pos())
+            }
+            SyntaxKind::AbstractKeyword => {
+                self.parse_abstract_class_declaration_with_decorators(decorators, self.token_pos())
+            }
+            _ => {
+                self.error_statement_expected();
+                self.parse_expression_statement()
+            }
+        }
     }
 
     /// Parse a string literal (used for module specifiers)
