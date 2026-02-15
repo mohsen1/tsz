@@ -2766,12 +2766,36 @@ impl ParserState {
 
             // Try to parse comma separator
             if !self.parse_optional(SyntaxKind::CommaToken) {
-                // Semicolons in object literals are a common mistake (`;` instead of `,`).
-                // Treat them as comma separators with an error for better recovery.
                 if self.is_token(SyntaxKind::SemicolonToken) {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
-                    self.next_token(); // skip the semicolon, continue parsing
+                    // Semicolons in object literals: look ahead to decide whether to
+                    // treat as a mistyped comma (continue) or abort the list (break).
+                    // tsc's parseDelimitedList aborts when the token after `;` is in
+                    // some other parsing context (e.g., EOF, statement keyword without
+                    // subsequent property-like content). We look ahead past `;` to
+                    // decide: if the next token looks like it could continue the object
+                    // literal (property start, or `}` to close it), treat `;` as a
+                    // mistyped comma. Otherwise, abort the list so the outer parser
+                    // can handle the rest as statements.
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token(); // look past `;`
+                    let should_continue =
+                        self.is_property_start() || self.is_token(SyntaxKind::CloseBraceToken);
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+
+                    if should_continue {
+                        // Treat `;` as mistyped `,` — emit error and continue
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        self.next_token(); // skip `;`
+                    } else {
+                        // `;` followed by EOF or non-property → abort the list
+                        break;
+                    }
                 } else if self.is_property_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
                     // We have a property-like token but no comma - likely missing comma
                     // Emit the comma error and continue parsing for better recovery
