@@ -36,6 +36,8 @@ pub const CONTEXT_FLAG_STATIC_BLOCK: u32 = 4;
 pub const CONTEXT_FLAG_PARAMETER_DEFAULT: u32 = 8;
 /// Context flag: disallow 'in' as a binary operator (for for-statement initializers)
 pub const CONTEXT_FLAG_DISALLOW_IN: u32 = 16;
+/// Context flag: parsing a class member name.
+pub const CONTEXT_FLAG_CLASS_MEMBER_NAME: u32 = 2048;
 /// Context flag: inside an ambient context (declare namespace/module)
 pub const CONTEXT_FLAG_AMBIENT: u32 = 32;
 /// Context flag: inside the 'true' branch of a conditional expression (a ? [here] : c)
@@ -337,6 +339,12 @@ impl ParserState {
         (self.context_flags & CONTEXT_FLAG_GENERATOR) != 0
     }
 
+    /// Check if we're parsing a class member name.
+    #[inline]
+    pub(crate) fn in_class_member_name(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_CLASS_MEMBER_NAME) != 0
+    }
+
     /// Check if we're inside a static block
     #[inline]
     pub(crate) fn in_static_block_context(&self) -> bool {
@@ -364,6 +372,33 @@ impl ParserState {
         let is_await = self.is_token(SyntaxKind::AwaitKeyword)
             || (self.is_token(SyntaxKind::Identifier)
                 && self.scanner.get_token_value_ref() == "await");
+
+        // Class members reject modifier-like keywords as computed property names.
+        // This emits TS1213 in class member context while leaving object/literal contexts unchanged.
+        if self.in_class_member_name()
+            && matches!(
+                self.token(),
+                SyntaxKind::PublicKeyword
+                    | SyntaxKind::PrivateKeyword
+                    | SyntaxKind::ProtectedKeyword
+                    | SyntaxKind::ReadonlyKeyword
+                    | SyntaxKind::StaticKeyword
+                    | SyntaxKind::AbstractKeyword
+                    | SyntaxKind::OverrideKeyword
+                    | SyntaxKind::AsyncKeyword
+                    | SyntaxKind::AwaitKeyword
+                    | SyntaxKind::YieldKeyword
+            )
+        {
+            let token_text = self.scanner.get_token_value_ref();
+            self.parse_error_at_current_token(
+                &format!(
+                    "Identifier expected. '{token_text}' is a reserved word in strict mode. Class definitions are automatically in strict mode."
+                ),
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+            );
+            return true;
+        }
 
         if is_await {
             // In static blocks, 'await' cannot be used as a binding identifier

@@ -2472,6 +2472,8 @@ impl<'a> CheckerState<'a> {
                             parent_id: None,
                         },
                     );
+                } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node) {
+                    self.check_computed_property_name(shorthand.name);
                 }
             }
             // Method shorthand: { foo() {} }
