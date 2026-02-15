@@ -1609,6 +1609,14 @@ impl<'a> CheckerState<'a> {
                     self.apply_this_substitution_to_call_return(return_type, callee_expr);
                 let return_type =
                     self.refine_mixin_call_return_type(callee_expr, arg_types, return_type);
+                // Strip freshness from function return types. Object literals returned
+                // from functions lose their freshness at the call boundary — the caller
+                // should not see excess property checks for the callee's return value.
+                let return_type = if !self.ctx.compiler_options.sound_mode {
+                    tsz_solver::freshness::widen_freshness(self.ctx.types, return_type)
+                } else {
+                    return_type
+                };
                 if is_optional_chain {
                     self.ctx
                         .types
