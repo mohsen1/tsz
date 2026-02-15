@@ -2,6 +2,7 @@
 //!
 //! This module contains all node access/query methods, the `NodeView` ergonomic wrapper,
 //! `Node` kind utility methods, and the `NodeAccess` trait.
+#![allow(clippy::too_many_lines)]
 
 use super::base::{NodeIndex, NodeList};
 use super::node::{
@@ -1717,7 +1718,6 @@ impl NodeAccess for NodeArena {
         Some(&data.text)
     }
 
-    #[allow(clippy::too_many_lines)]
     fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex> {
         if index.is_none() {
             return Vec::new();
