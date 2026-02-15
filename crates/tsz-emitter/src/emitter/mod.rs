@@ -89,6 +89,8 @@ pub struct PrinterOptions {
     pub type_only_nodes: Arc<FxHashSet<NodeIndex>>,
     /// Emit "use strict" for every source file
     pub always_strict: bool,
+    /// Emit class fields using Object.defineProperty semantics when downleveling
+    pub use_define_for_class_fields: bool,
 }
 
 impl Default for PrinterOptions {
@@ -104,6 +106,7 @@ impl Default for PrinterOptions {
             downlevel_iteration: false,
             type_only_nodes: Arc::new(FxHashSet::default()),
             always_strict: false,
+            use_define_for_class_fields: false,
         }
     }
 }

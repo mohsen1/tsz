@@ -324,11 +324,30 @@ impl<'a> Printer<'a> {
                 self.increase_indent();
             }
             for (name, init_idx) in &field_inits {
-                self.write("this.");
-                self.write(name);
-                self.write(" = ");
-                self.emit_expression(*init_idx);
-                self.write(";");
+                if self.ctx.options.use_define_for_class_fields {
+                    self.write("Object.defineProperty(this, ");
+                    self.emit_string_literal_text(name);
+                    self.write(", {");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write("enumerable: true,");
+                    self.write_line();
+                    self.write("configurable: true,");
+                    self.write_line();
+                    self.write("writable: true,");
+                    self.write_line();
+                    self.write("value: ");
+                    self.emit_expression(*init_idx);
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("});");
+                } else {
+                    self.write("this.");
+                    self.write(name);
+                    self.write(" = ");
+                    self.emit_expression(*init_idx);
+                    self.write(";");
+                }
                 self.write_line();
             }
             self.decrease_indent();
@@ -454,12 +473,33 @@ impl<'a> Printer<'a> {
                 for (name, init_idx, member_pos) in &static_field_inits {
                     // Emit leading comment from the original static property declaration
                     self.emit_comments_before_pos(*member_pos);
-                    self.write(&class_name);
-                    self.write(".");
-                    self.write(name);
-                    self.write(" = ");
-                    self.emit_expression(*init_idx);
-                    self.write(";");
+                    if self.ctx.options.use_define_for_class_fields {
+                        self.write("Object.defineProperty(");
+                        self.write(&class_name);
+                        self.write(", ");
+                        self.emit_string_literal_text(name);
+                        self.write(", {");
+                        self.write_line();
+                        self.increase_indent();
+                        self.write("enumerable: true,");
+                        self.write_line();
+                        self.write("configurable: true,");
+                        self.write_line();
+                        self.write("writable: true,");
+                        self.write_line();
+                        self.write("value: ");
+                        self.emit_expression(*init_idx);
+                        self.write_line();
+                        self.decrease_indent();
+                        self.write("});");
+                    } else {
+                        self.write(&class_name);
+                        self.write(".");
+                        self.write(name);
+                        self.write(" = ");
+                        self.emit_expression(*init_idx);
+                        self.write(";");
+                    }
                 }
             }
         }
@@ -1183,11 +1223,30 @@ impl<'a> Printer<'a> {
 
         // Emit class field initializer assignments: this.<name> = <init>;
         for (name, init_idx) in field_inits {
-            self.write("this.");
-            self.write(name);
-            self.write(" = ");
-            self.emit_expression(*init_idx);
-            self.write(";");
+            if self.ctx.options.use_define_for_class_fields {
+                self.write("Object.defineProperty(this, ");
+                self.emit_string_literal_text(name);
+                self.write(", {");
+                self.write_line();
+                self.increase_indent();
+                self.write("enumerable: true,");
+                self.write_line();
+                self.write("configurable: true,");
+                self.write_line();
+                self.write("writable: true,");
+                self.write_line();
+                self.write("value: ");
+                self.emit_expression(*init_idx);
+                self.write_line();
+                self.decrease_indent();
+                self.write("});");
+            } else {
+                self.write("this.");
+                self.write(name);
+                self.write(" = ");
+                self.emit_expression(*init_idx);
+                self.write(";");
+            }
             self.write_line();
         }
 

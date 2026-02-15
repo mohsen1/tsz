@@ -159,6 +159,9 @@ pub struct CompilerOptions {
     /// Parse in strict mode and emit "use strict" for each source file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub always_strict: Option<bool>,
+    /// Use `Object.defineProperty` semantics for class fields when downleveling.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub use_define_for_class_fields: Option<bool>,
     /// Raise error on expressions and declarations with an implied 'any' type
     #[serde(
         default,
@@ -628,6 +631,10 @@ pub fn resolve_compiler_options(
         resolved.printer.always_strict = always_strict;
     }
 
+    if let Some(use_define_for_class_fields) = options.use_define_for_class_fields {
+        resolved.printer.use_define_for_class_fields = use_define_for_class_fields;
+    }
+
     if let Some(no_unused_locals) = options.no_unused_locals {
         resolved.checker.no_unused_locals = no_unused_locals;
     }
@@ -810,6 +817,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             allow_js,
             check_js,
             always_strict,
+            use_define_for_class_fields,
             no_implicit_any,
             no_implicit_returns,
             strict_null_checks,

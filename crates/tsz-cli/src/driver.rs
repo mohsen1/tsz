@@ -3471,6 +3471,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.allow_importing_ts_extensions {
         options.allow_importing_ts_extensions = true;
     }
+    if let Some(use_define_for_class_fields) = args.use_define_for_class_fields {
+        options.printer.use_define_for_class_fields = use_define_for_class_fields;
+    }
     if args.rewrite_relative_import_extensions {
         options.rewrite_relative_import_extensions = true;
     }
