@@ -326,7 +326,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             tracing::trace!(
                 ?def_id,
                 has_type_params = type_params.is_some(),
-                type_params_count = type_params.as_ref().map(|p| p.len()),
+                type_params_count = type_params.as_ref().map(std::vec::Vec::len),
                 has_resolved = resolved.is_some(),
                 resolved_key = ?resolved.and_then(|r| self.interner.lookup(r)),
                 "evaluate_application resolve"

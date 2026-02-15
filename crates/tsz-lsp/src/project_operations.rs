@@ -2090,7 +2090,7 @@ impl Project {
 
         file.arena()
             .get_identifier_text(node_idx)
-            .map(|text| text.to_string())
+            .map(std::string::ToString::to_string)
     }
 
     pub(crate) fn identifier_at_position(

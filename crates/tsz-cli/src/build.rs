@@ -188,7 +188,11 @@ pub fn is_project_up_to_date(project: &ResolvedProject, args: &CliArgs) -> bool 
     // But we need to keep absolute paths for ChangeTracker to read files
     let _current_files_relative: Vec<PathBuf> = current_files
         .iter()
-        .filter_map(|path| path.strip_prefix(root_dir).ok().map(|p| p.to_path_buf()))
+        .filter_map(|path| {
+            path.strip_prefix(root_dir)
+                .ok()
+                .map(std::path::Path::to_path_buf)
+        })
         .collect();
 
     // Use ChangeTracker to detect modifications

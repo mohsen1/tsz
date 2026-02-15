@@ -164,7 +164,7 @@ fn build_exclude_patterns(options: &FileDiscoveryOptions) -> Vec<String> {
         None => normalize_patterns(
             &DEFAULT_EXCLUDES
                 .iter()
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<_>>(),
         ),
     };

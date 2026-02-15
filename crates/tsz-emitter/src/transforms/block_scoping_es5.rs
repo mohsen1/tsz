@@ -217,7 +217,7 @@ pub fn analyze_loop_capture(
         return info;
     }
 
-    let var_set: FxHashSet<&str> = loop_vars.iter().map(|s| s.as_str()).collect();
+    let var_set: FxHashSet<&str> = loop_vars.iter().map(std::string::String::as_str).collect();
 
     // Recursively check for closures that capture loop variables
     check_closure_capture(arena, body_idx, &var_set, &mut info, false);

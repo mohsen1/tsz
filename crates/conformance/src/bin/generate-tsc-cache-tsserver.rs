@@ -212,7 +212,7 @@ impl TsServerClient {
         if let Some(diagnostics) = body {
             if let Some(arr) = diagnostics.as_array() {
                 for diag in arr {
-                    if let Some(code) = diag.get("code").and_then(|c| c.as_u64()) {
+                    if let Some(code) = diag.get("code").and_then(serde_json::Value::as_u64) {
                         codes.push(code as u32);
                     }
                 }
@@ -238,7 +238,7 @@ impl TsServerClient {
         if let Some(diagnostics) = body {
             if let Some(arr) = diagnostics.as_array() {
                 for diag in arr {
-                    if let Some(code) = diag.get("code").and_then(|c| c.as_u64()) {
+                    if let Some(code) = diag.get("code").and_then(serde_json::Value::as_u64) {
                         codes.push(code as u32);
                     }
                 }
@@ -373,7 +373,7 @@ fn discover_tests(test_dir: &str, max: usize) -> Result<Vec<PathBuf>> {
     for entry in WalkDir::new(test_dir)
         .follow_links(true)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
     {
         let path = entry.path();
 

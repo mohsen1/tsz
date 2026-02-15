@@ -481,7 +481,7 @@ impl<'a> CheckerState<'a> {
                 let return_context = jsdoc_return_context.or_else(|| {
                     ctx_helper
                         .as_ref()
-                        .and_then(|helper| helper.get_return_type())
+                        .and_then(tsz_solver::ContextualTypeContext::get_return_type)
                 });
                 // Async function bodies return the awaited inner type; the function
                 // type itself is Promise<inner>. Contextual return typing must

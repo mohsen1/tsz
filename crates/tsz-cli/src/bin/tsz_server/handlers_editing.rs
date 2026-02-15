@@ -67,7 +67,10 @@ impl Server {
                 .iter()
                 .filter_map(|d| {
                     let text = d.get("text")?.as_str()?.to_string();
-                    let priority = d.get("priority").and_then(|p| p.as_i64()).unwrap_or(0);
+                    let priority = d
+                        .get("priority")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0);
                     Some((text, priority))
                 })
                 .collect();
@@ -253,7 +256,7 @@ impl Server {
             let generate_return = request
                 .arguments
                 .get("generateReturnInDocTemplate")
-                .and_then(|v| v.as_bool())
+                .and_then(serde_json::Value::as_bool)
                 .unwrap_or(true);
 
             // Detect JS files for JSDoc type annotation format
@@ -1074,8 +1077,8 @@ impl Server {
                 .get("options")
                 .and_then(|o| {
                     o.get("indentSize")
-                        .and_then(|v| v.as_u64())
-                        .or_else(|| o.get("tabSize").and_then(|v| v.as_u64()))
+                        .and_then(serde_json::Value::as_u64)
+                        .or_else(|| o.get("tabSize").and_then(serde_json::Value::as_u64))
                 })
                 .unwrap_or(4) as usize;
 
@@ -1083,7 +1086,7 @@ impl Server {
                 .arguments
                 .get("options")
                 .and_then(|o| o.get("baseIndentSize"))
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0) as usize;
 
             let lines: Vec<&str> = source_text.lines().collect();
@@ -1267,7 +1270,7 @@ impl Server {
             let end_offset = request
                 .arguments
                 .get("endOffset")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(1) as usize;
             let source_text = self.open_files.get(file)?.clone();
 

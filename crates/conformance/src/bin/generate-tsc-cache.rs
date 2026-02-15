@@ -220,7 +220,7 @@ fn discover_tests(test_dir: &str, max: usize, filter: Option<&str>) -> Result<Ve
     for entry in WalkDir::new(test_dir)
         .follow_links(true)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
     {
         let path = entry.path();
 

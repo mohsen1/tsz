@@ -2413,7 +2413,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .symbol_arenas
                     .get(&sym_id)
-                    .map(|arc| arc.as_ref())
+                    .map(std::convert::AsRef::as_ref)
                     .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
                     .unwrap_or(self.ctx.arena);
 
@@ -2732,7 +2732,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Lower cross-file augmentations (each group uses its own arena)
-            for (_, (arena, decls)) in &cross_file_groups {
+            for (arena, decls) in cross_file_groups.values() {
                 lower_with_arena(arena.as_ref(), decls);
             }
         }
@@ -3057,7 +3057,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Lower cross-file augmentations (each group uses its own arena)
-            for (_, (arena, decls)) in &cross_file_groups {
+            for (arena, decls) in cross_file_groups.values() {
                 lower_with_arena(arena.as_ref(), decls);
             }
         }
