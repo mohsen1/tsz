@@ -852,55 +852,48 @@ fn test_debug_if_statement_positions() {
     let line_map = LineMap::build(source);
     let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
 
-    // Print all IF_STATEMENT nodes and their positions
+    // Traverse IF_STATEMENT nodes to validate basic highlight positions.
+    let mut saw_if_statement = false;
     for (i, node) in arena.nodes.iter().enumerate() {
         if node.kind == syntax_kind_ext::IF_STATEMENT {
-            println!(
-                "IF_STATEMENT at index {}: pos={}, end={}",
-                i, node.pos, node.end
-            );
+            saw_if_statement = true;
             let kw_start = provider.skip_whitespace_forward(node.pos as usize);
-            println!("  skip_whitespace_forward(pos={})={}", node.pos, kw_start);
-            println!(
-                "  text at kw_start: '{}'",
-                &source[kw_start..kw_start.min(source.len()) + 10.min(source.len() - kw_start)]
-            );
+            assert!(kw_start >= node.pos as usize);
+            if let Some(text) = source.get(node.pos as usize..node.end as usize) {
+                assert!(
+                    text.contains("if") || text.contains("if ("),
+                    "IF statement node should contain an if token at index {}",
+                    i
+                );
+            }
             if let Some(if_data) = arena.get_if_statement(node) {
                 if let Some(then_node) = arena.get(if_data.then_statement) {
-                    println!("  then: pos={}, end={}", then_node.pos, then_node.end);
+                    assert!(kw_start <= then_node.pos as usize);
+                    assert!(then_node.pos < then_node.end);
                 }
                 if !if_data.else_statement.is_none()
                     && let Some(else_node) = arena.get(if_data.else_statement)
                 {
-                    println!(
-                        "  else_statement: pos={}, end={}, kind={}",
-                        else_node.pos, else_node.end, else_node.kind
-                    );
+                    assert!(else_node.pos < else_node.end);
+                    assert_eq!(else_node.kind, syntax_kind_ext::BLOCK);
                     if let Some(then_node) = arena.get(if_data.then_statement) {
                         let search_start = then_node.end as usize;
                         let search_end = else_node.end as usize;
-                        let search_text = &source[search_start..search_end.min(source.len())];
-                        println!(
-                            "  search range: {}..{}, text: '{}'",
-                            search_start, search_end, search_text
+                        let _ = &source[search_start..search_end.min(source.len())];
+                        assert!(
+                            provider
+                                .find_keyword_in_range(search_start, search_end, "else")
+                                .is_some()
                         );
-                        // Try to find "else" in this range
-                        if let Some(else_pos) =
-                            provider.find_keyword_in_range(search_start, search_end, "else")
-                        {
-                            println!("  FOUND 'else' at offset {}", else_pos);
-                        } else {
-                            println!("  DID NOT find 'else' in range");
-                        }
                     }
                 }
             }
         }
     }
 
-    // Also test find_owning_if_statement
-    println!(
-        "\nfind_owning_if_statement(0)={:?}",
-        provider.find_owning_if_statement(0)
+    assert!(saw_if_statement, "Expected at least one IF_STATEMENT node");
+    assert!(
+        provider.find_owning_if_statement(0).is_some(),
+        "Expected to find an owning IF statement at offset 0"
     );
 }
