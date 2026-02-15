@@ -64,9 +64,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_subtype(constraint, target);
         }
 
-        // Unconstrained type parameter acts like `unknown` (top type)
-        // An unconstrained type param as source cannot be assigned to a concrete target
-        SubtypeResult::False
+        // Unconstrained type parameter: use {} (empty object) as base constraint.
+        // In TypeScript, an unconstrained type parameter's base constraint is {},
+        // meaning it can be assigned to any object type with only optional properties.
+        let empty_object = self.interner.object(Vec::new());
+        self.check_subtype(empty_object, target)
     }
 
     /// Check subtype with optional method bivariance.
