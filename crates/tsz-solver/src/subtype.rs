@@ -2340,12 +2340,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             if source_eval != source || target_eval != target {
                 self.check_subtype(source_eval, target_eval)
+            } else if target == TypeId::NEVER {
+                SubtypeResult::False
             } else {
-                if target == TypeId::NEVER {
-                    SubtypeResult::False
-                } else {
-                    self.check_subtype_inner(source, target)
-                }
+                self.check_subtype_inner(source, target)
             }
         };
 
