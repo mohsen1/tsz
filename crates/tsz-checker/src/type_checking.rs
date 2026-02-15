@@ -4518,8 +4518,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true if a constructor with a body is found, false otherwise.
     pub(crate) fn find_constructor_impl(&self, members: &[NodeIndex], start: usize) -> bool {
-        for i in start..members.len() {
-            let member_idx = members[i];
+        for member_idx in members.iter().skip(start).copied() {
             let Some(node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
@@ -4552,8 +4551,7 @@ impl<'a> CheckerState<'a> {
         start: usize,
         name: &str,
     ) -> (bool, Option<String>, Option<usize>) {
-        for i in start..members.len() {
-            let member_idx = members[i];
+        for (offset, member_idx) in members.iter().skip(start).copied().enumerate() {
             let Some(node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
@@ -4564,14 +4562,14 @@ impl<'a> CheckerState<'a> {
                     if member_name.as_deref() != Some(name) {
                         if method.body.is_some() {
                             // Different name but has body - wrong-named implementation (TS2389)
-                            return (true, member_name, Some(i));
+                            return (true, member_name, Some(start + offset));
                         }
                         // Different name, no body - no implementation found
                         return (false, None, None);
                     }
                     if !method.body.is_none() {
                         // Found the implementation with matching name
-                        return (true, member_name, Some(i));
+                        return (true, member_name, Some(start + offset));
                     }
                     // Same name but no body - another overload signature, keep looking
                 }

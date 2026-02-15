@@ -142,8 +142,8 @@ impl<'a> Printer<'a> {
         let bytes = text.as_bytes();
         let start = node.pos as usize;
         let end = std::cmp::min(node.end as usize, bytes.len());
-        for i in start..end {
-            match bytes[i] {
+        for &byte in bytes.iter().take(end).skip(start) {
+            match byte {
                 b'\'' => return Some('\''),
                 b'"' => return Some('"'),
                 b' ' | b'\t' | b'\r' | b'\n' => continue,
