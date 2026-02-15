@@ -72,7 +72,6 @@ complexity = { level = "warn", priority = -1 }
 # Allow some that may be too noisy for this codebase
 too_many_arguments = "allow"
 unnested_or_patterns = "allow"
-needless_pass_by_value = "allow"
 
 [package]
 name = "tsz"
