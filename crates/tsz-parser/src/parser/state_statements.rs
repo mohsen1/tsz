@@ -3006,7 +3006,9 @@ impl ParserState {
                         "async"
                     };
                     self.parse_error_at_current_token(
-                        &format!("'{current_mod}' modifier must precede '{conflicting_mod}' modifier."),
+                        &format!(
+                            "'{current_mod}' modifier must precede '{conflicting_mod}' modifier."
+                        ),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
