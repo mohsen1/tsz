@@ -1725,7 +1725,10 @@ impl ParserState {
             self.next_token();
             if matches!(
                 self.token(),
-                SyntaxKind::ColonToken | SyntaxKind::CommaToken | SyntaxKind::QuestionToken
+                SyntaxKind::ColonToken
+                    | SyntaxKind::CommaToken
+                    | SyntaxKind::QuestionToken
+                    | SyntaxKind::EqualsToken
             ) {
                 self.scanner.restore_state(snapshot);
                 self.current_token = current;
