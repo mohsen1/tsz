@@ -1,6 +1,10 @@
 # Clippy configuration tuned for TSZ's architecture-first, type-soundness-first workflow.
 
+# Fail fast on accidental API churn and wildcard import leakage.
+avoid-breaking-exported-api = true
 warn-on-all-wildcard-imports = true
+
+# Keep functions and types explicit, not bloated with accidental semantic complexity.
 too-many-arguments-threshold = 8
 type-complexity-threshold = 250
 cognitive-complexity-threshold = 24

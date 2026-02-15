@@ -72,7 +72,11 @@ pub use compat::*;
 pub use contextual::{ContextualTypeContext, apply_contextual_type};
 pub use db::{QueryCache, QueryDatabase, RelationCacheProbe, RelationCacheStats, TypeDatabase};
 pub use def::*;
-pub use diagnostics::SubtypeFailureReason;
+pub use diagnostics::{
+    DiagnosticBuilder, DiagnosticCollector, DiagnosticSeverity, PendingDiagnostic,
+    PendingDiagnosticBuilder, SourceLocation, SourceSpan, SpannedDiagnosticBuilder,
+    SubtypeFailureReason,
+};
 pub use element_access::*;
 pub use evaluate::*;
 pub use flow_analysis::*;
@@ -81,13 +85,18 @@ pub use freshness::*;
 pub use index_signatures::*;
 pub use infer::*;
 pub use inheritance::*;
-pub use instantiate::{TypeSubstitution, instantiate_type};
+pub use instantiate::{
+    MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, instantiate_type,
+    substitute_this_type,
+};
 pub use judge::*;
 pub use lawyer::AnyPropagationRules;
 pub use narrowing::*;
 pub use object_literal::ObjectLiteralBuilder;
 pub use objects::*;
-pub use operations::AssignabilityChecker;
+pub use operations::{
+    AssignabilityChecker, CallEvaluator, CallResult, MAX_CONSTRAINT_RECURSION_DEPTH,
+};
 pub use relation_queries::*;
 pub use sound::*;
 pub use subtype::{
@@ -95,15 +104,15 @@ pub use subtype::{
     are_types_structurally_identical, is_subtype_of,
 };
 pub use type_factory::*;
-pub use types::Visibility;
 pub use types::{
-    CallSignature, IntrinsicKind, LiteralValue, MappedModifier, PropertyInfo, SymbolRef, TypeData,
-    TypeId,
+    CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
+    PropertyInfo, PropertyLookup, SymbolRef, TypeApplication, TypeApplicationId, TypeData, TypeId,
+    TypeListId, Visibility, is_compiler_managed_type,
 };
 pub use types::{
-    CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType, ObjectFlags,
-    ObjectShape, OrderedFloat, ParamInfo, RelationCacheKey, TemplateSpan, TupleElement,
-    TypeParamInfo, TypePredicate, TypePredicateTarget,
+    CallableShape, ConditionalType, FunctionShape, FunctionShapeId, IndexSignature, MappedType,
+    MappedTypeId, ObjectFlags, ObjectShape, OrderedFloat, ParamInfo, RelationCacheKey,
+    TemplateSpan, TupleElement, TupleListId, TypeParamInfo, TypePredicate, TypePredicateTarget,
 };
 pub use unsoundness_audit::*;
 pub use variance::*;
