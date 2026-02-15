@@ -30,6 +30,8 @@ use tsz_parser::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeGuard, TypeId, TypePredicate};
 
+type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
+
 // =============================================================================
 // FlowGraph
 // =============================================================================
@@ -97,7 +99,7 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) node_types: Option<&'a FxHashMap<u32, TypeId>>,
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
     /// Optional cache for flow analysis results to avoid redundant graph traversals
-    pub(crate) flow_cache: Option<&'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>>,
+    pub(crate) flow_cache: Option<&'a RefCell<FlowCache>>,
     /// Optional TypeEnvironment for resolving Lazy types during narrowing
     pub(crate) type_environment: Option<Rc<RefCell<tsz_solver::TypeEnvironment>>>,
     /// Cache for switch-reference relevance checks.

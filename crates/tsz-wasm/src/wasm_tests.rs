@@ -162,7 +162,7 @@ fn test_ts_source_file_node_api_contracts() {
         crate::wasm_api::enums::ScriptTarget::ESNext
     );
     assert_eq!(source_file.end() as usize, "const x = 1;".len());
-    assert!(source_file.is_declaration_file() == false);
+    assert!(!source_file.is_declaration_file());
 
     let root = source_file.get_root_handle();
     assert_ne!(root, u32::MAX);

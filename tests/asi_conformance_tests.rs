@@ -168,7 +168,7 @@ function f() {
 /// Comprehensive ASI edge case test suite
 #[test]
 fn test_asi_comprehensive_edge_cases() {
-    let test_cases = vec![
+    let test_cases = [
         // (source, should_have_errors, description)
         // Valid ASI cases
         (
@@ -216,7 +216,7 @@ fn test_asi_comprehensive_edge_cases() {
 /// Test TS1005 patterns (token expected)
 #[test]
 fn test_asi_ts1005_token_expected_patterns() {
-    let test_cases = vec![
+    let test_cases = [
         // Missing tokens that should trigger TS1005
         (r#"function f() { }"#, false, "complete function"),
         (

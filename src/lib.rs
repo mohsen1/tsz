@@ -3,10 +3,11 @@ use rustc_hash::FxHashMap;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 
+type LibFileCache = FxHashMap<(String, u64), Arc<lib_loader::LibFile>>;
+
 // Global cache for parsed lib files to avoid re-parsing lib.d.ts per test
 // Key: (file_name, content_hash), Value: Arc<LibFile>
-static LIB_FILE_CACHE: Lazy<Mutex<FxHashMap<(String, u64), Arc<lib_loader::LibFile>>>> =
-    Lazy::new(|| Mutex::new(FxHashMap::default()));
+static LIB_FILE_CACHE: Lazy<Mutex<LibFileCache>> = Lazy::new(|| Mutex::new(FxHashMap::default()));
 
 /// Simple hash function for lib file content
 fn hash_lib_content(content: &str) -> u64 {
@@ -208,6 +209,7 @@ pub use tsz_emitter::declaration_emitter;
 pub use tsz_emitter::transforms;
 
 // Query-based Structural Solver (Phase 7.5)
+pub use tsz_solver;
 
 // LSP (Language Server Protocol) support - re-exported from tsz-lsp workspace crate
 pub use tsz_lsp as lsp;

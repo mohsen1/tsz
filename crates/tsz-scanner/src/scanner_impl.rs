@@ -1831,10 +1831,9 @@ impl ScannerState {
 
     /// Scan an escape sequence in a template literal.
     /// Returns the resulting string and advances self.pos.
+    ///
+    /// `self.pos` is expected to point at the escaped character (just after `\`).
     fn scan_template_escape_sequence(&mut self) -> String {
-        // Skip the backslash
-        self.pos += 1;
-
         if self.pos >= self.end {
             return String::from("\\");
         }
@@ -3038,6 +3037,21 @@ mod tests {
         let tail = scanner.re_scan_template_token(false);
         assert_eq!(tail, SyntaxKind::TemplateTail);
         assert_eq!(scanner.get_token_value(), "µs");
+    }
+
+    #[test]
+    fn template_scan_preserves_escape_sequences() {
+        let source = "`hello\\nworld`".to_string();
+        let mut scanner = ScannerState::new(source, true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
+        assert_eq!(scanner.get_token_value(), "hello\nworld");
+
+        let source = "`hello\\${string}`".to_string();
+        let mut scanner = ScannerState::new(source, true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
+        assert_eq!(scanner.get_token_value(), "hello${string}");
     }
 
     #[test]

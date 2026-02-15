@@ -488,7 +488,7 @@ fn test_source_map_simple() {
 #[test]
 fn test_source_map_with_content() {
     let mut generator = SourceMapGenerator::new("output.js".to_string());
-    generator.add_source_with_content("input.ts".to_string(), "const x = 1;".to_string());
+    let _ = generator.add_source_with_content("input.ts".to_string(), "const x = 1;".to_string());
 
     generator.add_simple_mapping(0, 0, 0, 0, 0);
 
@@ -593,7 +593,7 @@ fn test_source_map_es5_transform_records_names() {
 #[test]
 fn test_inline_source_map() {
     let mut generator = SourceMapGenerator::new("output.js".to_string());
-    generator.add_source("input.ts".to_string());
+    let _ = generator.add_source("input.ts".to_string());
     generator.add_simple_mapping(0, 0, 0, 0, 0);
 
     let inline = generator.to_inline_comment();
