@@ -2358,7 +2358,12 @@ impl ParserState {
             } else if self.is_token(SyntaxKind::LessThanToken) {
                 self.parse_jsx_element_or_self_closing_or_fragment(true)
             } else {
-                self.error_expression_expected();
+                // TS1145: '{' or JSX element expected.
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "'{' or JSX element expected.",
+                    diagnostic_codes::OR_JSX_ELEMENT_EXPECTED,
+                );
                 NodeIndex::NONE
             }
         } else {

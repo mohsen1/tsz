@@ -3950,6 +3950,21 @@ impl ParserState {
         self.current_token = current;
         is_index_sig
     }
+
+    /// Check if this is `[]` — an empty index signature (malformed, no parameters).
+    /// Used in type member contexts where `[]` should be an empty index signature,
+    /// NOT in type suffix contexts where `[]` is an array type.
+    pub(crate) fn look_ahead_is_empty_index_signature(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token(); // skip `[`
+        let is_empty = self.is_token(SyntaxKind::CloseBracketToken);
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_empty
+    }
 }
 
 #[cfg(test)]
