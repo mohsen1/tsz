@@ -133,7 +133,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .arena
             .get(idx)
-            .and_then(|node| self.get_identifier_text(&node))
+            .and_then(|node| self.get_identifier_text(node))
     }
 
     /// Generic helper to check if modifiers include a specific keyword.

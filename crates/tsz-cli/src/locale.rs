@@ -49,7 +49,7 @@ impl LocaleMessages {
     /// Returns `None` if the locale is not supported or fails to parse.
     pub fn load(locale_id: &str) -> Option<Self> {
         let normalized = normalize_locale(locale_id)?;
-        let json_content = get_locale_content(&normalized)?;
+        let json_content = get_locale_content(normalized)?;
         let messages = parse_locale_json(json_content)?;
 
         Some(LocaleMessages {

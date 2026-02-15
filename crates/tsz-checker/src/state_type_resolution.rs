@@ -1368,7 +1368,7 @@ impl<'a> CheckerState<'a> {
                         .with_type_param_bindings(type_param_bindings);
 
                         let (alias_type, params) =
-                            lowering.lower_type_alias_declaration(&type_alias);
+                            lowering.lower_type_alias_declaration(type_alias);
 
                         if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                             self.ctx.insert_def_type_params(def_id, params.clone());
