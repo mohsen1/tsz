@@ -138,10 +138,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(info) = type_param_info(self.interner, source) {
-            return info
-                .constraint
-                .map(|constraint| self.check_subtype(constraint, TypeId::OBJECT).is_true())
-                .unwrap_or(false);
+            return info.constraint.is_some_and(|constraint| {
+                self.check_subtype(constraint, TypeId::OBJECT).is_true()
+            });
         }
 
         if let Some(sym) = ref_symbol(self.interner, source) {
@@ -217,8 +216,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(info) = type_param_info(self.interner, source) {
             return info
                 .constraint
-                .map(|constraint| self.is_callable_type(constraint))
-                .unwrap_or(false);
+                .is_some_and(|constraint| self.is_callable_type(constraint));
         }
 
         if let Some(sym) = ref_symbol(self.interner, source) {
@@ -312,7 +310,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
         properties.sort_by_key(|a| a.name);
 
-        let number_index = (kind == IntrinsicKind::String).then(|| IndexSignature {
+        let number_index = (kind == IntrinsicKind::String).then_some(IndexSignature {
             key_type: TypeId::NUMBER,
             value_type: TypeId::STRING,
             // Keep string index signature assignable to mutable targets for TS compat.

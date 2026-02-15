@@ -431,8 +431,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_extended(comma_idx)
-            .map(|ext| ext.parent)
-            .unwrap_or(NodeIndex::NONE);
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
         if parent.is_none() {
             return false;
         }
@@ -450,8 +449,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_extended(parent)
-            .map(|ext| ext.parent)
-            .unwrap_or(NodeIndex::NONE);
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
         if grand_parent.is_none() {
             return false;
         }
@@ -1884,20 +1882,17 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_property_decl(node)
-                .map(|prop| self.has_static_modifier(&prop.modifiers))
-                .unwrap_or(false),
+                .is_some_and(|prop| self.has_static_modifier(&prop.modifiers)),
             k if k == syntax_kind_ext::METHOD_DECLARATION => self
                 .ctx
                 .arena
                 .get_method_decl(node)
-                .map(|method| self.has_static_modifier(&method.modifiers))
-                .unwrap_or(false),
+                .is_some_and(|method| self.has_static_modifier(&method.modifiers)),
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
                 .ctx
                 .arena
                 .get_accessor(node)
-                .map(|accessor| self.has_static_modifier(&accessor.modifiers))
-                .unwrap_or(false),
+                .is_some_and(|accessor| self.has_static_modifier(&accessor.modifiers)),
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => true,
             _ => false,
         }
@@ -2033,7 +2028,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Explicit `this` parameter must have a type annotation
-        (is_this && !param.type_annotation.is_none()).then(|| param.type_annotation)
+        (is_this && !param.type_annotation.is_none()).then_some(param.type_annotation)
     }
 
     /// Get the this type for a class member.
@@ -2435,8 +2430,7 @@ impl<'a> CheckerState<'a> {
                             .binder
                             .declaration_arenas
                             .get(&(sym_id, decl_idx))
-                            .map(|arc| arc.as_ref())
-                            .unwrap_or(fallback_arena);
+                            .map_or(fallback_arena, |arc| arc.as_ref());
                         (decl_idx, arena)
                     })
                     .collect();
@@ -2579,8 +2573,7 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .declaration_arenas
                         .get(&(sym_id, decl_idx))
-                        .map(|arc| arc.as_ref())
-                        .unwrap_or(fallback_arena);
+                        .map_or(fallback_arena, |arc| arc.as_ref());
                     let value_lowering = lowering.with_arena(value_arena);
                     let val_type = value_lowering.lower_type(decl_idx);
                     // Only include non-ERROR types. Value declaration lowering can fail
@@ -2790,8 +2783,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .symbol_arenas
                     .get(&sym_id)
-                    .map(|arc| arc.as_ref())
-                    .unwrap_or_else(|| lib_ctx.arena.as_ref());
+                    .map_or_else(|| lib_ctx.arena.as_ref(), |arc| arc.as_ref());
 
                 // Build declaration -> arena pairs using declaration_arenas
                 // This is critical for merged interfaces like Array<T> that span multiple lib files
@@ -2803,8 +2795,7 @@ impl<'a> CheckerState<'a> {
                             .binder
                             .declaration_arenas
                             .get(&(sym_id, decl_idx))
-                            .map(|arc| arc.as_ref())
-                            .unwrap_or(fallback_arena);
+                            .map_or(fallback_arena, |arc| arc.as_ref());
                         (decl_idx, arena)
                     })
                     .collect();
@@ -2929,8 +2920,7 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .declaration_arenas
                         .get(&(sym_id, decl_idx))
-                        .map(|arc| arc.as_ref())
-                        .unwrap_or(fallback_arena);
+                        .map_or(fallback_arena, |arc| arc.as_ref());
                     let value_lowering = lowering.with_arena(value_arena);
                     lib_types.push(value_lowering.lower_type(decl_idx));
                     break;
@@ -3308,16 +3298,8 @@ impl<'a> CheckerState<'a> {
                     property_name,
                     has_exports = symbol.exports.is_some(),
                     has_members = symbol.members.is_some(),
-                    exports_len = symbol
-                        .exports
-                        .as_ref()
-                        .map(|t| t.iter().count())
-                        .unwrap_or(0),
-                    members_len = symbol
-                        .members
-                        .as_ref()
-                        .map(|t| t.iter().count())
-                        .unwrap_or(0),
+                    exports_len = symbol.exports.as_ref().map_or(0, |t| t.iter().count()),
+                    members_len = symbol.members.as_ref().map_or(0, |t| t.iter().count()),
                     has_module_exports = self
                         .ctx
                         .binder
@@ -4050,8 +4032,7 @@ impl<'a> CheckerState<'a> {
     /// ```
     pub(crate) fn symbol_is_type_only(&self, sym_id: SymbolId, name_hint: Option<&str>) -> bool {
         self.lookup_symbol_with_name(sym_id, name_hint)
-            .map(|(symbol, _arena)| symbol.is_type_only)
-            .unwrap_or(false)
+            .is_some_and(|(symbol, _arena)| symbol.is_type_only)
     }
 
     // Section 47: Node Predicate Utilities

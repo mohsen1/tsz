@@ -579,10 +579,7 @@ impl<'a> Printer<'a> {
                     let next_prop = obj.elements.nodes[i + 1];
                     self.emit_unemitted_comments_between(
                         prop_node.end,
-                        self.arena
-                            .get(next_prop)
-                            .map(|n| n.pos)
-                            .unwrap_or(prop_node.end),
+                        self.arena.get(next_prop).map_or(prop_node.end, |n| n.pos),
                     );
                     if self.are_on_same_line_in_source(prop, next_prop) {
                         // Keep on same line

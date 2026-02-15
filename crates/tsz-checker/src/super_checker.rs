@@ -557,8 +557,7 @@ impl<'a> CheckerState<'a> {
             .statements
             .nodes
             .first()
-            .map(|&first| first == expr_stmt_idx)
-            .unwrap_or(false)
+            .is_some_and(|&first| first == expr_stmt_idx)
     }
 
     fn enclosing_constructor_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
@@ -839,47 +838,35 @@ impl<'a> CheckerState<'a> {
             .get_extended(idx)
             .and_then(|ext| self.ctx.arena.get(ext.parent).map(|n| (ext.parent, n)));
 
-        let is_super_call = parent_info
-            .as_ref()
-            .map(|(_, parent_node)| {
-                parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                    && self
-                        .ctx
-                        .arena
-                        .get_call_expr(parent_node)
-                        .map(|call| call.expression == idx)
-                        .unwrap_or(false)
-            })
-            .unwrap_or(false);
+        let is_super_call = parent_info.as_ref().is_some_and(|(_, parent_node)| {
+            parent_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_call_expr(parent_node)
+                    .is_some_and(|call| call.expression == idx)
+        });
 
-        let is_super_new = parent_info
-            .as_ref()
-            .map(|(_, parent_node)| {
-                parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
-                    && self
-                        .ctx
-                        .arena
-                        .get_call_expr(parent_node)
-                        .map(|new_expr| new_expr.expression == idx)
-                        .unwrap_or(false)
-            })
-            .unwrap_or(false);
+        let is_super_new = parent_info.as_ref().is_some_and(|(_, parent_node)| {
+            parent_node.kind == syntax_kind_ext::NEW_EXPRESSION
+                && self
+                    .ctx
+                    .arena
+                    .get_call_expr(parent_node)
+                    .is_some_and(|new_expr| new_expr.expression == idx)
+        });
 
-        let is_super_property_access = parent_info
-            .as_ref()
-            .map(|(_, parent_node)| {
-                parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            })
-            .unwrap_or(false);
+        let is_super_property_access = parent_info.as_ref().is_some_and(|(_, parent_node)| {
+            parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        });
 
         let in_constructor_parameter_context = self.is_in_constructor_parameter_context(idx);
         let in_static_property_initializer = self
             .ctx
             .enclosing_class
             .as_ref()
-            .map(|info| info.in_static_property_initializer)
-            .unwrap_or(false);
+            .is_some_and(|info| info.in_static_property_initializer);
 
         if in_static_property_initializer {
             self.error_at_node(
@@ -983,23 +970,19 @@ impl<'a> CheckerState<'a> {
 
         let has_base_class = class_data
             .as_ref()
-            .map(|class| self.class_has_base(class))
-            .unwrap_or(false);
+            .is_some_and(|class| self.class_has_base(class));
 
         let extends_null = class_data
             .as_ref()
-            .map(|class| self.class_extends_null(class))
-            .unwrap_or(false);
+            .is_some_and(|class| self.class_extends_null(class));
 
         let requires_super_call = class_data
             .as_ref()
-            .map(|class| self.class_requires_super_call(class))
-            .unwrap_or(false);
+            .is_some_and(|class| self.class_requires_super_call(class));
 
         let has_position_sensitive_members = class_data
             .as_ref()
-            .map(|class| self.class_has_super_call_position_sensitive_members(class))
-            .unwrap_or(false);
+            .is_some_and(|class| self.class_has_super_call_position_sensitive_members(class));
 
         // TS2335: super can only be referenced in a derived class
         if !has_base_class {
@@ -1045,12 +1028,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_super_call_first_statement_in_constructor(idx) {
-                let should_emit_ts2376 = self
-                    .enclosing_constructor_node(idx)
-                    .map(|ctor_idx| {
-                        self.constructor_has_pre_super_this_or_super_property_reference(ctor_idx)
-                    })
-                    .unwrap_or(false);
+                let should_emit_ts2376 =
+                    self.enclosing_constructor_node(idx)
+                        .is_some_and(|ctor_idx| {
+                            self.constructor_has_pre_super_this_or_super_property_reference(
+                                ctor_idx,
+                            )
+                        });
 
                 if should_emit_ts2376 {
                     self.error_at_node(

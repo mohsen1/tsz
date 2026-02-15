@@ -29,9 +29,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns 0 if the type is not a tuple.
     pub fn tuple_element_count(&self, type_id: TypeId) -> usize {
-        query::tuple_elements(self.ctx.types, type_id)
-            .map(|elements| elements.len())
-            .unwrap_or(0)
+        query::tuple_elements(self.ctx.types, type_id).map_or(0, |elements| elements.len())
     }
 
     // =========================================================================
@@ -89,8 +87,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if any element in the tuple is optional.
     pub fn tuple_has_optional_elements(&self, tuple_type: TypeId) -> bool {
         query::tuple_elements(self.ctx.types, tuple_type)
-            .map(|elements| elements.iter().any(|elem| elem.optional))
-            .unwrap_or(false)
+            .is_some_and(|elements| elements.iter().any(|elem| elem.optional))
     }
 
     /// Check if a tuple has a rest element.
@@ -178,38 +175,34 @@ impl<'a> CheckerState<'a> {
     /// Returns the count of non-optional elements before the first optional
     /// or rest element.
     pub fn get_tuple_min_length(&self, tuple_type: TypeId) -> usize {
-        query::tuple_elements(self.ctx.types, tuple_type)
-            .map(|elements| {
-                elements
-                    .iter()
-                    .take_while(|elem| !elem.optional && !elem.rest)
-                    .count()
-            })
-            .unwrap_or(0)
+        query::tuple_elements(self.ctx.types, tuple_type).map_or(0, |elements| {
+            elements
+                .iter()
+                .take_while(|elem| !elem.optional && !elem.rest)
+                .count()
+        })
     }
 
     /// Get the fixed-length portion of a tuple type.
     ///
     /// Returns the number of elements before any rest element.
     pub fn get_tuple_fixed_length(&self, tuple_type: TypeId) -> usize {
-        query::tuple_elements(self.ctx.types, tuple_type)
-            .map(|elements| elements.iter().take_while(|elem| !elem.rest).count())
-            .unwrap_or(0)
+        query::tuple_elements(self.ctx.types, tuple_type).map_or(0, |elements| {
+            elements.iter().take_while(|elem| !elem.rest).count()
+        })
     }
 
     /// Check if a tuple is a homogeneous array-like tuple.
     ///
     /// Returns true if all elements have the same type (e.g., `[number, number]`).
     pub fn is_homogeneous_tuple(&self, tuple_type: TypeId) -> bool {
-        query::tuple_elements(self.ctx.types, tuple_type)
-            .map(|elements| {
-                if elements.is_empty() {
-                    return true;
-                }
-                let first_type = elements[0].type_id;
-                elements.iter().all(|elem| elem.type_id == first_type)
-            })
-            .unwrap_or(false)
+        query::tuple_elements(self.ctx.types, tuple_type).is_some_and(|elements| {
+            if elements.is_empty() {
+                return true;
+            }
+            let first_type = elements[0].type_id;
+            elements.iter().all(|elem| elem.type_id == first_type)
+        })
     }
 
     /// Get the common element type if tuple is homogeneous.
@@ -230,7 +223,6 @@ impl<'a> CheckerState<'a> {
     /// Returns true for the empty tuple type `[]`.
     pub fn is_empty_tuple(&self, tuple_type: TypeId) -> bool {
         query::tuple_elements(self.ctx.types, tuple_type)
-            .map(|elements| elements.is_empty())
-            .unwrap_or(false)
+            .is_some_and(|elements| elements.is_empty())
     }
 }

@@ -291,8 +291,7 @@ impl<'a> CheckerState<'a> {
         if !self.is_assignable_to(evaluated_rhs_type, declaring_type) {
             let shadowed = symbols.iter().skip(1).any(|sym_id| {
                 self.private_member_declaring_type(*sym_id)
-                    .map(|ty| self.is_assignable_to(evaluated_rhs_type, ty))
-                    .unwrap_or(false)
+                    .is_some_and(|ty| self.is_assignable_to(evaluated_rhs_type, ty))
             });
             if shadowed {
                 return;
@@ -789,8 +788,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .enclosing_class
             .as_ref()
-            .map(|c| c.in_constructor)
-            .unwrap_or(false);
+            .is_some_and(|c| c.in_constructor);
 
         if expected_type != TypeId::ANY
             && !is_in_constructor
@@ -1933,8 +1931,7 @@ impl<'a> CheckerState<'a> {
                                 .binder
                                 .symbol_arenas
                                 .get(&symbol_id)
-                                .map(|arena| arena.as_ref())
-                                .unwrap_or(self.ctx.arena);
+                                .map_or(self.ctx.arena, |arena| arena.as_ref());
 
                             let type_param_bindings = self.get_type_param_bindings();
                             let type_resolver = |node_idx: tsz_parser::parser::NodeIndex| {
@@ -3057,7 +3054,7 @@ impl<'a> CheckerState<'a> {
                     .filter_map(|&decl_idx| {
                         let constructor = self.ctx.arena.get_constructor_at(decl_idx)?;
                         // Only count constructors with a body as implementations
-                        (!constructor.body.is_none()).then(|| decl_idx)
+                        (!constructor.body.is_none()).then_some(decl_idx)
                     })
                     .collect();
 
@@ -4299,8 +4296,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_extended(idx)
-                .map(|ext| ext.parent)
-                .unwrap_or(NodeIndex::NONE);
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
         }
 
         None
@@ -4329,8 +4325,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_extended(idx)
-                .map(|ext| ext.parent)
-                .unwrap_or(NodeIndex::NONE);
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
         }
 
         None
@@ -4359,8 +4354,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_extended(idx)
-                .map(|ext| ext.parent)
-                .unwrap_or(NodeIndex::NONE);
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
         }
 
         None
@@ -4391,8 +4385,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_extended(idx)
-                .map(|ext| ext.parent)
-                .unwrap_or(NodeIndex::NONE);
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
         }
 
         None
@@ -4416,8 +4409,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_extended(idx)
-            .map(|ext| ext.parent)
-            .unwrap_or(NodeIndex::NONE);
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
         if parent_idx.is_none() {
             return false;
         }
@@ -4439,8 +4431,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_extended(idx)
-            .map(|ext| ext.parent)
-            .unwrap_or(NodeIndex::NONE);
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
         if parent_idx.is_none() {
             return false;
         }
@@ -4464,8 +4455,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_extended(current)
-                .map(|ext| ext.parent)
-                .unwrap_or(NodeIndex::NONE);
+                .map_or(NodeIndex::NONE, |ext| ext.parent);
             if parent_idx.is_none() {
                 return false;
             }

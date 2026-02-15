@@ -190,16 +190,14 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .arena
                             .get_function(node)
-                            .map(|f| f.is_async)
-                            .unwrap_or(false);
+                            .is_some_and(|f| f.is_async);
                     }
                     k if k == METHOD_DECLARATION => {
                         return self
                             .ctx
                             .arena
                             .get_method_decl(node)
-                            .map(|m| self.has_async_modifier(&m.modifiers))
-                            .unwrap_or(false);
+                            .is_some_and(|m| self.has_async_modifier(&m.modifiers));
                     }
                     k if k == CONSTRUCTOR || k == GET_ACCESSOR || k == SET_ACCESSOR => {
                         return false;
@@ -248,8 +246,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .arena
             .get_identifier(callee)
-            .map(|i| i.escaped_text == "Promise")
-            .unwrap_or(false)
+            .is_some_and(|i| i.escaped_text == "Promise")
     }
 
     /// Returns true when the parameter name belongs to a Promise executor callback.

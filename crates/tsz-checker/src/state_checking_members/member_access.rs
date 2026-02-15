@@ -306,8 +306,7 @@ impl<'a> CheckerState<'a> {
                         let source_is_external_module = self
                             .ctx
                             .get_binder_for_file(symbol.decl_file_idx as usize)
-                            .map(|binder| binder.is_external_module())
-                            .unwrap_or(false);
+                            .is_some_and(|binder| binder.is_external_module());
 
                         self.ctx.binder.is_external_module()
                             && symbol.decl_file_idx != self.ctx.current_file_idx as u32
@@ -439,11 +438,9 @@ impl<'a> CheckerState<'a> {
 
         // Check if there are own index signatures by scanning members
         let has_own_index_sig = iface.members.nodes.iter().any(|&member_idx| {
-            self.ctx
-                .arena
-                .get(member_idx)
-                .map(|node| node.kind == tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE)
-                .unwrap_or(false)
+            self.ctx.arena.get(member_idx).is_some_and(|node| {
+                node.kind == tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE
+            })
         });
 
         // If there are any index signatures (direct, own, or inherited), check compatibility

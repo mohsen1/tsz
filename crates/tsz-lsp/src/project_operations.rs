@@ -248,7 +248,7 @@ impl Project {
                 } else {
                     spec.property_name
                 };
-                let property_name = (!spec.property_name.is_none()).then(|| spec.property_name);
+                let property_name = (!spec.property_name.is_none()).then_some(spec.property_name);
 
                 targets.push(ImportSpecifierTarget {
                     local_ident,
@@ -846,9 +846,7 @@ impl Project {
             let is_heritage_member = {
                 let file = self.files.get(file_name)?;
                 let symbol = file.binder().symbols.get(symbol_id);
-                symbol
-                    .map(|s| Self::is_heritage_member_symbol(file, s))
-                    .unwrap_or(false)
+                symbol.is_some_and(|s| Self::is_heritage_member_symbol(file, s))
             };
 
             if is_heritage_member {
@@ -1272,9 +1270,7 @@ impl Project {
                 .get(file_name)
                 .ok_or_else(|| "Could not find file".to_string())?;
             let symbol = file.binder().symbols.get(symbol_id);
-            symbol
-                .map(|s| Self::is_heritage_member_symbol(file, s))
-                .unwrap_or(false)
+            symbol.is_some_and(|s| Self::is_heritage_member_symbol(file, s))
         };
 
         // Step 4: If heritage member, use heritage-aware rename logic

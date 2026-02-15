@@ -407,25 +407,23 @@ pub fn resolve_compiler_options(
         }
     }
     let effective_resolution = resolved.effective_module_resolution();
-    resolved.resolve_package_json_exports =
-        options.resolve_package_json_exports.unwrap_or_else(|| {
-            matches!(
-                effective_resolution,
-                ModuleResolutionKind::Node16
-                    | ModuleResolutionKind::NodeNext
-                    | ModuleResolutionKind::Bundler
-            )
-        });
-    resolved.resolve_package_json_imports =
-        options.resolve_package_json_imports.unwrap_or_else(|| {
-            matches!(
-                effective_resolution,
-                ModuleResolutionKind::Node
-                    | ModuleResolutionKind::Node16
-                    | ModuleResolutionKind::NodeNext
-                    | ModuleResolutionKind::Bundler
-            )
-        });
+    resolved.resolve_package_json_exports = options.resolve_package_json_exports.unwrap_or({
+        matches!(
+            effective_resolution,
+            ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        )
+    });
+    resolved.resolve_package_json_imports = options.resolve_package_json_imports.unwrap_or({
+        matches!(
+            effective_resolution,
+            ModuleResolutionKind::Node
+                | ModuleResolutionKind::Node16
+                | ModuleResolutionKind::NodeNext
+                | ModuleResolutionKind::Bundler
+        )
+    });
     if let Some(module_suffixes) = options.module_suffixes.as_ref() {
         resolved.module_suffixes = module_suffixes.clone();
     } else {
@@ -522,8 +520,7 @@ pub fn resolve_compiler_options(
         let has_base_url = options
             .base_url
             .as_deref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
+            .is_some_and(|value| !value.trim().is_empty());
         if !has_base_url {
             bail!("compilerOptions.paths requires compilerOptions.baseUrl");
         }

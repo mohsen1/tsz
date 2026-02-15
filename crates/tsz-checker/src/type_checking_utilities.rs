@@ -297,8 +297,7 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .symbol_arenas
                 .get(&sym_id)
-                .map(|arena| arena.as_ref())
-                .unwrap_or(self.ctx.arena);
+                .map_or(self.ctx.arena, |arena| arena.as_ref());
             return Some((symbol, arena));
         }
 
@@ -318,8 +317,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .symbol_arenas
                     .get(&sym_id)
-                    .map(|arena| arena.as_ref())
-                    .unwrap_or(self.ctx.arena);
+                    .map_or(self.ctx.arena, |arena| arena.as_ref());
                 return Some((symbol, arena));
             }
             return None;
@@ -331,8 +329,7 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .symbol_arenas
                 .get(&sym_id)
-                .map(|arena| arena.as_ref())
-                .unwrap_or(self.ctx.arena);
+                .map_or(self.ctx.arena, |arena| arena.as_ref());
             return Some((symbol, arena));
         }
 

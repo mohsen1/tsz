@@ -255,8 +255,7 @@ impl<'a> SignatureHelpProvider<'a> {
             CallSite::Regular(call_expr) => call_expr
                 .arguments
                 .as_ref()
-                .map(|args| args.nodes.len())
-                .unwrap_or(0),
+                .map_or(0, |args| args.nodes.len()),
             CallSite::TaggedTemplate(tagged) => {
                 // For tagged templates, arg count = 1 (templateStrings) + number of ${} expressions
                 if let Some(tmpl_node) = self.arena.get(tagged.template) {
@@ -501,8 +500,7 @@ impl<'a> SignatureHelpProvider<'a> {
             let call_end = self
                 .arena
                 .get(call_idx)
-                .map(|node| node.end)
-                .unwrap_or(cursor_offset);
+                .map_or(cursor_offset, |node| node.end);
             let scan_end = cursor_offset.min(call_end);
             if scan_end > last_arg_node.end && self.has_comma_between(last_arg_node.end, scan_end) {
                 return args.nodes.len() as u32;
@@ -581,14 +579,12 @@ impl<'a> SignatureHelpProvider<'a> {
                     .nodes
                     .first()
                     .and_then(|&idx| self.arena.get(idx))
-                    .map(|n| n.pos)
-                    .unwrap_or(after_paren);
+                    .map_or(after_paren, |n| n.pos);
                 let last_end = args
                     .nodes
                     .last()
                     .and_then(|&idx| self.arena.get(idx))
-                    .map(|n| n.end)
-                    .unwrap_or(after_paren);
+                    .map_or(after_paren, |n| n.end);
                 return (first_start, last_end.saturating_sub(first_start));
             }
         }
@@ -760,10 +756,10 @@ impl<'a> SignatureHelpProvider<'a> {
         let has_rest = shape.params.iter().any(|p| p.rest);
 
         for param in &shape.params {
-            let name = param
-                .name
-                .map(|atom| checker.ctx.types.resolve_atom(atom))
-                .unwrap_or_else(|| "arg".to_string());
+            let name = param.name.map_or_else(
+                || "arg".to_string(),
+                |atom| checker.ctx.types.resolve_atom(atom),
+            );
             let type_str = if param.type_id == TypeId::UNKNOWN {
                 "any".to_string()
             } else {

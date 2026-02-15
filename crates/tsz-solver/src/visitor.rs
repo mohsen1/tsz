@@ -1311,8 +1311,7 @@ fn is_object_like_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
             .constraint
-            .map(|constraint| is_object_like_type_impl(types, constraint))
-            .unwrap_or(false),
+            .is_some_and(|constraint| is_object_like_type_impl(types, constraint)),
         _ => false,
     }
 }
@@ -1837,13 +1836,11 @@ where
                     || shape
                         .string_index
                         .as_ref()
-                        .map(|i| self.check(i.value_type))
-                        .unwrap_or(false)
+                        .is_some_and(|i| self.check(i.value_type))
                     || shape
                         .number_index
                         .as_ref()
-                        .map(|i| self.check(i.value_type))
-                        .unwrap_or(false)
+                        .is_some_and(|i| self.check(i.value_type))
             }
             TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
                 let members = self.types.type_list(*list_id);
@@ -1858,7 +1855,7 @@ where
                 let shape = self.types.function_shape(*shape_id);
                 shape.params.iter().any(|p| self.check(p.type_id))
                     || self.check(shape.return_type)
-                    || shape.this_type.map(|t| self.check(t)).unwrap_or(false)
+                    || shape.this_type.is_some_and(|t| self.check(t))
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.types.callable_shape(*shape_id);
@@ -1869,8 +1866,8 @@ where
                 }) || shape.properties.iter().any(|p| self.check(p.type_id))
             }
             TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-                info.constraint.map(|c| self.check(c)).unwrap_or(false)
-                    || info.default.map(|d| self.check(d)).unwrap_or(false)
+                info.constraint.is_some_and(|c| self.check(c))
+                    || info.default.is_some_and(|d| self.check(d))
             }
             TypeData::Lazy(_)
             | TypeData::Recursive(_)
@@ -1890,19 +1887,11 @@ where
             }
             TypeData::Mapped(mapped_id) => {
                 let mapped = self.types.mapped_type(*mapped_id);
-                mapped
-                    .type_param
-                    .constraint
-                    .map(|c| self.check(c))
-                    .unwrap_or(false)
-                    || mapped
-                        .type_param
-                        .default
-                        .map(|d| self.check(d))
-                        .unwrap_or(false)
+                mapped.type_param.constraint.is_some_and(|c| self.check(c))
+                    || mapped.type_param.default.is_some_and(|d| self.check(d))
                     || self.check(mapped.constraint)
                     || self.check(mapped.template)
-                    || mapped.name_type.map(|n| self.check(n)).unwrap_or(false)
+                    || mapped.name_type.is_some_and(|n| self.check(n))
             }
             TypeData::IndexAccess(obj, idx) => self.check(*obj) || self.check(*idx),
             TypeData::TemplateLiteral(list_id) => {
@@ -1994,10 +1983,9 @@ impl LiteralTypeChecker {
             Some(TypeData::ReadonlyType(inner)) | Some(TypeData::NoInfer(inner)) => {
                 Self::check(types, inner)
             }
-            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
-                .constraint
-                .map(|c| Self::check(types, c))
-                .unwrap_or(false),
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+                info.constraint.is_some_and(|c| Self::check(types, c))
+            }
             _ => false,
         }
     }
@@ -2014,10 +2002,9 @@ impl FunctionTypeChecker {
                 let members = types.type_list(members);
                 members.iter().any(|&member| Self::check(types, member))
             }
-            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
-                .constraint
-                .map(|c| Self::check(types, c))
-                .unwrap_or(false),
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
+                info.constraint.is_some_and(|c| Self::check(types, c))
+            }
             _ => false,
         }
     }
@@ -2043,8 +2030,7 @@ impl ObjectTypeChecker {
             }
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
                 .constraint
-                .map(|constraint| Self::check(types, constraint))
-                .unwrap_or(false),
+                .is_some_and(|constraint| Self::check(types, constraint)),
             _ => false,
         }
     }
@@ -2076,7 +2062,7 @@ impl<'a> EmptyObjectChecker<'a> {
                 self.check(inner)
             }
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
-                info.constraint.map(|c| self.check(c)).unwrap_or(false)
+                info.constraint.is_some_and(|c| self.check(c))
             }
             _ => false,
         }

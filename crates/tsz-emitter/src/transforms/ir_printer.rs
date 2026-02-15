@@ -62,8 +62,11 @@ impl<'a> IRPrinter<'a> {
         let IRNode::Identifier(identifier_name) = &**value else {
             return None;
         };
-        (export_name == name && identifier_name == name)
-            .then(|| (name.as_str(), members, namespace.as_str()))
+        (export_name == name && identifier_name == name).then_some((
+            name.as_str(),
+            members,
+            namespace.as_str(),
+        ))
     }
 
     fn emit_namespace_bound_enum_iife(
@@ -1519,18 +1522,16 @@ impl<'a> IRPrinter<'a> {
     /// Uses brace depth counting to find the matching `}` and skips leading trivia.
     /// Check if a source range is on a single line (for object literals, etc.)
     fn is_single_line_range(&self, pos: u32, end: u32) -> bool {
-        self.source_text
-            .map(|text| {
-                let start = pos as usize;
-                let end = std::cmp::min(end as usize, text.len());
-                if start < end {
-                    let slice = &text[start..end];
-                    !slice.contains('\n')
-                } else {
-                    true // Empty range is considered single-line
-                }
-            })
-            .unwrap_or(true) // Default to single-line if no source text
+        self.source_text.is_none_or(|text| {
+            let start = pos as usize;
+            let end = std::cmp::min(end as usize, text.len());
+            if start < end {
+                let slice = &text[start..end];
+                !slice.contains('\n')
+            } else {
+                true // Empty range is considered single-line
+            }
+        }) // Default to single-line if no source text
     }
 
     fn is_body_source_single_line(&self, body_source_range: Option<(u32, u32)>) -> bool {
@@ -1903,9 +1904,7 @@ impl<'a> IRPrinter<'a> {
 
         // Body - use recursive emit_node to handle nested directives
         let body_node = arena.get(func.body);
-        let is_block = body_node
-            .map(|n| n.kind == syntax_kind_ext::BLOCK)
-            .unwrap_or(false);
+        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
 
         if is_block {
             // Block body - emit recursively to handle nested transforms

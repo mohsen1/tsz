@@ -47,12 +47,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the first argument (module specifier)
-        let args = call
-            .arguments
-            .as_ref()
-            .map(|a| &a.nodes)
-            .map(|n| n.as_slice())
-            .unwrap_or(&[]);
+        let args = match call.arguments.as_ref() {
+            Some(a) => a.nodes.as_slice(),
+            None => &[],
+        };
 
         if args.is_empty() {
             return; // No argument - will be caught by argument count check
@@ -420,12 +418,10 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::PropertyInfo;
 
         // Get the first argument (module specifier)
-        let args = call
-            .arguments
-            .as_ref()
-            .map(|a| &a.nodes)
-            .map(|n| n.as_slice())
-            .unwrap_or(&[]);
+        let args = match call.arguments.as_ref() {
+            Some(a) => a.nodes.as_slice(),
+            None => &[],
+        };
 
         if args.is_empty() {
             return self.create_promise_any();

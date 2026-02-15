@@ -781,9 +781,7 @@ impl<'a> Printer<'a> {
 
             // If body is not a block (concise arrow), wrap with return
             let body_node = self.arena.get(func.body);
-            let is_block = body_node
-                .map(|n| n.kind == syntax_kind_ext::BLOCK)
-                .unwrap_or(false);
+            let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
             let needs_param_prologue = param_transforms.has_transforms();
 
             if is_block {
@@ -1522,9 +1520,8 @@ impl<'a> Printer<'a> {
 
         // Check if this is a method call (property access)
         let callee_node = self.arena.get(call.expression);
-        let is_method_call = callee_node
-            .map(|n| n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
-            .unwrap_or(false);
+        let is_method_call =
+            callee_node.is_some_and(|n| n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION);
 
         if is_method_call {
             self.emit_method_call_with_spread(call.expression, args);

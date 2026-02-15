@@ -102,8 +102,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_block(node)
-                .map(|block| self.block_falls_through(&block.statements.nodes))
-                .unwrap_or(true),
+                .is_none_or(|block| self.block_falls_through(&block.statements.nodes)),
             syntax_kind_ext::EXPRESSION_STATEMENT => {
                 let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) else {
                     return true;
@@ -166,8 +165,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_catch_clause(node)
-                .map(|catch_data| self.statement_falls_through(catch_data.block))
-                .unwrap_or(true),
+                .is_none_or(|catch_data| self.statement_falls_through(catch_data.block)),
             syntax_kind_ext::WHILE_STATEMENT
             | syntax_kind_ext::DO_STATEMENT
             | syntax_kind_ext::FOR_STATEMENT => self.loop_falls_through(node),
@@ -176,8 +174,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_labeled_statement(node)
-                .map(|labeled| self.statement_falls_through(labeled.statement))
-                .unwrap_or(true),
+                .is_none_or(|labeled| self.statement_falls_through(labeled.statement)),
             _ => true,
         }
     }
@@ -287,41 +284,33 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             syntax_kind_ext::BREAK_STATEMENT => true,
-            syntax_kind_ext::BLOCK => self
-                .ctx
-                .arena
-                .get_block(node)
-                .map(|block| {
-                    block
-                        .statements
-                        .nodes
-                        .iter()
-                        .any(|&stmt| self.contains_break_statement(stmt))
-                })
-                .unwrap_or(false),
-            syntax_kind_ext::IF_STATEMENT => self
-                .ctx
-                .arena
-                .get_if_statement(node)
-                .map(|if_data| {
-                    self.contains_break_statement(if_data.then_statement)
-                        || (!if_data.else_statement.is_none()
-                            && self.contains_break_statement(if_data.else_statement))
-                })
-                .unwrap_or(false),
+            syntax_kind_ext::BLOCK => self.ctx.arena.get_block(node).is_some_and(|block| {
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .any(|&stmt| self.contains_break_statement(stmt))
+            }),
+            syntax_kind_ext::IF_STATEMENT => {
+                self.ctx
+                    .arena
+                    .get_if_statement(node)
+                    .is_some_and(|if_data| {
+                        self.contains_break_statement(if_data.then_statement)
+                            || (!if_data.else_statement.is_none()
+                                && self.contains_break_statement(if_data.else_statement))
+                    })
+            }
             syntax_kind_ext::SWITCH_STATEMENT => false,
-            syntax_kind_ext::TRY_STATEMENT => self
-                .ctx
-                .arena
-                .get_try(node)
-                .map(|try_data| {
+            syntax_kind_ext::TRY_STATEMENT => {
+                self.ctx.arena.get_try(node).is_some_and(|try_data| {
                     self.contains_break_statement(try_data.try_block)
                         || (!try_data.catch_clause.is_none()
                             && self.contains_break_statement(try_data.catch_clause))
                         || (!try_data.finally_block.is_none()
                             && self.contains_break_statement(try_data.finally_block))
                 })
-                .unwrap_or(false),
+            }
             syntax_kind_ext::WHILE_STATEMENT
             | syntax_kind_ext::DO_STATEMENT
             | syntax_kind_ext::FOR_STATEMENT
@@ -331,8 +320,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_labeled_statement(node)
-                .map(|labeled| self.contains_break_statement(labeled.statement))
-                .unwrap_or(false),
+                .is_some_and(|labeled| self.contains_break_statement(labeled.statement)),
             _ => false,
         }
     }

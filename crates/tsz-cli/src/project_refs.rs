@@ -216,18 +216,12 @@ impl ProjectReferenceGraph {
 
     /// Get direct references of a project
     pub fn get_references(&self, id: ProjectId) -> &[ProjectId] {
-        self.references
-            .get(&id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.references.get(&id).map_or(&[], |v| v.as_slice())
     }
 
     /// Get direct dependents of a project (projects that reference it)
     pub fn get_dependents(&self, id: ProjectId) -> &[ProjectId] {
-        self.dependents
-            .get(&id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.dependents.get(&id).map_or(&[], |v| v.as_slice())
     }
 
     /// Check for circular references
@@ -558,8 +552,7 @@ pub fn get_declaration_output_path(
     let root_dir = opts
         .root_dir
         .as_ref()
-        .map(|r| project.root_dir.join(r))
-        .unwrap_or_else(|| project.root_dir.clone());
+        .map_or_else(|| project.root_dir.clone(), |r| project.root_dir.join(r));
 
     let relative = source_file.strip_prefix(&root_dir).ok()?;
 

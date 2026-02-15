@@ -827,7 +827,7 @@ impl BinderState {
         };
 
         let mut consider =
-            |sym_id: SymbolId| -> Option<SymbolId> { accept(sym_id).then(|| sym_id) };
+            |sym_id: SymbolId| -> Option<SymbolId> { accept(sym_id).then_some(sym_id) };
 
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
             let mut iterations = 0;
@@ -3754,7 +3754,7 @@ impl BinderState {
                 return sym_id;
             }
 
-            let existing_flags = self.symbols.get(existing_id).map(|s| s.flags).unwrap_or(0);
+            let existing_flags = self.symbols.get(existing_id).map_or(0, |s| s.flags);
             let can_merge = Self::can_merge_flags(existing_flags, flags);
 
             let combined_flags = if can_merge {
@@ -3976,18 +3976,14 @@ impl BinderState {
                             .get(self.current_scope_idx)
                             .and_then(|ctx| arena.get(ctx.container_node))
                             .and_then(|node| arena.get_module(node))
-                            .map(|module| {
-                                let is_external = arena
-                                    .get(module.name)
-                                    .map(|name_node| {
-                                        name_node.kind == SyntaxKind::StringLiteral as u16
-                                            || name_node.kind
-                                                == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                                    })
-                                    .unwrap_or(false);
+                            .is_some_and(|module| {
+                                let is_external = arena.get(module.name).is_some_and(|name_node| {
+                                    name_node.kind == SyntaxKind::StringLiteral as u16
+                                        || name_node.kind
+                                            == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                                });
                                 self.has_declare_modifier(arena, &module.modifiers) || is_external
-                            })
-                            .unwrap_or(false);
+                            });
 
                         // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag
                         let mut exports = SymbolTable::new();

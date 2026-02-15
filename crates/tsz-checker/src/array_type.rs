@@ -98,8 +98,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the array element type is a primitive type.
     pub fn is_primitive_array(&self, type_id: TypeId) -> bool {
         query::array_element_type(self.ctx.types, type_id)
-            .map(|element_type| self.is_primitive_type(element_type))
-            .unwrap_or(false)
+            .is_some_and(|element_type| self.is_primitive_type(element_type))
     }
 
     /// Check if an array type contains only literal elements.
@@ -107,8 +106,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the array element type is a literal type.
     pub fn is_literal_array(&self, type_id: TypeId) -> bool {
         query::array_element_type(self.ctx.types, type_id)
-            .map(|element_type| self.is_literal_type(element_type))
-            .unwrap_or(false)
+            .is_some_and(|element_type| self.is_literal_type(element_type))
     }
 
     /// Check if an array type contains union elements.
@@ -116,8 +114,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the array element type is a union type.
     pub fn is_union_array(&self, type_id: TypeId) -> bool {
         query::array_element_type(self.ctx.types, type_id)
-            .map(|element_type| query::is_union_type(self.ctx.types, element_type))
-            .unwrap_or(false)
+            .is_some_and(|element_type| query::is_union_type(self.ctx.types, element_type))
     }
 
     /// Check if an array type is homogeneous (all elements same type).
@@ -125,8 +122,7 @@ impl<'a> CheckerState<'a> {
     /// Returns false if the element type is a union or tuple type.
     pub fn is_homogeneous_array(&self, type_id: TypeId) -> bool {
         query::array_element_type(self.ctx.types, type_id)
-            .map(|element_type| !query::is_union_type(self.ctx.types, element_type))
-            .unwrap_or(false)
+            .is_some_and(|element_type| !query::is_union_type(self.ctx.types, element_type))
     }
 
     /// Get the common element type if array is homogeneous.

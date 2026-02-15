@@ -1854,8 +1854,7 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(import_clause_idx)
             .and_then(|clause_node| self.ctx.arena.get_import_clause(clause_node))
-            .map(|clause| clause.is_type_only)
-            .unwrap_or(false);
+            .is_some_and(|clause| clause.is_type_only);
         let mut emitted_dts_import_error = false;
         if module_name.ends_with(".d.ts") && !is_type_only_import {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};

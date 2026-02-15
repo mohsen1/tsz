@@ -324,10 +324,9 @@ impl StatementChecker {
                         // Check if initializer is a variable declaration list
                         let is_var_decl_list = {
                             let arena = state.arena();
-                            arena
-                                .get(initializer)
-                                .map(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
-                                .unwrap_or(false)
+                            arena.get(initializer).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                            })
                         };
                         if is_var_decl_list {
                             state.check_variable_declaration_list(initializer);
@@ -382,8 +381,7 @@ impl StatementChecker {
                         let arena = state.arena();
                         arena
                             .get(initializer)
-                            .map(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
-                            .unwrap_or(false)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
                     };
                     if is_var_decl_list {
                         state.assign_for_in_of_initializer_types(

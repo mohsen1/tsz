@@ -1012,7 +1012,7 @@ impl<'a> Judge for DefaultJudge<'a> {
                     IndexKind::Number => shape.number_index.as_ref().map(|s| s.value_type),
                 }
             }
-            TypeData::Array(elem) => (kind == IndexKind::Number).then(|| elem),
+            TypeData::Array(elem) => (kind == IndexKind::Number).then_some(elem),
             TypeData::Tuple(list_id) => (kind == IndexKind::Number).then(|| {
                 let elements = self.db.tuple_list(list_id);
                 let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();

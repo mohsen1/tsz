@@ -140,13 +140,7 @@ impl<'a> CheckerState<'a> {
                             .find_map(|decl| {
                                 let node = self.ctx.arena.get(*decl)?;
                                 let class = self.ctx.arena.get_class(node)?;
-                                Some(
-                                    class
-                                        .type_parameters
-                                        .as_ref()
-                                        .map(|p| p.nodes.len())
-                                        .unwrap_or(0),
-                                )
+                                Some(class.type_parameters.as_ref().map_or(0, |p| p.nodes.len()))
                             })
                             .unwrap_or(0)
                     };
@@ -219,10 +213,10 @@ impl<'a> CheckerState<'a> {
         let params_text: Vec<String> = params
             .iter()
             .map(|p| {
-                let name = p
-                    .name
-                    .map(|atom| self.ctx.types.resolve_atom_ref(atom).to_string())
-                    .unwrap_or_else(|| "_".to_string());
+                let name = p.name.map_or_else(
+                    || "_".to_string(),
+                    |atom| self.ctx.types.resolve_atom_ref(atom).to_string(),
+                );
                 let rest = if p.rest { "..." } else { "" };
                 let optional = if p.optional { "?" } else { "" };
                 let ty = self.format_type_for_assignability_message(p.type_id);

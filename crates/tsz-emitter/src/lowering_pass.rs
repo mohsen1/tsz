@@ -304,14 +304,10 @@ impl<'a> LoweringPass<'a> {
                     // mark as assignment target so we don't treat it as spread-in-array-literal
                     let is_destructuring_assignment = bin.operator_token
                         == tsz_scanner::SyntaxKind::EqualsToken as u16
-                        && self
-                            .arena
-                            .get(bin.left)
-                            .map(|n| {
-                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                    || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            })
-                            .unwrap_or(false);
+                        && self.arena.get(bin.left).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        });
                     if is_destructuring_assignment {
                         let prev = self.in_assignment_target;
                         self.in_assignment_target = true;
@@ -357,8 +353,7 @@ impl<'a> LoweringPass<'a> {
                         && mods.nodes.iter().any(|&mod_idx| {
                             self.arena
                                 .get(mod_idx)
-                                .map(|n| n.kind == SyntaxKind::AsyncKeyword as u16)
-                                .unwrap_or(false)
+                                .is_some_and(|n| n.kind == SyntaxKind::AsyncKeyword as u16)
                         })
                     {
                         self.mark_async_helpers();
@@ -511,8 +506,7 @@ impl<'a> LoweringPass<'a> {
                             };
                             self.arena
                                 .get_binding_element(elem_node)
-                                .map(|elem| elem.dot_dot_dot_token)
-                                .unwrap_or(false)
+                                .is_some_and(|elem| elem.dot_dot_dot_token)
                         })
                     {
                         self.transforms.helpers_mut().rest = true;
@@ -1464,8 +1458,7 @@ impl<'a> LoweringPass<'a> {
                 && self
                     .arena
                     .get(arrow.type_annotation)
-                    .map(|n| n.kind == SyntaxKind::Identifier as u16)
-                    .unwrap_or(false);
+                    .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
 
             if self.is_recovery_malformed_arrow(node) || malformed_return_type {
                 for &param_idx in &arrow.parameters.nodes {
@@ -1797,8 +1790,7 @@ impl<'a> LoweringPass<'a> {
         mods.nodes.iter().any(|&mod_idx| {
             self.arena
                 .get(mod_idx)
-                .map(|n| n.kind == SyntaxKind::DeclareKeyword as u16)
-                .unwrap_or(false)
+                .is_some_and(|n| n.kind == SyntaxKind::DeclareKeyword as u16)
         })
     }
 
@@ -1811,8 +1803,7 @@ impl<'a> LoweringPass<'a> {
         mods.nodes.iter().any(|&mod_idx| {
             self.arena
                 .get(mod_idx)
-                .map(|n| n.kind == SyntaxKind::ConstKeyword as u16)
-                .unwrap_or(false)
+                .is_some_and(|n| n.kind == SyntaxKind::ConstKeyword as u16)
         })
     }
 
@@ -1825,8 +1816,7 @@ impl<'a> LoweringPass<'a> {
         mods.nodes.iter().any(|&mod_idx| {
             self.arena
                 .get(mod_idx)
-                .map(|n| n.kind == SyntaxKind::ExportKeyword as u16)
-                .unwrap_or(false)
+                .is_some_and(|n| n.kind == SyntaxKind::ExportKeyword as u16)
         })
     }
 
@@ -1839,8 +1829,7 @@ impl<'a> LoweringPass<'a> {
         mods.nodes.iter().any(|&mod_idx| {
             self.arena
                 .get(mod_idx)
-                .map(|n| n.kind == SyntaxKind::DefaultKeyword as u16)
-                .unwrap_or(false)
+                .is_some_and(|n| n.kind == SyntaxKind::DefaultKeyword as u16)
         })
     }
 
@@ -1876,8 +1865,7 @@ impl<'a> LoweringPass<'a> {
         mods.nodes.iter().any(|&mod_idx| {
             self.arena
                 .get(mod_idx)
-                .map(|n| n.kind == SyntaxKind::StaticKeyword as u16)
-                .unwrap_or(false)
+                .is_some_and(|n| n.kind == SyntaxKind::StaticKeyword as u16)
         })
     }
 
@@ -1915,8 +1903,7 @@ impl<'a> LoweringPass<'a> {
         mods.nodes.iter().any(|&mod_idx| {
             self.arena
                 .get(mod_idx)
-                .map(|n| n.kind == SyntaxKind::AsyncKeyword as u16)
-                .unwrap_or(false)
+                .is_some_and(|n| n.kind == SyntaxKind::AsyncKeyword as u16)
         })
     }
 
@@ -2079,13 +2066,10 @@ impl<'a> LoweringPass<'a> {
     }
 
     fn is_binding_pattern_idx(&self, idx: NodeIndex) -> bool {
-        self.arena
-            .get(idx)
-            .map(|node| {
-                node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-            })
-            .unwrap_or(false)
+        self.arena.get(idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        })
     }
 
     fn is_computed_property_member(&self, idx: NodeIndex) -> bool {

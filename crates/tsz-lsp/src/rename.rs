@@ -281,14 +281,14 @@ impl<'a> RenameProvider<'a> {
         };
 
         // Extract identifier text (fall back to source slice, trimming non-ident chars)
-        let display_name = self
+        let display_name = match self
             .arena
             .get_identifier_text(node_idx)
             .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                extract_identifier_from_source(self.source_text, node.pos, node.end)
-            });
+        {
+            Some(s) => s.to_string(),
+            None => extract_identifier_from_source(self.source_text, node.pos, node.end),
+        };
 
         // Check for non-renamable built-in identifiers
         if is_non_renamable_builtin(&display_name) {
@@ -473,14 +473,14 @@ impl<'a> RenameProvider<'a> {
 
         // Get old name for shorthand / import expansion.
         // Try get_identifier_text first; fall back to source text slice.
-        let old_name = self
+        let old_name = match self
             .arena
             .get_identifier_text(node_idx)
             .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                extract_identifier_from_source(self.source_text, node.pos, node.end)
-            });
+        {
+            Some(s) => s.to_string(),
+            None => extract_identifier_from_source(self.source_text, node.pos, node.end),
+        };
 
         // Reject non-renamable built-in identifiers
         if is_non_renamable_builtin(&old_name) {
@@ -667,17 +667,20 @@ impl<'a> RenameProvider<'a> {
         node_idx: NodeIndex,
         symbol_id: Option<SymbolId>,
     ) -> (RenameSymbolKind, String, String) {
-        let display_name = self
+        let display_name = match self
             .arena
             .get_identifier_text(node_idx)
             .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
+        {
+            Some(s) => s.to_string(),
+            None => {
                 if let Some(n) = self.arena.get(node_idx) {
-                    return extract_identifier_from_source(self.source_text, n.pos, n.end);
+                    extract_identifier_from_source(self.source_text, n.pos, n.end)
+                } else {
+                    String::new()
                 }
-                String::new()
-            });
+            }
+        };
 
         let Some(sym_id) = symbol_id else {
             return (RenameSymbolKind::Unknown, String::new(), display_name);
