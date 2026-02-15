@@ -1,7 +1,5 @@
 //! Parser state - interface, type alias, enum, module, import/export, and control flow parsing methods
 
-#![allow(clippy::too_many_lines)]
-
 use super::state::{CONTEXT_FLAG_DISALLOW_IN, ParserState};
 use crate::parser::{
     NodeIndex, NodeList,
@@ -150,6 +148,7 @@ impl ParserState {
     }
 
     /// Parse a single type member (property signature, method signature, call signature, construct signature)
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_type_member(&mut self, in_interface_declaration: bool) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -1817,6 +1816,7 @@ impl ParserState {
     }
 
     /// Parse exported declaration (export function, export class, etc.)
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_export_declaration_or_statement(&mut self, start_pos: u32) -> NodeIndex {
         // Parse the declaration and wrap it
         let declaration = match self.token() {
@@ -2209,6 +2209,7 @@ impl ParserState {
     /// Parse variable declaration list for for statement
     /// Supports multiple declarations for regular for: for (let x = 0, y = 1; ...)
     /// Single declaration for for-in/for-of: for (let x in/of ...)
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_for_variable_declaration(&mut self) -> NodeIndex {
         use crate::parser::node_flags;
 
@@ -2590,6 +2591,7 @@ impl ParserState {
     }
 
     /// Parse switch statement
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_switch_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::SwitchKeyword);
