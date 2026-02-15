@@ -362,13 +362,15 @@ impl<'a> Printer<'a> {
         // to single lines. Single-line formatting is preserved via emit_block
         // when the source was originally single-line.
 
-        // Push temp scope for function body - each function gets fresh temp variables
+        // Push temp scope and block scope for function body - each function gets fresh variables.
+        self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         self.emit(func.body);
         self.ctx.flags.in_generator = prev_in_generator;
         self.pop_temp_scope();
+        self.ctx.block_scope_state.exit_scope();
     }
 
     /// Check if a statement is a simple return statement (for single-line emission).

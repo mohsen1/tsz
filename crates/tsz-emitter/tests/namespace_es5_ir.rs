@@ -684,6 +684,33 @@ fn test_namespace_comment_after_erased_interface() {
 }
 
 #[test]
+fn test_namespace_comment_between_value_exports() {
+    let source = r#"namespace Geometry {
+    export var Origin = { x: 0, y: 0 };
+
+    // this is valid since Point is visible outside
+    export var Unit = { x: 1, y: 0 };
+}"#;
+    let output = transform_and_emit_with_comments(source);
+    let origin_pos = output.find("Geometry.Origin =").unwrap_or(usize::MAX);
+    let comment_pos = output
+        .find("// this is valid since Point is visible outside")
+        .unwrap_or(usize::MAX);
+    let unit_pos = output.find("Geometry.Unit =").unwrap_or(usize::MAX);
+
+    assert!(
+        origin_pos < comment_pos,
+        "Comment should appear after Origin assignment. Got:\n{}",
+        output
+    );
+    assert!(
+        comment_pos < unit_pos,
+        "Comment should appear before Unit assignment. Got:\n{}",
+        output
+    );
+}
+
+#[test]
 fn test_namespace_inline_block_comment_preserved() {
     let source = r#"namespace M {
     /* block comment */

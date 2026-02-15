@@ -187,12 +187,61 @@ impl<'a> Printer<'a> {
 
         self.write("new ");
         self.emit(call.expression);
-        // Only emit parentheses if they were present in source (arguments is Some)
         if let Some(ref args) = call.arguments {
             self.write("(");
             self.emit_comma_separated(&args.nodes);
             self.write(")");
+            return;
         }
+
+        if self.new_expression_has_explicit_parens(node, call.expression) {
+            self.write("()");
+        }
+    }
+
+    fn new_expression_has_explicit_parens(
+        &self,
+        node: &Node,
+        callee: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        let Some(source) = self.source_text else {
+            return false;
+        };
+
+        let Some(callee_node) = self.arena.get(callee) else {
+            return false;
+        };
+
+        let bytes = source.as_bytes();
+        let mut i = callee_node.end as usize;
+        let end = std::cmp::min(node.end as usize, source.len());
+
+        while i < end {
+            match bytes[i] {
+                b' ' | b'\t' | b'\r' | b'\n' => {
+                    i += 1;
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                    // Line comment: skip to end of line
+                    while i < end && bytes[i] != b'\n' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                    // Block comment: skip to closing */
+                    i += 2;
+                    while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    if i + 1 < end {
+                        i += 2;
+                    }
+                }
+                b'(' => return true,
+                _ => return false,
+            }
+        }
+        false
     }
 
     pub(super) fn emit_property_access(&mut self, node: &Node) {
@@ -479,6 +528,9 @@ impl<'a> Printer<'a> {
             self.write_line();
             self.increase_indent();
             for (i, &prop) in obj.elements.nodes.iter().enumerate() {
+                let Some(prop_node) = self.arena.get(prop) else {
+                    continue;
+                };
                 self.emit(prop);
 
                 let is_last = i == obj.elements.nodes.len() - 1;
@@ -489,6 +541,13 @@ impl<'a> Printer<'a> {
                 // Check if next property is on the same line in source
                 if !is_last {
                     let next_prop = obj.elements.nodes[i + 1];
+                    self.emit_unemitted_comments_between(
+                        prop_node.end,
+                        self.arena
+                            .get(next_prop)
+                            .map(|n| n.pos)
+                            .unwrap_or(prop_node.end),
+                    );
                     if self.are_on_same_line_in_source(prop, next_prop) {
                         // Keep on same line
                         self.write(" ");
@@ -497,6 +556,7 @@ impl<'a> Printer<'a> {
                         self.write_line();
                     }
                 } else {
+                    self.emit_unemitted_comments_between(prop_node.end, node.end);
                     self.write_line();
                 }
             }

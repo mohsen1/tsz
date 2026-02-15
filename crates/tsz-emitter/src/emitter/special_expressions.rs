@@ -31,12 +31,22 @@ impl<'a> Printer<'a> {
             }
         }
         if !unary.expression.is_none() {
-            self.write(" ");
+            let Some(expr_node) = self.arena.get(unary.expression) else {
+                self.write(" ");
+                return;
+            };
+            if !self.is_expression_parenthesized(expr_node) {
+                self.write(" ");
+            }
             self.emit_expression(unary.expression);
         } else if unary.asterisk_token {
             // TypeScript emits `yield* ;` (with space) when yield* has no expression
             self.write(" ");
         }
+    }
+
+    fn is_expression_parenthesized(&self, node: &Node) -> bool {
+        node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
     }
 
     /// Emit an await expression: await value

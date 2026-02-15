@@ -63,13 +63,16 @@ impl<'a> Printer<'a> {
 
         self.write_space();
 
-        // Push temp scope for function body - each function gets fresh temp variables
+        // Push temp scope and block scope for function body.
+        // Each function has its own scope for variable renaming/shadowing.
+        self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         self.emit(func.body);
         self.ctx.flags.in_generator = prev_in_generator;
         self.pop_temp_scope();
+        self.ctx.block_scope_state.exit_scope();
 
         // Track function name to prevent duplicate var declarations for merged namespaces.
         // Function declarations provide their own declaration, so if a namespace merges
@@ -107,8 +110,8 @@ impl<'a> Printer<'a> {
             "var"
         };
         self.write(keyword);
+        self.write(" ");
         if !decl_list.declarations.nodes.is_empty() {
-            self.write(" ");
             self.emit_comma_separated(&decl_list.declarations.nodes);
         }
     }

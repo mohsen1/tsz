@@ -54,7 +54,9 @@
 use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
 use crate::transforms::enum_es5_ir::transform_enum_to_ir;
 use crate::transforms::ir::*;
-use tsz_parser::parser::node::NodeArena;
+use crate::transforms::ir_printer::IRPrinter;
+use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -423,6 +425,27 @@ impl<'a> NamespaceES5Transformer<'a> {
         body_has_value_declarations(self.arena, body_idx)
     }
 
+    fn declaration_keyword_from_var_declarations(&self, declarations: &NodeList) -> &'static str {
+        declaration_keyword_from_var_declarations(self.arena, declarations)
+    }
+
+    fn namespace_member_ast_ref_if_non_empty(&self, member_idx: NodeIndex) -> Option<IRNode> {
+        if let Some(source_text) = self.source_text
+            && let Some(member_node) = self.arena.get(member_idx)
+        {
+            let start = member_node.pos as usize;
+            let end = (member_node.end as usize).min(source_text.len());
+            if start < end {
+                let raw = &source_text[start..end];
+                if raw.trim().is_empty() {
+                    return None;
+                }
+            }
+        }
+
+        Some(IRNode::ASTRef(member_idx))
+    }
+
     /// Flatten a module name into parts (handles both identifiers and qualified names)
     ///
     /// For qualified names like `A.B.C` (parsed as nested MODULE_DECLARATIONs), returns `["A", "B", "C"]`.
@@ -505,6 +528,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Transform namespace body into IR nodes
     fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
         let mut result = Vec::new();
+        let runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
 
         // The innermost namespace name (last part) is used for member exports
         let ns_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
@@ -519,7 +543,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // First pass: collect declared names from classes, functions, enums
         if let Some(block_data) = self.arena.get_module_block(body_node)
-            && let Some(ref stmts) = block_data.statements
+            && let Some(stmts) = block_data.statements.as_ref()
         {
             for &stmt_idx in &stmts.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
@@ -609,11 +633,12 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Check if it's a module block
         if let Some(block_data) = self.arena.get_module_block(body_node)
-            && let Some(ref stmts) = block_data.statements
+            && let Some(stmts) = block_data.statements.as_ref()
         {
             // Track cursor for comment extraction between statements.
             // Start after the opening brace of the module block.
             let mut prev_end = body_node.pos + 1; // skip past '{'
+            let mut prev_stmt_pos = body_node.pos + 1;
 
             for &stmt_idx in &stmts.nodes {
                 let stmt_node = match self.arena.get(stmt_idx) {
@@ -621,11 +646,27 @@ impl<'a> NamespaceES5Transformer<'a> {
                     None => continue,
                 };
 
+                // Some statements have trailing trivia that includes standalone comments
+                // before the next declaration. Capture those comments here so they can
+                // be emitted immediately after the current statement.
+                let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
+                let trailing_standalone =
+                    self.extract_standalone_comments_in_range(code_end, stmt_node.end);
+
                 // Extract leading comments between previous end and this statement.
                 let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
                 if prev_end <= actual_start {
                     let leading_comments = self.extract_comments_in_range(prev_end, actual_start);
                     for c in leading_comments {
+                        result.push(c);
+                    }
+                } else if prev_end == stmt_node.pos && prev_stmt_pos <= actual_start {
+                    // Parser trivia-skipping can move `stmt_node.end` to the next statement token,
+                    // which can skip standalone comments on blank lines. Recover those comments
+                    // by probing from the previous statement start as a fallback.
+                    let fallback_comments =
+                        self.extract_comments_in_range(prev_stmt_pos, actual_start);
+                    for c in fallback_comments {
                         result.push(c);
                     }
                 }
@@ -637,13 +678,6 @@ impl<'a> NamespaceES5Transformer<'a> {
                 );
 
                 if let Some(ir) = ir {
-                    // Filter out empty sequences (e.g., from uninitialized exports)
-                    if let IRNode::Sequence(ref items) = ir {
-                        if items.is_empty() {
-                            prev_end = stmt_node.end;
-                            continue;
-                        }
-                    }
                     // Constrain ASTRef nodes so their source text doesn't extend
                     // into the module block's closing brace.
                     let ir = if let IRNode::ASTRef(idx) = ir {
@@ -690,19 +724,16 @@ impl<'a> NamespaceES5Transformer<'a> {
                     }
                 } else {
                     // Erased statement (interface/type alias).
-                    // Find the actual code end (after closing } or ;) and extract
-                    // standalone comments from the trailing trivia. These are
-                    // between-statement comments that would otherwise be lost
-                    // because prev_end advances past them.
-                    let code_end = self.find_code_end_of_erased_stmt(stmt_node.pos, stmt_node.end);
-                    let standalone =
-                        self.extract_standalone_comments_in_range(code_end, stmt_node.end);
-                    for c in standalone {
-                        result.push(c);
-                    }
+                    // (Standalone trailing comments are now emitted above for all
+                    // statement kinds.)
+                }
+
+                for c in trailing_standalone {
+                    result.push(c);
                 }
 
                 prev_end = stmt_node.end;
+                prev_stmt_pos = stmt_node.pos;
             }
 
             // Extract standalone comments after the last statement but before the closing brace.
@@ -716,6 +747,12 @@ impl<'a> NamespaceES5Transformer<'a> {
                 for c in standalone_comments {
                     result.push(c);
                 }
+            }
+        }
+
+        if !runtime_exported_vars.is_empty() {
+            for node in &mut result {
+                rewrite_exported_var_refs(node, ns_name, &runtime_exported_vars);
             }
         }
 
@@ -795,7 +832,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => None,
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => None,
-            _ => Some(IRNode::ASTRef(member_idx)),
+            _ => self.namespace_member_ast_ref_if_non_empty(member_idx),
         }
     }
 
@@ -861,6 +898,25 @@ impl<'a> NamespaceES5Transformer<'a> {
     ) -> Option<IRNode> {
         let import = self.arena.get_import_decl_at(import_idx)?;
         let alias = get_identifier_text(self.arena, import.import_clause)?;
+
+        // Skip export-import aliases that point to type-only namespaces.
+        // These are emitted as no-op in TypeScript emit output.
+        let should_emit_alias = if let Some(target_parts) =
+            collect_qualified_name_parts(self.arena, import.module_specifier)
+        {
+            if let Some(body) = namespace_body_by_name(self.arena, &target_parts) {
+                body_has_value_declarations(self.arena, body)
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+
+        if !should_emit_alias {
+            return None;
+        }
+
         let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
 
         Some(IRNode::NamespaceExport {
@@ -1002,10 +1058,14 @@ impl<'a> NamespaceES5Transformer<'a> {
                 ns_name,
             )))
         } else {
-            Some(IRNode::Sequence(convert_variable_declarations(
+            let empty_decl_keyword =
+                self.declaration_keyword_from_var_declarations(&var_data.declarations);
+            let decls = convert_variable_declarations(
                 self.arena,
                 &var_data.declarations,
-            )))
+                empty_decl_keyword,
+            );
+            Some(IRNode::Sequence(decls))
         }
     }
 
@@ -1252,6 +1312,14 @@ impl<'a> NamespaceTransformContext<'a> {
         body_has_value_declarations(self.arena, body_idx)
     }
 
+    fn declaration_keyword_from_var_declarations(&self, declarations: &NodeList) -> &'static str {
+        declaration_keyword_from_var_declarations(self.arena, declarations)
+    }
+
+    fn namespace_member_ast_ref_if_non_empty(&self, member_idx: NodeIndex) -> Option<IRNode> {
+        Some(IRNode::ASTRef(member_idx))
+    }
+
     /// Collect all name parts by walking through nested MODULE_DECLARATION chain
     fn collect_all_namespace_parts(&self, ns_idx: NodeIndex) -> Option<(Vec<String>, NodeIndex)> {
         let mut parts = Vec::new();
@@ -1290,6 +1358,7 @@ impl<'a> NamespaceTransformContext<'a> {
     /// Transform namespace body
     fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
         let mut result = Vec::new();
+        let runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
         let ns_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
 
         let Some(body_node) = self.arena.get(body_idx) else {
@@ -1298,12 +1367,18 @@ impl<'a> NamespaceTransformContext<'a> {
 
         // Check if it's a module block
         if let Some(block_data) = self.arena.get_module_block(body_node)
-            && let Some(ref stmts) = block_data.statements
+            && let Some(stmts) = block_data.statements.as_ref()
         {
             for &stmt_idx in &stmts.nodes {
                 if let Some(ir) = self.transform_namespace_member(ns_name, stmt_idx) {
                     result.push(ir);
                 }
+            }
+        }
+
+        if !runtime_exported_vars.is_empty() {
+            for node in &mut result {
+                rewrite_exported_var_refs(node, ns_name, &runtime_exported_vars);
             }
         }
 
@@ -1340,7 +1415,7 @@ impl<'a> NamespaceTransformContext<'a> {
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => None,
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => None,
-            _ => Some(IRNode::ASTRef(member_idx)),
+            _ => self.namespace_member_ast_ref_if_non_empty(member_idx),
         }
     }
 
@@ -1506,22 +1581,21 @@ impl<'a> NamespaceTransformContext<'a> {
         let var_data = self.arena.get_variable_at(var_idx)?;
 
         let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
-
-        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
-
         if is_exported {
-            // Collect variable names for export
-            let var_names = collect_variable_names(self.arena, &var_data.declarations);
-            for name in var_names {
-                result.push(IRNode::NamespaceExport {
-                    namespace: ns_name.to_string(),
-                    name: name.clone(),
-                    value: Box::new(IRNode::Identifier(name)),
-                });
-            }
+            Some(IRNode::Sequence(convert_exported_variable_declarations(
+                self.arena,
+                &var_data.declarations,
+                ns_name,
+            )))
+        } else {
+            let empty_decl_keyword =
+                self.declaration_keyword_from_var_declarations(&var_data.declarations);
+            Some(IRNode::Sequence(convert_variable_declarations(
+                self.arena,
+                &var_data.declarations,
+                empty_decl_keyword,
+            )))
         }
-
-        Some(IRNode::Sequence(result))
     }
 
     /// Transform an exported variable statement in namespace
@@ -1532,19 +1606,11 @@ impl<'a> NamespaceTransformContext<'a> {
     ) -> Option<IRNode> {
         let var_data = self.arena.get_variable_at(var_idx)?;
 
-        let mut result = convert_variable_declarations(self.arena, &var_data.declarations);
-
-        // Always export
-        let var_names = collect_variable_names(self.arena, &var_data.declarations);
-        for name in var_names {
-            result.push(IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: name.clone(),
-                value: Box::new(IRNode::Identifier(name)),
-            });
-        }
-
-        Some(IRNode::Sequence(result))
+        Some(IRNode::Sequence(convert_exported_variable_declarations(
+            self.arena,
+            &var_data.declarations,
+            ns_name,
+        )))
     }
 
     /// Transform an enum in namespace
@@ -1712,7 +1778,7 @@ fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
         return false;
     };
 
-    let Some(ref stmts) = block_data.statements else {
+    let Some(stmts) = block_data.statements.as_ref() else {
         return false;
     };
 
@@ -1870,23 +1936,82 @@ fn convert_function_body(arena: &NodeArena, body_idx: NodeIndex) -> Vec<IRNode> 
     vec![]
 }
 
-/// Collect variable names from a declaration list
-fn collect_variable_names(arena: &NodeArena, declarations: &NodeList) -> Vec<String> {
-    let mut names = Vec::new();
+fn collect_runtime_exported_var_names(
+    arena: &NodeArena,
+    body_idx: NodeIndex,
+) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
 
-    for &decl_list_idx in &declarations.nodes {
-        if let Some(decl_list) = arena.get_variable_at(decl_list_idx) {
-            for &decl_idx in &decl_list.declarations.nodes {
-                if let Some(decl) = arena.get_variable_declaration_at(decl_idx)
-                    && let Some(name) = get_identifier_text(arena, decl.name)
-                {
-                    names.push(name);
-                }
-            }
-        }
+    let Some(body_node) = arena.get(body_idx) else {
+        return names;
+    };
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return names;
+    };
+    let Some(stmts) = block_data.statements.as_ref() else {
+        return names;
+    };
+
+    for &stmt_idx in &stmts.nodes {
+        collect_runtime_exported_var_names_in_stmt(arena, stmt_idx, &mut names);
     }
 
     names
+}
+
+fn collect_runtime_exported_var_names_in_stmt(
+    arena: &NodeArena,
+    stmt_idx: NodeIndex,
+    names: &mut std::collections::HashSet<String>,
+) {
+    let Some(stmt_node) = arena.get(stmt_idx) else {
+        return;
+    };
+
+    let collect_from_var_statement =
+        |node: &Node, names: &mut std::collections::HashSet<String>| {
+            if let Some(var_data) = arena.get_variable(node) {
+                for &decl_list_idx in &var_data.declarations.nodes {
+                    if let Some(decl_list_node) = arena.get(decl_list_idx)
+                        && let Some(decl_list) = arena.get_variable(decl_list_node)
+                    {
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            if let Some(decl_node) = arena.get(decl_idx)
+                                && let Some(decl) = arena.get_variable_declaration(decl_node)
+                                && let Some(name_node) = arena.get(decl.name)
+                            {
+                                let Some(name) = arena
+                                    .get_identifier(name_node)
+                                    .map(|id| id.escaped_text.clone())
+                                else {
+                                    continue;
+                                };
+                                if decl.initializer.is_none() {
+                                    continue;
+                                }
+                                names.insert(name);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+    match stmt_node.kind {
+        kind if kind == syntax_kind_ext::VARIABLE_STATEMENT => {
+            collect_from_var_statement(stmt_node, names)
+        }
+        kind if kind == syntax_kind_ext::EXPORT_DECLARATION => {
+            if let Some(export_data) = arena.get_export_decl(stmt_node) {
+                if let Some(inner_node) = arena.get(export_data.export_clause) {
+                    if inner_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        collect_from_var_statement(inner_node, names);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Convert exported variable declarations directly to namespace property assignments.
@@ -1897,6 +2022,7 @@ fn convert_exported_variable_declarations(
     ns_name: &str,
 ) -> Vec<IRNode> {
     let mut result = Vec::new();
+    let mut assignment_targets: Vec<(String, IRNode)> = Vec::new();
 
     for &decl_list_idx in &declarations.nodes {
         if let Some(decl_list_node) = arena.get(decl_list_idx)
@@ -1909,11 +2035,7 @@ fn convert_exported_variable_declarations(
                 {
                     if !decl.initializer.is_none() {
                         let value = AstToIr::new(arena).convert_expression(decl.initializer);
-                        result.push(IRNode::NamespaceExport {
-                            namespace: ns_name.to_string(),
-                            name,
-                            value: Box::new(value),
-                        });
+                        assignment_targets.push((name, value));
                     }
                     // No initializer: tsc omits the assignment entirely in namespaces
                 }
@@ -1921,15 +2043,47 @@ fn convert_exported_variable_declarations(
         }
     }
 
+    if assignment_targets.is_empty() {
+        return result;
+    }
+
+    if assignment_targets.len() == 1 {
+        let (name, value) = assignment_targets.remove(0);
+        return vec![IRNode::NamespaceExport {
+            namespace: ns_name.to_string(),
+            name,
+            value: Box::new(value),
+        }];
+    }
+
+    let parts: Vec<String> = assignment_targets
+        .into_iter()
+        .map(|(name, value)| format!("{}.{name} = {}", ns_name, IRPrinter::emit_to_string(&value)))
+        .collect();
+    result.push(IRNode::Raw(format!("{};", parts.join(", "))));
+
     result
 }
 
 /// Convert variable declarations to proper IR (VarDecl nodes)
-fn convert_variable_declarations(arena: &NodeArena, declarations: &NodeList) -> Vec<IRNode> {
+fn convert_variable_declarations(
+    arena: &NodeArena,
+    declarations: &NodeList,
+    empty_decl_keyword: &str,
+) -> Vec<IRNode> {
     let mut result = Vec::new();
 
     for &decl_list_idx in &declarations.nodes {
-        if let Some(decl_list) = arena.get_variable_at(decl_list_idx) {
+        let decl_list_node = arena.get(decl_list_idx);
+        if let (Some(decl_list_node), Some(decl_list)) =
+            (decl_list_node, arena.get_variable_at(decl_list_idx))
+        {
+            let mut emitted_any = false;
+            let keyword = if decl_list_node.flags == 0 {
+                empty_decl_keyword
+            } else {
+                declaration_keyword_from_flags(decl_list_node.flags)
+            };
             for &decl_idx in &decl_list.declarations.nodes {
                 if let Some(decl) = arena.get_variable_declaration_at(decl_idx)
                     && let Some(name) = get_identifier_text(arena, decl.name)
@@ -1945,12 +2099,51 @@ fn convert_variable_declarations(arena: &NodeArena, declarations: &NodeList) -> 
                     };
 
                     result.push(IRNode::VarDecl { name, initializer });
+                    emitted_any = true;
+                }
+            }
+
+            if !emitted_any && decl_list.declarations.nodes.is_empty() {
+                // Preserve declaration-shape recovery output such as `var ;` / `let;`.
+                if keyword == "var" {
+                    result.push(IRNode::Raw("var ;".to_string()));
+                } else {
+                    result.push(IRNode::Raw(format!("{keyword};")));
                 }
             }
         }
     }
 
     result
+}
+
+fn declaration_keyword_from_flags(flags: u16) -> &'static str {
+    if (flags & node_flags::LET as u16) != 0 {
+        "let"
+    } else {
+        // TypeScript emits `const` declarations as `var` in emitted JS output.
+        "var"
+    }
+}
+
+fn declaration_keyword_from_var_declarations(
+    arena: &NodeArena,
+    declarations: &NodeList,
+) -> &'static str {
+    for &decl_list_idx in &declarations.nodes {
+        let Some(decl_list_node) = arena.get(decl_list_idx) else {
+            continue;
+        };
+
+        if arena.get_variable_at(decl_list_idx).is_some() {
+            let keyword = declaration_keyword_from_flags(decl_list_node.flags);
+            if keyword == "let" {
+                return "let";
+            }
+        }
+    }
+
+    "var"
 }
 
 // =============================================================================
@@ -2050,6 +2243,305 @@ fn detect_and_apply_param_rename(body: &mut [IRNode], ns_name: &str) -> Option<S
         Some(renamed)
     } else {
         None
+    }
+}
+
+fn rewrite_exported_var_refs(
+    node: &mut IRNode,
+    ns_name: &str,
+    names: &std::collections::HashSet<String>,
+) {
+    match node {
+        IRNode::Identifier(name) => {
+            if names.contains(name) {
+                let property = name.clone();
+                *node = IRNode::PropertyAccess {
+                    object: Box::new(IRNode::Identifier(ns_name.to_string())),
+                    property,
+                };
+            }
+        }
+        IRNode::BinaryExpr { left, right, .. } => {
+            rewrite_exported_var_refs(left, ns_name, names);
+            rewrite_exported_var_refs(right, ns_name, names);
+        }
+        IRNode::PrefixUnaryExpr { operand, .. } => {
+            rewrite_exported_var_refs(operand, ns_name, names)
+        }
+        IRNode::PostfixUnaryExpr { operand, .. } => {
+            rewrite_exported_var_refs(operand, ns_name, names)
+        }
+        IRNode::CallExpr {
+            callee, arguments, ..
+        } => {
+            rewrite_exported_var_refs(callee, ns_name, names);
+            for arg in arguments {
+                rewrite_exported_var_refs(arg, ns_name, names);
+            }
+        }
+        IRNode::NewExpr {
+            callee, arguments, ..
+        } => {
+            rewrite_exported_var_refs(callee, ns_name, names);
+            for arg in arguments {
+                rewrite_exported_var_refs(arg, ns_name, names);
+            }
+        }
+        IRNode::PropertyAccess { object, .. } => rewrite_exported_var_refs(object, ns_name, names),
+        IRNode::ElementAccess { object, index } => {
+            rewrite_exported_var_refs(object, ns_name, names);
+            rewrite_exported_var_refs(index, ns_name, names);
+        }
+        IRNode::ConditionalExpr {
+            condition,
+            when_true,
+            when_false,
+            ..
+        } => {
+            rewrite_exported_var_refs(condition, ns_name, names);
+            rewrite_exported_var_refs(when_true, ns_name, names);
+            rewrite_exported_var_refs(when_false, ns_name, names);
+        }
+        IRNode::Parenthesized(inner) => rewrite_exported_var_refs(inner, ns_name, names),
+        IRNode::CommaExpr(exprs) | IRNode::ArrayLiteral(exprs) => {
+            for expr in exprs.iter_mut() {
+                rewrite_exported_var_refs(expr, ns_name, names);
+            }
+        }
+        IRNode::SpreadElement(inner) => rewrite_exported_var_refs(inner, ns_name, names),
+        IRNode::ObjectLiteral { properties, .. } => {
+            for prop in properties.iter_mut() {
+                if let IRPropertyKey::Computed(key) = &mut prop.key {
+                    rewrite_exported_var_refs(key, ns_name, names);
+                }
+                rewrite_exported_var_refs(&mut prop.value, ns_name, names);
+            }
+        }
+        IRNode::FunctionExpr { body, .. } | IRNode::FunctionDecl { body, .. } => {
+            for stmt in body {
+                rewrite_exported_var_refs(stmt, ns_name, names);
+            }
+        }
+        IRNode::LogicalOr { left, right } | IRNode::LogicalAnd { left, right } => {
+            rewrite_exported_var_refs(left, ns_name, names);
+            rewrite_exported_var_refs(right, ns_name, names);
+        }
+        IRNode::VarDecl {
+            initializer: Some(initializer),
+            ..
+        } => {
+            rewrite_exported_var_refs(initializer, ns_name, names);
+        }
+        IRNode::VarDeclList(items) => {
+            for item in items {
+                rewrite_exported_var_refs(item, ns_name, names);
+            }
+        }
+        IRNode::ExpressionStatement(expr) => {
+            rewrite_exported_var_refs(expr, ns_name, names);
+        }
+        IRNode::ReturnStatement(Some(expr)) | IRNode::ThrowStatement(expr) => {
+            rewrite_exported_var_refs(expr, ns_name, names);
+        }
+        IRNode::AwaiterCall {
+            this_arg,
+            generator_body,
+            ..
+        } => {
+            rewrite_exported_var_refs(this_arg, ns_name, names);
+            rewrite_exported_var_refs(generator_body, ns_name, names);
+        }
+        IRNode::IfStatement {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            rewrite_exported_var_refs(condition, ns_name, names);
+            rewrite_exported_var_refs(then_branch, ns_name, names);
+            if let Some(else_branch) = else_branch {
+                rewrite_exported_var_refs(else_branch, ns_name, names);
+            }
+        }
+        IRNode::Block(statements) | IRNode::Sequence(statements) => {
+            for stmt in statements {
+                rewrite_exported_var_refs(stmt, ns_name, names);
+            }
+        }
+        IRNode::ForStatement {
+            initializer,
+            condition,
+            incrementor,
+            body,
+        } => {
+            if let Some(init) = initializer {
+                rewrite_exported_var_refs(init, ns_name, names);
+            }
+            if let Some(cond) = condition {
+                rewrite_exported_var_refs(cond, ns_name, names);
+            }
+            if let Some(inc) = incrementor {
+                rewrite_exported_var_refs(inc, ns_name, names);
+            }
+            rewrite_exported_var_refs(body, ns_name, names);
+        }
+        IRNode::WhileStatement { condition, body }
+        | IRNode::DoWhileStatement {
+            body: condition,
+            condition: body,
+            ..
+        } => {
+            rewrite_exported_var_refs(condition, ns_name, names);
+            rewrite_exported_var_refs(body, ns_name, names);
+        }
+        IRNode::TryStatement {
+            try_block,
+            catch_clause,
+            finally_block,
+        } => {
+            rewrite_exported_var_refs(try_block, ns_name, names);
+            if let Some(catch) = catch_clause {
+                if let Some(param) = catch.param.as_ref() {
+                    let _ = param;
+                }
+                for stmt in &mut catch.body {
+                    rewrite_exported_var_refs(stmt, ns_name, names);
+                }
+            }
+            if let Some(finally_block) = finally_block {
+                rewrite_exported_var_refs(finally_block, ns_name, names);
+            }
+        }
+        IRNode::LabeledStatement { statement, .. } => {
+            rewrite_exported_var_refs(statement, ns_name, names)
+        }
+        IRNode::SwitchStatement { expression, cases } => {
+            rewrite_exported_var_refs(expression, ns_name, names);
+            for case in cases {
+                if let Some(ref mut test) = case.test {
+                    rewrite_exported_var_refs(test, ns_name, names);
+                }
+                for stmt in &mut case.statements {
+                    rewrite_exported_var_refs(stmt, ns_name, names);
+                }
+            }
+        }
+        IRNode::NamespaceIIFE { body, .. } => {
+            for stmt in body {
+                rewrite_exported_var_refs(stmt, ns_name, names);
+            }
+        }
+        IRNode::NamespaceExport { value, .. } => {
+            rewrite_exported_var_refs(value, ns_name, names);
+        }
+        IRNode::ES5ClassIIFE { body, .. } => {
+            for stmt in body {
+                rewrite_exported_var_refs(stmt, ns_name, names);
+            }
+        }
+        IRNode::PrototypeMethod { function, .. } | IRNode::StaticMethod { function, .. } => {
+            rewrite_exported_var_refs(function, ns_name, names);
+        }
+        IRNode::DefineProperty {
+            target, descriptor, ..
+        } => {
+            rewrite_exported_var_refs(target, ns_name, names);
+            if let Some(getter) = &mut descriptor.get {
+                rewrite_exported_var_refs(getter, ns_name, names);
+            }
+            if let Some(setter) = &mut descriptor.set {
+                rewrite_exported_var_refs(setter, ns_name, names);
+            }
+        }
+        IRNode::EnumIIFE { members, .. } => {
+            for member in members {
+                if let EnumMemberValue::Computed(expr) = &mut member.value {
+                    rewrite_exported_var_refs(expr, ns_name, names);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_qualified_name_parts(arena: &NodeArena, name_idx: NodeIndex) -> Option<Vec<String>> {
+    let Some(node) = arena.get(name_idx) else {
+        return None;
+    };
+
+    if node.kind == SyntaxKind::Identifier as u16 {
+        if let Some(id) = arena.get_identifier(node) {
+            return Some(vec![id.escaped_text.clone()]);
+        }
+        return None;
+    }
+
+    if node.kind == syntax_kind_ext::QUALIFIED_NAME
+        && let Some(qn) = arena.qualified_names.get(node.data_index as usize)
+    {
+        let mut left = collect_qualified_name_parts(arena, qn.left)?;
+        let right = collect_qualified_name_parts(arena, qn.right)?;
+        left.extend(right);
+        return Some(left);
+    }
+
+    None
+}
+
+fn namespace_body_by_name(arena: &NodeArena, target_parts: &[String]) -> Option<NodeIndex> {
+    if target_parts.is_empty() {
+        return None;
+    }
+
+    for (idx, node) in arena.nodes.iter().enumerate() {
+        if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            continue;
+        };
+
+        if let Some((parts, body_idx)) =
+            collect_module_decl_parts_for_body_lookup(arena, NodeIndex(idx as u32))
+        {
+            if parts == target_parts {
+                return Some(body_idx);
+            }
+        }
+    }
+
+    None
+}
+
+fn collect_module_decl_parts_for_body_lookup(
+    arena: &NodeArena,
+    ns_idx: NodeIndex,
+) -> Option<(Vec<String>, NodeIndex)> {
+    let mut parts = Vec::new();
+    let mut current_idx = ns_idx;
+
+    loop {
+        let node = arena.get(current_idx)?;
+        if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            break;
+        }
+
+        let ns_data = arena.get_module(node)?;
+
+        if let Some(name_node) = arena.get(ns_data.name) {
+            if let Some(id) = arena.get_identifier(name_node) {
+                parts.push(id.escaped_text.clone());
+            }
+        }
+
+        let body_node = arena.get(ns_data.body)?;
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            current_idx = ns_data.body;
+        } else {
+            return Some((parts, ns_data.body));
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some((parts, current_idx))
     }
 }
 
