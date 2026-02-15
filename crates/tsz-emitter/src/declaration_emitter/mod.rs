@@ -3729,11 +3729,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         } else {
             // No usage tracking - count everything as used
-            default_count = if !import.import_clause.is_none() {
-                1
-            } else {
-                0
-            };
+            default_count = usize::from(!import.import_clause.is_none());
             named_count = 1; // At least one if present
         }
 
