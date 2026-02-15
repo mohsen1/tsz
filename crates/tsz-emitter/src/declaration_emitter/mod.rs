@@ -52,14 +52,6 @@ pub struct DeclarationEmitter<'a> {
     source_map_text: Option<&'a str>,
     source_map_state: Option<SourceMapState>,
     pending_source_pos: Option<SourcePosition>,
-    /// Whether we're currently emitting a declaration file.
-    source_is_declaration_file: bool,
-    /// If true, only emit declarations that are part of the public API surface.
-    emit_public_api_only: bool,
-    /// Track whether we're currently emitting inside a public-API namespace/module.
-    public_api_scope_depth: u32,
-    /// Raw source text for this source file, used for keyword fallback emission.
-    source_file_text: Option<Arc<str>>,
     /// Type cache for looking up inferred types
     type_cache: Option<TypeCacheView>,
     /// Type interner for printing types
@@ -117,10 +109,6 @@ impl<'a> DeclarationEmitter<'a> {
             source_map_text: None,
             source_map_state: None,
             pending_source_pos: None,
-            source_is_declaration_file: false,
-            emit_public_api_only: false,
-            public_api_scope_depth: 0,
-            source_file_text: None,
             type_cache: None,
             type_interner: None,
             binder: None,
@@ -155,10 +143,6 @@ impl<'a> DeclarationEmitter<'a> {
             source_map_text: None,
             source_map_state: None,
             pending_source_pos: None,
-            source_is_declaration_file: false,
-            emit_public_api_only: false,
-            public_api_scope_depth: 0,
-            source_file_text: None,
             type_cache: Some(type_cache),
             type_interner: Some(type_interner),
             binder: Some(binder),
@@ -452,10 +436,6 @@ impl<'a> DeclarationEmitter<'a> {
             return String::new();
         };
 
-        self.source_file_text = Some(source_file.text.clone());
-        self.source_is_declaration_file = source_file.is_declaration_file;
-        self.emit_public_api_only = self.has_public_api_exports(source_file);
-
         debug!(
             "[DEBUG] source_file has {} comments",
             source_file.comments.len()
@@ -560,7 +540,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_module_declaration(stmt_idx);
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                self.emit_import_equals_declaration(stmt_idx, false);
+                self.emit_import_equals_declaration(stmt_idx);
             }
             k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
                 self.emit_namespace_export_declaration(stmt_idx);
@@ -662,9 +642,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let is_exported = self.has_export_modifier(&class.modifiers);
-        if !self.should_emit_public_api_member(&class.modifiers) {
-            return;
-        }
         let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
 
         self.write_indent();
@@ -1065,9 +1042,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let is_exported = self.has_export_modifier(&iface.modifiers);
-        if !self.should_emit_public_api_member(&iface.modifiers) {
-            return;
-        }
 
         self.write_indent();
         if is_exported {
@@ -1377,9 +1351,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let is_exported = self.has_export_modifier(&alias.modifiers);
-        if !self.should_emit_public_api_member(&alias.modifiers) {
-            return;
-        }
 
         self.write_indent();
         if is_exported {
@@ -1412,9 +1383,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let is_exported = self.has_export_modifier(&enum_data.modifiers);
-        if !self.should_emit_public_api_member(&enum_data.modifiers) {
-            return;
-        }
         let is_const = self.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword as u16);
 
         self.write_indent();
@@ -1519,9 +1487,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let is_exported = self.has_export_modifier(&var_stmt.modifiers);
-        if !self.should_emit_public_api_member(&var_stmt.modifiers) {
-            return;
-        }
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1771,17 +1736,14 @@ impl<'a> DeclarationEmitter<'a> {
                     return;
                 }
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    let prev_public_api_scope_depth = self.public_api_scope_depth;
-                    self.public_api_scope_depth += 1;
                     self.emit_module_declaration(export.export_clause);
-                    self.public_api_scope_depth = prev_public_api_scope_depth;
                     return;
                 }
                 k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                     // Emit: export import x = require(...)
                     self.write_indent();
                     self.write("export ");
-                    self.emit_import_equals_declaration(export.export_clause, true);
+                    self.emit_import_equals_declaration(export.export_clause);
                     return;
                 }
                 _ => {}
@@ -2561,9 +2523,6 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let is_exported = self.has_export_modifier(&module.modifiers);
-        if !self.should_emit_public_api_module(is_exported) {
-            return;
-        }
 
         self.write_indent();
         // Don't emit 'export' or 'declare' inside a declare namespace
@@ -2595,10 +2554,6 @@ impl<'a> DeclarationEmitter<'a> {
             // Inside a declare namespace, don't emit 'declare' keyword for members
             let prev_inside_declare_namespace = self.inside_declare_namespace;
             self.inside_declare_namespace = true;
-            let prev_public_api_scope_depth = self.public_api_scope_depth;
-            if is_exported {
-                self.public_api_scope_depth += 1;
-            }
 
             if let Some(body_node) = self.arena.get(module.body) {
                 if let Some(module_block) = self.arena.get_module_block(body_node) {
@@ -2615,7 +2570,6 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            self.public_api_scope_depth = prev_public_api_scope_depth;
             self.inside_declare_namespace = prev_inside_declare_namespace;
             self.decrease_indent();
             self.write_indent();
@@ -2625,7 +2579,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
-    fn emit_import_equals_declaration(&mut self, import_idx: NodeIndex, already_exported: bool) {
+    fn emit_import_equals_declaration(&mut self, import_idx: NodeIndex) {
         let Some(import_node) = self.arena.get(import_idx) else {
             return;
         };
@@ -2633,11 +2587,14 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        // For import equals declarations:
+        // - import_clause is the variable name (identifier)
+        // - module_specifier is the require() expression
+
         let is_exported = self.has_export_modifier(&import_eq.modifiers);
-        let is_public_exported = is_exported && !already_exported;
 
         self.write_indent();
-        if is_public_exported {
+        if is_exported {
             self.write("export ");
         }
         self.write("import ");
@@ -3326,12 +3283,6 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
                 }
             }
-            // Fallback for contextual keywords and other unhandled node kinds used as names.
-            _ if self.source_file_text.is_some() => {
-                if let Some(text) = self.get_source_slice(node.pos, node.end) {
-                    self.write(&text);
-                }
-            }
             _ => {}
         }
 
@@ -3342,113 +3293,6 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
         self.has_modifier(modifiers, SyntaxKind::ExportKeyword as u16)
-    }
-
-    fn has_public_api_exports(
-        &self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> bool {
-        if source_file.is_declaration_file {
-            return false;
-        }
-
-        let mut has_import = false;
-        let mut has_export = false;
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-
-            if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION
-                || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-            {
-                has_import = true;
-            }
-
-            match stmt_node.kind {
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    if let Some(func) = self.arena.get_function(stmt_node)
-                        && self.has_export_modifier(&func.modifiers)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                    if let Some(class) = self.arena.get_class(stmt_node)
-                        && self.has_export_modifier(&class.modifiers)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                    if let Some(iface) = self.arena.get_interface(stmt_node)
-                        && self.has_export_modifier(&iface.modifiers)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                    if let Some(alias) = self.arena.get_type_alias(stmt_node)
-                        && self.has_export_modifier(&alias.modifiers)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                    if let Some(enum_data) = self.arena.get_enum(stmt_node)
-                        && self.has_export_modifier(&enum_data.modifiers)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                    if let Some(var_stmt) = self.arena.get_variable(stmt_node)
-                        && self.has_export_modifier(&var_stmt.modifiers)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    if let Some(module) = self.arena.get_module(stmt_node)
-                        && self.has_export_modifier(&module.modifiers)
-                    {
-                        has_export = true;
-                    }
-                }
-                k if k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
-                {
-                    has_export = true;
-                }
-                _ => {}
-            }
-        }
-
-        has_import || has_export
-    }
-
-    /// Return true when declarations are filtered to public API members.
-    fn public_api_filter_enabled(&self) -> bool {
-        self.emit_public_api_only && self.public_api_scope_depth == 0
-    }
-
-    /// Return true if a top-level declaration should be emitted when API filtering is enabled.
-    fn should_emit_public_api_member(&self, modifiers: &Option<NodeList>) -> bool {
-        if !self.public_api_filter_enabled() {
-            return true;
-        }
-
-        self.has_export_modifier(modifiers)
-    }
-
-    /// Return true if a module declaration should be emitted when API filtering is enabled.
-    fn should_emit_public_api_module(&self, is_exported: bool) -> bool {
-        if !self.public_api_filter_enabled() {
-            return true;
-        }
-
-        is_exported
     }
 
     /// Get the function/method name as a string for overload tracking
@@ -3756,7 +3600,6 @@ impl<'a> DeclarationEmitter<'a> {
     fn reset_writer(&mut self) {
         self.writer = SourceWriter::with_capacity(4096);
         self.pending_source_pos = None;
-        self.public_api_scope_depth = 0;
         if let Some(state) = &self.source_map_state {
             self.writer.enable_source_map(state.output_name.clone());
             let content = self.source_map_text.map(std::string::ToString::to_string);
@@ -3780,18 +3623,6 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
-    }
-
-    fn get_source_slice(&self, start: u32, end: u32) -> Option<String> {
-        let text = self.source_file_text.as_ref()?;
-        let start = start as usize;
-        let end = end as usize;
-        if start > end || end > text.len() {
-            return None;
-        }
-
-        let slice = text[start..end].trim().to_string();
-        if slice.is_empty() { None } else { Some(slice) }
     }
 
     fn write_raw(&mut self, s: &str) {
@@ -3840,73 +3671,8 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(type_id) = self.get_node_type(node_id) {
                 return Some(type_id);
             }
-
-            let Some(node) = self.arena.get(node_id) else {
-                continue;
-            };
-
-            for related_id in self.get_node_type_related_nodes(node) {
-                if let Some(type_id) = self.get_node_type(related_id) {
-                    return Some(type_id);
-                }
-            }
         }
         None
-    }
-
-    fn get_node_type_related_nodes(&self, node: &Node) -> Vec<NodeIndex> {
-        match node.kind {
-            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                if let Some(decl) = self.arena.get_variable_declaration(node) {
-                    let mut related = Vec::with_capacity(1);
-                    if !decl.initializer.is_none() {
-                        related.push(decl.initializer);
-                    }
-                    related.push(decl.type_annotation);
-                    related
-                } else {
-                    Vec::new()
-                }
-            }
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                if let Some(decl) = self.arena.get_property_decl(node) {
-                    let mut related = Vec::with_capacity(2);
-                    if !decl.initializer.is_none() {
-                        related.push(decl.initializer);
-                    }
-                    related.push(decl.type_annotation);
-                    related
-                } else {
-                    Vec::new()
-                }
-            }
-            k if k == syntax_kind_ext::PARAMETER => {
-                if let Some(param) = self.arena.get_parameter(node) {
-                    if !param.initializer.is_none() {
-                        vec![param.initializer]
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                }
-            }
-            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                if let Some(access_expr) = self.arena.get_access_expr(node) {
-                    vec![access_expr.expression, access_expr.name_or_argument]
-                } else {
-                    Vec::new()
-                }
-            }
-            k if k == syntax_kind_ext::TYPE_QUERY => {
-                if let Some(query) = self.arena.get_type_query(node) {
-                    vec![query.expr_name]
-                } else {
-                    Vec::new()
-                }
-            }
-            _ => Vec::new(),
-        }
     }
 
     /// Print a TypeId as TypeScript syntax using TypePrinter.
