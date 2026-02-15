@@ -3,6 +3,7 @@
 //! Extracted from state.rs: Methods for type analysis including qualified name
 //! resolution, symbol type computation, type queries, and contextual literal type analysis.
 
+use crate::query_boundaries::state_type_environment;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use rustc_hash::FxHashSet;
@@ -2319,6 +2320,14 @@ impl<'a> CheckerState<'a> {
                 && !self.ctx.lib_contexts.is_empty()
                 && let Some(lib_type) = self.resolve_lib_type_by_name(&escaped_name)
             {
+                // Preserve diagnostic formatting for canonical lib interfaces
+                // by recording the resolved object shape on this symbol's DefId.
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                if let Some(shape) = state_type_environment::object_shape(self.ctx.types, lib_type)
+                {
+                    self.ctx.definition_store.set_instance_shape(def_id, shape);
+                }
+
                 return (lib_type, Vec::new());
             }
 
@@ -2372,15 +2381,21 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings);
                 let interface_type =
                     lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
+                let interface_type =
+                    self.merge_interface_heritage_types(&declarations, interface_type);
+                if let Some(shape) =
+                    state_type_environment::object_shape(self.ctx.types, interface_type)
+                {
+                    self.ctx
+                        .definition_store
+                        .set_instance_shape(self.ctx.get_or_create_def_id(sym_id), shape);
+                }
 
                 // Restore the type parameter scope
                 self.pop_type_parameters(updates);
 
                 // Return the interface type along with the type parameters that were used
-                return (
-                    self.merge_interface_heritage_types(&declarations, interface_type),
-                    params,
-                );
+                return (interface_type, params);
             }
             if !value_decl.is_none() {
                 return (self.get_type_of_interface(value_decl), Vec::new());
