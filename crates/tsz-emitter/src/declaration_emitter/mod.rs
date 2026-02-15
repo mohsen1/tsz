@@ -647,7 +647,9 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.write("export ");
         }
-        self.write("declare ");
+        if !self.inside_declare_namespace {
+            self.write("declare ");
+        }
         if is_abstract {
             self.write("abstract ");
         }
@@ -752,7 +754,7 @@ impl<'a> DeclarationEmitter<'a> {
         } else if !is_private && (is_abstract || !prop.initializer.is_none()) {
             // For abstract properties OR properties with initializers (non-private), use inferred type
             // Private properties never get inferred types (prevents type leak)
-            if let Some(type_id) = self.get_node_type(prop_idx) {
+            if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
                 self.write(": ");
                 self.write(&self.print_type_id(type_id));
             }
@@ -993,6 +995,11 @@ impl<'a> DeclarationEmitter<'a> {
         if is_getter && !accessor.type_annotation.is_none() {
             self.write(": ");
             self.emit_type(accessor.type_annotation);
+        } else if is_getter {
+            if let Some(type_id) = self.get_node_type_or_names(&[accessor_idx, accessor.name]) {
+                self.write(": ");
+                self.write(&self.print_type_id(type_id));
+            }
         }
 
         self.write(";");
@@ -1570,7 +1577,9 @@ impl<'a> DeclarationEmitter<'a> {
                             } else if is_unique_symbol {
                                 // const x = Symbol() gets : unique symbol
                                 self.write(": unique symbol");
-                            } else if let Some(type_id) = self.get_node_type(decl_idx) {
+                            } else if let Some(type_id) =
+                                self.get_node_type_or_names(&[decl_idx, decl.name])
+                            {
                                 // No explicit type, but we have inferred type from cache
                                 self.write(": ");
                                 self.write(&self.print_type_id(type_id));
@@ -2322,7 +2331,9 @@ impl<'a> DeclarationEmitter<'a> {
                             } else if is_unique_symbol {
                                 // const x = Symbol() gets : unique symbol
                                 self.write(": unique symbol");
-                            } else if let Some(type_id) = self.get_node_type(decl_idx) {
+                            } else if let Some(type_id) =
+                                self.get_node_type_or_names(&[decl_idx, decl.name])
+                            {
                                 // No explicit type, but we have inferred type from cache
                                 self.write(": ");
                                 self.write(&self.print_type_id(type_id));
@@ -2592,9 +2603,18 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Emit " = require(...)"
-        self.write(" = require(");
-        self.emit_node(import_eq.module_specifier);
-        self.write(")");
+        if let Some(module_node) = self.arena.get(import_eq.module_specifier) {
+            if module_node.kind == SyntaxKind::StringLiteral as u16 {
+                self.write(" = require(");
+                self.emit_node(import_eq.module_specifier);
+                self.write(")");
+            } else {
+                self.write(" = ");
+                self.emit_node(import_eq.module_specifier);
+            }
+        } else {
+            self.write(" = ");
+        }
 
         self.write(";");
         self.write_line();
@@ -2748,6 +2768,7 @@ impl<'a> DeclarationEmitter<'a> {
                         k if k == SyntaxKind::StaticKeyword as u16 => self.write("static "),
                         k if k == SyntaxKind::AbstractKeyword as u16 => self.write("abstract "),
                         k if k == SyntaxKind::AsyncKeyword as u16 => self.write("async "),
+                        k if k == SyntaxKind::AccessorKeyword as u16 => self.write("accessor "),
                         _ => {}
                     }
                 }
@@ -2912,16 +2933,16 @@ impl<'a> DeclarationEmitter<'a> {
             // Type literal - inline format without newlines
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(lit) = self.arena.get_type_literal(type_node) {
-                    self.write("{ ");
-                    let mut first = true;
+                    self.write("{\n");
+                    self.increase_indent();
                     for &member_idx in &lit.members.nodes {
-                        if !first {
-                            self.write("; ");
-                        }
-                        first = false;
+                        self.write_indent();
                         self.emit_interface_member_inline(member_idx);
+                        self.write(";");
+                        self.write_line();
                     }
-                    self.write(" }");
+                    self.decrease_indent();
+                    self.write("}");
                 }
             }
 
@@ -3632,6 +3653,15 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             None
         }
+    }
+
+    fn get_node_type_or_names(&self, node_ids: &[NodeIndex]) -> Option<tsz_solver::types::TypeId> {
+        for &node_id in node_ids {
+            if let Some(type_id) = self.get_node_type(node_id) {
+                return Some(type_id);
+            }
+        }
+        None
     }
 
     /// Print a TypeId as TypeScript syntax using TypePrinter.
