@@ -23,3 +23,14 @@ doc-valid-idents = [
     "TS",
     "JSDoc",
 ]
+disallowed-methods = [
+    "std::mem::transmute",
+]
+
+# Avoiding hidden convenience that masks missing boundary discipline.
+allow-unwrap-in-tests = false
+
+# Architecture-aligned lint posture:
+# - Solver-first and architecture-first paths should remain explicit.
+# - Any new transmutation-based bypass is treated as suspicious early.
+allow-unwrap-in-tests = false
