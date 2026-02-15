@@ -3115,7 +3115,7 @@ impl<'a> CheckerState<'a> {
     /// 2. The assignment is to `this.property` (not some other object)
     /// 3. The property is declared in the current class (not inherited)
     pub(crate) fn is_readonly_assignment_allowed_in_constructor(
-        &mut self,
+        &self,
         prop_name: &str,
         object_expr: NodeIndex,
     ) -> bool {
@@ -3135,7 +3135,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an expression is `this` (helper to avoid conflict with existing method).
-    pub(crate) fn is_this_expression_in_constructor(&mut self, expr_idx: NodeIndex) -> bool {
+    pub(crate) fn is_this_expression_in_constructor(&self, expr_idx: NodeIndex) -> bool {
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(expr_idx) else {
@@ -3157,7 +3157,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a property is declared in a specific class (not inherited).
     pub(crate) fn is_property_declared_in_class(
-        &mut self,
+        &self,
         prop_name: &str,
         class_idx: NodeIndex,
     ) -> bool {
