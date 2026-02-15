@@ -7,12 +7,12 @@ use tsz_solver::TypeInterner;
 
 #[test]
 fn test_interface_used_as_value() {
-    let source = r#"
+    let source = r"
 interface Foo {
     a: number;
 }
 const x = new Foo();
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -45,12 +45,12 @@ const x = new Foo();
 
 #[test]
 fn test_type_alias_used_as_value() {
-    let source = r#"
+    let source = r"
 type Foo = {
     a: number;
 };
 const x = new Foo();
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -83,9 +83,9 @@ const x = new Foo();
 
 #[test]
 fn test_primitive_array_type_recovery_used_as_value_emits_ts2693() {
-    let source = r#"
+    let source = r"
 var results = number[];
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -153,10 +153,10 @@ const result = str - 5;
 
 #[test]
 fn test_boolean_multiplication_emits_ts2362() {
-    let source = r#"
+    let source = r"
 const flag = true;
 const result = flag * 10;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -226,13 +226,13 @@ const result = num / str;
 
 #[test]
 fn test_arithmetic_on_non_numeric_types() {
-    let source = r#"
+    let source = r"
 const obj = { a: 1 };
 const arr = [1, 2, 3];
 const r1 = obj - 1;  // TS2362
 const r2 = 10 * arr;  // TS2363
 const r3 = obj % 2;  // TS2362
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -276,7 +276,7 @@ const r3 = obj % 2;  // TS2362
 
 #[test]
 fn test_valid_arithmetic_no_errors() {
-    let source = r#"
+    let source = r"
 const a = 10;
 const b = 5;
 const r1 = a + b;  // OK - number addition
@@ -284,7 +284,7 @@ const r2 = a - b;  // OK - number subtraction
 const r3 = a * b;  // OK - number multiplication
 const r4 = a / b;  // OK - number division
 const r5 = a % b;  // OK - number modulo
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -317,12 +317,12 @@ const r5 = a % b;  // OK - number modulo
 
 #[test]
 fn test_for_of_variable_type_annotation_emits_ts2322() {
-    let source = r#"
+    let source = r"
 const numbers = [1, 2, 3];
 for (const x: string of numbers) {
     // Should emit TS2322: number is not assignable to string
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -355,12 +355,12 @@ for (const x: string of numbers) {
 
 #[test]
 fn test_for_of_variable_compatible_type_no_error() {
-    let source = r#"
+    let source = r"
 const numbers = [1, 2, 3];
 for (const x: number of numbers) {
     // OK - number is assignable to number
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -394,10 +394,10 @@ for (const x: number of numbers) {
 #[test]
 fn test_type_import_used_as_value() {
     // Test that type-only imports emit TS2693 when used as values
-    let source = r#"
+    let source = r"
 import type { Foo } from './foo';
 const x = new Foo();  // TS2693: Foo only refers to a type
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -431,12 +431,12 @@ const x = new Foo();  // TS2693: Foo only refers to a type
 #[test]
 fn test_interface_property_access_emits_ts18050() {
     // Test accessing interface as if it were an object with properties
-    let source = r#"
+    let source = r"
 interface MyInterface {
     prop: string;
 }
 const x = MyInterface.prop;  // TS2693: MyInterface only refers to a type
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -600,14 +600,14 @@ const result = str + num;  // OK: string concatenation
 #[test]
 fn test_enum_arithmetic_valid() {
     // Test that enum members can be used in arithmetic
-    let source = r#"
+    let source = r"
 enum MyEnum {
     A = 0,
     B = 1,
     C = 2,
 }
 const result = MyEnum.A + MyEnum.B;  // OK: enum arithmetic is valid
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -641,9 +641,9 @@ const result = MyEnum.A + MyEnum.B;  // OK: enum arithmetic is valid
 #[test]
 fn test_null_property_access_emits_ts18050() {
     // Test accessing property on null literal - should emit TS18050
-    let source = r#"
+    let source = r"
 const x = null.toString();  // TS18050: The value 'null' cannot be used here.
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -677,9 +677,9 @@ const x = null.toString();  // TS18050: The value 'null' cannot be used here.
 #[test]
 fn test_undefined_property_access_emits_ts18050() {
     // Test accessing property on undefined - should emit TS18050
-    let source = r#"
+    let source = r"
 const x = undefined.toString();  // TS18050: The value 'undefined' cannot be used here.
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -752,12 +752,12 @@ const result = a - b;  // TS2362: left-hand side must be number/bigint/any/enum
 fn test_never_type_property_access_emits_ts18050() {
     // Test accessing property on a value that narrows to never type
     // This happens when exhaustive narrowing produces an impossible union
-    let source = r#"
+    let source = r"
 function test(x: never) {
     // x is never type - property access should emit TS18050
     const y = x.toString();
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -791,12 +791,12 @@ function test(x: never) {
 #[test]
 fn test_never_type_call_emits_ts18050() {
     // Test calling a value that is never type
-    let source = r#"
+    let source = r"
 function test(x: never) {
     // x is never type - calling it should emit TS18050
     const y = x();
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -869,11 +869,11 @@ arr.hasOwnProperty("length");
 
 #[test]
 fn test_shorthand_property_missing_value_emits_ts18004() {
-    let source = r#"
+    let source = r"
 const make = () => {
     return { arguments };
 };
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 

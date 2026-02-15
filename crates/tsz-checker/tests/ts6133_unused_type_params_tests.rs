@@ -267,7 +267,7 @@ fn test_no_unused_locals_only_no_type_param_errors() {
 fn test_this_parameter_not_reported_unused() {
     // `this` parameters are TypeScript type annotations, not real params.
     // They should never be flagged as unused.
-    let source = r#"
+    let source = r"
 class A {
     public a: number = 0;
     public method(this: A): number {
@@ -277,7 +277,7 @@ class A {
 function f(this: A): number {
     return this.a;
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -316,7 +316,7 @@ function f(this: A): number {
 fn test_using_declaration_not_reported_unused() {
     // `using` declarations always have dispose side effects,
     // so TSC never flags them as unused.
-    let source = r#"using x = undefined as any;"#;
+    let source = r"using x = undefined as any;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -354,7 +354,7 @@ fn test_using_declaration_not_reported_unused() {
 fn test_setter_only_private_member_not_reported_unused() {
     // A setter without a getter is "used" by write accesses.
     // TSC never flags setter-only private members as unused.
-    let source = r#"
+    let source = r"
 class Employee {
     private set p(_: number) {}
 
@@ -362,7 +362,7 @@ class Employee {
         this.p = 0;
     }
 }
-"#;
+";
     // Private members are checked under noUnusedLocals, not noUnusedParameters
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();

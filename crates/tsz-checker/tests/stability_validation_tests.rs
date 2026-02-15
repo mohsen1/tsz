@@ -17,11 +17,11 @@ fn assert_in_range(name: &str, value: usize, min: usize, max: usize) {
 #[test]
 fn test_comma_separated_boolean_options() {
     // Validates fix for: "invalid type: string 'true, false'" crashes
-    let text = r#"
+    let text = r"
         // @strict: true, false
         // @noimplicitany: false, true
         // @strictnullchecks: true, false, true
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(
@@ -43,10 +43,10 @@ fn test_comma_separated_boolean_options() {
 
 #[test]
 fn test_boolean_option_with_trailing_delimiters() {
-    let text = r#"
+    let text = r"
         // @strict: true;
         // @noimplicitany: false,
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, Some(true), "Should handle semicolon delimiter");

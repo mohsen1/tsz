@@ -27,7 +27,7 @@ fn test_extract_quoted_path() {
         Some("./file.ts".to_string())
     );
     assert_eq!(
-        extract_quoted_path(r#"path='./file.ts'"#),
+        extract_quoted_path(r"path='./file.ts'"),
         Some("./file.ts".to_string())
     );
     assert_eq!(

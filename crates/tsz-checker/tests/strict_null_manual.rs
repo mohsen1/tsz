@@ -10,10 +10,10 @@ use tsz_solver::TypeInterner;
 
 #[test]
 fn test_literal_null_property_access_without_strict() {
-    let source = r#"
+    let source = r"
 const x: null = null;
 x.prop;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -51,10 +51,10 @@ x.prop;
 
 #[test]
 fn test_literal_undefined_property_access_without_strict() {
-    let source = r#"
+    let source = r"
 const x: undefined = undefined;
 x.prop;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -91,10 +91,10 @@ x.prop;
 
 #[test]
 fn test_null_union_property_access_without_strict() {
-    let source = r#"
+    let source = r"
 const x: string | null = null;
 x.prop;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -131,10 +131,10 @@ x.prop;
 
 #[test]
 fn test_any_property_access_no_error() {
-    let source = r#"
+    let source = r"
 const x: any = null;
 x.prop;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 

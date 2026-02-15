@@ -199,14 +199,14 @@ fn test_ts2322_return_wrong_array_element() {
 
 #[test]
 fn test_ts2322_generator_yield_missing_value() {
-    let source = r#"
+    let source = r"
         interface IterableIterator<T> {}
 
         function* g(): IterableIterator<number> {
             yield;
             yield 1;
         }
-    "#;
+    ";
 
     assert!(has_error_with_code(
         source,
@@ -261,9 +261,9 @@ fn test_ts2322_variable_declaration_wrong_object_property() {
 
 #[test]
 fn test_ts2322_variable_declaration_wrong_array_element() {
-    let source = r#"
+    let source = r"
         let z: string[] = [1, 2, 3];
-    "#;
+    ";
 
     assert!(has_error_with_code(
         source,
@@ -353,10 +353,10 @@ fn test_ts2322_no_error_correct_types() {
 #[test]
 fn test_ts2322_no_false_positive_simple_generic_identity() {
     // type Id<T> = T; let a: Id<number> = 42;
-    let source = r#"
+    let source = r"
         type Id<T> = T;
         let a: Id<number> = 42;
-    "#;
+    ";
 
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
@@ -372,10 +372,10 @@ fn test_ts2322_no_false_positive_simple_generic_identity() {
 #[test]
 fn test_ts2322_no_false_positive_generic_object_wrapper() {
     // type Box<T> = { value: T }; let b: Box<number> = { value: 42 };
-    let source = r#"
+    let source = r"
         type Box<T> = { value: T };
         let b: Box<number> = { value: 42 };
-    "#;
+    ";
 
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
@@ -391,10 +391,10 @@ fn test_ts2322_no_false_positive_generic_object_wrapper() {
 #[test]
 fn test_ts2322_no_false_positive_conditional_type_true_branch() {
     // IsStr<string> should evaluate to 'true', and true is assignable to true
-    let source = r#"
+    let source = r"
         type IsStr<T> = T extends string ? true : false;
         let a: IsStr<string> = true;
-    "#;
+    ";
 
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
@@ -410,10 +410,10 @@ fn test_ts2322_no_false_positive_conditional_type_true_branch() {
 #[test]
 fn test_ts2322_no_false_positive_conditional_type_false_branch() {
     // IsStr<number> should evaluate to 'false', and false is assignable to false
-    let source = r#"
+    let source = r"
         type IsStr<T> = T extends string ? true : false;
         let b: IsStr<number> = false;
-    "#;
+    ";
 
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
@@ -450,10 +450,10 @@ fn test_ts2322_no_false_positive_user_defined_mapped_type() {
 #[test]
 fn test_ts2322_no_false_positive_conditional_infer() {
     // UnpackPromise<Promise<number>> should evaluate to number
-    let source = r#"
+    let source = r"
         type UnpackPromise<T> = T extends Promise<infer U> ? U : T;
         let a: UnpackPromise<Promise<number>> = 42;
-    "#;
+    ";
 
     let errors = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = errors
@@ -556,9 +556,9 @@ fn test_ts2322_accessor_getter_setter_type_mismatch_message() {
 
 #[test]
 fn test_ts2322_for_of_annotation_mismatch() {
-    let source = r#"
+    let source = r"
         for (const x: string of [1, 2, 3]) {}
-    "#;
+    ";
 
     assert!(
         has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
@@ -739,11 +739,11 @@ fn test_ts2322_check_js_false_does_not_enforce_jsdoc_return_type() {
 
 #[test]
 fn test_ts2322_strict_js_strictness_affects_nullability() {
-    let source = r#"
+    let source = r"
         // @ts-check
         /** @type {number} */
         const maybeNumber = null;
-    "#;
+    ";
 
     let loose = compile_with_options(
         source,
@@ -876,10 +876,10 @@ fn test_ts2322_check_js_true_does_not_relabel_with_unrelated_diagnostics() {
 
 #[test]
 fn test_ts2322_no_error_for_any_to_number_assignment() {
-    let source = r#"
+    let source = r"
         let inferredAny: any;
         let x: number = inferredAny;
-    "#;
+    ";
 
     assert!(
         !has_error_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
@@ -890,11 +890,11 @@ fn test_ts2322_no_error_for_any_to_number_assignment() {
 
 #[test]
 fn test_ts2322_check_js_true_reports_annotation_union_mismatch() {
-    let source = r#"
+    let source = r"
         // @ts-check
         /** @type {number | string} */
         const value = { };
-    "#;
+    ";
 
     let diagnostics = compile_with_options(
         source,
@@ -986,11 +986,11 @@ fn test_ts2322_check_jsx_false_does_not_enforce_annotation_type() {
 
 #[test]
 fn test_ts2322_check_jsx_strict_nullability_effect() {
-    let source = r#"
+    let source = r"
         // @ts-check
         /** @type {number} */
         const maybeNumber = null;
-    "#;
+    ";
 
     let loose = compile_with_options(
         source,
@@ -1104,7 +1104,7 @@ fn test_ts2322_assignable_through_generic_identity_in_jsdoc_mode_mjs() {
 
 #[test]
 fn test_ts2322_for_of_uses_declared_type_for_predeclared_identifier() {
-    let source = r#"
+    let source = r"
         let obj: number[];
         let x: string | number | boolean | RegExp;
 
@@ -1115,7 +1115,7 @@ fn test_ts2322_for_of_uses_declared_type_for_predeclared_identifier() {
             }
             x;
         }
-    "#;
+    ";
 
     let diagnostics = get_all_diagnostics(source);
     assert!(

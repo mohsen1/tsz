@@ -20,10 +20,10 @@ fn get_if_condition(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> No
 
 #[test]
 fn test_truthiness_false_branch_narrows_to_falsy() {
-    let source = r#"
+    let source = r"
 let x: string | number | boolean | null | undefined;
 if (x) {}
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -323,10 +323,10 @@ if (x === "a") {}
 
 #[test]
 fn test_loose_nullish_equality_narrows_to_nullish_union() {
-    let source = r#"
+    let source = r"
 let x: string | null | undefined;
 if (x == null) {}
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -492,7 +492,7 @@ const fn = () => {
 #[test]
 fn test_nested_closures_handling() {
     // Test that we handle nested closures correctly
-    let source = r#"
+    let source = r"
 let x: string | number;
 const fn = () => {
 // Outer closure - x should not be narrowed from outer scope
@@ -500,7 +500,7 @@ const inner = () => {
     // Inner closure - x should still not be narrowed
 };
 };
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();

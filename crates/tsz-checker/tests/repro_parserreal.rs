@@ -154,13 +154,13 @@ fn run_and_print_source_line(
 #[cfg(test)]
 #[test]
 fn repro_async_generator_computed_yield_method() {
-    let source = r#"
+    let source = r"
 interface yield {}
 class C21 {
     async * [yield]() {
     }
 }
-"#;
+";
     let mut parser = ParserState::new(
         "yieldInClassComputedPropertyIsError.ts".to_string(),
         source.to_string(),
@@ -248,12 +248,12 @@ class C21 {
 #[cfg(test)]
 #[test]
 fn repro_async_generator_computed_yield_method_with_parse_errors() {
-    let source = r#"
+    let source = r"
 interface yield {}
 class C21 {
     async * [yield]() {
     }
-}"#;
+}";
     let mut parser = ParserState::new(
         "yieldInClassComputedPropertyIsError.ts".to_string(),
         source.to_string(),

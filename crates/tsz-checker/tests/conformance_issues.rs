@@ -68,7 +68,7 @@ fn has_error(diagnostics: &[(u32, String)], code: u32) -> bool {
 #[ignore = "Flow analysis from invalid assignment - HIGH complexity"]
 fn test_flow_narrowing_from_invalid_assignment() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class C<T> {
     foo(x: T, y: T) { }
 }
@@ -85,7 +85,7 @@ declare var c: C<string>;
 declare var e: E<string>;
 c = e;                      // Should error: TS2322
 var r = c.foo('', '');      // Should NOT error (c is still C<string>)
-        "#,
+        ",
     );
 
     // Should only have TS2322 on the assignment
@@ -109,10 +109,10 @@ var r = c.foo('', '');      // Should NOT error (c is still C<string>)
 /// Fix: Added `next_token()` call in `state_statements.rs` after reserved word error
 #[test]
 fn test_parser_cascading_error_suppression() {
-    let source = r#"
+    let source = r"
 // classes cannot use predefined types as names
 class void {}
-        "#;
+        ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -207,9 +207,9 @@ fn test_method_implementation_name_formatting_probe() {
 /// Fix: Added reserved word check in `state_declarations.rs` `parse_interface_declaration`
 #[test]
 fn test_interface_reserved_word_error_suppression() {
-    let source = r#"
+    let source = r"
 interface void {}
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -244,9 +244,9 @@ interface void {}
 #[test]
 fn test_class_extends_primitive_reports_ts2863() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class C extends number {}
-        "#,
+        ",
     );
 
     assert!(
@@ -258,9 +258,9 @@ class C extends number {}
 #[test]
 fn test_class_implements_primitive_reports_ts2864() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class C implements number {}
-        "#,
+        ",
     );
 
     assert!(
@@ -272,7 +272,7 @@ class C implements number {}
 #[test]
 fn test_indirect_class_cycle_reports_all_ts2506_errors() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class C extends E { foo: string; }
 class D extends C { bar: string; }
 class E extends D { baz: number; }
@@ -280,7 +280,7 @@ class E extends D { baz: number; }
 class C2<T> extends E2<T> { foo: T; }
 class D2<T> extends C2<T> { bar: T; }
 class E2<T> extends D2<T> { baz: T; }
-        "#,
+        ",
     );
 
     let ts2506_count = diagnostics.iter().filter(|(code, _)| *code == 2506).count();
@@ -293,9 +293,9 @@ class E2<T> extends D2<T> { baz: T; }
 #[test]
 fn test_interface_extends_primitive_reports_ts2840() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 interface I extends number {}
-        "#,
+        ",
     );
 
     assert!(
@@ -307,7 +307,7 @@ interface I extends number {}
 #[test]
 fn test_interface_extends_classes_with_private_member_clash_reports_ts2320() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class X {
     private m: number;
 }
@@ -316,7 +316,7 @@ class Y {
 }
 
 interface Z extends X, Y {}
-        "#,
+        ",
     );
 
     assert!(
@@ -328,7 +328,7 @@ interface Z extends X, Y {}
 #[test]
 fn test_instance_member_initializer_constructor_param_capture_reports_ts2301() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 declare var console: {
     log(msg?: any): void;
 };
@@ -341,7 +341,7 @@ class Test1 {
         console.log(field1);
     };
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -353,7 +353,7 @@ class Test1 {
 #[test]
 fn test_instance_member_initializer_missing_name_reports_ts2663() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 declare var console: {
     log(msg?: any): void;
 };
@@ -365,7 +365,7 @@ export class Test1 {
         console.log(field1);
     };
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -377,7 +377,7 @@ export class Test1 {
 #[test]
 fn test_instance_member_initializer_local_shadow_does_not_report_ts2301() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 declare var console: {
     log(msg?: any): void;
 };
@@ -390,7 +390,7 @@ class Test {
         console.log(field);
     };
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -439,13 +439,13 @@ class Derived extends Base<number> {
 #[test]
 fn test_derived_constructor_without_super_reports_ts2377() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class Base {}
 
 class Derived extends Base {
     constructor() {}
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -457,7 +457,7 @@ class Derived extends Base {
 #[test]
 fn test_this_before_missing_super_reports_ts17009() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class Base {}
 
 class Derived extends Base {
@@ -465,7 +465,7 @@ class Derived extends Base {
         this.x;
     }
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -477,13 +477,13 @@ class Derived extends Base {
 #[test]
 fn test_malformed_this_property_annotation_does_not_emit_ts2551() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class A {
     constructor() {
         this.foo: any;
     }
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -495,7 +495,7 @@ class A {
 #[test]
 fn test_super_property_before_super_call_reports_ts17011() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class Base {
     method() {}
 }
@@ -506,7 +506,7 @@ class Derived extends Base {
         super();
     }
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -518,7 +518,7 @@ class Derived extends Base {
 #[test]
 fn test_super_property_access_reports_ts2855() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class Base {
     value = 1;
 }
@@ -528,7 +528,7 @@ class Derived extends Base {
         return super.value;
     }
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -540,7 +540,7 @@ class Derived extends Base {
 #[test]
 fn test_super_in_constructor_parameter_reports_ts2336_and_ts17011() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class B {
     public foo(): number {
         return 0;
@@ -551,7 +551,7 @@ class C extends B {
     constructor(a = super.foo()) {
     }
 }
-                "#,
+                ",
     );
 
     assert!(
@@ -608,11 +608,11 @@ function f01(x: string | undefined) {
 #[test]
 fn test_private_identifier_in_object_literal() {
     // TS18016 is a PARSER error, so we need to check parser diagnostics
-    let source = r#"
+    let source = r"
 const obj = {
     #x: 1
 };
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -639,13 +639,13 @@ const obj = {
 #[test]
 fn test_private_identifier_access_outside_class() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class Foo {
     #bar = 42;
 }
 const f = new Foo();
 const x = f.#bar;  // Should error TS18013
-        "#,
+        ",
     );
 
     assert!(
@@ -661,14 +661,14 @@ const x = f.#bar;  // Should error TS18013
 #[test]
 fn test_private_identifier_access_inside_class() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class Foo {
     #bar = 42;
     getBar() {
         return this.#bar;  // Should NOT error
     }
 }
-        "#,
+        ",
     );
 
     assert!(
@@ -687,11 +687,11 @@ class Foo {
 #[test]
 fn test_private_identifier_as_parameter() {
     // TS18009 is a PARSER error
-    let source = r#"
+    let source = r"
 class Foo {
     method(#param: any) {}
 }
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -718,9 +718,9 @@ class Foo {
 #[test]
 fn test_private_identifier_in_variable_declaration() {
     // TS18029 is a PARSER error
-    let source = r#"
+    let source = r"
 const #x = 1;
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -747,14 +747,14 @@ const #x = 1;
 #[test]
 fn test_private_identifier_in_optional_chain() {
     // TS18030 is a PARSER error
-    let source = r#"
+    let source = r"
 class Bar {
     #prop = 42;
     test() {
         return this?.#prop;
     }
 }
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -782,14 +782,14 @@ class Bar {
 #[test]
 fn test_ts18016_private_identifier_outside_class() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class Foo {
     #bar: number;
 }
 
 let f: Foo;
 let x = f.#bar;  // Outside class - should error TS18013 only (not TS18016)
-        "#,
+        ",
     );
 
     // Filter out TS2318 (missing global types) which are noise for this test
@@ -823,7 +823,7 @@ let x = f.#bar;  // Outside class - should error TS18013 only (not TS18016)
 #[test]
 fn test_private_field_no_override_error() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class Parent {
     #foo: number;
 }
@@ -831,7 +831,7 @@ class Parent {
 class Child extends Parent {
     #foo: string;  // Should NOT emit TS2416 - private fields don't participate in inheritance
 }
-        "#,
+        ",
     );
 
     // Filter out TS2318 (missing global types)
@@ -854,7 +854,7 @@ class Child extends Parent {
 #[test]
 fn test_interface_extension_incompatible_property_reports_ts2430() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 interface Base {
   value: string;
 }
@@ -862,7 +862,7 @@ interface Base {
 interface Derived extends Base {
   value: number;
 }
-        "#,
+        ",
     );
 
     let relevant_diagnostics: Vec<_> = diagnostics
@@ -944,10 +944,10 @@ let {[foo]: bar} = {bar: "baz"};
 #[test]
 fn test_contextual_typing_generic_function_param() {
     // Enable noImplicitAny to trigger TS7006
-    let source = r#"
+    let source = r"
 // @noImplicitAny: true
 const fn2: <T>(x: T) => void = function test(t) { };
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -993,11 +993,11 @@ const fn2: <T>(x: T) => void = function test(t) { };
 /// Issue: Contextual typing for arrow function assigned to generic type
 #[test]
 fn test_contextual_typing_generic_arrow_param() {
-    let source = r#"
+    let source = r"
 // @noImplicitAny: true
 declare function f(fun: <T>(t: T) => void): void;
 f(t => { });
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1046,7 +1046,7 @@ f(t => { });
 /// Expected: no TS2322/TS2345 errors
 #[test]
 fn test_contextual_outer_type_parameters_no_false_assignability_errors() {
-    let source = r#"
+    let source = r"
 declare function f(fun: <T>(t: T) => void): void
 
 f(t => {
@@ -1063,7 +1063,7 @@ const fn2: <T>(x: T) => void = function test(t) {
     type isArray = (typeof t)[] extends string[] ? true : false;
     type IsObject = { x: typeof t } extends { x: string } ? true : false;
 };
-"#;
+";
 
     let options = CheckerOptions {
         strict: true,
@@ -1094,12 +1094,12 @@ const fn2: <T>(x: T) => void = function test(t) {
 #[test]
 fn test_contextual_signature_instantiation_chain_no_false_ts2345() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 var dot: <T, S>(f: (_: T) => S) => <U>(g: (_: U) => T) => (_: U) => S;
 dot = <T, S>(f: (_: T) => S) => <U>(g: (_: U) => T): (r:U) => S => (x) => f(g(x));
 var id: <T>(x:T) => T;
 var r23 = dot(id)(id);
-        "#,
+        ",
     );
 
     let relevant: Vec<_> = diagnostics
@@ -1117,9 +1117,9 @@ var r23 = dot(id)(id);
 #[test]
 fn test_settimeout_callback_assignable_to_function_union() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 setTimeout(() => 1, 0);
-        "#,
+        ",
     );
 
     let relevant: Vec<_> = diagnostics
@@ -1137,13 +1137,13 @@ setTimeout(() => 1, 0);
 #[test]
 fn test_typed_array_constructor_accepts_number_array() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 function makeTyped(obj: number[]) {
     var typedArrays = [];
     typedArrays[0] = new Int8Array(obj);
     return typedArrays;
 }
-        "#,
+        ",
     );
 
     let relevant: Vec<_> = diagnostics
@@ -1161,10 +1161,10 @@ function makeTyped(obj: number[]) {
 /// Regression test: TS7006 SHOULD still fire for closures without any contextual type
 #[test]
 fn test_ts7006_still_fires_without_contextual_type() {
-    let source = r#"
+    let source = r"
 // @noImplicitAny: true
 var f = function(x) { };
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1229,14 +1229,14 @@ var f = function(x) { };
 ///    before extracting property types.
 #[test]
 fn test_contextual_typing_mapped_type_generic_param() {
-    let source = r#"
+    let source = r"
 // @noImplicitAny: true
 interface Props {
     when: (value: string) => boolean;
 }
 function good2<P extends Props>(attrs: { [K in keyof P]: P[K] }) { }
 good2({ when: value => false });
-    "#;
+    ";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1291,7 +1291,7 @@ good2({ when: value => false });
 #[test]
 fn test_ts2344_no_duplicate_errors() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 interface Box<T extends string> {
     value: T;
 }
@@ -1300,7 +1300,7 @@ type IsString<T extends string> = T extends string ? true : false;
 type Test2 = IsString<number>;
 type Keys<T extends object> = keyof T;
 type Test4 = Keys<string>;
-        "#,
+        ",
     );
 
     // Count TS2344 errors - each should appear exactly once
@@ -1319,7 +1319,7 @@ type Test4 = Keys<string>;
 #[test]
 fn test_ts2339_this_in_static_method() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 class C {
     public p = 0;
     static s = 0;
@@ -1328,7 +1328,7 @@ class C {
         this.s = 2; // OK - 's' is static
     }
 }
-        "#,
+        ",
     );
 
     let ts2339_errors: Vec<_> = diagnostics
@@ -1351,14 +1351,14 @@ class C {
 fn test_interface_accessor_declarations() {
     // Interface accessor declarations (get/set) should be recognized as properties
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 interface Test {
     get foo(): string;
     set foo(s: string | number);
 }
 const t = {} as Test;
 let m: string = t.foo;   // OK - getter returns string
-        "#,
+        ",
     );
 
     let ts2339_errors: Vec<_> = diagnostics
@@ -1376,14 +1376,14 @@ let m: string = t.foo;   // OK - getter returns string
 fn test_type_literal_accessor_declarations() {
     // Type literal accessor declarations (get/set) should be recognized as properties
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 type Test = {
     get foo(): string;
     set foo(s: number);
 };
 const t = {} as Test;
 let m: string = t.foo;   // OK - getter returns string
-        "#,
+        ",
     );
 
     let ts2339_errors: Vec<_> = diagnostics
@@ -1409,7 +1409,7 @@ let m: string = t.foo;   // OK - getter returns string
 #[test]
 fn test_interface_inherited_call_signature_no_false_ts2345() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 interface Foo {
     (bar:number): string;
 }
@@ -1420,7 +1420,7 @@ interface Bar extends Foo {
 
 var a: Bar;
 var kitty = a(1);
-        "#,
+        ",
     );
 
     // Filter out TS2318 (missing global types)
@@ -1447,7 +1447,7 @@ var kitty = a(1);
 #[test]
 fn test_mixin_pattern_no_false_ts2345() {
     let diagnostics = compile_and_get_diagnostics(
-        r#"
+        r"
 type Constructor<T = {}> = new (...args: any[]) => T;
 
 function Timestamped<TBase extends Constructor>(Base: TBase) {
@@ -1465,7 +1465,7 @@ class TimestampedUser extends Timestamped(User) {
         super();
     }
 }
-        "#,
+        ",
     );
 
     // Filter out TS2318 (missing global types)
@@ -1494,14 +1494,14 @@ fn test_contextual_typing_union_with_undefined() {
     }
     .apply_strict_defaults();
     let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
+        r"
 interface Opts {
     fn(x: number): void;
 }
 
 declare function a(opts: Opts | undefined): void;
 a({ fn(x) {} });
-        "#,
+        ",
         opts,
     );
 
@@ -1520,14 +1520,14 @@ fn test_contextual_typing_property_in_union_with_null() {
     }
     .apply_strict_defaults();
     let diagnostics = compile_and_get_diagnostics_with_options(
-        r#"
+        r"
 interface Opts {
     callback: (x: number) => void;
 }
 
 declare function b(opts: Opts | null): void;
 b({ callback: (x) => {} });
-        "#,
+        ",
         opts,
     );
 

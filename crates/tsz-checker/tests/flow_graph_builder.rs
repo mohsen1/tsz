@@ -55,11 +55,11 @@ if (x) {
 
 #[test]
 fn test_flow_graph_loop() {
-    let source = r#"
+    let source = r"
 while (true) {
     break;
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -79,14 +79,14 @@ while (true) {
 
 #[test]
 fn test_flow_graph_try_finally() {
-    let source = r#"
+    let source = r"
 let x;
 try {
     x = 1;
 } finally {
 }
 console.log(x);
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -110,7 +110,7 @@ console.log(x);
 
 #[test]
 fn test_flow_graph_try_catch_finally() {
-    let source = r#"
+    let source = r"
 try {
     let x = 1;
 } catch (e) {
@@ -118,7 +118,7 @@ try {
 } finally {
     let z = 3;
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -138,9 +138,9 @@ try {
 
 #[test]
 fn test_flow_graph_async_function() {
-    let source = r#"
+    let source = r"
 let x = await bar();
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -162,9 +162,9 @@ let x = await bar();
 
 #[test]
 fn test_flow_graph_await_in_expression() {
-    let source = r#"
+    let source = r"
 const result = await bar() + await baz();
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -185,13 +185,13 @@ const result = await bar() + await baz();
 
 #[test]
 fn test_flow_graph_await_in_if() {
-    let source = r#"
+    let source = r"
 if (condition) {
     await bar();
 } else {
     await baz();
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -212,11 +212,11 @@ if (condition) {
 
 #[test]
 fn test_flow_graph_await_in_loop() {
-    let source = r#"
+    let source = r"
 while (condition) {
     await bar();
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -237,13 +237,13 @@ while (condition) {
 
 #[test]
 fn test_flow_graph_await_in_try_catch() {
-    let source = r#"
+    let source = r"
 try {
     await bar();
 } catch (e) {
     console.error(e);
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -264,9 +264,9 @@ try {
 
 #[test]
 fn test_flow_graph_async_arrow_function() {
-    let source = r#"
+    let source = r"
 const x = await bar();
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -332,9 +332,9 @@ console.log(x);
 
 #[test]
 fn test_flow_graph_yield_star() {
-    let source = r#"
+    let source = r"
 yield* otherGenerator();
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -355,13 +355,13 @@ yield* otherGenerator();
 
 #[test]
 fn test_flow_graph_yield_in_loop() {
-    let source = r#"
+    let source = r"
 let counter = 0;
 while (counter < 10) {
     yield counter;
     counter++;
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -382,13 +382,13 @@ while (counter < 10) {
 
 #[test]
 fn test_flow_graph_yield_in_try_catch() {
-    let source = r#"
+    let source = r"
 try {
     yield 1;
 } catch (e) {
     yield 2;
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -502,13 +502,13 @@ console.log(x);
 #[test]
 fn test_flow_graph_for_of_await_in_async_generator() {
     // Test for-await-of in async generator
-    let source = r#"
+    let source = r"
 let result: string[] = [];
 for await (const item of asyncIterable) {
     yield item;
     result.push(item);
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -576,13 +576,13 @@ console.log(x);
 #[test]
 fn test_flow_graph_nested_generator() {
     // Test nested generator (generator calling another generator)
-    let source = r#"
+    let source = r"
 yield 1;
 for (const val of innerGenerator()) {
     yield val * 2;
 }
 yield 3;
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.context_flags |= CONTEXT_FLAG_GENERATOR; // Set generator context for parsing
@@ -619,7 +619,7 @@ yield 3;
 
 #[test]
 fn test_flow_graph_class_with_static_block() {
-    let source = r#"
+    let source = r"
 let x: number;
 class Foo {
     static {
@@ -627,7 +627,7 @@ class Foo {
     }
 }
 console.log(x);
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -647,13 +647,13 @@ console.log(x);
 
 #[test]
 fn test_flow_graph_class_with_static_property() {
-    let source = r#"
+    let source = r"
 let x: number;
 class Foo {
     static prop = (x = 42);
 }
 console.log(x);
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -684,10 +684,10 @@ console.log(x);
 
 #[test]
 fn test_flow_graph_class_with_extends() {
-    let source = r#"
+    let source = r"
 class Base {}
 class Derived extends Base {}
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -767,7 +767,7 @@ console.log(x, y);
 
 #[test]
 fn test_flow_graph_class_expression() {
-    let source = r#"
+    let source = r"
 let x: number;
 const Foo = class {
     static {
@@ -775,7 +775,7 @@ const Foo = class {
     }
 };
 console.log(x);
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();

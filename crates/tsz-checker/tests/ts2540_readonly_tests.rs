@@ -61,13 +61,13 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
 
 #[test]
 fn test_readonly_class_property_assignment() {
-    let source = r#"
+    let source = r"
 class C {
     readonly x: number = 1;
 }
 const c = new C();
 c.x = 10;
-"#;
+";
     assert!(
         has_error_with_code(source, 2540),
         "Should emit TS2540 for assigning to readonly class property"
@@ -76,13 +76,13 @@ c.x = 10;
 
 #[test]
 fn test_non_readonly_class_property_assignment_ok() {
-    let source = r#"
+    let source = r"
 class C {
     y: number = 2;
 }
 const c = new C();
 c.y = 20;
-"#;
+";
     assert!(
         !has_error_with_code(source, 2540),
         "Should NOT emit TS2540 for non-readonly property"
@@ -115,13 +115,13 @@ c.mut_prop = "ok";
 
 #[test]
 fn test_readonly_interface_property() {
-    let source = r#"
+    let source = r"
 interface I {
     readonly x: number;
 }
 declare const obj: I;
 obj.x = 10;
-"#;
+";
     assert!(
         has_error_with_code(source, 2540),
         "Should emit TS2540 for assigning to readonly interface property"
@@ -130,13 +130,13 @@ obj.x = 10;
 
 #[test]
 fn test_non_readonly_interface_property_ok() {
-    let source = r#"
+    let source = r"
 interface I {
     x: number;
 }
 declare const obj: I;
 obj.x = 10;
-"#;
+";
     assert!(
         !has_error_with_code(source, 2540),
         "Should NOT emit TS2540 for mutable interface property"
@@ -150,10 +150,10 @@ obj.x = 10;
 #[test]
 fn test_const_variable_assignment() {
     // TS2588: Cannot assign to 'x' because it is a constant
-    let source = r#"
+    let source = r"
 const x = 10;
 x = 20;
-"#;
+";
     assert!(
         has_error_with_code(source, 2588),
         "Should emit TS2588 for assigning to const variable"
@@ -166,12 +166,12 @@ x = 20;
 
 #[test]
 fn test_namespace_const_export_readonly() {
-    let source = r#"
+    let source = r"
 namespace M {
     export const x = 0;
 }
 M.x = 1;
-"#;
+";
     assert!(
         has_error_with_code(source, 2540),
         "Should emit TS2540 for assigning to namespace const export"
@@ -230,12 +230,12 @@ obj.c = true;
 
 #[test]
 fn test_namespace_let_export_mutable() {
-    let source = r#"
+    let source = r"
 namespace M {
     export let x = 0;
 }
 M.x = 1;
-"#;
+";
     assert!(
         !has_error_with_code(source, 2540),
         "Should NOT emit TS2540 for namespace let export"
@@ -265,13 +265,13 @@ obj["x"] = 10;
 #[test]
 fn test_readonly_class_compound_assignment() {
     // Compound assignments (+=, -=, etc.) should also be caught
-    let source = r#"
+    let source = r"
 class C {
     readonly x: number = 1;
 }
 const c = new C();
 c.x += 10;
-"#;
+";
     assert!(
         has_error_with_code(source, 2540),
         "Should emit TS2540 for compound assignment to readonly class property"
@@ -281,13 +281,13 @@ c.x += 10;
 #[test]
 fn test_readonly_class_increment() {
     // Increment/decrement should also be caught
-    let source = r#"
+    let source = r"
 class C {
     readonly x: number = 1;
 }
 const c = new C();
 c.x++;
-"#;
+";
     assert!(
         has_error_with_code(source, 2540),
         "Should emit TS2540 for increment on readonly class property"

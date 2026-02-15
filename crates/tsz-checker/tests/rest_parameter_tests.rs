@@ -33,83 +33,83 @@ fn has_error_ts2370(source: &str) -> bool {
 
 #[test]
 fn test_rest_parameter_non_array_type_emits_ts2370() {
-    let source = r#"
+    let source = r"
         function f(x: string, ...rest: number) {
         }
-    "#;
+    ";
 
     assert!(has_error_ts2370(source));
 }
 
 #[test]
 fn test_rest_parameter_array_type_ok() {
-    let source = r#"
+    let source = r"
         function f(x: string, ...rest: number[]) {
         }
-    "#;
+    ";
 
     assert!(!has_error_ts2370(source));
 }
 
 #[test]
 fn test_rest_parameter_tuple_type_ok() {
-    let source = r#"
+    let source = r"
         function f(...rest: [string, number]) {
         }
-    "#;
+    ";
 
     assert!(!has_error_ts2370(source));
 }
 
 #[test]
 fn test_rest_parameter_no_type_annotation_ok() {
-    let source = r#"
+    let source = r"
         function f(...rest) {
         }
-    "#;
+    ";
 
     assert!(!has_error_ts2370(source));
 }
 
 #[test]
 fn test_rest_parameter_array_generic_ok() {
-    let source = r#"
+    let source = r"
         function f<T>(...rest: T[]) {
         }
-    "#;
+    ";
 
     assert!(!has_error_ts2370(source));
 }
 
 #[test]
 fn test_rest_parameter_in_method() {
-    let source = r#"
+    let source = r"
         class C {
             method(...rest: string) {
             }
         }
-    "#;
+    ";
 
     assert!(has_error_ts2370(source));
 }
 
 #[test]
 fn test_rest_parameter_in_constructor() {
-    let source = r#"
+    let source = r"
         class C {
             constructor(...rest: boolean) {
             }
         }
-    "#;
+    ";
 
     assert!(has_error_ts2370(source));
 }
 
 #[test]
 fn test_rest_parameter_in_arrow_function() {
-    let source = r#"
+    let source = r"
         const f = (...rest: number) => {};
-    "#;
+    ";
 
     assert!(has_error_ts2370(source));
 }

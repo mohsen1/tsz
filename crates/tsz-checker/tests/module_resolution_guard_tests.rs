@@ -10,7 +10,7 @@ use tsz_solver::TypeInterner;
 
 #[test]
 fn ambient_external_module_without_internal_import_declaration_has_no_errors() {
-    let src0 = r#"
+    let src0 = r"
 declare module 'M' {
     namespace C {
         export var f: number;
@@ -20,12 +20,12 @@ declare module 'M' {
     }
     export = C;
 }
-"#;
-    let src1 = r#"
+";
+    let src1 = r"
 /// <reference path='ambientExternalModuleWithoutInternalImportDeclaration_0.ts'/>
 import A = require('M');
 var c = new A();
-"#;
+";
 
     let mut parser0 = ParserState::new(
         "ambientExternalModuleWithoutInternalImportDeclaration_0.ts".to_string(),

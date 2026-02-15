@@ -5,10 +5,10 @@ use tsz_solver::{TypeInterner, type_queries};
 
 #[test]
 fn test_enum_member_types_prefilled_after_enum_resolution() {
-    let source = r#"
+    let source = r"
 enum E { A, B, C }
 const a = E.A;
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();

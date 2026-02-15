@@ -109,11 +109,11 @@ fn test_ts2322_check_js_false_suppresses_jsdoc_mismatch() {
 
 #[test]
 fn test_target_sensitive_check_js_strictness_stability() {
-    let source = r#"
+    let source = r"
         // @ts-check
         /** @type {number} */
         const n = null;
-    "#;
+    ";
 
     let strict = compile_with_options(
         source,
@@ -210,16 +210,16 @@ fn test_js_file_routing_prefers_2322_over_2345_for_assignment() {
 
 #[test]
 fn test_target_sensitive_strictness_effect_on_jsdoc_error_classification() {
-    let strict_source = r#"
+    let strict_source = r"
         // @ts-check
         /** @type {string} */
         const value = null;
-    "#;
-    let loose_source = r#"
+    ";
+    let loose_source = r"
         // @ts-check
         /** @type {string} */
         const value = null;
-    "#;
+    ";
 
     let strict = compile_with_options(
         strict_source,

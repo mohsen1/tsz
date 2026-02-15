@@ -56,7 +56,7 @@ const b = identity(true);
 
 #[test]
 fn test_constraint_validation() {
-    let source = r#"
+    let source = r"
 function logName<T extends { name: string }>(obj: T): void {
     // Avoid using console.log which requires lib files
     const _unused: void = undefined;
@@ -64,7 +64,7 @@ function logName<T extends { name: string }>(obj: T): void {
 
 const invalid = { id: 1 };
 logName(invalid);
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -100,13 +100,13 @@ logName(invalid);
 
 #[test]
 fn test_downward_inference() {
-    let source = r#"
+    let source = r"
 function identity<T>(x: T): T {
     return x;
 }
 
 const x: string = identity(42);
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -157,13 +157,13 @@ fn test_map_multi_pass_inference() {
 
     // For now, we test a simpler case that demonstrates the multi-pass
     // inference working correctly for nested generic callbacks.
-    let source = r#"
+    let source = r"
 function process<T, U>(value: T, callback: (x: T) => U): U {
     return callback(value);
 }
 
 const result = process(42, x => x.toString());
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
