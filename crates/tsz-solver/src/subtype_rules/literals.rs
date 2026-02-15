@@ -446,13 +446,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             }
 
-            match self.apparent_primitive_kind_for_type(member) {
-                Some(IntrinsicKind::String) => {
-                    if self.match_string_wildcard(remaining, spans, span_idx) {
-                        return true;
-                    }
+            if let Some(IntrinsicKind::String) = self.apparent_primitive_kind_for_type(member) {
+                if self.match_string_wildcard(remaining, spans, span_idx) {
+                    return true;
                 }
-                _ => {}
             }
         }
         false

@@ -829,19 +829,17 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Handle Mapped and Conditional types by evaluating them first
-        match self.interner.lookup(expected) {
-            Some(TypeData::Mapped(_) | TypeData::Conditional(_)) => {
-                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
-                if evaluated != expected {
-                    let ctx = ContextualTypeContext::with_expected_and_options(
-                        self.interner,
-                        evaluated,
-                        self.no_implicit_any,
-                    );
-                    return ctx.get_parameter_type(index);
-                }
+        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_)) = self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected_and_options(
+                    self.interner,
+                    evaluated,
+                    self.no_implicit_any,
+                );
+                return ctx.get_parameter_type(index);
             }
-            _ => {}
         }
 
         // Use visitor for Function/Callable types
