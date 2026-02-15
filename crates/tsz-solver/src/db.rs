@@ -1720,12 +1720,11 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
         // Check cache first
-        let cached = match self.variance_cache.read() {
+
+        match self.variance_cache.read() {
             Ok(cache) => cache.get(&def_id).cloned(),
             Err(e) => e.into_inner().get(&def_id).cloned(),
-        };
-
-        cached
+        }
     }
 
     fn canonical_id(&self, type_id: TypeId) -> TypeId {

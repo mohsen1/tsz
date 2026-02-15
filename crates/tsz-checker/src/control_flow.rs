@@ -959,7 +959,7 @@ impl<'a> FlowAnalyzer<'a> {
             return current_type;
         };
 
-        let clause_type = if clause.expression.is_none() {
+        if clause.expression.is_none() {
             self.narrow_by_default_switch_clause(
                 pre_switch_type,
                 switch_data.expression,
@@ -975,9 +975,7 @@ impl<'a> FlowAnalyzer<'a> {
                 reference,
                 &narrowing,
             )
-        };
-
-        clause_type
+        }
     }
 
     /// Helper function for call handling in iterative mode.
@@ -2285,15 +2283,15 @@ impl<'a> FlowAnalyzer<'a> {
         antecedent_id: FlowNodeId,
     ) -> TypeId {
         let mut visited_aliases = Vec::new();
-        let result = self.narrow_type_by_condition_inner(
+
+        self.narrow_type_by_condition_inner(
             type_id,
             condition_idx,
             target,
             is_true_branch,
             antecedent_id,
             &mut visited_aliases,
-        );
-        result
+        )
     }
 
     pub(crate) fn narrow_type_by_condition_inner(

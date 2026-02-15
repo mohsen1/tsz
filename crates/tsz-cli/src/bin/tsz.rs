@@ -33,13 +33,13 @@ fn main() -> Result<()> {
     // The default 8MB main thread stack can overflow when build_type_environment
     // resolves interdependent lib types that require cross-arena delegation.
     const MAIN_STACK_SIZE: usize = 64 * 1024 * 1024;
-    let result = std::thread::Builder::new()
+
+    std::thread::Builder::new()
         .stack_size(MAIN_STACK_SIZE)
         .spawn(actual_main)
         .expect("failed to spawn main thread")
         .join()
-        .expect("main thread panicked");
-    result
+        .expect("main thread panicked")
 }
 
 fn actual_main() -> Result<()> {
