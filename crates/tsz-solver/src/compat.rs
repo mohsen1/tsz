@@ -994,8 +994,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        let lacks_common = self.source_lacks_union_common_property(source, members.as_ref());
-        lacks_common
+        self.source_lacks_union_common_property(source, members.as_ref())
     }
 
     pub fn is_weak_union_violation(&self, source: TypeId, target: TypeId) -> bool {

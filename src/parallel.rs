@@ -942,9 +942,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     }
                 } else {
                     // Nested symbol - always allocate new, never merge
-                    let new_id = global_symbols.alloc_from(lib_sym);
+
                     // NOTE: Don't add to merged_symbols - nested symbols should never be cross-file merged
-                    new_id
+                    global_symbols.alloc_from(lib_sym)
                 };
 
                 // Store the remapping
