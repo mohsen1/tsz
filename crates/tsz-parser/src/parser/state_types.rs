@@ -1318,10 +1318,7 @@ impl ParserState {
                 members.push(member);
             }
 
-            // Allow comma or semicolon as separator
-            if !self.parse_optional(SyntaxKind::SemicolonToken) {
-                self.parse_optional(SyntaxKind::CommaToken);
-            }
+            self.parse_type_member_separator_with_asi();
         }
 
         self.parse_expected(SyntaxKind::CloseBraceToken);
