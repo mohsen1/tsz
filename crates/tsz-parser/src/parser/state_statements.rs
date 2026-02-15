@@ -7,7 +7,7 @@ use super::state::{
 use crate::parser::{
     NodeIndex, NodeList,
     node::{
-        BlockData, ClassData, FunctionData, ImportDeclData, LabeledData, QualifiedNameData,
+        self, BlockData, ClassData, FunctionData, ImportDeclData, LabeledData, QualifiedNameData,
         SourceFileData, VariableData, VariableDeclarationData,
     },
     parse_rules::{
@@ -19,6 +19,7 @@ use crate::parser::{
     syntax_kind_ext,
 };
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -3806,18 +3807,28 @@ impl ParserState {
         }
         let name = if self.is_property_name() {
             self.parse_property_name()
+        } else if asterisk_token {
+            // After asterisk (*), we expect an identifier (method name).
+            // Create a missing identifier and continue parsing the method
+            // body so we don't produce cascading TS1068/TS1128 errors.
+            self.error_identifier_expected();
+            let pos = self.token_pos();
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                pos,
+                pos,
+                node::IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
         } else {
-            // Report error for unknown/missing token
-            // After asterisk (*), we specifically expect an identifier (method name)
-            // so emit TS1003 "Identifier expected" to match tsc
-            if asterisk_token {
-                self.error_identifier_expected();
-            } else {
-                self.parse_error_at_current_token(
-                    "Unexpected token. A constructor, method, accessor, or property was expected.",
-                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
-                );
-            }
+            self.parse_error_at_current_token(
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+            );
             self.context_flags = name_saved_flags;
             self.next_token();
             return NodeIndex::NONE;
