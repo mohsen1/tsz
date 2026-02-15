@@ -13,10 +13,8 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Pre-register all variable names in this declaration list to handle shadowing.
-        // For let/const: use register_variable (renames for any scope conflict including current)
-        // For var: use register_var_declaration (only renames for parent scope conflicts,
-        // allowing same-scope redeclarations like `var cl; var cl = Point();`)
+        // Pre-register block-scoped names in this declaration list to handle shadowing.
+        // For plain `var` declarations, preserve source names (tsc keeps them as-is).
         let flags = node.flags as u32;
         let is_block_scoped = (flags & tsz_parser::parser::node_flags::LET != 0)
             || (flags & tsz_parser::parser::node_flags::CONST != 0);
@@ -26,14 +24,6 @@ impl<'a> Printer<'a> {
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 {
                     self.pre_register_binding_name(decl.name);
-                }
-            }
-        } else {
-            for &decl_idx in &decl_list.declarations.nodes {
-                if let Some(decl_node) = self.arena.get(decl_idx)
-                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                {
-                    self.pre_register_var_binding_name(decl.name);
                 }
             }
         }
@@ -1319,19 +1309,20 @@ impl<'a> Printer<'a> {
         &mut self,
         pattern_idx: NodeIndex,
         source_expr: &str,
-        _first: &mut bool,
+        first: &mut bool,
     ) {
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
             return;
         };
 
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+
         // Only handle array binding patterns for now
         if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
             let temp_name = self.get_temp_var_name();
-            if !*_first {
-                self.write(", ");
-            }
-            *_first = false;
             self.write(&temp_name);
             self.write(" = ");
             self.write(source_expr);
@@ -1358,7 +1349,6 @@ impl<'a> Printer<'a> {
 
         // Emit: _d = __read(expr, N)
         let read_temp = self.get_temp_var_name();
-        // Note: caller has already handled the comma and set first=false
         self.write(&read_temp);
         self.write(" = __read(");
         self.write(source_expr);
@@ -2985,11 +2975,6 @@ impl<'a> Printer<'a> {
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
-                        if !first {
-                            self.write(", ");
-                        }
-                        first = false;
-
                         // Check if name is a binding pattern (array or object destructuring)
                         if self.is_binding_pattern(decl.name) {
                             // For downlevelIteration with binding patterns, use __read
@@ -3001,6 +2986,10 @@ impl<'a> Printer<'a> {
                                 &mut first,
                             );
                         } else {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
                             // Simple identifier binding
                             self.emit(decl.name);
                             self.write(" = ");

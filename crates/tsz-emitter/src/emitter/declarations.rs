@@ -114,8 +114,8 @@ impl<'a> Printer<'a> {
             "var"
         };
         self.write(keyword);
+        self.write(" ");
         if !decl_list.declarations.nodes.is_empty() {
-            self.write(" ");
             self.emit_comma_separated(&decl_list.declarations.nodes);
         }
     }
