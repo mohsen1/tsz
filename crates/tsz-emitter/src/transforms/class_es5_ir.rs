@@ -71,7 +71,10 @@
 
 use crate::transform_context::TransformContext;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
-use crate::transforms::ir::*;
+use crate::transforms::ir::{
+    IRCatchClause, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey,
+    IRPropertyKind, IRSwitchCase,
+};
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_private_accessors, collect_private_fields,
 };

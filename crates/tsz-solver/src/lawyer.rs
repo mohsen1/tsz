@@ -205,6 +205,7 @@ impl Default for AnyPropagationRules {
 ///
 /// This struct provides documentation and helper methods for understanding
 /// and configuring the various TypeScript compatibility behaviors.
+#[allow(dead_code)]
 pub struct TypeScriptQuirks;
 
 #[cfg(test)]

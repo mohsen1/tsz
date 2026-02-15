@@ -105,6 +105,9 @@ mod conformance_issues;
 #[path = "../tests/control_flow_tests.rs"]
 mod control_flow_tests;
 #[cfg(test)]
+#[path = "../tests/definite_assignment_tests.rs"]
+mod definite_assignment_tests;
+#[cfg(test)]
 #[path = "../tests/enum_member_cache_tests.rs"]
 mod enum_member_cache_tests;
 #[cfg(test)]
@@ -165,6 +168,9 @@ mod module_resolution_guard_tests;
 #[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
+#[cfg(test)]
+#[path = "../tests/repro_parserreal.rs"]
+mod repro_parserreal;
 #[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;

@@ -8,6 +8,13 @@ warn-on-all-wildcard-imports = true
 too-many-arguments-threshold = 8
 type-complexity-threshold = 250
 cognitive-complexity-threshold = 24
+disallowed-methods = [
+    "std::mem::transmute",
+]
 
 # Avoiding hidden convenience that masks missing boundary discipline.
 allow-unwrap-in-tests = false
+
+# Architecture-aligned lint posture:
+# - Solver-first and architecture-first paths should remain explicit.
+# - Any new transmutation-based bypass is treated as suspicious early.

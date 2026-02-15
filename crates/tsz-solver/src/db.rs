@@ -1398,9 +1398,6 @@ impl TypeDatabase for QueryCache<'_> {
 /// QueryCache doesn't have access to the Binder or type environment,
 /// so it cannot resolve symbol references or DefIds. This implementation
 /// returns None for all resolution operations.
-///
-/// Note: BinderTypeDatabase provides the actual TypeResolver implementation
-/// with full type binding capabilities.
 impl TypeResolver for QueryCache<'_> {
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         None

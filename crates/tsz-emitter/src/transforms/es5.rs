@@ -24,7 +24,7 @@
 //! }());
 //! ```
 
-use crate::transforms::ir::*;
+use crate::transforms::ir::{IRGeneratorCase, IRMethodName, IRNode, IRParam};
 use crate::transforms::private_fields_es5::{
     collect_private_accessors, collect_private_fields, is_private_identifier,
 };

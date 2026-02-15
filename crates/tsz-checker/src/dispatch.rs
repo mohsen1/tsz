@@ -335,16 +335,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     }
                 }
                 if let Some(this_type) = self.checker.current_this_type() {
-                    this_type
+                    self.checker.apply_flow_narrowing(idx, this_type)
                 } else if let Some(ref class_info) = self.checker.ctx.enclosing_class {
                     // Inside a class but no explicit this type on stack -
                     // return the class instance type (e.g., for constructor default params)
                     if let Some(class_node) = self.checker.ctx.arena.get(class_info.class_idx)
                         && let Some(class_data) = self.checker.ctx.arena.get_class(class_node)
                     {
-                        return self
+                        let class_instance = self
                             .checker
                             .get_class_instance_type(class_info.class_idx, class_data);
+                        return self.checker.apply_flow_narrowing(idx, class_instance);
                     }
                     TypeId::ANY
                 } else if self.checker.this_has_contextual_owner(idx).is_some() {

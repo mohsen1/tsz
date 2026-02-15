@@ -408,31 +408,36 @@ impl<'a> CheckerState<'a> {
         match query::classify_for_type_resolution(self.ctx.types, type_id) {
             query::TypeResolutionKind::Lazy(def_id) => {
                 // Resolve Lazy(DefId) types by looking up the symbol and getting its concrete type
-                // Use get_type_of_symbol instead of type_reference_symbol_type because:
-                // - type_reference_symbol_type returns Lazy types (for error message formatting)
-                // - get_type_of_symbol returns the actual cached concrete type
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                    let resolved = self.get_type_of_symbol(sym_id);
-                    // FIX: Detect identity loop by comparing DefId, not TypeId.
-                    // When get_type_of_symbol hits a circular reference, it returns a Lazy placeholder
-                    // for the same symbol. Even though the TypeId might be different (due to fresh interning),
-                    // the DefId should be the same. This detects the cycle and breaks infinite recursion.
-                    // This happens in cases like: class C { static { C.#x; } static #x = 123; }
-                    let resolved_def_id = query::lazy_def_id(self.ctx.types, resolved);
-                    if resolved_def_id == Some(def_id) {
-                        return type_id;
-                    }
-                    // Recursively resolve if still Lazy (handles Lazy chains)
-                    if query::lazy_def_id(self.ctx.types, resolved).is_some() {
-                        self.evaluate_type_with_resolution(resolved)
-                    } else {
-                        // Further evaluate compound types (IndexAccess, KeyOf, Mapped, etc.)
-                        // that need reduction. E.g., type NameType = Person["name"] resolves
-                        // to IndexAccess(Person, "name") which must be evaluated to "string".
-                        self.evaluate_type_for_assignability(resolved)
-                    }
+                // Prefer `resolve_and_insert_def_type` to ensure class instance mapping is respected
+                // and the environment contains a concrete type for the definition.
+                let resolved = if let Some(resolved) = self.resolve_and_insert_def_type(def_id) {
+                    resolved
+                } else if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
+                    self.get_type_of_symbol(sym_id)
                 } else {
                     type_id
+                };
+                if resolved == type_id {
+                    return type_id;
+                }
+
+                // FIX: Detect identity loop by comparing DefId, not TypeId.
+                // When get_type_of_symbol hits a circular reference, it returns a Lazy placeholder
+                // for the same symbol. Even though the TypeId might be different (due to fresh interning),
+                // the DefId should be the same. This detects the cycle and breaks infinite recursion.
+                // This happens in cases like: class C { static { C.#x; } static #x = 123; }
+                let resolved_def_id = query::lazy_def_id(self.ctx.types, resolved);
+                if resolved_def_id == Some(def_id) {
+                    return type_id;
+                }
+                // Recursively resolve if still Lazy (handles Lazy chains)
+                if query::lazy_def_id(self.ctx.types, resolved).is_some() {
+                    self.evaluate_type_with_resolution(resolved)
+                } else {
+                    // Further evaluate compound types (IndexAccess, KeyOf, Mapped, etc.)
+                    // that need reduction. E.g., type NameType = Person["name"] resolves
+                    // to IndexAccess(Person, "name") which must be evaluated to "string".
+                    self.evaluate_type_for_assignability(resolved)
                 }
             }
             query::TypeResolutionKind::Application => self.evaluate_application_type(type_id),
@@ -867,7 +872,23 @@ impl<'a> CheckerState<'a> {
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
         let sym_id = self.ctx.def_to_symbol_id(def_id)?;
-        let resolved = self.get_type_of_symbol(sym_id);
+        let resolved = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if symbol.flags & symbol_flags::CLASS != 0 {
+                // Keep class references in type position as instance types to avoid
+                // constructor/instance split diagnostics (e.g. `Type 'Dataset' is not
+                // assignable to type 'Dataset'` in parser harness regressions).
+                self.ctx
+                    .symbol_instance_types
+                    .get(&sym_id)
+                    .copied()
+                    .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+            } else {
+                self.get_type_of_symbol(sym_id)
+            }
+        } else {
+            self.get_type_of_symbol(sym_id)
+        };
+
         if resolved != TypeId::ERROR
             && resolved != TypeId::ANY
             && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()

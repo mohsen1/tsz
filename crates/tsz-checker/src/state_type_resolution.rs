@@ -801,6 +801,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn class_instance_type_from_symbol(&mut self, sym_id: SymbolId) -> Option<TypeId> {
+        if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+            return Some(instance_type);
+        }
         self.class_instance_type_with_params_from_symbol(sym_id)
             .map(|(instance_type, _)| instance_type)
     }
@@ -830,7 +833,13 @@ impl<'a> CheckerState<'a> {
             }
 
             let (params, updates) = self.push_type_parameters(&class.type_parameters);
+            if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
+                self.pop_type_parameters(updates);
+                return Some((instance_type, params));
+            }
+
             let instance_type = self.get_class_instance_type(decl_idx, class);
+            self.ctx.symbol_instance_types.insert(sym_id, instance_type);
             self.pop_type_parameters(updates);
             return Some((instance_type, params));
         }

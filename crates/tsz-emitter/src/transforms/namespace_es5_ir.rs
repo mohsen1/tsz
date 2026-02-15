@@ -53,7 +53,7 @@
 
 use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
 use crate::transforms::enum_es5_ir::transform_enum_to_ir;
-use crate::transforms::ir::*;
+use crate::transforms::ir::{EnumMemberValue, IRNode, IRParam, IRPropertyKey};
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
