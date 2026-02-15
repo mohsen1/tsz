@@ -594,29 +594,15 @@ impl<'a> CheckerState<'a> {
                     self.resolve_type_for_property_access_inner(resolved, visited)
                 }
             }
-            query::PropertyAccessResolutionKind::Application(app_id) => {
-                // For property access, we need to resolve type arguments to their constraints
-                // Example: Readonly<P> where P extends Props should resolve to Readonly<Props>
-                let app = self.ctx.types.type_application(app_id);
-                let base = app.base;
-                let args = &app.args;
-
-                // Recursively resolve each type argument
-                let mut resolved_args = Vec::with_capacity(args.len());
-                let mut any_changed = false;
-                for &arg in args {
-                    let resolved_arg = self.resolve_type_for_property_access_inner(arg, visited);
-                    if resolved_arg != arg {
-                        any_changed = true;
-                    }
-                    resolved_args.push(resolved_arg);
-                }
-
-                if any_changed {
-                    // Create new Application with resolved args
-                    factory.application(base, resolved_args)
+            query::PropertyAccessResolutionKind::Application(_app_id) => {
+                // For property access on Application types (e.g., Box<number>),
+                // we need to expand the Application to its concrete type.
+                // This is critical for unions like `Box<number> | Box<string>`
+                // where the solver can't resolve Lazy bases in Application types.
+                let evaluated = self.evaluate_application_type(type_id);
+                if evaluated != type_id {
+                    self.resolve_type_for_property_access_inner(evaluated, visited)
                 } else {
-                    // No changes, return original
                     type_id
                 }
             }
