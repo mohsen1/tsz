@@ -1027,6 +1027,17 @@ impl Project {
         }
     }
 
+    /// Creates an empty project using default values.
+    fn empty() -> Self {
+        Self {
+            files: FxHashMap::default(),
+            dependency_graph: DependencyGraph::new(),
+            symbol_index: SymbolIndex::new(),
+            performance: ProjectPerformance::default(),
+            strict: false,
+        }
+    }
+
     /// Get the strict mode setting for type checking.
     pub fn strict(&self) -> bool {
         self.strict
@@ -1971,5 +1982,11 @@ impl Project {
         );
 
         provider.subtypes(file.root(), position)
+    }
+}
+
+impl Default for Project {
+    fn default() -> Self {
+        Self::empty()
     }
 }
