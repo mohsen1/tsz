@@ -1981,11 +1981,12 @@ impl<'a> CheckerState<'a> {
                     let current_is_commonjs = {
                         let current_file = &self.ctx.file_name;
                         // .cts files are always CommonJS
-                        let is_cts = current_file.ends_with(".cts");
+                        let is_commonjs_file = current_file.ends_with(".cts");
                         // .mts files are always ESM
-                        let is_mts = current_file.ends_with(".mts");
+                        let is_esm_file = current_file.ends_with(".mts");
                         // For other files, check if module system will emit require() calls
-                        is_cts || (!is_mts && !self.ctx.compiler_options.module.is_es_module())
+                        is_commonjs_file
+                            || (!is_esm_file && !self.ctx.compiler_options.module.is_es_module())
                     };
 
                     if current_is_commonjs && target_is_esm && !is_type_only_import {

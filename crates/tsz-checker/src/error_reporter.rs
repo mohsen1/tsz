@@ -756,20 +756,20 @@ impl<'a> CheckerState<'a> {
                 let source_str = self.format_type_for_assignability_message(source);
                 let target_str = self.format_type_for_assignability_message(target);
                 let detail = match (source_prop.visibility, target_prop.visibility) {
-                    (tsz_solver::Visibility::Public, tsz_solver::Visibility::Private)
-                    | (tsz_solver::Visibility::Protected, tsz_solver::Visibility::Private) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
-                            &[&prop_name, &target_str, &source_str],
-                        )
-                    }
-                    (tsz_solver::Visibility::Private, tsz_solver::Visibility::Public)
-                    | (tsz_solver::Visibility::Private, tsz_solver::Visibility::Protected) => {
-                        format_message(
-                            diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
-                            &[&prop_name, &source_str, &target_str],
-                        )
-                    }
+                    (
+                        tsz_solver::Visibility::Public | tsz_solver::Visibility::Protected,
+                        tsz_solver::Visibility::Private,
+                    ) => format_message(
+                        diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                        &[&prop_name, &target_str, &source_str],
+                    ),
+                    (
+                        tsz_solver::Visibility::Private,
+                        tsz_solver::Visibility::Public | tsz_solver::Visibility::Protected,
+                    ) => format_message(
+                        diagnostic_messages::PROPERTY_IS_PRIVATE_IN_TYPE_BUT_NOT_IN_TYPE,
+                        &[&prop_name, &source_str, &target_str],
+                    ),
                     (tsz_solver::Visibility::Public, tsz_solver::Visibility::Protected) => {
                         format_message(
                             diagnostic_messages::PROPERTY_IS_PROTECTED_IN_TYPE_BUT_PUBLIC_IN_TYPE,

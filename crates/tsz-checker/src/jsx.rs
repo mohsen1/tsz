@@ -398,19 +398,19 @@ impl<'a> JsxChecker<'a> {
         let mut seen_keys: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
 
         for &attr_idx in &attrs.properties.nodes {
-            let Some(attr_node) = self.arena.get(attr_idx) else {
+            let Some(attribute_node) = self.arena.get(attr_idx) else {
                 continue;
             };
 
-            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
-                && let Some(attr) = self.arena.get_jsx_attribute(attr_node)
+            if attribute_node.kind == syntax_kind_ext::JSX_ATTRIBUTE
+                && let Some(attr) = self.arena.get_jsx_attribute(attribute_node)
                 && let Some(name) = self.get_tag_name(attr.name)
             {
                 // Check for duplicate attributes
                 if seen_keys.contains(&name) {
                     errors.push(JsxError::DuplicateAttribute {
                         name: name.clone(),
-                        pos: attr_node.pos,
+                        pos: attribute_node.pos,
                     });
                 }
                 seen_keys.insert(name);

@@ -1289,8 +1289,10 @@ impl<'a> CheckerState<'a> {
         // Overload candidates need signature-specific contextual typing.
         let force_bivariant_callbacks = matches!(
             self.ctx.arena.get(call.expression).map(|n| n.kind),
-            Some(syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
-                | Some(syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            Some(
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            )
         );
 
         if let Some(signatures) = overload_signatures.as_deref()

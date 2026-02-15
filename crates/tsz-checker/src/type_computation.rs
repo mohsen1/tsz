@@ -20,6 +20,8 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::Visibility;
 use tsz_solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
 
+const MAX_AWAIT_DEPTH: u32 = 10;
+
 // =============================================================================
 // Type Computation Methods
 // =============================================================================
@@ -2862,17 +2864,16 @@ impl<'a> CheckerState<'a> {
             && !self.ctx.binder.is_external_module()
             && self.await_expression_uses_call_like_syntax(idx)
         {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             if let Some((start, _)) = self.get_node_span(idx) {
-                let message = format_message(
-                    diagnostic_messages::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,
+                let message = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,
                     &["await"],
                 );
                 self.error_at_position(
                     start,
                     5,
                     &message,
-                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,
+                    crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION,
                 );
             }
             return TypeId::ANY;
@@ -2912,7 +2913,6 @@ impl<'a> CheckerState<'a> {
         // For example: await Promise<Promise<number>> should have type `number`
         let mut current_type = expr_type;
         let mut depth = 0;
-        const MAX_AWAIT_DEPTH: u32 = 10; // Prevent infinite loops
 
         while let Some(inner) = self.promise_like_return_type_argument(current_type) {
             current_type = inner;
