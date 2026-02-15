@@ -2485,6 +2485,11 @@ impl<'a> CheckerState<'a> {
             if self.ctx.compiler_options.module.is_commonjs() {
                 return TypeId::ANY;
             }
+            // JS files implicitly have CommonJS globals (require, exports, module, etc.)
+            // tsc never emits TS2580 for JS files — they're treated as CommonJS by default
+            if self.is_js_file() {
+                return TypeId::ANY;
+            }
             // Otherwise, emit TS2580 suggesting @types/node installation
             self.error_cannot_find_name_install_node_types(name, idx);
             return TypeId::ERROR;
