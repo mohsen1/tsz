@@ -87,7 +87,7 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Set the source text (for `ASTRef` emission)
-    pub fn set_source_text(&mut self, source_text: &'a str) {
+    pub const fn set_source_text(&mut self, source_text: &'a str) {
         self.source_text = Some(source_text);
         self.transformer.set_source_text(source_text);
     }
@@ -96,7 +96,7 @@ impl<'a> ClassES5Emitter<'a> {
     ///
     /// Note: Source maps are not currently supported in the IR-based approach.
     /// This method is kept for API compatibility.
-    pub fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
+    pub const fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
         self.source_text = Some(source_text);
         self.source_index = source_index;
         self.transformer.set_source_text(source_text);

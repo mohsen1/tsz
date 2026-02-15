@@ -2426,8 +2426,8 @@ impl<'a> Printer<'a> {
             self.write(&capture_name);
             self.write(" = this;");
             self.write_line();
-        } else if std::env::var("TSZ_LOWERING_DEBUG").is_ok() {
-            eprintln!("[emit] no top-level this capture for source {:?}", source_idx);
+        } else {
+            tracing::debug!("[emit] no top-level this capture for source {source_idx:?}");
         }
 
         // Save position for hoisted temp var declarations (assignment destructuring).

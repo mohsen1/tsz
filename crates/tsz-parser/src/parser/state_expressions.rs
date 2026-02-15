@@ -259,12 +259,15 @@ impl ParserState {
             // by `=>` are unambiguously arrow function params even with line breaks.
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 || self.is_token(SyntaxKind::OpenBraceToken)
-        } else if self.is_token(SyntaxKind::ColonToken) {
+        } else if self.is_token(SyntaxKind::ColonToken)
+            && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) == 0
+        {
             // When we see `:` after `)`, it could be either:
             // 1. A return type annotation for an arrow function: (x): T => body
             // 2. The else separator of a conditional: a ? (x) : y
-            // We must look ahead past the type to check for `=>` to distinguish these cases.
-            // Even in a conditional's true branch, arrow functions are valid: a ? (x): T => x : y
+            // In a conditional's true branch, `:` belongs to the ternary, so we must
+            // not try to parse it as a return type annotation (matching tsc behavior of
+            // disallowReturnTypeInArrowFunction inside conditionals).
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();
 

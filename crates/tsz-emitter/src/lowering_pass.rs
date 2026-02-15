@@ -143,7 +143,7 @@ impl<'a> LoweringPass<'a> {
         self.maybe_wrap_module(source_file);
         self.transforms.mark_helpers_populated();
 
-        if std::env::var("TSZ_LOWERING_DEBUG").is_ok() {
+        if tracing::enabled!(tracing::Level::DEBUG) {
             let arrow_captures = self
                 .transforms
                 .iter()
@@ -157,14 +157,19 @@ impl<'a> LoweringPass<'a> {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            eprintln!(
+            tracing::debug!(
                 "[lowering] source={} arrow directives: {:?}",
-                source_file.0, arrow_captures
+                source_file.0,
+                arrow_captures
             );
             if let Some(capture_name) = self.transforms.this_capture_name(source_file) {
-                eprintln!("[lowering] source {} this capture: {}", source_file.0, capture_name);
+                tracing::debug!(
+                    "[lowering] source {} this capture: {}",
+                    source_file.0,
+                    capture_name
+                );
             } else {
-                eprintln!("[lowering] source {} no this capture scope", source_file.0);
+                tracing::debug!("[lowering] source {} no this capture scope", source_file.0);
             }
         }
 
@@ -1522,14 +1527,12 @@ impl<'a> LoweringPass<'a> {
             let captures_this = contains_this_reference(self.arena, idx) || arrow.is_async;
             let captures_arguments = contains_arguments_reference(self.arena, idx);
 
-            if std::env::var("TSZ_LOWERING_DEBUG").is_ok() {
-                eprintln!(
-                    "[lowering][arrow] idx={} captures_this={} is_async={}",
-                    idx.0,
-                    captures_this,
-                    arrow.is_async
-                );
-            }
+            tracing::debug!(
+                "[lowering][arrow] idx={} captures_this={} is_async={}",
+                idx.0,
+                captures_this,
+                arrow.is_async
+            );
 
             // For static members, use class alias capture instead of IIFE
             let class_alias = if self.in_static_context && captures_this {
