@@ -374,15 +374,14 @@ impl<'a> Printer<'a> {
         }
 
         // Emit remaining properties as assignments
-        for i in first_computed_idx..elements.len() {
-            let prop_idx = elements[i];
+        for prop_idx in elements.iter().skip(first_computed_idx) {
             if single_computed_only && source_is_multiline {
                 self.write(",");
                 self.write_line();
             } else {
                 self.write(", ");
             }
-            self.emit_property_assignment_es5(prop_idx, &temp_var);
+            self.emit_property_assignment_es5(*prop_idx, &temp_var);
         }
 
         // Return the temp variable

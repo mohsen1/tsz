@@ -122,10 +122,11 @@ impl<'a> IRPrinter<'a> {
             return None;
         }
         let mut trailing = None;
-        for i in start..end {
-            if bytes[i] == b'}'
+        for (offset, &byte) in bytes[start..end].iter().enumerate() {
+            if byte == b'}'
                 && let Some(comment) =
-                    crate::emitter::get_trailing_comment_ranges(source_text, i + 1).first()
+                    crate::emitter::get_trailing_comment_ranges(source_text, start + offset + 1)
+                        .first()
             {
                 trailing =
                     Some(source_text[comment.pos as usize..comment.end as usize].to_string());

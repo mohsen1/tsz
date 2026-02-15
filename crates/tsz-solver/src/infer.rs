@@ -2754,8 +2754,11 @@ impl<'a> InferenceContext<'a> {
             };
             let rest_elem = self.rest_element_type(rest_param.type_id);
 
-            for i in target_fixed..source_fixed {
-                let s_param = &source_params[i];
+            for s_param in source_params
+                .iter()
+                .skip(target_fixed)
+                .take(source_fixed - target_fixed)
+            {
                 if !self.are_parameters_compatible(s_param.type_id, rest_elem, bivariant) {
                     return false;
                 }
