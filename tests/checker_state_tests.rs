@@ -29084,6 +29084,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             always_strict: true,
             resolve_json_module: false,
             check_js: false,
+            no_resolve: false,
         },
     );
     assert!(

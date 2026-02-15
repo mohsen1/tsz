@@ -1778,41 +1778,44 @@ fn read_source_files(
                 return Err(anyhow::anyhow!("failed to read {}: {}", path.display(), e));
             }
         };
-        let specifiers = if is_binary {
-            vec![] // Don't try to parse module specifiers from binary files
+        let (specifiers, type_refs) = if is_binary {
+            (vec![], vec![])
         } else {
-            collect_module_specifiers_from_text(&path, &text)
+            (
+                collect_module_specifiers_from_text(&path, &text),
+                tsz::checker::triple_slash_validator::extract_reference_types(&text),
+            )
         };
-
-        // Collect /// <reference types="..." /> directives
-        let type_refs = if is_binary {
+        let reference_paths = if is_binary || options.no_resolve {
             vec![]
         } else {
-            tsz::checker::triple_slash_validator::extract_reference_types(&text)
+            tsz::checker::triple_slash_validator::extract_reference_paths(&text)
         };
 
         sources.insert(path.clone(), (Some(text), is_binary));
         let entry = dependencies.entry(path.clone()).or_default();
 
-        for specifier in specifiers {
-            if let Some(resolved) = resolve_module_specifier(
-                &path,
-                &specifier,
-                options,
-                base_dir,
-                &mut resolution_cache,
-                &seen,
-            ) {
-                let canonical = canonicalize_or_owned(&resolved);
-                entry.insert(canonical.clone());
-                if seen.insert(canonical.clone()) {
-                    pending.push_back(canonical);
+        if !options.no_resolve {
+            for specifier in specifiers {
+                if let Some(resolved) = resolve_module_specifier(
+                    &path,
+                    &specifier,
+                    options,
+                    base_dir,
+                    &mut resolution_cache,
+                    &seen,
+                ) {
+                    let canonical = canonicalize_or_owned(&resolved);
+                    entry.insert(canonical.clone());
+                    if seen.insert(canonical.clone()) {
+                        pending.push_back(canonical);
+                    }
                 }
             }
         }
 
         // Resolve /// <reference types="..." /> directives
-        if !type_refs.is_empty() {
+        if !type_refs.is_empty() && !options.no_resolve {
             let type_roots = options
                 .type_roots
                 .clone()
@@ -1851,6 +1854,37 @@ fn read_source_files(
                     if seen.insert(canonical.clone()) {
                         pending.push_back(canonical);
                     }
+                }
+            }
+        }
+
+        // Resolve /// <reference path="..." /> directives
+        if !reference_paths.is_empty() {
+            let base_dir = path.parent().unwrap_or_else(|| Path::new(""));
+            for (reference_path, _line_num) in reference_paths {
+                if reference_path.is_empty() {
+                    continue;
+                }
+                let mut candidates = Vec::new();
+                let direct_reference = base_dir.join(&reference_path);
+                candidates.push(direct_reference);
+                if !reference_path.contains('.') {
+                    for ext in [".ts", ".tsx", ".d.ts"] {
+                        candidates.push(base_dir.join(format!("{reference_path}{ext}")));
+                    }
+                }
+
+                let Some(resolved_reference) = candidates
+                    .iter()
+                    .filter(|candidate| candidate.is_file())
+                    .next()
+                    .map(|candidate| canonicalize_or_owned(candidate))
+                else {
+                    continue;
+                };
+                entry.insert(resolved_reference.clone());
+                if seen.insert(resolved_reference.clone()) {
+                    pending.push_back(resolved_reference);
                 }
             }
         }
@@ -3567,6 +3601,10 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.no_emit {
         options.no_emit = true;
+    }
+    if args.no_resolve {
+        options.no_resolve = true;
+        options.checker.no_resolve = true;
     }
     if args.no_check {
         options.no_check = true;

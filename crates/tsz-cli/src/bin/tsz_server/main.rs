@@ -367,6 +367,8 @@ struct CheckOptions {
     #[serde(default)]
     experimental_decorators: bool,
     #[serde(default)]
+    no_resolve: bool,
+    #[serde(default)]
     check_js: bool,
     #[serde(default)]
     resolve_json_module: bool,
@@ -4416,6 +4418,7 @@ impl Server {
             always_strict: options.always_strict.unwrap_or(options.strict),
             resolve_json_module: options.resolve_json_module,
             check_js: options.check_js,
+            no_resolve: options.no_resolve,
         }
     }
 }

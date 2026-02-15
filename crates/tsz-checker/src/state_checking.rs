@@ -167,7 +167,9 @@ impl<'a> CheckerState<'a> {
             self.check_missing_global_types();
 
             // Check triple-slash reference directives (TS6053)
-            self.check_triple_slash_references(&sf.file_name, &sf.text);
+            if !self.ctx.compiler_options.no_resolve {
+                self.check_triple_slash_references(&sf.file_name, &sf.text);
+            }
 
             // Check for duplicate AMD module name assignments (TS2458)
             self.check_amd_module_names(&sf.text);
@@ -1389,7 +1391,10 @@ impl<'a> CheckerState<'a> {
         let target_type = if is_for_of
             && let Some(init_node) = self.ctx.arena.get(initializer)
             && init_node.kind == SyntaxKind::Identifier as u16
-            && let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, initializer)
+            && let Some(sym_id) = self
+                .ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, initializer)
         {
             // For `for (x of y)` with pre-declared identifier `x`, compare against
             // the declared type of `x` (not the current flow-narrowed type).
@@ -4946,50 +4951,28 @@ impl<'a> CheckerState<'a> {
 
         let has_virtual_reference = |reference_path: &str| {
             let base = source_path.parent().unwrap_or_else(|| Path::new(""));
-            let mut candidates = Vec::new();
-            candidates.push(base.join(reference_path));
+            if validate_reference_path(source_path, reference_path) {
+                return true;
+            }
+
+            let direct_candidate = base.join(reference_path);
+            if known_files.contains(direct_candidate.to_string_lossy().as_ref()) {
+                return true;
+            }
+
             if !reference_path.contains('.') {
                 for ext in [".ts", ".tsx", ".d.ts"] {
-                    candidates.push(base.join(format!("{}{}", reference_path, ext)));
+                    let candidate = base.join(format!("{}{}", reference_path, ext));
+                    if known_files.contains(candidate.to_string_lossy().as_ref()) {
+                        return true;
+                    }
                 }
             }
-            let reference_stem = Path::new(reference_path)
-                .file_stem()
-                .and_then(|stem| stem.to_str());
-            candidates.iter().any(|candidate| {
-                let candidate_str = candidate.to_string_lossy();
-                if known_files.contains(candidate_str.as_ref()) {
-                    return true;
-                }
-                if known_files
-                    .iter()
-                    .any(|known| known.ends_with(candidate_str.as_ref()))
-                {
-                    return true;
-                }
-                let candidate_file = Path::new(candidate_str.as_ref())
-                    .file_name()
-                    .and_then(|name| name.to_str());
-                if let Some(candidate_file) = candidate_file {
-                    return known_files.iter().any(|known| {
-                        Path::new(known).file_name().and_then(|name| name.to_str())
-                            == Some(candidate_file)
-                    });
-                }
-                if let Some(reference_stem) = reference_stem {
-                    return known_files.iter().any(|known| {
-                        Path::new(known).file_stem().and_then(|stem| stem.to_str())
-                            == Some(reference_stem)
-                    });
-                }
-                false
-            })
+            false
         };
 
         for (reference_path, line_num) in references {
-            if !has_virtual_reference(&reference_path)
-                && !validate_reference_path(source_path, &reference_path)
-            {
+            if !has_virtual_reference(&reference_path) {
                 // Calculate the position of the error (start of the line)
                 let mut pos = 0u32;
                 for (idx, _) in source_text.lines().enumerate() {

@@ -60,6 +60,8 @@ pub struct TsCompilerOptions {
     pub allow_js: Option<bool>,
     #[serde(default)]
     pub check_js: Option<bool>,
+    #[serde(default)]
+    pub no_resolve: Option<bool>,
 }
 
 impl TsCompilerOptions {
@@ -94,6 +96,7 @@ impl TsCompilerOptions {
             always_strict: strict,
             resolve_json_module: false,
             check_js: self.check_js.unwrap_or(false),
+            no_resolve: self.no_resolve.unwrap_or(false),
         }
     }
 }
