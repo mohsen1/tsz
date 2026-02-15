@@ -2822,7 +2822,9 @@ impl<'a> CheckerState<'a> {
                         // but use the parameter type annotation for the property type
                         self.get_type_of_function(elem_idx);
 
-                        // Extract setter write type from first parameter
+                        // Extract setter write type from first parameter.
+                        // When no type annotation, fall back to the paired getter's
+                        // return type (mirroring tsc's inference behavior).
                         accessor
                             .parameters
                             .nodes
@@ -2834,6 +2836,12 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     Some(self.get_type_from_type_node(param.type_annotation))
                                 }
+                            })
+                            .or_else(|| {
+                                // No annotation — infer from paired getter's type
+                                let setter_name = self.get_property_name(accessor.name)?;
+                                let name_atom = self.ctx.types.intern_string(&setter_name);
+                                properties.get(&name_atom).map(|p| p.type_id)
                             })
                             .unwrap_or(TypeId::ANY)
                     };
@@ -2914,19 +2922,44 @@ impl<'a> CheckerState<'a> {
                         setter_names.insert(name_atom);
                     }
 
-                    properties.insert(
-                        name_atom,
-                        PropertyInfo {
-                            name: name_atom,
-                            type_id: accessor_type,
-                            write_type: accessor_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                        },
-                    );
+                    // Merge getter/setter into a single property with separate
+                    // read (type_id) and write (write_type) types.
+                    if let Some(existing) = properties.get(&name_atom) {
+                        let (read_type, write_type) = if is_getter {
+                            // Getter arriving after setter
+                            (accessor_type, existing.write_type)
+                        } else {
+                            // Setter arriving after getter
+                            (existing.type_id, accessor_type)
+                        };
+                        properties.insert(
+                            name_atom,
+                            PropertyInfo {
+                                name: name_atom,
+                                type_id: read_type,
+                                write_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            },
+                        );
+                    } else {
+                        properties.insert(
+                            name_atom,
+                            PropertyInfo {
+                                name: name_atom,
+                                type_id: accessor_type,
+                                write_type: accessor_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                            },
+                        );
+                    }
                 } else {
                     // Computed accessor name - still type-check the expression and body
                     self.check_computed_property_name(accessor.name);

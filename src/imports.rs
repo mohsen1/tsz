@@ -112,7 +112,7 @@ pub struct DynamicImport {
     pub end: u32,
 }
 
-/// Information about a require() call
+/// Information about a `require()` call
 #[derive(Debug, Clone)]
 pub struct RequireCall {
     /// The module specifier (if statically known)
@@ -280,7 +280,7 @@ pub struct ImportStats {
     pub total_modules: usize,
 }
 
-/// Builder for creating ImportedBinding
+/// Builder for creating `ImportedBinding`
 pub struct ImportedBindingBuilder {
     local_name: String,
     imported_name: String,
