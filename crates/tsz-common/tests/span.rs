@@ -132,7 +132,7 @@ fn test_span_dummy() {
 #[test]
 fn test_span_display() {
     let span = Span::new(10, 20);
-    assert_eq!(format!("{}", span), "10..20");
+    assert_eq!(format!("{span}"), "10..20");
 }
 
 #[test]

@@ -3,7 +3,9 @@
 //! Implements Source Map v3 specification for mapping generated JavaScript
 //! back to original TypeScript source.
 //!
-//! Format: https://sourcemaps.info/spec.html
+//! Format: <https://sourcemaps.info/spec.html>
+
+use std::fmt::Write;
 
 use memchr;
 use serde::Serialize;
@@ -58,6 +60,7 @@ pub struct SourceMapGenerator {
 }
 
 impl SourceMapGenerator {
+    #[must_use]
     pub fn new(file: String) -> Self {
         SourceMapGenerator {
             file,
@@ -80,30 +83,33 @@ impl SourceMapGenerator {
     }
 
     /// Add a source file
+    #[must_use]
     pub fn add_source(&mut self, source: String) -> u32 {
-        let index = self.sources.len() as u32;
+        let index = u32::try_from(self.sources.len()).unwrap_or(u32::MAX);
         self.sources.push(source);
         self.sources_content.push(None);
         index
     }
 
     /// Add a source file with content
+    #[must_use]
     pub fn add_source_with_content(&mut self, source: String, content: String) -> u32 {
-        let index = self.sources.len() as u32;
+        let index = u32::try_from(self.sources.len()).unwrap_or(u32::MAX);
         self.sources.push(source);
         self.sources_content.push(Some(content));
         index
     }
 
     /// Add a name to the names array
+    #[must_use]
     pub fn add_name(&mut self, name: String) -> u32 {
         // Check if name already exists
         for (i, n) in self.names.iter().enumerate() {
             if n == &name {
-                return i as u32;
+                return u32::try_from(i).unwrap_or(u32::MAX);
             }
         }
-        let index = self.names.len() as u32;
+        let index = u32::try_from(self.names.len()).unwrap_or(u32::MAX);
         self.names.push(name);
         index
     }
@@ -162,10 +168,10 @@ impl SourceMapGenerator {
     pub fn generate(&mut self) -> SourceMap {
         // Sort mappings by generated position
         self.mappings.sort_by(|a, b| {
-            if a.generated_line != b.generated_line {
-                a.generated_line.cmp(&b.generated_line)
-            } else {
+            if a.generated_line == b.generated_line {
                 a.generated_column.cmp(&b.generated_column)
+            } else {
+                a.generated_line.cmp(&b.generated_line)
             }
         });
 
@@ -173,7 +179,7 @@ impl SourceMapGenerator {
         let mappings_str = self.encode_mappings();
 
         // Build sources content if any are present
-        let sources_content = if self.sources_content.iter().any(|c| c.is_some()) {
+        let sources_content = if self.sources_content.iter().any(Option::is_some) {
             Some(
                 self.sources_content
                     .iter()
@@ -196,12 +202,14 @@ impl SourceMapGenerator {
     }
 
     /// Generate source map as JSON string
+    #[must_use]
     pub fn generate_json(&mut self) -> String {
         let map = self.generate();
         serde_json::to_string(&map).unwrap_or_default()
     }
 
-    /// Alias for generate_json (compatibility)
+    /// Alias for `generate_json` (compatibility)
+    #[must_use]
     pub fn to_json(&mut self) -> String {
         self.generate_json()
     }
@@ -210,13 +218,11 @@ impl SourceMapGenerator {
     pub fn generate_inline(&mut self) -> String {
         let json = self.generate_json();
         let base64 = base64_encode(json.as_bytes());
-        format!(
-            "//# sourceMappingURL=data:application/json;base64,{}",
-            base64
-        )
+        format!("//# sourceMappingURL=data:application/json;base64,{base64}")
     }
 
-    /// Alias for generate_inline (compatibility)
+    /// Alias for `generate_inline` (compatibility)
+    #[must_use]
     pub fn to_inline_comment(&mut self) -> String {
         self.generate_inline()
     }
@@ -283,28 +289,28 @@ impl SourceMapGenerator {
         let mut segment = String::with_capacity(16);
 
         // Generated column (relative to previous) - using zero-allocation encode_to
-        let gen_col = mapping.generated_column as i32;
+        let gen_col = i32::try_from(mapping.generated_column).unwrap_or(i32::MAX);
         vlq::encode_to(gen_col - self.prev_generated_column, &mut segment);
         self.prev_generated_column = gen_col;
 
         // Source index (relative)
-        let src_idx = mapping.source_index as i32;
+        let src_idx = i32::try_from(mapping.source_index).unwrap_or(i32::MAX);
         vlq::encode_to(src_idx - self.prev_source_index, &mut segment);
         self.prev_source_index = src_idx;
 
         // Original line (relative)
-        let orig_line = mapping.original_line as i32;
+        let orig_line = i32::try_from(mapping.original_line).unwrap_or(i32::MAX);
         vlq::encode_to(orig_line - self.prev_original_line, &mut segment);
         self.prev_original_line = orig_line;
 
         // Original column (relative)
-        let orig_col = mapping.original_column as i32;
+        let orig_col = i32::try_from(mapping.original_column).unwrap_or(i32::MAX);
         vlq::encode_to(orig_col - self.prev_original_column, &mut segment);
         self.prev_original_column = orig_col;
 
         // Name index (relative, optional)
         if let Some(name_idx) = mapping.name_index {
-            let name_idx = name_idx as i32;
+            let name_idx = i32::try_from(name_idx).unwrap_or(i32::MAX);
             vlq::encode_to(name_idx - self.prev_name_index, &mut segment);
             self.prev_name_index = name_idx;
         }
@@ -324,6 +330,7 @@ pub mod vlq {
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     /// Encode a signed integer as VLQ (allocates String)
+    #[must_use]
     pub fn encode(value: i32) -> String {
         let mut result = String::with_capacity(8);
         encode_to(value, &mut result);
@@ -331,7 +338,7 @@ pub mod vlq {
     }
 
     /// Encode a signed integer as VLQ directly into buffer (zero allocation)
-    /// This is 3-5x faster than encode() for source map generation
+    /// This is 3-5x faster than `encode()` for source map generation
     #[inline]
     pub fn encode_to(value: i32, buf: &mut String) {
         // Convert to unsigned with sign in LSB
@@ -350,7 +357,8 @@ pub mod vlq {
             }
 
             // Direct push - no allocation per character
-            buf.push(BASE64_CHARS[digit as usize] as char);
+            let digit_idx = usize::try_from(digit).unwrap_or(0);
+            buf.push(BASE64_CHARS[digit_idx].into());
 
             if vlq == 0 {
                 break;
@@ -358,7 +366,8 @@ pub mod vlq {
         }
     }
 
-    /// Decode a VLQ encoded string, returns (value, bytes_consumed)
+    /// Decode a VLQ encoded string, returns (value, `bytes_consumed`)
+    #[must_use]
     pub fn decode(s: &str) -> Option<(i32, usize)> {
         let bytes = s.as_bytes();
         let mut result: i32 = 0;
@@ -367,7 +376,7 @@ pub mod vlq {
 
         for &byte in bytes {
             let char_idx = BASE64_CHARS.iter().position(|&c| c == byte)?;
-            let digit = char_idx as i32;
+            let digit = i32::try_from(char_idx).unwrap_or(i32::MAX);
 
             result |= (digit & VLQ_BASE_MASK) << shift;
             consumed += 1;
@@ -395,6 +404,7 @@ const BASE64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst
 /// SIMD-optimized JSON string escaping
 /// Uses memchr to find escape-worthy bytes in bulk, then copies safe chunks via memcpy.
 /// 5-10x faster than char-by-char iteration for typical strings.
+#[must_use]
 pub fn escape_json(s: &str) -> String {
     let bytes = s.as_bytes();
 
@@ -423,7 +433,7 @@ pub fn escape_json(s: &str) -> String {
                 if i > start {
                     result.push_str(&s[start..i]);
                 }
-                result.push_str(&format!("\\u{:04x}", byte));
+                let _ = write!(result, "\\u{byte:04x}");
                 start = i + 1;
                 continue;
             }
@@ -450,6 +460,7 @@ pub fn escape_json(s: &str) -> String {
 
 /// Escape a JavaScript string literal (single or double quoted)
 /// SIMD-optimized with memchr for bulk scanning
+#[must_use]
 pub fn escape_js_string(s: &str, quote: char) -> String {
     let bytes = s.as_bytes();
     let quote_byte = quote as u8;
@@ -502,14 +513,15 @@ pub fn escape_js_string(s: &str, quote: char) -> String {
 }
 
 /// Base64 encode a byte slice
+#[must_use]
 pub fn base64_encode(input: &[u8]) -> String {
     let bytes = input;
     let mut result = String::with_capacity(bytes.len().div_ceil(3) * 4);
 
     for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(chunk.get(1).copied().unwrap_or(0));
+        let b2 = u32::from(chunk.get(2).copied().unwrap_or(0));
 
         let n = (b0 << 16) | (b1 << 8) | b2;
 

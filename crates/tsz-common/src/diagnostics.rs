@@ -48,6 +48,7 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     /// Create a new error diagnostic.
+    #[must_use]
     pub fn error(file: String, start: u32, length: u32, message: String, code: u32) -> Self {
         Diagnostic {
             file,
@@ -61,6 +62,7 @@ impl Diagnostic {
     }
 
     /// Add related information to this diagnostic.
+    #[must_use]
     pub fn with_related(mut self, file: String, start: u32, length: u32, message: String) -> Self {
         self.related_information.push(DiagnosticRelatedInformation {
             file,
@@ -75,10 +77,11 @@ impl Diagnostic {
 }
 
 /// Format a diagnostic message by replacing {0}, {1}, etc. with arguments.
+#[must_use]
 pub fn format_message(template: &str, args: &[&str]) -> String {
     let mut result = template.to_string();
     for (i, arg) in args.iter().enumerate() {
-        result = result.replace(&format!("{{{}}}", i), arg);
+        result = result.replace(&format!("{{{i}}}"), arg);
     }
     result
 }
@@ -93,8 +96,9 @@ pub struct DiagnosticMessage {
 
 /// Look up a diagnostic message definition by code.
 ///
-/// Returns the DiagnosticMessage with template string containing `{0}`, `{1}`, etc. placeholders.
+/// Returns the `DiagnosticMessage` with template string containing `{0}`, `{1}`, etc. placeholders.
 /// Use `format_message()` to fill in the placeholders.
+#[must_use]
 pub fn get_diagnostic_message(code: u32) -> Option<&'static DiagnosticMessage> {
     DIAGNOSTIC_MESSAGES.iter().find(|m| m.code == code)
 }
@@ -103,11 +107,13 @@ pub fn get_diagnostic_message(code: u32) -> Option<&'static DiagnosticMessage> {
 ///
 /// Returns the template string with `{0}`, `{1}`, etc. placeholders.
 /// Use `format_message()` to fill in the placeholders.
+#[must_use]
 pub fn get_message_template(code: u32) -> Option<&'static str> {
     get_diagnostic_message(code).map(|m| m.message)
 }
 
 /// Get the category for a diagnostic code.
+#[must_use]
 pub fn get_diagnostic_category(code: u32) -> Option<DiagnosticCategory> {
     get_diagnostic_message(code).map(|m| m.category)
 }
@@ -10757,7 +10763,7 @@ pub static DIAGNOSTIC_MESSAGES: &[DiagnosticMessage] = &[
 ];
 
 /// Diagnostic message templates matching TypeScript exactly.
-/// Use format_message() to fill in placeholders.
+/// Use `format_message()` to fill in placeholders.
 pub mod diagnostic_messages {
     pub const UNTERMINATED_STRING_LITERAL: &str = "Unterminated string literal.";
     pub const IDENTIFIER_EXPECTED: &str = "Identifier expected.";

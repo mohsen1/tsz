@@ -13,7 +13,7 @@ fn test_vlq_encode() {
 #[test]
 fn test_simple_source_map() {
     let mut generator = SourceMapGenerator::new("output.js".to_string());
-    generator.add_source("input.ts".to_string());
+    let _ = generator.add_source("input.ts".to_string());
 
     // Add some mappings
     generator.add_simple_mapping(0, 0, 0, 0, 0); // Line 1, col 1
@@ -31,7 +31,7 @@ fn test_simple_source_map() {
 #[test]
 fn test_inline_source_map() {
     let mut generator = SourceMapGenerator::new("output.js".to_string());
-    generator.add_source("input.ts".to_string());
+    let _ = generator.add_source("input.ts".to_string());
     generator.add_simple_mapping(0, 0, 0, 0, 0);
 
     let inline = generator.generate_inline();
@@ -42,7 +42,7 @@ fn test_inline_source_map() {
 #[test]
 fn test_with_names() {
     let mut generator = SourceMapGenerator::new("output.js".to_string());
-    generator.add_source("input.ts".to_string());
+    let _ = generator.add_source("input.ts".to_string());
 
     let name_idx = generator.add_name("myFunction".to_string());
     generator.add_mapping(0, 0, 0, 0, 0, Some(name_idx));
@@ -55,7 +55,7 @@ fn test_with_names() {
 #[test]
 fn test_with_source_content() {
     let mut generator = SourceMapGenerator::new("output.js".to_string());
-    generator.add_source_with_content("input.ts".to_string(), "const x = 1;".to_string());
+    let _ = generator.add_source_with_content("input.ts".to_string(), "const x = 1;".to_string());
 
     let map = generator.generate();
 

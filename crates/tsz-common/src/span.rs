@@ -24,12 +24,14 @@ pub struct Span {
 impl Span {
     /// Create a new span from start and end offsets.
     #[inline]
+    #[must_use]
     pub const fn new(start: u32, end: u32) -> Self {
         Span { start, end }
     }
 
     /// Create an empty span at the given position.
     #[inline]
+    #[must_use]
     pub const fn at(pos: u32) -> Self {
         Span {
             start: pos,
@@ -39,6 +41,7 @@ impl Span {
 
     /// Create a span from start position and length.
     #[inline]
+    #[must_use]
     pub const fn from_len(start: u32, len: u32) -> Self {
         Span {
             start,
@@ -48,6 +51,7 @@ impl Span {
 
     /// Create a dummy/invalid span (used for synthetic nodes).
     #[inline]
+    #[must_use]
     pub const fn dummy() -> Self {
         Span {
             start: u32::MAX,
@@ -57,42 +61,49 @@ impl Span {
 
     /// Check if this is a dummy/invalid span.
     #[inline]
+    #[must_use]
     pub const fn is_dummy(&self) -> bool {
         self.start == u32::MAX && self.end == u32::MAX
     }
 
     /// Get the length of this span in bytes.
     #[inline]
+    #[must_use]
     pub const fn len(&self) -> u32 {
         self.end.saturating_sub(self.start)
     }
 
     /// Check if this span is empty.
     #[inline]
+    #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.start == self.end
     }
 
     /// Check if this span contains a byte offset.
     #[inline]
+    #[must_use]
     pub const fn contains(&self, offset: u32) -> bool {
         offset >= self.start && offset < self.end
     }
 
     /// Check if this span contains another span.
     #[inline]
+    #[must_use]
     pub const fn contains_span(&self, other: Span) -> bool {
         other.start >= self.start && other.end <= self.end
     }
 
     /// Check if this span overlaps with another span.
     #[inline]
+    #[must_use]
     pub const fn overlaps(&self, other: Span) -> bool {
         self.start < other.end && other.start < self.end
     }
 
     /// Merge two spans to create a span covering both.
     #[inline]
+    #[must_use]
     pub const fn merge(&self, other: Span) -> Span {
         let start = if self.start < other.start {
             self.start
@@ -109,6 +120,7 @@ impl Span {
 
     /// Get the intersection of two spans, if they overlap.
     #[inline]
+    #[must_use]
     pub fn intersect(&self, other: Span) -> Option<Span> {
         let start = self.start.max(other.start);
         let end = self.end.min(other.end);
@@ -121,6 +133,7 @@ impl Span {
 
     /// Shrink this span by removing bytes from the start.
     #[inline]
+    #[must_use]
     pub const fn shrink_start(&self, amount: u32) -> Span {
         let new_start = self.start + amount;
         Span {
@@ -135,6 +148,7 @@ impl Span {
 
     /// Shrink this span by removing bytes from the end.
     #[inline]
+    #[must_use]
     pub const fn shrink_end(&self, amount: u32) -> Span {
         let new_end = self.end.saturating_sub(amount);
         Span {
@@ -149,6 +163,7 @@ impl Span {
 
     /// Create a span for just the first byte.
     #[inline]
+    #[must_use]
     pub const fn first_byte(&self) -> Span {
         Span {
             start: self.start,
@@ -162,6 +177,7 @@ impl Span {
 
     /// Create a span for just the last byte.
     #[inline]
+    #[must_use]
     pub const fn last_byte(&self) -> Span {
         Span {
             start: if self.end > self.start {
@@ -175,6 +191,7 @@ impl Span {
 
     /// Extract the slice of text covered by this span.
     #[inline]
+    #[must_use]
     pub fn slice<'a>(&self, text: &'a str) -> &'a str {
         let start = self.start as usize;
         let end = self.end as usize;
@@ -183,6 +200,7 @@ impl Span {
 
     /// Extract the slice of text covered by this span, with safety checks.
     #[inline]
+    #[must_use]
     pub fn slice_safe<'a>(&self, text: &'a str) -> &'a str {
         let start = (self.start as usize).min(text.len());
         let end = (self.end as usize).min(text.len());
@@ -268,18 +286,21 @@ pub struct SpanBuilder {
 impl SpanBuilder {
     /// Start building a span at the given position.
     #[inline]
+    #[must_use]
     pub const fn start(pos: u32) -> Self {
         SpanBuilder { start: pos }
     }
 
     /// Finish building the span at the given position.
     #[inline]
+    #[must_use]
     pub const fn end(&self, pos: u32) -> Span {
         Span::new(self.start, pos)
     }
 
     /// Get the start position.
     #[inline]
+    #[must_use]
     pub const fn start_pos(&self) -> u32 {
         self.start
     }
@@ -301,34 +322,38 @@ pub struct ByteSpan<'a> {
 }
 
 impl<'a> ByteSpan<'a> {
-    /// Create a new ByteSpan.
+    /// Create a new `ByteSpan`.
+    #[must_use]
     pub fn new(text: &'a str, span: Span) -> Self {
         ByteSpan { text, span }
     }
 
     /// Get the slice of text covered by this span.
+    #[must_use]
     pub fn as_str(&self) -> &'a str {
         self.span.slice(self.text)
     }
 
     /// Get the length in bytes.
+    #[must_use]
     pub fn len(&self) -> u32 {
         self.span.len()
     }
 
     /// Check if empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.span.is_empty()
     }
 }
 
-impl<'a> Spanned for ByteSpan<'a> {
+impl Spanned for ByteSpan<'_> {
     fn span(&self) -> Span {
         self.span
     }
 }
 
-impl<'a> std::fmt::Display for ByteSpan<'a> {
+impl std::fmt::Display for ByteSpan<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
     }
