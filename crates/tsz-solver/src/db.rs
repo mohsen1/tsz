@@ -462,6 +462,26 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         crate::evaluate::evaluate_mapped(self.as_type_database(), mapped)
     }
 
+    /// Look up a shared cache entry for evaluated generic applications.
+    fn lookup_application_eval_cache(
+        &self,
+        _def_id: DefId,
+        _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Store an evaluated generic application result in the shared cache.
+    fn insert_application_eval_cache(
+        &self,
+        _def_id: DefId,
+        _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+        _result: TypeId,
+    ) {
+    }
+
     fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
         crate::evaluate::evaluate_keyof(self.as_type_database(), operand)
     }
@@ -845,6 +865,7 @@ impl QueryDatabase for TypeInterner {
 }
 
 type EvalCacheKey = (TypeId, bool);
+type ApplicationEvalCacheKey = (DefId, Vec<TypeId>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool);
 
@@ -868,6 +889,7 @@ pub struct RelationCacheStats {
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
     eval_cache: RwLock<FxHashMap<EvalCacheKey, TypeId>>,
+    application_eval_cache: RwLock<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     element_access_cache: RwLock<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RwLock<FxHashMap<TypeId, Vec<PropertyInfo>>>,
     subtype_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
@@ -894,6 +916,7 @@ impl<'a> QueryCache<'a> {
         QueryCache {
             interner,
             eval_cache: RwLock::new(FxHashMap::default()),
+            application_eval_cache: RwLock::new(FxHashMap::default()),
             element_access_cache: RwLock::new(FxHashMap::default()),
             object_spread_properties_cache: RwLock::new(FxHashMap::default()),
             subtype_cache: RwLock::new(FxHashMap::default()),
@@ -916,6 +939,10 @@ impl<'a> QueryCache<'a> {
             Err(e) => e.into_inner().clear(),
         }
         match self.element_access_cache.write() {
+            Ok(mut cache) => cache.clear(),
+            Err(e) => e.into_inner().clear(),
+        }
+        match self.application_eval_cache.write() {
             Ok(mut cache) => cache.clear(),
             Err(e) => e.into_inner().clear(),
         }
@@ -1042,6 +1069,24 @@ impl<'a> QueryCache<'a> {
 
     fn insert_element_access_cache(&self, key: ElementAccessTypeCacheKey, result: TypeId) {
         match self.element_access_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(key, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, result);
+            }
+        }
+    }
+
+    fn check_application_eval_cache(&self, key: ApplicationEvalCacheKey) -> Option<TypeId> {
+        match self.application_eval_cache.read() {
+            Ok(cache) => cache.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
+        }
+    }
+
+    fn insert_application_eval_cache(&self, key: ApplicationEvalCacheKey, result: TypeId) {
+        match self.application_eval_cache.write() {
             Ok(mut cache) => {
                 cache.insert(key, result);
             }
@@ -1441,6 +1486,7 @@ impl QueryDatabase for QueryCache<'_> {
 
         let mut evaluator = crate::evaluate::TypeEvaluator::new(self.as_type_database());
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator = evaluator.with_query_db(self);
         let result = evaluator.evaluate(type_id);
         match self.eval_cache.write() {
             Ok(mut cache) => {
@@ -1454,6 +1500,28 @@ impl QueryDatabase for QueryCache<'_> {
             crate::query_trace::unary_end(query_id, "evaluate_type_with_options", result, false);
         }
         result
+    }
+
+    fn lookup_application_eval_cache(
+        &self,
+        def_id: DefId,
+        args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        self.check_application_eval_cache((def_id, args.to_vec(), no_unchecked_indexed_access))
+    }
+
+    fn insert_application_eval_cache(
+        &self,
+        def_id: DefId,
+        args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+        result: TypeId,
+    ) {
+        self.insert_application_eval_cache(
+            (def_id, args.to_vec(), no_unchecked_indexed_access),
+            result,
+        );
     }
 
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
@@ -2126,6 +2194,7 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         let type_env = self.type_env.borrow();
         let mut evaluator = TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator = evaluator.with_query_db(self);
 
         let result = evaluator.evaluate(type_id);
 
@@ -2138,6 +2207,32 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
             }
         }
         result
+    }
+
+    fn lookup_application_eval_cache(
+        &self,
+        def_id: DefId,
+        args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        self.query_cache.check_application_eval_cache((
+            def_id,
+            args.to_vec(),
+            no_unchecked_indexed_access,
+        ))
+    }
+
+    fn insert_application_eval_cache(
+        &self,
+        def_id: DefId,
+        args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+        result: TypeId,
+    ) {
+        self.query_cache.insert_application_eval_cache(
+            (def_id, args.to_vec(), no_unchecked_indexed_access),
+            result,
+        );
     }
 
     fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
@@ -2161,6 +2256,7 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         let mut evaluator =
             crate::evaluate::TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator = evaluator.with_query_db(self);
         evaluator.evaluate_index_access(object_type, index_type)
     }
 
@@ -2170,6 +2266,7 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         let type_env = self.type_env.borrow();
         let mut evaluator =
             crate::evaluate::TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
+        evaluator = evaluator.with_query_db(self);
         evaluator.evaluate_mapped(mapped)
     }
 
@@ -2179,6 +2276,7 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
         let type_env = self.type_env.borrow();
         let mut evaluator =
             crate::evaluate::TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
+        evaluator = evaluator.with_query_db(self);
         evaluator.evaluate_keyof(operand)
     }
 

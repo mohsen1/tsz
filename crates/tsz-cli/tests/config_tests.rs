@@ -4,9 +4,12 @@ use super::config::{
     resolve_lib_files_from_dir_with_options,
 };
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tsz::emitter::{ModuleKind, ScriptTarget};
+
+static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 struct TempDir {
     path: PathBuf,
@@ -19,7 +22,13 @@ impl TempDir {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        path.push(format!("tsz_cli_test_{}_{}", std::process::id(), nanos));
+        let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        path.push(format!(
+            "tsz_cli_test_{}_{}_{}",
+            std::process::id(),
+            nanos,
+            counter
+        ));
         std::fs::create_dir_all(&path)?;
         Ok(Self { path })
     }

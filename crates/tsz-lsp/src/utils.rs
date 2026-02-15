@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
+use tsz_scanner::SyntaxKind;
 
 /// Find the most specific node containing the given byte offset.
 ///
@@ -90,6 +91,31 @@ pub fn find_nodes_in_range(arena: &NodeArena, start: u32, end: u32) -> Vec<NodeI
     }
 
     result
+}
+
+/// Check whether a node is a valid symbol-query target for LSP symbol-resolution flows.
+/// This includes identifiers and keyword tokens (used for declaration keyword fallbacks).
+pub fn is_symbol_query_node(arena: &NodeArena, node: NodeIndex) -> bool {
+    let Some(node) = arena.get(node) else {
+        return false;
+    };
+
+    if node.kind == SyntaxKind::Identifier as u16
+        || node.kind == SyntaxKind::PrivateIdentifier as u16
+    {
+        return true;
+    }
+
+    // Include tagged template span nodes so references can fall back to the tag symbol.
+    if node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        || node.kind == SyntaxKind::TemplateHead as u16
+        || node.kind == SyntaxKind::TemplateMiddle as u16
+        || node.kind == SyntaxKind::TemplateTail as u16
+    {
+        return true;
+    }
+
+    node.kind >= SyntaxKind::BreakKeyword as u16 && node.kind <= SyntaxKind::DeferKeyword as u16
 }
 
 /// Calculate the new relative path for an import statement after a file rename.

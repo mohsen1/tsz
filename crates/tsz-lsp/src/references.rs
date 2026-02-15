@@ -7,7 +7,7 @@
 //! - `lineText`: the full text of the line containing the reference
 
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
-use crate::utils::find_node_at_offset;
+use crate::utils::{find_node_at_offset, is_symbol_query_node};
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_common::position::{Location, Position, Range};
@@ -99,6 +99,9 @@ impl<'a> FindReferences<'a> {
         // 2. Find the most specific node at this offset
         let node_idx = find_node_at_offset(self.arena, offset);
         if node_idx.is_none() {
+            return None;
+        }
+        if !is_symbol_query_node(self.arena, node_idx) {
             return None;
         }
 
@@ -252,6 +255,9 @@ impl<'a> FindReferences<'a> {
         if node_idx.is_none() {
             return None;
         }
+        if !is_symbol_query_node(self.arena, node_idx) {
+            return None;
+        }
 
         let symbol_id = self.resolve_symbol_internal(root, node_idx, scope_cache, scope_stats)?;
 
@@ -286,6 +292,9 @@ impl<'a> FindReferences<'a> {
             .position_to_offset(position, self.source_text)?;
         let node_idx = find_node_at_offset(self.arena, offset);
         if node_idx.is_none() {
+            return None;
+        }
+        if !is_symbol_query_node(self.arena, node_idx) {
             return None;
         }
 
@@ -333,6 +342,9 @@ impl<'a> FindReferences<'a> {
             .position_to_offset(position, self.source_text)?;
         let node_idx = find_node_at_offset(self.arena, offset);
         if node_idx.is_none() {
+            return None;
+        }
+        if !is_symbol_query_node(self.arena, node_idx) {
             return None;
         }
 
@@ -400,6 +412,9 @@ impl<'a> FindReferences<'a> {
             .position_to_offset(position, self.source_text)?;
         let node_idx = find_node_at_offset(self.arena, offset);
         if node_idx.is_none() {
+            return None;
+        }
+        if !is_symbol_query_node(self.arena, node_idx) {
             return None;
         }
 

@@ -3097,6 +3097,7 @@ impl<'a> Printer<'a> {
 
     /// Pre-register a var binding name. Uses `register_var_declaration` which allows
     /// same-scope redeclarations but renames for parent-scope conflicts.
+    #[allow(dead_code)]
     fn pre_register_var_binding_name(&mut self, name_idx: NodeIndex) {
         if name_idx.is_none() {
             return;
