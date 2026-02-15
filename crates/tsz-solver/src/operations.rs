@@ -1253,39 +1253,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// contextually-instantiated callback arguments. If one of those placeholders
     /// survives as an inferred result, we normalize it through the current
     /// substitution map and fall back to `unknown` if it remains unresolved.
+    ///
+    /// Uses iterative `instantiate_type` to resolve placeholders within compound
+    /// types (e.g., `Array(__infer_src_0)` → `Array(__infer_0)` → `Array(number)`).
     fn normalize_inferred_placeholder_type(
         &self,
         ty: TypeId,
         infer_subst: &TypeSubstitution,
     ) -> TypeId {
+        if infer_subst.is_empty() {
+            return ty;
+        }
+
+        // Iteratively apply substitution to resolve transitive placeholders.
+        // Each pass may resolve one level (e.g., __infer_src_0 → __infer_0[] → number[]).
         let mut current = ty;
-        let mut visited = FxHashSet::default();
-
-        for _ in 0..32 {
-            if !visited.insert(current) {
+        for _ in 0..8 {
+            let next = instantiate_type(self.interner, current, infer_subst);
+            if next == current {
                 break;
             }
-
-            let Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) =
-                self.interner.lookup(current)
-            else {
-                break;
-            };
-
-            if let Some(next) = infer_subst.get(info.name) {
-                if next == current {
-                    break;
-                }
-                current = next;
-                continue;
-            }
-
-            let name = self.interner.resolve_atom(info.name);
-            if name.starts_with("__infer_") || name.starts_with("__infer_src_") {
-                return TypeId::UNKNOWN;
-            }
-
-            break;
+            current = next;
         }
 
         current
