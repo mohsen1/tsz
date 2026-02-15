@@ -318,58 +318,17 @@ impl<'a> CheckerState<'a> {
         func_idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
         let Some(func) = self.ctx.arena.get_function(node) else {
             return;
         };
 
-        // TS8009: 'declare' modifier on function
-        if self.has_declare_modifier(&func.modifiers) {
-            let message = format_message(
-                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                &["declare"],
-            );
-            if let Some(mod_idx) =
-                self.get_modifier_index(&func.modifiers, SyntaxKind::DeclareKeyword as u16)
-            {
-                self.error_at_node(
-                    mod_idx,
-                    &message,
-                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
-            }
-        }
-
-        // TS8004: Type parameter declarations
-        if let Some(ref type_params) = func.type_parameters
-            && !type_params.nodes.is_empty()
-        {
-            // Point error at the first type parameter
-            self.error_at_node(
-                    type_params.nodes[0],
-                    diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
-        }
-
-        // TS8010: Return type annotation
-        if !func.type_annotation.is_none() {
-            self.error_at_node(
-                func.type_annotation,
-                diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-            );
-        }
+        self.error_if_ts_only_modifier(&func.modifiers, SyntaxKind::DeclareKeyword, "declare");
+        self.error_if_ts_only_type_params(&func.type_parameters);
+        self.error_if_ts_only_type_annotation(func.type_annotation);
 
         // TS8017: Function overload (function without body)
-        if func.body.is_none() && node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-            self.error_at_node(
-                func_idx,
-                diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-            );
-        }
+        let is_overload = func.body.is_none() && node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+        self.error_if_ts_only_signature_without_body(is_overload, func_idx);
 
         // Check parameter types and modifiers
         self.check_js_grammar_parameters(&func.parameters.nodes);
@@ -378,25 +337,16 @@ impl<'a> CheckerState<'a> {
     /// Check class declaration for JS grammar errors.
     fn check_js_grammar_class(
         &mut self,
-        class_idx: NodeIndex,
+        _class_idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(class) = self.ctx.arena.get_class(node) else {
             return;
         };
 
-        // TS8004: Type parameter declarations on class
-        if let Some(ref type_params) = class.type_parameters
-            && !type_params.nodes.is_empty()
-        {
-            self.error_at_node(
-                    type_params.nodes[0],
-                    diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
-        }
+        self.error_if_ts_only_type_params(&class.type_parameters);
 
         // TS8005: 'implements' clause
         if let Some(ref heritage_clauses) = class.heritage_clauses {
@@ -404,59 +354,21 @@ impl<'a> CheckerState<'a> {
                 if let Some(clause_node) = self.ctx.arena.get(clause_idx)
                     && clause_node.kind == syntax_kind_ext::HERITAGE_CLAUSE
                 {
-                    // Check if this is an 'implements' clause (token = ImplementsKeyword)
                     if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node)
                         && heritage.token == SyntaxKind::ImplementsKeyword as u16
                     {
                         self.error_at_node(
-                                    clause_idx,
-                                    diagnostic_messages::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                                    diagnostic_codes::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                                );
+                            clause_idx,
+                            diagnostic_messages::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                            diagnostic_codes::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        );
                     }
                 }
             }
         }
 
-        // TS8009: 'abstract' modifier on class
-        if self.has_abstract_modifier(&class.modifiers) {
-            let message = format_message(
-                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                &["abstract"],
-            );
-            if let Some(mod_idx) =
-                self.get_modifier_index(&class.modifiers, SyntaxKind::AbstractKeyword as u16)
-            {
-                self.error_at_node(
-                    mod_idx,
-                    &message,
-                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
-            } else {
-                self.error_at_node(
-                    class_idx,
-                    &message,
-                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
-            }
-        }
-
-        // TS8009: 'declare' modifier on class
-        if self.has_declare_modifier(&class.modifiers) {
-            let message = format_message(
-                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                &["declare"],
-            );
-            if let Some(mod_idx) =
-                self.get_modifier_index(&class.modifiers, SyntaxKind::DeclareKeyword as u16)
-            {
-                self.error_at_node(
-                    mod_idx,
-                    &message,
-                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
-            }
-        }
+        self.error_if_ts_only_modifier(&class.modifiers, SyntaxKind::AbstractKeyword, "abstract");
+        self.error_if_ts_only_modifier(&class.modifiers, SyntaxKind::DeclareKeyword, "declare");
 
         // Check class members for JS grammar errors
         for &member_idx in &class.members.nodes {
