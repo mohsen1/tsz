@@ -513,14 +513,41 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Scan backwards from the closing bracket to find comma (skipping whitespace)
+        // Scan backwards from the closing bracket to find comma (skipping whitespace and comments).
+        // This matches TypeScript behavior for cases like `yield 1, /*comment*/`.
         while pos > 0 {
             pos -= 1;
-            match bytes[pos] {
-                b',' => return true,
-                b' ' | b'\t' | b'\r' | b'\n' => continue,
-                _ => return false,
+            if bytes[pos].is_ascii_whitespace() {
+                continue;
             }
+
+            // Skip block comments when scanning backwards.
+            if bytes[pos] == b'/' && pos + 1 < bytes.len() && bytes[pos - 1] == b'*' {
+                pos -= 1;
+                while pos > 1 {
+                    if bytes[pos - 1] == b'/' && bytes[pos - 2] == b'*' {
+                        break;
+                    }
+                    pos -= 1;
+                }
+                if pos > 0 && bytes[pos - 1] == b'/' && bytes[pos - 2] == b'*' {
+                    // keep scanning from before this comment end
+                    pos -= 2;
+                    continue;
+                }
+                // If we couldn't find a matching start, treat as non-comma.
+                return false;
+            }
+
+            // Skip line comments by rewinding to the start of the line.
+            if bytes[pos] == b'/' && pos + 1 < bytes.len() && bytes[pos + 1] == b'/' {
+                while pos > 0 && bytes[pos - 1] != b'\n' {
+                    pos -= 1;
+                }
+                continue;
+            }
+
+            return bytes[pos] == b',';
         }
         false
     }

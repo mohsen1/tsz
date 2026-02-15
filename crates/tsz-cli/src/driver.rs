@@ -880,9 +880,8 @@ fn compile_inner(
                 "File appears to be binary.".to_string(),
                 diagnostic_codes::FILE_APPEARS_TO_BE_BINARY,
             ));
-        } else {
-            sources.push(source);
         }
+        sources.push(source);
     }
 
     // Collect all files that were read (including dependencies) before sources is moved
@@ -1435,8 +1434,8 @@ fn hash_text(text: &str) -> u64 {
 pub enum FileReadResult {
     /// File was successfully read as UTF-8 text
     Text(String),
-    /// File appears to be binary (emit TS1490)
-    Binary,
+    /// File appears to be binary (emit TS1490), but keep best-effort text for parser diagnostics
+    Binary(String),
     /// File could not be read (I/O error)
     Error(String),
 }
@@ -1456,13 +1455,13 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
 
     // Check for binary indicators
     if is_binary_file(&bytes) {
-        return FileReadResult::Binary;
+        return FileReadResult::Binary(String::from_utf8_lossy(&bytes).to_string());
     }
 
     // Try to decode as UTF-8
     match String::from_utf8(bytes) {
         Ok(text) => FileReadResult::Text(text),
-        Err(_) => FileReadResult::Binary, // Invalid UTF-8 = treat as binary
+        Err(err) => FileReadResult::Binary(String::from_utf8_lossy(err.as_bytes()).to_string()),
     }
 }
 
@@ -1774,7 +1773,7 @@ fn read_source_files(
         // Read file with binary detection
         let (text, is_binary) = match read_source_file(&path) {
             FileReadResult::Text(t) => (t, false),
-            FileReadResult::Binary => (String::new(), true), // Binary files get empty content + TS1490
+            FileReadResult::Binary(text) => (text, true),
             FileReadResult::Error(e) => {
                 return Err(anyhow::anyhow!("failed to read {}: {}", path.display(), e));
             }
