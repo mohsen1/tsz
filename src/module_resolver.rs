@@ -2197,14 +2197,15 @@ impl ModuleResolver {
 /// Parse a package specifier into package name and subpath
 fn parse_package_specifier(specifier: &str) -> (String, Option<String>) {
     // Handle scoped packages (@scope/pkg)
-    if specifier.starts_with('@') {
-        if let Some(slash_idx) = specifier[1..].find('/') {
-            let scope_end = slash_idx + 1;
-            if let Some(next_slash) = specifier[scope_end + 1..].find('/') {
-                let pkg_end = scope_end + 1 + next_slash;
+    if let Some(without_at) = specifier.strip_prefix('@') {
+        if let Some(scope_sep) = without_at.find('/') {
+            let scope = &without_at[..scope_sep];
+            let rest = &without_at[scope_sep + 1..];
+
+            if let Some(sub_sep) = rest.find('/') {
                 return (
-                    specifier[..pkg_end].to_string(),
-                    Some(specifier[pkg_end + 1..].to_string()),
+                    format!("@{}/{}", scope, &rest[..sub_sep]),
+                    Some(rest[sub_sep + 1..].to_string()),
                 );
             }
             return (specifier.to_string(), None);

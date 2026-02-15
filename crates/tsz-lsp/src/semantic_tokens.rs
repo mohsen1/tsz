@@ -239,7 +239,6 @@ impl<'a> SemanticTokensProvider<'a> {
         // Check if this identifier is used as a type reference to a type parameter
         if self.is_type_parameter_reference(node_idx) {
             self.emit_token_at(node_idx, SemanticTokenType::TypeParameter, 0);
-            return;
         }
 
         // Unresolved identifier - don't emit a token (let editor use default highlighting)

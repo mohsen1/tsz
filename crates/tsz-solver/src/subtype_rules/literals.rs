@@ -156,9 +156,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return match literal {
                         LiteralValue::String(pattern) => {
                             let pattern_str = self.interner.resolve_atom(pattern);
-                            if remaining.starts_with(pattern_str.as_str()) {
+                            if let Some(remaining) = remaining.strip_prefix(pattern_str.as_str()) {
                                 self.match_template_literal_recursive(
-                                    &remaining[pattern_str.len()..],
+                                    remaining,
                                     spans,
                                     span_idx + 1,
                                 )
@@ -168,9 +168,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                         LiteralValue::Number(num) => {
                             let num_str = format_number_for_template(num.0);
-                            if remaining.starts_with(&num_str) {
+                            if let Some(remaining) = remaining.strip_prefix(&num_str) {
                                 self.match_template_literal_recursive(
-                                    &remaining[num_str.len()..],
+                                    remaining,
                                     spans,
                                     span_idx + 1,
                                 )
@@ -180,9 +180,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                         LiteralValue::Boolean(b) => {
                             let bool_str = if b { "true" } else { "false" };
-                            if remaining.starts_with(bool_str) {
+                            if let Some(remaining) = remaining.strip_prefix(bool_str) {
                                 self.match_template_literal_recursive(
-                                    &remaining[bool_str.len()..],
+                                    remaining,
                                     spans,
                                     span_idx + 1,
                                 )
@@ -410,24 +410,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                     LiteralValue::BigInt(n) => {
                         let bigint_str = self.interner.resolve_atom(n);
-                        if remaining.starts_with(bigint_str.as_str()) {
-                            self.match_template_literal_recursive(
-                                &remaining[bigint_str.len()..],
-                                spans,
-                                span_idx + 1,
-                            )
+                        if let Some(remaining) = remaining.strip_prefix(bigint_str.as_str()) {
+                            self.match_template_literal_recursive(remaining, spans, span_idx + 1)
                         } else {
                             false
                         }
                     }
                     LiteralValue::Boolean(b) => {
                         let bool_str = if b { "true" } else { "false" };
-                        if remaining.starts_with(bool_str) {
-                            self.match_template_literal_recursive(
-                                &remaining[bool_str.len()..],
-                                spans,
-                                span_idx + 1,
-                            )
+                        if let Some(remaining) = remaining.strip_prefix(bool_str) {
+                            self.match_template_literal_recursive(remaining, spans, span_idx + 1)
                         } else {
                             false
                         }

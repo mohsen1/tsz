@@ -1031,7 +1031,7 @@ impl<'a> Completions<'a> {
             }
             // "function* name|" - generator function name
             if before_word.ends_with('*') {
-                let before_star = before_word[..before_word.len() - 1].trim_end();
+                let before_star = before_word.trim_end_matches('*').trim_end();
                 if is_whole_word(before_star, "function") {
                     return true;
                 }
