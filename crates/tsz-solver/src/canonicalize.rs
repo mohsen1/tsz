@@ -10,7 +10,7 @@
 //!
 //! ### Structural vs Nominal Types
 //!
-//! - **TypeAlias**: Structural - `type A = { x: A }` and `type B = { x: B }`
+//! - **`TypeAlias`**: Structural - `type A = { x: A }` and `type B = { x: B }`
 //!   should canonicalize to the same type with `Recursive(0)`
 //! - **Interface/Class/Enum**: Nominal - Must remain as `Lazy(DefId)` for nominal identity
 //!
@@ -46,11 +46,11 @@ use tsz_common::interner::Atom;
 /// Only processes `DefKind::TypeAlias` (structural types), preserving nominal
 /// types (Interface/Class/Enum) as `Lazy(DefId)`.
 pub struct Canonicalizer<'a, R: TypeResolver> {
-    /// Type interner for creating new TypeIds
+    /// Type interner for creating new `TypeIds`
     interner: &'a dyn TypeDatabase,
     /// Type resolver for looking up definitions
     resolver: &'a R,
-    /// Stack of DefIds currently being expanded (for Recursive(n))
+    /// Stack of `DefIds` currently being expanded (for Recursive(n))
     def_stack: Vec<DefId>,
     /// Stack of type parameter scopes (for BoundParameter(n))
     /// Each scope is a list of parameter names in order
@@ -73,8 +73,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
     /// Canonicalize a type to its structural form.
     ///
-    /// Returns a TypeId that represents the canonical structural form.
-    /// Two types with the same structure will return the same TypeId.
+    /// Returns a `TypeId` that represents the canonical structural form.
+    /// Two types with the same structure will return the same `TypeId`.
     pub fn canonicalize(&mut self, type_id: TypeId) -> TypeId {
         // 1. Check cache
         if let Some(&cached) = self.cache.get(&type_id) {
@@ -114,11 +114,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 }
             }
 
-            // Handle Recursive references (pass through - already canonical)
-            TypeData::Recursive(_) => type_id,
-
-            // Handle BoundParameter references (pass through - already canonical)
-            TypeData::BoundParameter(_) => type_id,
+            // Handle references that are already canonical
+            TypeData::Recursive(_) | TypeData::BoundParameter(_) => type_id,
 
             // Recurse into composite types
             TypeData::Array(elem) => {
@@ -348,7 +345,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
     /// Canonicalize a type alias definition.
     ///
     /// This handles:
-    /// - Cycle detection via def_stack
+    /// - Cycle detection via `def_stack`
     /// - Generic parameter scope management
     /// - Recursive self-references -> Recursive(n)
     fn canonicalize_type_alias(&mut self, def_id: DefId) -> TypeId {
@@ -386,10 +383,10 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         canonical_body
     }
 
-    /// Get the recursion depth for a DefId if it's in the def_stack.
+    /// Get the recursion depth for a `DefId` if it's in the `def_stack`.
     ///
-    /// Returns Some(depth) if the DefId is being expanded, where:
-    /// - 0 = immediate self-reference (current DefId)
+    /// Returns Some(depth) if the `DefId` is being expanded, where:
+    /// - 0 = immediate self-reference (current `DefId`)
     /// - n = n levels up the nesting chain
     fn get_recursion_depth(&self, def_id: DefId) -> Option<u32> {
         self.def_stack
@@ -425,8 +422,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
     /// Canonicalize an object type by recursively canonicalizing property types.
     ///
-    /// Preserves all metadata (names, optional, readonly, visibility, parent_id)
-    /// and nominal symbols. Only transforms the TypeIds within properties.
+    /// Preserves all metadata (names, optional, readonly, visibility, `parent_id`)
+    /// and nominal symbols. Only transforms the `TypeIds` within properties.
     fn canonicalize_object(&mut self, shape_id: ObjectShapeId, _with_index: bool) -> TypeId {
         let shape = self.interner.object_shape(shape_id);
 
