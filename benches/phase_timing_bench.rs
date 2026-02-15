@@ -11,6 +11,7 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::time::Duration;
+use tsz_solver::{QueryCache, TypeInterner};
 
 /// Generate a TypeScript file with N top-level declarations.
 /// Mix of functions, classes, interfaces, type aliases — realistic variety.
@@ -178,8 +179,8 @@ fn bench_phase_timing(c: &mut Criterion) {
                     let mut binder = tsz::binder::BinderState::new();
                     binder.bind_source_file(parser.get_arena(), root);
 
-                    let interner = tsz::solver::TypeInterner::new();
-                    let query_cache = tsz::solver::QueryCache::new(&interner);
+                    let interner = TypeInterner::new();
+                    let query_cache = QueryCache::new(&interner);
                     let options = tsz::checker::context::CheckerOptions {
                         strict: true,
                         no_implicit_any: true,
@@ -231,8 +232,8 @@ fn bench_cache_reuse(c: &mut Criterion) {
         &source,
         |b, _src| {
             b.iter(|| {
-                let interner = tsz::solver::TypeInterner::new();
-                let query_cache = tsz::solver::QueryCache::new(&interner);
+                let interner = TypeInterner::new();
+                let query_cache = QueryCache::new(&interner);
                 let options = tsz::checker::context::CheckerOptions {
                     strict: true,
                     no_implicit_any: true,
