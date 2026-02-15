@@ -51,9 +51,8 @@ impl<'a> Printer<'a> {
                 self.emit(binary.right);
                 self.decrease_indent();
                 return;
-            } else {
-                self.write(", ");
             }
+            self.write(", ");
         } else {
             self.write_space();
             self.write(get_operator_text(binary.operator_token));

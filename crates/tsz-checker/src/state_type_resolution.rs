@@ -944,12 +944,12 @@ impl<'a> CheckerState<'a> {
                     {
                         self.ctx.leave_recursion();
                         return structural_type;
-                    } else {
-                        // Return Lazy wrapper for regular interfaces
-                        let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
-                        self.ctx.leave_recursion();
-                        return lazy_type;
                     }
+
+                    // Return Lazy wrapper for regular interfaces
+                    let lazy_type = self.ctx.create_lazy_type_ref(sym_id);
+                    self.ctx.leave_recursion();
+                    return lazy_type;
                 }
                 if !symbol.value_declaration.is_none() {
                     let result = self.get_type_of_interface(symbol.value_declaration);
