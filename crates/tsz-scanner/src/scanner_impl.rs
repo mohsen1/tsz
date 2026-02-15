@@ -136,12 +136,14 @@ pub struct ScannerState {
 }
 
 #[wasm_bindgen]
+#[allow(clippy::missing_const_for_fn)]
 impl ScannerState {
+    /// Exported scanner accessors are JS bindings and cannot be made `const`
+    /// because `#[wasm_bindgen]` methods in this crate are non-`const`.
     /// Create a new scanner state with the given text.
     /// ZERO-COPY: No Vec<char> allocation, works directly with UTF-8 bytes.
     #[wasm_bindgen(constructor)]
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn new(text: String, skip_trivia: bool) -> Self {
         // Common keywords are interned on-demand for faster startup
         let end = text.len();
@@ -169,14 +171,12 @@ impl ScannerState {
     /// Get the current position (end position of current token).
     #[wasm_bindgen(js_name = getPos)]
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn get_pos(&self) -> usize {
         self.pos
     }
 
     /// Set the current position (used for rescanning compound tokens).
     /// This allows consuming partial tokens like splitting `>>` into `>` + `>`.
-    #[allow(clippy::missing_const_for_fn)]
     pub fn set_pos(&mut self, pos: usize) {
         self.pos = pos;
     }
@@ -184,7 +184,6 @@ impl ScannerState {
     /// Get the full start position (including leading trivia).
     #[wasm_bindgen(js_name = getTokenFullStart)]
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token_full_start(&self) -> usize {
         self.full_start_pos
     }
@@ -192,7 +191,6 @@ impl ScannerState {
     /// Get the start position of the current token (excluding trivia).
     #[wasm_bindgen(js_name = getTokenStart)]
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token_start(&self) -> usize {
         self.token_start
     }
@@ -200,7 +198,6 @@ impl ScannerState {
     /// Get the end position of the current token.
     #[wasm_bindgen(js_name = getTokenEnd)]
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token_end(&self) -> usize {
         self.pos
     }
@@ -208,7 +205,6 @@ impl ScannerState {
     /// Get the current token kind.
     #[wasm_bindgen(js_name = getToken)]
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token(&self) -> SyntaxKind {
         self.token
     }
@@ -231,7 +227,6 @@ impl ScannerState {
     /// Get the token flags.
     #[must_use]
     #[wasm_bindgen(js_name = getTokenFlags)]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token_flags(&self) -> u32 {
         self.token_flags
     }
@@ -239,7 +234,6 @@ impl ScannerState {
     /// Check if there was a preceding line break.
     #[must_use]
     #[wasm_bindgen(js_name = hasPrecedingLineBreak)]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn has_preceding_line_break(&self) -> bool {
         (self.token_flags & TokenFlags::PrecedingLineBreak as u32) != 0
     }
@@ -247,7 +241,6 @@ impl ScannerState {
     /// Check if the token is unterminated.
     #[must_use]
     #[wasm_bindgen(js_name = isUnterminated)]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn is_unterminated(&self) -> bool {
         (self.token_flags & TokenFlags::Unterminated as u32) != 0
     }
@@ -263,7 +256,6 @@ impl ScannerState {
     /// Check if the current token is a reserved word.
     #[must_use]
     #[wasm_bindgen(js_name = isReservedWord)]
-    #[allow(clippy::missing_const_for_fn)]
     pub fn is_reserved_word(&self) -> bool {
         let t = self.token as u16;
         t >= SyntaxKind::BreakKeyword as u16 && t <= SyntaxKind::WithKeyword as u16
