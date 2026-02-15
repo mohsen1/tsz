@@ -1876,8 +1876,7 @@ fn read_source_files(
 
                 let Some(resolved_reference) = candidates
                     .iter()
-                    .filter(|candidate| candidate.is_file())
-                    .next()
+                    .find(|candidate| candidate.is_file())
                     .map(|candidate| canonicalize_or_owned(candidate))
                 else {
                     continue;
