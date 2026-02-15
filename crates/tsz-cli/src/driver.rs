@@ -966,7 +966,7 @@ fn compile_inner(
     };
 
     // Save BuildInfo if incremental compilation is enabled
-    if should_save_build_info && has_error == false {
+    if should_save_build_info && !has_error {
         let tsconfig_path_ref = tsconfig_path.as_deref();
         if let Some(build_info_path) = get_build_info_path(tsconfig_path_ref, &resolved, &base_dir)
         {
