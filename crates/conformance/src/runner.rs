@@ -159,6 +159,9 @@ impl Runner {
                             match result {
                                 TestResult::Pass => {
                                     stats.passed.fetch_add(1, Ordering::SeqCst);
+                                    if print_test {
+                                        println!("PASS {}", rel_path);
+                                    }
                                 }
                                 TestResult::Fail {
                                     expected,

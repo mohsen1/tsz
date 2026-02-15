@@ -158,6 +158,14 @@ Skill usage rules:
 - Reuse scripts/assets/templates from skill directories when available.
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
+## 20.5) Conformance Analysis Tools
+- `./scripts/conformance.sh run` — run conformance tests (error-code level).
+- `./scripts/conformance.sh analyze` — categorize failures by error code, find quick wins.
+- `./scripts/conformance.sh areas` — analyze pass/fail rates by **feature area** (parser, types, salsa, jsx, etc.). Use this to decide which feature to work on next.
+  - `--depth 2` for sub-area breakdown.
+  - `--drilldown <area>` to drill into a specific area (e.g., `types`, `statements`).
+  - `--min-tests N` to filter out small areas.
+
 ## 21) Non-Negotiables
 - Parity with `tsc` overrides convenience.
 - Architecture direction is one-way; no cross-layer semantic leakage.
