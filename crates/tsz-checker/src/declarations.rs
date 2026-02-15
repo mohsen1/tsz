@@ -879,19 +879,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// Extract the property key from a property access expression.
     fn extract_property_key(&self, expr_idx: NodeIndex) -> Option<PropertyKey> {
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(expr_idx)?;
 
         match node.kind {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
-                let Some(prop_access) = self.ctx.arena.get_access_expr(node) else {
-                    return None;
-                };
+                let prop_access = self.ctx.arena.get_access_expr(node)?;
 
-                let Some(name_node) = self.ctx.arena.get(prop_access.name_or_argument) else {
-                    return None;
-                };
+                let name_node = self.ctx.arena.get(prop_access.name_or_argument)?;
 
                 self.ctx
                     .arena
@@ -900,14 +894,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 // Handle this["x"] = 1 pattern
-                let Some(elem_access) = self.ctx.arena.get_access_expr(node) else {
-                    return None;
-                };
+                let elem_access = self.ctx.arena.get_access_expr(node)?;
 
                 // Extract the property name if it's a string literal
-                let Some(arg_node) = self.ctx.arena.get(elem_access.name_or_argument) else {
-                    return None;
-                };
+                let arg_node = self.ctx.arena.get(elem_access.name_or_argument)?;
 
                 if arg_node.kind == (SyntaxKind::StringLiteral as u16) {
                     self.ctx

@@ -353,9 +353,7 @@ impl<'a> CheckerState<'a> {
                     return self.instance_type_from_constructor_type_inner(inner, visited);
                 }
                 InstanceTypeKind::TypeParameter { constraint } => {
-                    let Some(constraint) = constraint else {
-                        return None;
-                    };
+                    let constraint = constraint?;
                     current = constraint;
                 }
                 InstanceTypeKind::SymbolRef(sym_ref) => {

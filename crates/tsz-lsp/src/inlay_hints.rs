@@ -277,12 +277,8 @@ impl<'a> InlayHintsProvider<'a> {
             .nodes
             .iter()
             .map(|&param_idx| {
-                let Some(param_node) = self.arena.get(param_idx) else {
-                    return None;
-                };
-                let Some(param) = self.arena.get_parameter(param_node) else {
-                    return None;
-                };
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
                 self.arena
                     .get_identifier_text(param.name)
                     .map(|s| s.to_string())

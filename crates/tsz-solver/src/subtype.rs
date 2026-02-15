@@ -4191,9 +4191,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if source_has_rest {
-                let Some(s_rest_param) = source.params.last() else {
-                    return None;
-                };
+                let s_rest_param = source.params.last()?;
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
                 if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {

@@ -83,17 +83,13 @@ pub fn check_nullish_coalescing_precedence(
     arena: &NodeArena,
     left_idx: NodeIndex,
 ) -> Option<PrecedenceError> {
-    let Some(left_node) = arena.get(left_idx) else {
-        return None;
-    };
+    let left_node = arena.get(left_idx)?;
 
     if left_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
         return None;
     }
 
-    let Some(binary) = arena.get_binary_expr(left_node) else {
-        return None;
-    };
+    let binary = arena.get_binary_expr(left_node)?;
 
     let op = binary.operator_token;
     if op == SyntaxKind::AmpersandAmpersandToken as u16 || op == SyntaxKind::BarBarToken as u16 {

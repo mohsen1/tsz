@@ -3079,9 +3079,7 @@ fn find_local_declaration(
     source_file: NodeIndex,
     name: &str,
 ) -> Option<NodeIndex> {
-    let Some(source) = arena.get_source_file_at(source_file) else {
-        return None;
-    };
+    let source = arena.get_source_file_at(source_file)?;
 
     for &stmt_idx in &source.statements.nodes {
         let Some(stmt) = arena.get(stmt_idx) else {
@@ -3114,9 +3112,7 @@ fn find_local_declaration_in_node(
     node_idx: NodeIndex,
     name: &str,
 ) -> Option<NodeIndex> {
-    let Some(node) = arena.get(node_idx) else {
-        return None;
-    };
+    let node = arena.get(node_idx)?;
 
     if let Some(var_decl) = arena.get_variable_declaration(node) {
         if let Some(decl_name) = arena.get_identifier_text(var_decl.name)
