@@ -34,19 +34,12 @@ impl ParserState {
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::InterfaceKeyword);
 
-        // Parse interface name - keywords like 'string', 'abstract' can be used as interface names
-        // BUT reserved words like 'void', 'null' cannot be used
+        // Parse interface name — all keywords (including reserved words like
+        // 'void', 'null') are accepted by the parser. The checker validates
+        // whether the name is allowed (e.g., emitting TS2427 for built-in type
+        // names or TS2304 for reserved words used as types).
         let name = if self.is_identifier_or_keyword() {
-            // TS1005: Reserved words cannot be used as interface names
-            if self.is_reserved_word() {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
-                // Consume the invalid token to avoid cascading errors
-                self.next_token();
-                NodeIndex::NONE
-            } else {
-                self.parse_identifier_name()
-            }
+            self.parse_identifier_name()
         } else {
             self.parse_identifier()
         };
@@ -2123,8 +2116,8 @@ impl ParserState {
         if !self.is_token(SyntaxKind::StringLiteral) {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
-                "String literal expected",
-                diagnostic_codes::EXPECTED,
+                "String literal expected.",
+                diagnostic_codes::STRING_LITERAL_EXPECTED,
             );
             return NodeIndex::NONE;
         }
