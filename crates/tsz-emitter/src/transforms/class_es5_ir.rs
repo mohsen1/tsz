@@ -2771,13 +2771,6 @@ impl<'a> AstToIr<'a> {
             self.current_class_alias.set(prev_alias);
 
             // Arrow functions become regular functions in ES5
-            let func_expr = IRNode::FunctionExpr {
-                name: None,
-                parameters: params,
-                body,
-                is_expression_body,
-                body_source_range,
-            };
 
             // TypeScript's ES5 arrow transform:
             // - Convert arrow to plain function expression
@@ -2786,7 +2779,13 @@ impl<'a> AstToIr<'a> {
             //
             // Note: We no longer use IIFE wrappers like `(function (_this) { ... })(this)`
             // The `_this` capture should be hoisted to the containing function's body start.
-            func_expr
+            IRNode::FunctionExpr {
+                name: None,
+                parameters: params,
+                body,
+                is_expression_body,
+                body_source_range,
+            }
         } else {
             IRNode::ASTRef(idx)
         }
