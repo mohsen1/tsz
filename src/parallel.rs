@@ -1,4 +1,3 @@
-#![allow(clippy::type_complexity)]
 //! Parallel Processing Module
 //!
 //! Provides parallel file parsing and processing using Rayon.
@@ -49,6 +48,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tsz_common::interner::{Atom, Interner};
+
+type ModuleExportEntry = FxHashMap<String, (String, Option<String>)>;
+type Reexports = FxHashMap<String, ModuleExportEntry>;
 
 #[cfg(target_arch = "wasm32")]
 fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBuf>> {
@@ -201,7 +203,7 @@ pub struct BindResult {
     /// Maps module specifier -> [ModuleAugmentation]
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
-    pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+    pub reexports: Reexports,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     /// Lib binders for global type resolution (Array, String, etc.)
@@ -690,7 +692,7 @@ pub struct MergedProgram {
     pub module_exports: FxHashMap<String, SymbolTable>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (current_file, exported_name) -> (source_module, original_name)
-    pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+    pub reexports: Reexports,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps current_file -> Vec of source_modules
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
@@ -855,8 +857,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_exports: FxHashMap<String, SymbolTable> = FxHashMap::default();
-    let mut reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>> =
-        FxHashMap::default();
+    let mut reexports: Reexports = FxHashMap::default();
     let mut wildcard_reexports: FxHashMap<String, Vec<String>> = FxHashMap::default();
     let mut global_lib_symbol_ids: FxHashSet<SymbolId> = FxHashSet::default();
 
