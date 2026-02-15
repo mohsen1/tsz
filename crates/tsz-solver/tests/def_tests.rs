@@ -185,6 +185,7 @@ fn test_definition_store_concurrent() {
                         exports: Vec::new(),
                         file_id: None,
                         span: None,
+                        symbol_id: None,
                     };
                     let id = store.register(info);
                     assert!(store.contains(id));

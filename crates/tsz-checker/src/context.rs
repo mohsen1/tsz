@@ -2003,6 +2003,7 @@ impl<'a> CheckerContext<'a> {
             exports: Vec::new(), // Will be populated for namespaces/modules
             file_id: Some(symbol.decl_file_idx),
             span,
+            symbol_id: Some(sym_id.0),
         };
 
         let def_id = self.definition_store.register(info);
@@ -3061,6 +3062,16 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     ///   if structurally identical, so they must keep their Lazy(DefId) reference
     fn get_def_kind(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::def::DefKind> {
         self.definition_store.get_kind(def_id)
+    }
+
+    /// Get the `SymbolId` for a `DefId`.
+    ///
+    /// Uses the `DefinitionStore` to look up the `symbol_id` stored in `DefinitionInfo`.
+    /// This works across checker contexts because `DefinitionStore` is shared.
+    fn def_to_symbol_id(&self, def_id: tsz_solver::DefId) -> Option<tsz_binder::SymbolId> {
+        self.definition_store
+            .get_symbol_id(def_id)
+            .map(tsz_binder::SymbolId)
     }
 
     /// Get the `DefId` for a `SymbolRef` (Phase 4.2: Ref -> Lazy migration).

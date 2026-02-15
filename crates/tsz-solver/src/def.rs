@@ -150,6 +150,13 @@ pub struct DefinitionInfo {
 
     /// Optional span for source location
     pub span: Option<(u32, u32)>,
+
+    /// The binder `SymbolId` that this `DefId` was created from.
+    /// Used for cross-context cycle detection: the same interface may get
+    /// different `DefIds` in different checker contexts, but the `SymbolId`
+    /// stays the same. This enables coinductive cycle detection for recursive
+    /// generic interfaces (e.g., `Promise<T>` vs `PromiseLike<T>`).
+    pub symbol_id: Option<u32>,
 }
 
 /// Enum member value.
@@ -179,6 +186,7 @@ impl DefinitionInfo {
             exports: Vec::new(),
             file_id: None,
             span: None,
+            symbol_id: None,
         }
     }
 
@@ -208,6 +216,7 @@ impl DefinitionInfo {
             exports: Vec::new(),
             file_id: None,
             span: None,
+            symbol_id: None,
         }
     }
 
@@ -245,6 +254,7 @@ impl DefinitionInfo {
             exports: Vec::new(),
             file_id: None,
             span: None,
+            symbol_id: None,
         }
     }
 
@@ -263,6 +273,7 @@ impl DefinitionInfo {
             exports: Vec::new(),
             file_id: None,
             span: None,
+            symbol_id: None,
         }
     }
 
@@ -281,6 +292,7 @@ impl DefinitionInfo {
             exports,
             file_id: None,
             span: None,
+            symbol_id: None,
         }
     }
 
@@ -408,6 +420,15 @@ impl DefinitionStore {
     /// Get definition info by `DefId`.
     pub fn get(&self, id: DefId) -> Option<DefinitionInfo> {
         self.definitions.get(&id).map(|r| r.clone())
+    }
+
+    /// Get the binder SymbolId for a `DefId`.
+    ///
+    /// Returns the `SymbolId` (as raw u32) that this `DefId` was created from.
+    /// This is available across checker contexts because it's stored directly
+    /// in the `DefinitionInfo` (which is shared via `DefinitionStore`).
+    pub fn get_symbol_id(&self, id: DefId) -> Option<u32> {
+        self.definitions.get(&id).and_then(|info| info.symbol_id)
     }
 
     /// Check if a `DefId` exists.
