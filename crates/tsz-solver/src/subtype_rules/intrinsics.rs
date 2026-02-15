@@ -156,6 +156,69 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         false
     }
 
+    /// Check whether a type is assignable to the global `Object` interface type.
+    ///
+    /// Global `Object` in TypeScript is intentionally permissive:
+    /// it accepts all non-nullish values, including primitive values through
+    /// boxing. This helper mirrors that behavior while still excluding
+    /// `null`, `undefined`, and `void`.
+    pub(crate) fn is_global_object_interface_type(&mut self, source: TypeId) -> bool {
+        if source == TypeId::ANY || source == TypeId::ERROR || source == TypeId::NEVER {
+            return true;
+        }
+
+        if matches!(
+            source,
+            TypeId::UNKNOWN | TypeId::VOID | TypeId::NULL | TypeId::UNDEFINED
+        ) {
+            return false;
+        }
+
+        if function_shape_id(self.interner, source).is_some()
+            || callable_shape_id(self.interner, source).is_some()
+        {
+            return false;
+        }
+
+        if let Some(kind) = intrinsic_kind(self.interner, source) {
+            return !matches!(
+                kind,
+                IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void
+            );
+        }
+
+        if let Some(members) = union_list_id(self.interner, source) {
+            let members = self.interner.type_list(members);
+            return members
+                .iter()
+                .all(|&member| self.is_global_object_interface_type(member));
+        }
+
+        if let Some(members) = intersection_list_id(self.interner, source) {
+            let members = self.interner.type_list(members);
+            return members
+                .iter()
+                .any(|&member| self.is_global_object_interface_type(member));
+        }
+
+        if let Some(info) = type_param_info(self.interner, source) {
+            return info
+                .constraint
+                .is_some_and(|constraint| self.is_global_object_interface_type(constraint));
+        }
+
+        if let Some(inner) = readonly_inner_type(self.interner, source) {
+            return self.is_global_object_interface_type(inner);
+        }
+
+        if let Some(sym) = ref_symbol(self.interner, source)
+            && let Some(resolved) = self.resolver.resolve_symbol_ref(sym, self.interner) {
+                return self.is_global_object_interface_type(resolved);
+            }
+
+        self.is_object_keyword_type(source)
+    }
+
     /// Check if a type is callable (can be invoked as a function).
     ///
     /// Callable types represent values that can be called with parentheses syntax:
