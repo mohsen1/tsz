@@ -1251,8 +1251,7 @@ impl<'a> CheckerState<'a> {
         StatementChecker::check(stmt_idx, self);
     }
 
-    /// Check a variable statement (var/let/const declarations).
-    // ============================================================================
+    // Check a variable statement (var/let/const declarations).
     // Iterable/Iterator Type Checking Methods
     // ============================================================================
     // The following methods have been extracted to src/checker/iterable_checker.rs:
