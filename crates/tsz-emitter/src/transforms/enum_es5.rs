@@ -35,7 +35,7 @@
 //! // usages are inlined
 //! ```
 
-use crate::transforms::ir::*;
+use crate::transforms::ir::{IRNode, IRParam};
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
