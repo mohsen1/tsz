@@ -49,17 +49,16 @@ struct EnvVarGuard {
 }
 
 impl EnvVarGuard {
-    #[allow(unsafe_code)]
     fn set(key: &'static str, value: Option<&str>) -> Self {
         let previous = std::env::var(key).ok();
         match value {
             Some(value) => {
-                // SAFETY: tests serialize env mutation with a global lock.
-                unsafe { std::env::set_var(key, value) };
+                // tests serialize env mutation with a global lock.
+                std::env::set_var(key, value);
             }
             None => {
-                // SAFETY: tests serialize env mutation with a global lock.
-                unsafe { std::env::remove_var(key) };
+                // tests serialize env mutation with a global lock.
+                std::env::remove_var(key);
             }
         }
         Self { key, previous }
@@ -67,16 +66,15 @@ impl EnvVarGuard {
 }
 
 impl Drop for EnvVarGuard {
-    #[allow(unsafe_code)]
     fn drop(&mut self) {
         match self.previous.as_deref() {
             Some(value) => {
-                // SAFETY: tests serialize env mutation with a global lock.
-                unsafe { std::env::set_var(self.key, value) };
+                // tests serialize env mutation with a global lock.
+                std::env::set_var(self.key, value);
             }
             None => {
-                // SAFETY: tests serialize env mutation with a global lock.
-                unsafe { std::env::remove_var(self.key) };
+                // tests serialize env mutation with a global lock.
+                std::env::remove_var(self.key);
             }
         }
     }

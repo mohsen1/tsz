@@ -318,16 +318,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     /// Set the inheritance graph for nominal class subtype checking.
     /// Propagates to the internal SubtypeChecker.
-    #[allow(unsafe_code)]
-    pub fn set_inheritance_graph(&mut self, graph: Option<&crate::inheritance::InheritanceGraph>) {
-        self.subtype.inheritance_graph = graph.map(|g| unsafe {
-            // SAFETY: The caller is responsible for ensuring the `InheritanceGraph` outlives
-            // the checker/compat context. This mirrors the CheckerContext ownership model.
-            std::mem::transmute::<
-                &crate::inheritance::InheritanceGraph,
-                &'a crate::inheritance::InheritanceGraph,
-            >(g)
-        });
+    pub fn set_inheritance_graph(
+        &mut self,
+        graph: Option<&'a crate::inheritance::InheritanceGraph>,
+    ) {
+        self.subtype.inheritance_graph = graph;
     }
 
     /// Configure strict function parameter checking.

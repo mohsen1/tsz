@@ -2611,9 +2611,9 @@ impl<'a> CheckerContext<'a> {
 
     /// Apply standard compiler options to a CompatChecker, including query_db.
     /// This wires the CompilerOptions (via JudgeConfig) and the QueryDatabase.
-    pub fn configure_compat_checker<R: tsz_solver::TypeResolver>(
-        &self,
-        checker: &mut tsz_solver::CompatChecker<'a, R>,
+    pub fn configure_compat_checker<'b, R: tsz_solver::TypeResolver>(
+        &'b self,
+        checker: &mut tsz_solver::CompatChecker<'b, R>,
     ) {
         // Apply configuration from options
         checker.apply_config(&self.as_judge_config());

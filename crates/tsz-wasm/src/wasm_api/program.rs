@@ -114,7 +114,7 @@ pub struct TsProgram {
     /// Merged program state (contains bound files with parse diagnostics)
     merged: Option<MergedProgram>,
     /// Type interner for this program
-    type_interner: TypeInterner,
+    type_interner: Arc<TypeInterner>,
     /// Compiler options
     options: TsCompilerOptions,
     /// Cached type checker
@@ -132,7 +132,7 @@ impl TsProgram {
             files: Vec::new(),
             lib_files: Vec::new(),
             merged: None,
-            type_interner: TypeInterner::new(),
+            type_interner: Arc::new(TypeInterner::new()),
             options: TsCompilerOptions::default(),
             type_checker: None,
             source_files: Vec::new(),
@@ -369,7 +369,7 @@ impl TsProgram {
         // In a full implementation, we'd cache this
         TsTypeChecker::new(
             self.merged.as_ref().unwrap(),
-            &self.type_interner,
+            self.type_interner.clone(),
             &self.options,
             &self.lib_files,
         )
