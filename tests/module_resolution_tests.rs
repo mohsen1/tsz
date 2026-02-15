@@ -27,6 +27,7 @@ use tsz_solver::TypeInterner;
 ///
 /// `module_exports` maps module specifier -> list of export names.
 /// Each module's exports are created by parsing and binding a synthetic exporter file.
+#[allow(clippy::type_complexity)]
 fn check_with_module_exports(
     source: &str,
     file_name: &str,

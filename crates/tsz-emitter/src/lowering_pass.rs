@@ -158,15 +158,13 @@ impl<'a> LoweringPass<'a> {
                 })
                 .collect::<Vec<_>>();
             tracing::debug!(
-                "[lowering] source={} arrow directives: {:?}",
-                source_file.0,
-                arrow_captures
+                "[lowering] source={} arrow directives: {arrow_captures:?}",
+                source_file.0
             );
             if let Some(capture_name) = self.transforms.this_capture_name(source_file) {
                 tracing::debug!(
-                    "[lowering] source {} this capture: {}",
-                    source_file.0,
-                    capture_name
+                    "[lowering] source {} this capture: {capture_name}",
+                    source_file.0
                 );
             } else {
                 tracing::debug!("[lowering] source {} no this capture scope", source_file.0);
@@ -1528,9 +1526,8 @@ impl<'a> LoweringPass<'a> {
             let captures_arguments = contains_arguments_reference(self.arena, idx);
 
             tracing::debug!(
-                "[lowering][arrow] idx={} captures_this={} is_async={}",
+                "[lowering][arrow] idx={} captures_this={captures_this} is_async={}",
                 idx.0,
-                captures_this,
                 arrow.is_async
             );
 
