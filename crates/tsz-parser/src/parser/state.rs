@@ -295,6 +295,15 @@ impl ParserState {
         self.current_token as u16 >= SyntaxKind::Identifier as u16
     }
 
+    /// Check if current token can start a type member declaration
+    #[inline]
+    pub(crate) const fn is_type_member_start(&self) -> bool {
+        match self.current_token {
+            SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken | SyntaxKind::NewKeyword => true,
+            _ => self.is_property_name(),
+        }
+    }
+
     /// Check if current token can be a property name
     /// Includes identifiers, keywords (as property names), string/numeric literals, computed properties
     #[inline]
@@ -334,6 +343,34 @@ impl ParserState {
             // Everything else could potentially start a type
             // (identifiers, keywords, literals, type operators, etc.)
             _ => true
+        }
+    }
+
+    /// Parse type member separators with ASI-aware recovery.
+    ///
+    /// Type members in interface/type literal bodies allow:
+    /// - Explicit `;` or `,`
+    /// - ASI-separated members when a line break exists
+    ///
+    /// When members are missing a separator on the same line, emit
+    /// `';' expected.` (TS1005) and continue parsing.
+    pub(crate) fn parse_type_member_separator_with_asi(&mut self) {
+        if self.parse_optional(SyntaxKind::SemicolonToken)
+            || self.parse_optional(SyntaxKind::CommaToken)
+        {
+            return;
+        }
+
+        // No explicit separator and not at a boundary that permits implicit recovery.
+        if self.scanner.has_preceding_line_break()
+            || self.is_token(SyntaxKind::CloseBraceToken)
+            || self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            return;
+        }
+
+        if self.is_type_member_start() {
+            self.error_token_expected(";");
         }
     }
 

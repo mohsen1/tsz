@@ -160,9 +160,7 @@ impl ParserState {
                 members.push(member);
             }
 
-            // Handle semicolons or commas
-            self.parse_optional(SyntaxKind::SemicolonToken);
-            self.parse_optional(SyntaxKind::CommaToken);
+            self.parse_type_member_separator_with_asi();
 
             // If we didn't make progress, skip the current token to avoid infinite loop
             if self.token_pos() == start_pos && !self.is_token(SyntaxKind::CloseBraceToken) {
