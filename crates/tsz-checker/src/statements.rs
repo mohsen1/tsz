@@ -423,11 +423,9 @@ impl StatementChecker {
                     let clauses = {
                         let arena = state.arena();
                         if let Some(cb_node) = arena.get(case_block) {
-                            if let Some(cb) = arena.get_block(cb_node) {
-                                Some(cb.statements.nodes.clone())
-                            } else {
-                                None
-                            }
+                            arena
+                                .get_block(cb_node)
+                                .map(|cb| cb.statements.nodes.clone())
                         } else {
                             None
                         }

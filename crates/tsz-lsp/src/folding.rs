@@ -665,10 +665,10 @@ fn parse_region_delimiter(trimmed: &str) -> Option<RegionDelimiter> {
     if let Some(rest) = after_slashes.strip_prefix("#endregion") {
         let _ = rest;
         Some(RegionDelimiter { is_start: false })
-    } else if let Some(_rest) = after_slashes.strip_prefix("#region") {
-        Some(RegionDelimiter { is_start: true })
     } else {
-        None
+        after_slashes
+            .strip_prefix("#region")
+            .map(|_rest| RegionDelimiter { is_start: true })
     }
 }
 

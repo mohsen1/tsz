@@ -197,10 +197,10 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy type aliases once and reuse for both tuple_context and ctx_helper
         // This ensures type aliases (e.g., type Tup = [string, number]) are expanded
         // before checking for tuple elements and providing contextual typing
-        let resolved_contextual_type = match self.ctx.contextual_type {
-            Some(ctx_type) => Some(self.resolve_lazy_type(ctx_type)),
-            None => None,
-        };
+        let resolved_contextual_type = self
+            .ctx
+            .contextual_type
+            .map(|ctx_type| self.resolve_lazy_type(ctx_type));
 
         let tuple_context = match resolved_contextual_type {
             Some(resolved) => {
