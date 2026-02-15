@@ -4,27 +4,55 @@
 
 Last full run: `./scripts/conformance.sh analyze` after syncing to `origin/main`.
 
-- Total analyzed: 5392
+- Total analyzed: 5388
 - Missing diagnostics: 2474
-- Extra diagnostics: 748
-- Wrong code: 2170
-- Close-to-passing: 1422
+- Extra diagnostics: 745
+- Wrong code: 2169
+- Close-to-passing: 1421
 
 Top buckets of concern:
 
-- `TS2322`: missing=755, extra=93
-- `TS2564`: missing=620, extra=4
+- `TS2322`: missing=755, extra=95
+- `TS2564`: missing=623, extra=4
 - `TS2454`: missing=444, extra=8
 
 ### TS2322 breakdown (from verbose run)
 
 - `MISSING`: 755
-- `EXTRA`: 93
+- `EXTRA`: 95
 - `BOTH`: 91
 - Missing split: compiler=394, conformance=361
 - overlap with `TS2564`: 83
 - overlap with `TS2454`: 56
 - overlap with both: 22
+
+### Step 0 execution log (current run, 2026-02-15)
+
+- `./scripts/conformance.sh run --error-code 2322` produced:
+  - `missing=755`, `extra=95`, `both=91`, total 941 categorized cases.
+  - `missing-only` list path: `/tmp/fail_2322_missing_only.txt`
+  - `extra-only` list path: `/tmp/fail_2322_extra_only.txt`
+  - `both` list path: `/tmp/fail_2322_both_only.txt`
+- Hot TS2322 families:
+  - `TypeScript/tests/cases/compiler/assignmentCompatability*` (31 missing)
+  - `TypeScript/tests/cases/conformance/types/typeRelationships/assignmentCompatibility/*` (31 missing, 3 both)
+  - `TypeScript/tests/cases/conformance/es6/destructuring/*` (many hits in both missing and overlap)
+  - `TypeScript/tests/cases/conformance/classes/*` (broad spread across member/declaration/construction paths)
+- TS2322 missing distribution by suite:
+  - `conformance`: 361
+  - `compiler`: 394
+- TS2322 extra distribution by suite:
+  - `conformance`: 47
+  - `compiler`: 95 - 47 = 48 (exactly 48)
+- TS2322 overlap (`both`) distribution by suite:
+  - `conformance`: 34
+  - `compiler`: 57
+
+#### Step 0 working hypotheses from this classification
+
+1. `TS2322` misses are not random; there is a clear concentration in assignment/callability compatibility surfaces and destructuring/type-guard class of conformance tests.
+2. `extra` is dominated by edge-flow/conformance diagnostics where checker and solver expectations currently diverge on contextual flow and symbol interactions.
+3. The `query_boundaries`/`assignability` path should be first-order target for next fixes before broadening flow-only paths.
 
 Representative hot files already observed:
 
