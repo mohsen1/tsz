@@ -1517,6 +1517,121 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
+    /// Narrow a type by instanceof check using the instance type.
+    ///
+    /// Unlike `narrow_to_type` which uses structural assignability to filter union members,
+    /// this method uses instanceof-specific semantics:
+    /// - Type parameters with constraints assignable to the target are kept (intersected)
+    /// - When a type parameter absorbs the target, anonymous object types are excluded
+    ///   since they cannot be class instances at runtime
+    ///
+    /// This prevents anonymous object types like `{ x: string }` from surviving instanceof
+    /// narrowing when they happen to be structurally compatible with the class type.
+    pub fn narrow_by_instance_type(&self, source_type: TypeId, instance_type: TypeId) -> TypeId {
+        let resolved_source = self.resolve_type(source_type);
+
+        if resolved_source == TypeId::ERROR && source_type != TypeId::ERROR {
+            return source_type;
+        }
+
+        let resolved_target = self.resolve_type(instance_type);
+        if resolved_target == TypeId::ERROR && instance_type != TypeId::ERROR {
+            return source_type;
+        }
+
+        if resolved_source == resolved_target {
+            return source_type;
+        }
+
+        // any/unknown narrow to instance type with instanceof
+        if resolved_source == TypeId::ANY || resolved_source == TypeId::UNKNOWN {
+            return instance_type;
+        }
+
+        // If source is a union, filter members using instanceof semantics
+        if let Some(members) = union_list_id(self.db, resolved_source) {
+            let members = self.db.type_list(members);
+            trace!(
+                "instanceof: narrowing union with {} members to instance type {}",
+                members.len(),
+                instance_type.0
+            );
+
+            // First pass: check if any type parameter matches the instance type.
+            let mut type_param_results: Vec<(usize, TypeId)> = Vec::new();
+            for (i, &member) in members.iter().enumerate() {
+                if let Some(narrowed) = self.narrow_type_param(member, instance_type) {
+                    type_param_results.push((i, narrowed));
+                }
+            }
+
+            let matching: Vec<TypeId> = if !type_param_results.is_empty() {
+                // Type parameter(s) matched: keep type params and exclude anonymous
+                // object types that can't be class instances at runtime.
+                let mut result = Vec::new();
+                let tp_indices: Vec<usize> = type_param_results.iter().map(|(i, _)| *i).collect();
+                for &(_, narrowed) in &type_param_results {
+                    result.push(narrowed);
+                }
+                for (i, &member) in members.iter().enumerate() {
+                    if tp_indices.contains(&i) {
+                        continue;
+                    }
+                    if crate::type_queries::is_object_type(self.db, member) {
+                        trace!(
+                            "instanceof: excluding anonymous object {} (type param absorbs)",
+                            member.0
+                        );
+                        continue;
+                    }
+                    if crate::subtype::is_subtype_of_with_db(self.db, member, instance_type) {
+                        result.push(member);
+                    } else if crate::subtype::is_subtype_of_with_db(self.db, instance_type, member)
+                    {
+                        result.push(instance_type);
+                    }
+                }
+                result
+            } else {
+                // No type parameter match: use standard assignability filtering
+                members
+                    .iter()
+                    .filter_map(|&member| {
+                        if let Some(narrowed) = self.narrow_type_param(member, instance_type) {
+                            return Some(narrowed);
+                        }
+                        if self.is_assignable_to(member, instance_type) {
+                            return Some(member);
+                        }
+                        if crate::subtype::is_subtype_of_with_db(self.db, instance_type, member) {
+                            return Some(instance_type);
+                        }
+                        if self.is_array_like(member) {
+                            use crate::type_queries;
+                            let is_target_lazy_or_app =
+                                type_queries::is_type_reference(self.db, resolved_target)
+                                    || type_queries::is_generic_type(self.db, resolved_target);
+                            if is_target_lazy_or_app {
+                                return Some(member);
+                            }
+                        }
+                        None
+                    })
+                    .collect()
+            };
+
+            if matching.is_empty() {
+                return self.narrow_to_type(source_type, instance_type);
+            } else if matching.len() == 1 {
+                return matching[0];
+            }
+            return self.db.union(matching);
+        }
+
+        // Non-union: delegate to narrow_to_type
+        self.narrow_to_type(source_type, instance_type)
+    }
+
     /// Narrow a type to exclude members assignable to target.
     pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
         if let Some(members) = intersection_list_id(self.db, source_type) {
@@ -2064,9 +2179,10 @@ impl<'a> NarrowingContext<'a> {
                 if sense {
                     // Positive: x instanceof Class
                     // CRITICAL: The payload is already the Instance Type (extracted by Checker)
-                    // We narrow to it directly using narrow_to_type, not narrow_by_instanceof
-                    // which would try to extract the instance type again from a constructor.
-                    let narrowed = self.narrow_to_type(source_type, *instance_type);
+                    // Use narrow_by_instance_type for instanceof-specific semantics:
+                    // type parameters with matching constraints are kept, but anonymous
+                    // object types that happen to be structurally compatible are excluded.
+                    let narrowed = self.narrow_by_instance_type(source_type, *instance_type);
 
                     // Fallback: If standard narrowing returns NEVER but source wasn't NEVER,
                     // it might be an interface vs class check (which is allowed in TS).

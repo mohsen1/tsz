@@ -527,7 +527,7 @@ impl<'a> FlowAnalyzer<'a> {
             } else {
                 NarrowingContext::new(self.interner)
             };
-            return narrowing.narrow_to_type(type_id, instance_type);
+            return narrowing.narrow_by_instance_type(type_id, instance_type);
         }
 
         self.narrow_to_objectish(type_id)
