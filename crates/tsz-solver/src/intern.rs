@@ -821,21 +821,80 @@ impl TypeInterner {
 
     /// Intern a literal bigint type
     pub fn literal_bigint(&self, value: &str) -> TypeId {
-        let atom = self.intern_string(value);
+        let atom = self.intern_string(&self.normalize_bigint_literal(value));
         self.intern(TypeData::Literal(LiteralValue::BigInt(atom)))
     }
 
     /// Intern a literal bigint type, allowing a sign prefix without extra clones.
     pub fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId {
+        let normalized = self.normalize_bigint_literal(digits);
+        if normalized == "0" {
+            return self.literal_bigint(&normalized);
+        }
         if !negative {
-            return self.literal_bigint(digits);
+            return self.literal_bigint(&normalized);
         }
 
-        let mut value = String::with_capacity(digits.len() + 1);
+        let mut value = String::with_capacity(normalized.len() + 1);
         value.push('-');
-        value.push_str(digits);
+        value.push_str(&normalized);
         let atom = self.string_interner.intern_owned(value);
         self.intern(TypeData::Literal(LiteralValue::BigInt(atom)))
+    }
+
+    fn normalize_bigint_literal(&self, value: &str) -> String {
+        let stripped = value.replace('_', "");
+        if stripped.is_empty() {
+            return "0".to_string();
+        }
+
+        let (base, digits) = if stripped.starts_with("0x") || stripped.starts_with("0X") {
+            (16, &stripped[2..])
+        } else if stripped.starts_with("0o") || stripped.starts_with("0O") {
+            (8, &stripped[2..])
+        } else if stripped.starts_with("0b") || stripped.starts_with("0B") {
+            (2, &stripped[2..])
+        } else {
+            (10, stripped.as_str())
+        };
+
+        if digits.is_empty() {
+            return "0".to_string();
+        }
+
+        if base == 10 {
+            let normalized = digits.trim_start_matches('0');
+            return if normalized.is_empty() { "0".to_string() } else { normalized.to_string() };
+        }
+
+        let mut decimal: Vec<u8> = vec![0];
+        for ch in digits.chars() {
+            let Some(digit) = ch.to_digit(base) else {
+                return "0".to_string();
+            };
+            let digit = digit as u16;
+            let mut carry = digit;
+            let base = base as u16;
+            for dec in decimal.iter_mut() {
+                let value = u16::from(*dec) * base + carry;
+                *dec = (value % 10) as u8;
+                carry = value / 10;
+            }
+            while carry > 0 {
+                decimal.push((carry % 10) as u8);
+                carry /= 10;
+            }
+        }
+
+        while decimal.len() > 1 && *decimal.last().unwrap_or(&0) == 0 {
+            decimal.pop();
+        }
+
+        let mut out = String::with_capacity(decimal.len());
+        for digit in decimal.iter().rev() {
+            out.push(char::from(b'0' + *digit));
+        }
+        out
     }
 
     /// Intern a union type, normalizing and deduplicating members

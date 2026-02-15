@@ -24,6 +24,8 @@ use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::RelationCacheKey;
 use tsz_solver::TypeId;
@@ -55,6 +57,91 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         matches!(source, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
             || matches!(target, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
+    }
+
+    /// Suppress assignability diagnostics when they are likely parser-recovery artifacts.
+    ///
+    /// In files with real syntax errors, we often get placeholder nodes and transient
+    /// parse states. Checker-level semantics should not emit TS2322 there.
+    fn should_suppress_assignability_for_parse_recovery(
+        &self,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        if !self.has_syntax_parse_errors() {
+            return false;
+        }
+
+        if self.ctx.syntax_parse_error_positions.is_empty() {
+            return false;
+        }
+
+        self.is_parse_recovery_anchor_node(source_idx)
+            || self.is_parse_recovery_anchor_node(diag_idx)
+    }
+
+    /// Detect nodes that look like parser-recovery artifacts.
+    ///
+    /// Recovery heuristics:
+    /// - Missing-expression placeholders are currently identifiers with empty text.
+    /// - Nodes that start very near a syntax parse error are considered unstable.
+    /// - Nodes in subtrees that were marked as parse-recovery by the parser are suppressed.
+    fn is_parse_recovery_anchor_node(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        // Missing-expression placeholders used by parser recovery.
+        if self
+            .ctx
+            .arena
+            .get_identifier_text(idx)
+            .is_some_and(str::is_empty)
+        {
+            return true;
+        }
+
+        // Also suppress diagnostics anchored very near a syntax parse error.
+        const DIAG_PARSE_DISTANCE: u32 = 16;
+        for &err_pos in &self.ctx.syntax_parse_error_positions {
+            let before = err_pos.saturating_sub(DIAG_PARSE_DISTANCE);
+            let after = err_pos.saturating_add(DIAG_PARSE_DISTANCE);
+            if (node.pos >= before && node.pos <= after)
+                || (node.end >= before && node.end <= after)
+            {
+                return true;
+            }
+        }
+
+        let mut current = idx;
+        let mut walk_guard = 0;
+        while !current.is_none() {
+            walk_guard += 1;
+            if walk_guard > 512 {
+                break;
+            }
+
+            if let Some(current_node) = self.ctx.arena.get(current) {
+                let flags = current_node.flags as u32;
+                if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                    || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                {
+                    return true;
+                }
+            } else {
+                break;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        false
     }
 
     // =========================================================================
@@ -101,11 +188,34 @@ impl<'a> CheckerState<'a> {
     /// Determines if the type needs evaluation (applications, env-dependent types)
     /// and performs the appropriate evaluation.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
-        match classify_for_assignability_eval(self.ctx.types, type_id) {
+        let mut evaluated = match classify_for_assignability_eval(self.ctx.types, type_id) {
             AssignabilityEvalKind::Application => self.evaluate_type_with_resolution(type_id),
             AssignabilityEvalKind::NeedsEnvEval => self.evaluate_type_with_env(type_id),
             AssignabilityEvalKind::Resolved => type_id,
+        };
+
+        // Distribution pass: normalize compound types so mixed representations do not
+        // leak into relation checks (for example, `Lazy(Class)` + resolved class object).
+        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, evaluated) {
+            let factory = self.ctx.types.factory();
+            let members: Vec<TypeId> = members
+                .into_iter()
+                .map(|member| self.evaluate_type_for_assignability(member))
+                .collect();
+            evaluated = factory.union(members);
+        } else if let Some(members) = tsz_solver::type_queries::get_intersection_members(
+            self.ctx.types,
+            evaluated,
+        ) {
+            let factory = self.ctx.types.factory();
+            let members: Vec<TypeId> = members
+                .into_iter()
+                .map(|member| self.evaluate_type_for_assignability(member))
+                .collect();
+            evaluated = factory.intersection(members);
         }
+
+        evaluated
     }
 
     // =========================================================================
@@ -415,6 +525,9 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
         }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
+            return true;
+        }
         if self.is_assignable_to(source, target)
             || self.should_skip_weak_union_error(source, target, source_idx)
         {
@@ -436,6 +549,9 @@ impl<'a> CheckerState<'a> {
         diag_idx: NodeIndex,
     ) -> bool {
         if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
         if self.is_assignable_to(source, target)
@@ -460,6 +576,9 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
         }
+        if self.should_suppress_assignability_for_parse_recovery(arg_idx, arg_idx) {
+            return true;
+        }
         if self.is_assignable_to(source, target)
             || self.should_skip_weak_union_error(source, target, arg_idx)
         {
@@ -482,6 +601,9 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_diagnostic(source, target) {
             return false;
         }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, source_idx) {
+            return false;
+        }
         !self.is_assignable_to(source, target)
             && !self.should_skip_weak_union_error(source, target, source_idx)
     }
@@ -497,6 +619,9 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
     ) -> bool {
         if self.should_suppress_assignability_diagnostic(source, target) {
+            return false;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, source_idx) {
             return false;
         }
         !self.is_assignable_to_bivariant(source, target)

@@ -400,6 +400,8 @@ impl<'a> CheckerState<'a> {
     /// Returns boolean for `!`, number for arithmetic operators, string for `typeof`.
     pub(crate) fn get_type_of_prefix_unary(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_scanner::SyntaxKind;
+        use tsz_solver::type_queries::{classify_literal_type, LiteralTypeKind};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -427,11 +429,37 @@ impl<'a> CheckerState<'a> {
                 // Evaluate operand for side effects / flow analysis but don't type-check it
                 self.get_type_of_node(unary.operand);
 
-                if let Some(literal_type) = self.literal_type_from_initializer(idx)
-                    && self.contextual_literal_type(literal_type).is_some()
-                {
+                if let Some(literal_type) = self.literal_type_from_initializer(idx) {
+                if self.contextual_literal_type(literal_type).is_some() {
                     return literal_type;
                 }
+
+                if matches!(
+                    classify_literal_type(self.ctx.types, literal_type),
+                    LiteralTypeKind::BigInt(_)
+                ) {
+                    if unary.operator == SyntaxKind::PlusToken as u16 {
+                        if let Some(node) = self.ctx.arena.get(idx) {
+                            let message = format_message(
+                                diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                                &["+","bigint"],
+                            );
+                            self.ctx.error(
+                                node.pos,
+                                node.end.saturating_sub(node.pos),
+                                message,
+                                diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                            );
+                        }
+                        return TypeId::ERROR;
+                    }
+
+                    // Preserve bigint literals for unary +/- to avoid widening to number in
+                    // numeric-literal assignments (`const negZero: 0n = -0n`).
+                    return literal_type;
+                }
+                }
+
                 TypeId::NUMBER
             }
             // ~ (bitwise NOT) returns number
