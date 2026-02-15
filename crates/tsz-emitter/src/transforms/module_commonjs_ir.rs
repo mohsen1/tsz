@@ -20,7 +20,7 @@
 //! exports.default = myFunc;
 //! ```
 
-use crate::transforms::ir::*;
+use crate::transforms::ir::IRNode;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;

@@ -4,7 +4,7 @@
 //! with the lock-free TypeInterner architecture.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use rayon::prelude::*;
+use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::sync::Arc;
 use std::time::Duration;
 use tsz_solver::{ObjectFlags, TypeId, TypeInterner};

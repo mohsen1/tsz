@@ -10,7 +10,17 @@
 use crate::resolver::ScopeWalker;
 use crate::utils::find_node_at_offset;
 use tsz_common::position::{Location, Position, Range};
-use tsz_parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::{
+    NodeIndex,
+    syntax_kind_ext::{
+        ARRAY_TYPE, ARROW_FUNCTION, CLASS_DECLARATION, CONDITIONAL_TYPE, ENUM_DECLARATION,
+        FUNCTION_DECLARATION, FUNCTION_TYPE, INDEXED_ACCESS_TYPE, INTERFACE_DECLARATION,
+        INTERSECTION_TYPE, LITERAL_TYPE, MAPPED_TYPE, METHOD_DECLARATION, PARAMETER,
+        PARENTHESIZED_TYPE, PROPERTY_DECLARATION, PROPERTY_SIGNATURE, TEMPLATE_LITERAL_TYPE,
+        TUPLE_TYPE, TYPE_ALIAS_DECLARATION, TYPE_LITERAL, TYPE_QUERY, TYPE_REFERENCE, UNION_TYPE,
+        VARIABLE_DECLARATION,
+    },
+};
 use tsz_scanner::SyntaxKind;
 
 define_lsp_provider!(binder TypeDefinitionProvider, "Provider for Go to Type Definition.");
@@ -68,25 +78,20 @@ impl<'a> TypeDefinitionProvider<'a> {
 
         match node.kind {
             // Variable declaration: look for type annotation
-            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+            k if k == VARIABLE_DECLARATION => {
                 self.find_type_from_variable_declaration(root, decl_idx)
             }
 
             // Parameter: look for type annotation
-            k if k == syntax_kind_ext::PARAMETER => self.find_type_from_parameter(root, decl_idx),
+            k if k == PARAMETER => self.find_type_from_parameter(root, decl_idx),
 
             // Property declaration/signature: look for type annotation
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION
-                || k == syntax_kind_ext::PROPERTY_SIGNATURE =>
-            {
+            k if k == PROPERTY_DECLARATION || k == PROPERTY_SIGNATURE => {
                 self.find_type_from_property(root, decl_idx)
             }
 
             // Function/method: look at return type
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                || k == syntax_kind_ext::METHOD_DECLARATION
-                || k == syntax_kind_ext::ARROW_FUNCTION =>
-            {
+            k if k == FUNCTION_DECLARATION || k == METHOD_DECLARATION || k == ARROW_FUNCTION => {
                 self.find_type_from_function(root, decl_idx)
             }
 
@@ -165,8 +170,6 @@ impl<'a> TypeDefinitionProvider<'a> {
 
     /// Check if a node kind represents a type.
     fn is_type_node(&self, kind: u16) -> bool {
-        use syntax_kind_ext::*;
-
         matches!(
             kind,
             TYPE_REFERENCE
@@ -195,12 +198,12 @@ impl<'a> TypeDefinitionProvider<'a> {
         let node = self.arena.get(type_node)?;
 
         // Handle TypeReference (the most common case)
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+        if node.kind == TYPE_REFERENCE {
             return self.resolve_type_reference(root, type_node);
         }
 
         // For array types, resolve the element type
-        if node.kind == syntax_kind_ext::ARRAY_TYPE {
+        if node.kind == ARRAY_TYPE {
             // Find the element type child and resolve it
             if let Some(elem_type) = self.find_type_annotation_child(type_node) {
                 return self.resolve_type_to_location(root, elem_type);
@@ -209,9 +212,7 @@ impl<'a> TypeDefinitionProvider<'a> {
 
         // For union/intersection, we could return multiple locations
         // For now, just return the first resolvable type
-        if node.kind == syntax_kind_ext::UNION_TYPE
-            || node.kind == syntax_kind_ext::INTERSECTION_TYPE
-        {
+        if node.kind == UNION_TYPE || node.kind == INTERSECTION_TYPE {
             // Find first type child and resolve it
             if let Some(first_type) = self.find_type_annotation_child(type_node) {
                 return self.resolve_type_to_location(root, first_type);
@@ -289,8 +290,6 @@ impl<'a> TypeDefinitionProvider<'a> {
 
     /// Check if a node kind represents a type declaration.
     fn is_type_declaration(&self, kind: u16) -> bool {
-        use syntax_kind_ext::*;
-
         matches!(
             kind,
             INTERFACE_DECLARATION | TYPE_ALIAS_DECLARATION | CLASS_DECLARATION | ENUM_DECLARATION
