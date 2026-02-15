@@ -19,6 +19,8 @@ use crate::types::{
     TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tsz_binder::SymbolId;
@@ -1816,6 +1818,612 @@ impl QueryDatabase for QueryCache<'_> {
         }
 
         canonical
+    }
+}
+
+/// Wrapper that combines QueryCache with Binder access for class hierarchy lookups.
+///
+/// This is used by the Checker to provide the TypeDatabase with the ability to
+/// resolve base classes (extends clauses) for nominal types.
+#[allow(dead_code)]
+pub struct BinderTypeDatabase<'a> {
+    pub query_cache: &'a QueryCache<'a>,
+    pub binder: &'a tsz_binder::BinderState,
+    pub type_env: Rc<RefCell<crate::subtype::TypeEnvironment>>,
+}
+
+#[allow(dead_code)]
+impl<'a> BinderTypeDatabase<'a> {
+    pub fn new(
+        query_cache: &'a QueryCache<'a>,
+        binder: &'a tsz_binder::BinderState,
+        type_env: Rc<RefCell<crate::subtype::TypeEnvironment>>,
+    ) -> Self {
+        Self {
+            query_cache,
+            binder,
+            type_env,
+        }
+    }
+
+    pub fn clear(&self) {
+        self.query_cache.clear();
+    }
+}
+
+impl TypeDatabase for BinderTypeDatabase<'_> {
+    fn intern(&self, key: TypeData) -> TypeId {
+        self.query_cache.intern(key)
+    }
+
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        self.query_cache.lookup(id)
+    }
+
+    fn intern_string(&self, s: &str) -> Atom {
+        self.query_cache.intern_string(s)
+    }
+
+    fn resolve_atom(&self, atom: Atom) -> String {
+        self.query_cache.resolve_atom(atom)
+    }
+
+    fn resolve_atom_ref(&self, atom: Atom) -> Arc<str> {
+        self.query_cache.resolve_atom_ref(atom)
+    }
+
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        self.query_cache.type_list(id)
+    }
+
+    fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
+        self.query_cache.tuple_list(id)
+    }
+
+    fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
+        self.query_cache.template_list(id)
+    }
+
+    fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
+        self.query_cache.object_shape(id)
+    }
+
+    fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
+        self.query_cache.object_property_index(shape_id, name)
+    }
+
+    fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
+        self.query_cache.function_shape(id)
+    }
+
+    fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
+        self.query_cache.callable_shape(id)
+    }
+
+    fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
+        self.query_cache.conditional_type(id)
+    }
+
+    fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
+        self.query_cache.mapped_type(id)
+    }
+
+    fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
+        self.query_cache.type_application(id)
+    }
+
+    fn literal_string(&self, value: &str) -> TypeId {
+        self.query_cache.literal_string(value)
+    }
+
+    fn literal_number(&self, value: f64) -> TypeId {
+        self.query_cache.literal_number(value)
+    }
+
+    fn literal_boolean(&self, value: bool) -> TypeId {
+        self.query_cache.literal_boolean(value)
+    }
+
+    fn literal_bigint(&self, value: &str) -> TypeId {
+        self.query_cache.literal_bigint(value)
+    }
+
+    fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId {
+        self.query_cache.literal_bigint_with_sign(negative, digits)
+    }
+
+    fn union(&self, members: Vec<TypeId>) -> TypeId {
+        self.query_cache.union(members)
+    }
+
+    fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.query_cache.union2(left, right)
+    }
+
+    fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
+        self.query_cache.union3(first, second, third)
+    }
+
+    fn intersection(&self, members: Vec<TypeId>) -> TypeId {
+        self.query_cache.intersection(members)
+    }
+
+    fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.query_cache.intersection2(left, right)
+    }
+
+    fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
+        self.query_cache.intersect_types_raw2(left, right)
+    }
+
+    fn array(&self, element: TypeId) -> TypeId {
+        self.query_cache.array(element)
+    }
+
+    fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
+        self.query_cache.tuple(elements)
+    }
+
+    fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.query_cache.object(properties)
+    }
+
+    fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
+        self.query_cache.object_with_flags(properties, flags)
+    }
+
+    fn object_with_flags_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        flags: ObjectFlags,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.query_cache
+            .object_with_flags_and_symbol(properties, flags, symbol)
+    }
+
+    fn object_fresh(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.query_cache.object_fresh(properties)
+    }
+
+    fn object_with_index(&self, shape: ObjectShape) -> TypeId {
+        self.query_cache.object_with_index(shape)
+    }
+
+    fn function(&self, shape: FunctionShape) -> TypeId {
+        self.query_cache.function(shape)
+    }
+
+    fn callable(&self, shape: CallableShape) -> TypeId {
+        self.query_cache.callable(shape)
+    }
+
+    fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId {
+        self.query_cache.template_literal(spans)
+    }
+
+    fn conditional(&self, conditional: ConditionalType) -> TypeId {
+        self.query_cache.conditional(conditional)
+    }
+
+    fn mapped(&self, mapped: MappedType) -> TypeId {
+        self.query_cache.mapped(mapped)
+    }
+
+    fn reference(&self, symbol: SymbolRef) -> TypeId {
+        self.query_cache.reference(symbol)
+    }
+
+    fn lazy(&self, def_id: DefId) -> TypeId {
+        self.query_cache.lazy(def_id)
+    }
+
+    fn bound_parameter(&self, index: u32) -> TypeId {
+        self.query_cache.bound_parameter(index)
+    }
+
+    fn recursive(&self, depth: u32) -> TypeId {
+        self.query_cache.recursive(depth)
+    }
+
+    fn type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.query_cache.type_param(info)
+    }
+
+    fn type_query(&self, symbol: SymbolRef) -> TypeId {
+        self.query_cache.type_query(symbol)
+    }
+
+    fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
+        self.query_cache.enum_type(def_id, structural_type)
+    }
+
+    fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
+        self.query_cache.application(base, args)
+    }
+
+    fn literal_string_atom(&self, atom: Atom) -> TypeId {
+        self.query_cache.literal_string_atom(atom)
+    }
+
+    fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
+        self.query_cache.union_preserve_members(members)
+    }
+
+    fn readonly_type(&self, inner: TypeId) -> TypeId {
+        self.query_cache.readonly_type(inner)
+    }
+
+    fn keyof(&self, inner: TypeId) -> TypeId {
+        self.query_cache.keyof(inner)
+    }
+
+    fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.query_cache.index_access(object_type, index_type)
+    }
+
+    fn this_type(&self) -> TypeId {
+        self.query_cache.this_type()
+    }
+
+    fn no_infer(&self, inner: TypeId) -> TypeId {
+        self.query_cache.no_infer(inner)
+    }
+
+    fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
+        self.query_cache.unique_symbol(symbol)
+    }
+
+    fn infer(&self, info: TypeParamInfo) -> TypeId {
+        self.query_cache.infer(info)
+    }
+
+    fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
+        self.query_cache.string_intrinsic(kind, type_arg)
+    }
+
+    fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
+        // TODO: Look up the symbol in the binder and find its extends clause
+        // This requires accessing the class declaration node and heritage clauses
+        // For now, return None - BCT will fall back to union creation
+        None
+    }
+
+    fn is_unit_type(&self, type_id: TypeId) -> bool {
+        self.query_cache.is_unit_type(type_id)
+    }
+}
+
+impl TypeResolver for BinderTypeDatabase<'_> {
+    fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.type_env.borrow().get(symbol)
+    }
+
+    fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.type_env.borrow().resolve_lazy(def_id, interner)
+    }
+
+    fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
+        self.type_env.borrow().get_type_params(symbol)
+    }
+
+    fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        self.type_env.borrow().get_lazy_type_params(def_id)
+    }
+
+    fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
+        self.type_env.borrow().def_to_symbol_id(def_id)
+    }
+
+    fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
+        self.type_env.borrow().symbol_to_def_id(symbol)
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.type_env.borrow().get_boxed_type(kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        self.type_env.borrow().is_boxed_def_id(def_id, kind)
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        self.type_env.borrow().get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        // NOTE: Cannot easily return &[] from RefCell due to lifetime issues
+        // Returning empty slice for now - this is acceptable since array types
+        // are typically handled through other mechanisms
+        &[]
+    }
+
+    fn get_lazy_export(&self, def_id: DefId, name: Atom) -> Option<TypeId> {
+        self.type_env.borrow().get_lazy_export(def_id, name)
+    }
+
+    fn get_lazy_enum_member(&self, def_id: DefId, name: Atom) -> Option<TypeId> {
+        self.type_env.borrow().get_lazy_enum_member(def_id, name)
+    }
+
+    fn is_numeric_enum(&self, def_id: DefId) -> bool {
+        self.type_env.borrow().is_numeric_enum(def_id)
+    }
+
+    fn get_base_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.type_env.borrow().get_base_type(type_id, interner)
+    }
+
+    fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
+        self.type_env.borrow().get_def_kind(def_id)
+    }
+}
+
+impl QueryDatabase for BinderTypeDatabase<'_> {
+    fn as_type_database(&self) -> &dyn TypeDatabase {
+        self
+    }
+
+    fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
+        self.query_cache
+            .interner
+            .set_array_base_type(type_id, type_params.clone());
+        self.type_env
+            .borrow_mut()
+            .set_array_base_type(type_id, type_params);
+    }
+
+    fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+        self.evaluate_type_with_options(type_id, self.query_cache.no_unchecked_indexed_access())
+    }
+
+    fn evaluate_type_with_options(
+        &self,
+        type_id: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        use crate::evaluate::TypeEvaluator;
+
+        let key = (type_id, no_unchecked_indexed_access);
+        // Handle poisoned locks gracefully
+        let cached = match self.query_cache.eval_cache.read() {
+            Ok(cache) => cache.get(&key).copied(),
+            Err(e) => e.into_inner().get(&key).copied(),
+        };
+
+        if let Some(result) = cached {
+            return result;
+        }
+
+        // CRITICAL: Use TypeEvaluator with type_env as resolver
+        // This ensures Lazy types are resolved using the TypeEnvironment
+        let type_env = self.type_env.borrow();
+        let mut evaluator = TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator = evaluator.with_query_db(self);
+
+        let result = evaluator.evaluate(type_id);
+
+        match self.query_cache.eval_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(key, result);
+            }
+            Err(e) => {
+                e.into_inner().insert(key, result);
+            }
+        }
+        result
+    }
+
+    fn lookup_application_eval_cache(
+        &self,
+        def_id: DefId,
+        args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        self.query_cache.check_application_eval_cache((
+            def_id,
+            args.to_vec(),
+            no_unchecked_indexed_access,
+        ))
+    }
+
+    fn insert_application_eval_cache(
+        &self,
+        def_id: DefId,
+        args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+        result: TypeId,
+    ) {
+        self.query_cache.insert_application_eval_cache(
+            (def_id, args.to_vec(), no_unchecked_indexed_access),
+            result,
+        );
+    }
+
+    fn evaluate_index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        self.evaluate_index_access_with_options(
+            object_type,
+            index_type,
+            self.no_unchecked_indexed_access(),
+        )
+    }
+
+    fn evaluate_index_access_with_options(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        no_unchecked_indexed_access: bool,
+    ) -> TypeId {
+        // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution.
+        // This fixes the NoopResolver issue that prevents type alias resolution in index access
+        // (e.g. `OptionsForKey[K]` where OptionsForKey is a type alias).
+        let type_env = self.type_env.borrow();
+        let mut evaluator =
+            crate::evaluate::TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
+        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator = evaluator.with_query_db(self);
+        evaluator.evaluate_index_access(object_type, index_type)
+    }
+
+    fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+        // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+        // This fixes the NoopResolver issue that prevents type alias resolution in mapped types
+        let type_env = self.type_env.borrow();
+        let mut evaluator =
+            crate::evaluate::TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
+        evaluator = evaluator.with_query_db(self);
+        evaluator.evaluate_mapped(mapped)
+    }
+
+    fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+        // CRITICAL: Borrow type_env to use as resolver for proper Lazy type resolution
+        // This fixes the NoopResolver issue that prevents type alias resolution in keyof
+        let type_env = self.type_env.borrow();
+        let mut evaluator =
+            crate::evaluate::TypeEvaluator::with_resolver(self.as_type_database(), &*type_env);
+        evaluator = evaluator.with_query_db(self);
+        evaluator.evaluate_keyof(operand)
+    }
+
+    fn resolve_property_access(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> crate::operations_property::PropertyAccessResult {
+        self.query_cache
+            .resolve_property_access(object_type, prop_name)
+    }
+
+    fn resolve_property_access_with_options(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+        no_unchecked_indexed_access: bool,
+    ) -> crate::operations_property::PropertyAccessResult {
+        self.query_cache.resolve_property_access_with_options(
+            object_type,
+            prop_name,
+            no_unchecked_indexed_access,
+        )
+    }
+
+    fn property_access_type(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> crate::operations_property::PropertyAccessResult {
+        self.query_cache
+            .property_access_type(object_type, prop_name)
+    }
+
+    fn is_property_readonly(&self, object_type: TypeId, prop_name: &str) -> bool {
+        self.query_cache
+            .is_property_readonly(object_type, prop_name)
+    }
+
+    fn is_readonly_index_signature(
+        &self,
+        object_type: TypeId,
+        wants_string: bool,
+        wants_number: bool,
+    ) -> bool {
+        self.query_cache
+            .is_readonly_index_signature(object_type, wants_string, wants_number)
+    }
+
+    fn no_unchecked_indexed_access(&self) -> bool {
+        self.query_cache.no_unchecked_indexed_access()
+    }
+
+    fn set_no_unchecked_indexed_access(&self, enabled: bool) {
+        self.query_cache.set_no_unchecked_indexed_access(enabled);
+    }
+
+    fn resolve_element_access(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> ElementAccessResult {
+        self.query_cache
+            .resolve_element_access(object_type, index_type, literal_index)
+    }
+
+    fn resolve_element_access_type(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        literal_index: Option<usize>,
+    ) -> TypeId {
+        self.query_cache
+            .resolve_element_access_type(object_type, index_type, literal_index)
+    }
+
+    fn collect_object_spread_properties(&self, spread_type: TypeId) -> Vec<PropertyInfo> {
+        self.query_cache
+            .collect_object_spread_properties(spread_type)
+    }
+
+    fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
+        self.query_cache.get_index_signatures(type_id)
+    }
+
+    fn is_nullish_type(&self, type_id: TypeId) -> bool {
+        self.query_cache.is_nullish_type(type_id)
+    }
+
+    fn remove_nullish(&self, type_id: TypeId) -> TypeId {
+        self.query_cache.remove_nullish(type_id)
+    }
+
+    fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
+        self.query_cache.is_subtype_of(source, target)
+    }
+
+    fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        self.query_cache
+            .is_subtype_of_with_flags(source, target, flags)
+    }
+
+    fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        self.query_cache.is_assignable_to(source, target)
+    }
+
+    fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
+        self.query_cache
+            .is_assignable_to_with_flags(source, target, flags)
+    }
+
+    fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {
+        self.query_cache.lookup_subtype_cache(key)
+    }
+
+    fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
+        self.query_cache.insert_subtype_cache(key, result);
+    }
+
+    fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
+        self.query_cache.lookup_assignability_cache(key)
+    }
+
+    fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {
+        self.query_cache.insert_assignability_cache(key, result);
+    }
+
+    fn new_inference_context(&self) -> crate::infer::InferenceContext<'_> {
+        crate::infer::InferenceContext::new(self)
+    }
+
+    fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        // Use fully qualified syntax to disambiguate between
+        // QueryDatabase and TypeResolver traits (both have this method)
+        <QueryCache<'_> as QueryDatabase>::get_type_param_variance(self.query_cache, def_id)
+    }
+
+    fn canonical_id(&self, type_id: TypeId) -> TypeId {
+        // Delegate to QueryCache which has the canonical cache
+        self.query_cache.canonical_id(type_id)
     }
 }
 

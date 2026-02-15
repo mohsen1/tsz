@@ -8,7 +8,7 @@
 //! - Type expansion and instantiation
 
 use crate::def::DefId;
-use crate::types::Visibility;
+use crate::types::{IntrinsicKind, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
     application_id, index_access_parts, keyof_inner_type, lazy_def_id, literal_value,
