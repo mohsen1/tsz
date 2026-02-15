@@ -2065,12 +2065,13 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         matches!(
             (derived_visibility, base_visibility),
-            (MemberVisibility::Private, MemberVisibility::Private)
-                | (MemberVisibility::Private, MemberVisibility::Protected)
-                | (MemberVisibility::Private, MemberVisibility::Public)
-                | (MemberVisibility::Protected, MemberVisibility::Public)
-                | (MemberVisibility::Public, MemberVisibility::Private)
-                | (MemberVisibility::Protected, MemberVisibility::Private)
+            (
+                MemberVisibility::Private,
+                MemberVisibility::Private | MemberVisibility::Protected | MemberVisibility::Public
+            ) | (
+                MemberVisibility::Protected,
+                MemberVisibility::Public | MemberVisibility::Private
+            ) | (MemberVisibility::Public, MemberVisibility::Private)
         )
     }
 
