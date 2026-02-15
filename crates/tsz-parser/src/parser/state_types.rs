@@ -2123,6 +2123,19 @@ impl ParserState {
         self.parse_expected(SyntaxKind::LessThanToken);
         let type_node = self.parse_type();
         self.parse_expected(SyntaxKind::GreaterThanToken);
+
+        // TypeScript doesn't allow bare 'yield' after type assertion
+        // Unlike 'await', 'yield' is not allowed as a simple unary expression in this context
+        // Example: <number> yield 0 → TS1109 "Expression expected"
+        // But:     <number> (yield 0) → valid (parens make it a primary expression)
+        if self.is_token(SyntaxKind::YieldKeyword) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+        }
+
         let expression = self.parse_unary_expression();
         if expression.is_none() {
             self.error_expression_expected();

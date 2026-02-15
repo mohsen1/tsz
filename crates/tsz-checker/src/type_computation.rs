@@ -689,9 +689,9 @@ impl<'a> CheckerState<'a> {
                             .nodes
                             .iter()
                             .any(|stmt_idx| statement_is_use_strict(*stmt_idx, self))
-                        {
-                            return true;
-                        }
+                    {
+                        return true;
+                    }
                     return false;
                 }
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION

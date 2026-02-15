@@ -1033,6 +1033,60 @@ class C {
 }
 
 // =============================================================================
+// Yield Expression Tests
+// =============================================================================
+
+#[test]
+fn test_yield_after_type_assertion_requires_parens() {
+    // yield without parentheses after type assertion should emit TS1109
+    let source = r"
+function* f() {
+    <number> yield 0;
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+
+    assert_eq!(
+        ts1109_count, 1,
+        "Expected 1 TS1109 error for yield without parens after type assertion, got {ts1109_count}. Diagnostics: {diagnostics:?}",
+    );
+
+    // Check that the error mentions expression
+    let has_expression_expected = diagnostics
+        .iter()
+        .any(|d| d.code == 1109 && d.message.to_lowercase().contains("expression"));
+    assert!(
+        has_expression_expected,
+        "Expected TS1109 error to mention 'expression', got diagnostics: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn test_yield_with_parens_after_type_assertion_is_valid() {
+    // yield with parentheses after type assertion should be valid
+    let source = r"
+function* f() {
+    <number> (yield 0);
+}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+
+    // Should not emit TS1109 for yield in parentheses
+    let ts1109_count = diagnostics.iter().filter(|d| d.code == 1109).count();
+    assert_eq!(
+        ts1109_count, 0,
+        "Expected no TS1109 errors for yield with parens, got {ts1109_count}. Diagnostics: {diagnostics:?}",
+    );
+}
+
+// =============================================================================
 // Orphan Catch/Finally Tests
 // =============================================================================
 
