@@ -546,63 +546,56 @@ impl<'a> NamespaceES5Transformer<'a> {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
                     match stmt_node.kind {
                         k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                            if let Some(class_data) = self.arena.get_class(stmt_node) {
-                                if let Some(name) = get_identifier_text(self.arena, class_data.name)
-                                {
-                                    declared_names.insert(name);
-                                }
+                            if let Some(class_data) = self.arena.get_class(stmt_node)
+                                && let Some(name) = get_identifier_text(self.arena, class_data.name)
+                            {
+                                declared_names.insert(name);
                             }
                         }
                         k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                            if let Some(func_data) = self.arena.get_function(stmt_node) {
-                                if let Some(name) = get_identifier_text(self.arena, func_data.name)
-                                {
-                                    declared_names.insert(name);
-                                }
+                            if let Some(func_data) = self.arena.get_function(stmt_node)
+                                && let Some(name) = get_identifier_text(self.arena, func_data.name)
+                            {
+                                declared_names.insert(name);
                             }
                         }
                         k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                            if let Some(enum_data) = self.arena.get_enum(stmt_node) {
-                                if let Some(name) = get_identifier_text(self.arena, enum_data.name)
-                                {
-                                    declared_names.insert(name);
-                                }
+                            if let Some(enum_data) = self.arena.get_enum(stmt_node)
+                                && let Some(name) = get_identifier_text(self.arena, enum_data.name)
+                            {
+                                declared_names.insert(name);
                             }
                         }
                         k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                            if let Some(export_data) = self.arena.get_export_decl(stmt_node) {
-                                if let Some(inner) = self.arena.get(export_data.export_clause) {
-                                    match inner.kind {
-                                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                                            if let Some(class_data) = self.arena.get_class(inner) {
-                                                if let Some(name) =
-                                                    get_identifier_text(self.arena, class_data.name)
-                                                {
-                                                    declared_names.insert(name);
-                                                }
-                                            }
+                            if let Some(export_data) = self.arena.get_export_decl(stmt_node)
+                                && let Some(inner) = self.arena.get(export_data.export_clause)
+                            {
+                                match inner.kind {
+                                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                                        if let Some(class_data) = self.arena.get_class(inner)
+                                            && let Some(name) =
+                                                get_identifier_text(self.arena, class_data.name)
+                                        {
+                                            declared_names.insert(name);
                                         }
-                                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                                            if let Some(func_data) = self.arena.get_function(inner)
-                                            {
-                                                if let Some(name) =
-                                                    get_identifier_text(self.arena, func_data.name)
-                                                {
-                                                    declared_names.insert(name);
-                                                }
-                                            }
-                                        }
-                                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                                            if let Some(enum_data) = self.arena.get_enum(inner) {
-                                                if let Some(name) =
-                                                    get_identifier_text(self.arena, enum_data.name)
-                                                {
-                                                    declared_names.insert(name);
-                                                }
-                                            }
-                                        }
-                                        _ => {}
                                     }
+                                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                                        if let Some(func_data) = self.arena.get_function(inner)
+                                            && let Some(name) =
+                                                get_identifier_text(self.arena, func_data.name)
+                                        {
+                                            declared_names.insert(name);
+                                        }
+                                    }
+                                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                                        if let Some(enum_data) = self.arena.get_enum(inner)
+                                            && let Some(name) =
+                                                get_identifier_text(self.arena, enum_data.name)
+                                        {
+                                            declared_names.insert(name);
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -775,17 +768,17 @@ impl<'a> NamespaceES5Transformer<'a> {
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export_data) = self.arena.get_export_decl(member_node) {
-                    if let Some(inner) = self.arena.get(export_data.export_clause) {
-                        if inner.kind == syntax_kind_ext::MODULE_DECLARATION {
-                            let ns_data = self.arena.get_module(inner)?;
-                            let name = get_identifier_text(self.arena, ns_data.name)?;
-                            let should_declare_var = !declared_names.contains(&name);
-                            return self.transform_nested_namespace_exported_with_var(
-                                ns_name,
-                                export_data.export_clause,
-                                should_declare_var,
-                            );
-                        }
+                    if let Some(inner) = self.arena.get(export_data.export_clause)
+                        && inner.kind == syntax_kind_ext::MODULE_DECLARATION
+                    {
+                        let ns_data = self.arena.get_module(inner)?;
+                        let name = get_identifier_text(self.arena, ns_data.name)?;
+                        let should_declare_var = !declared_names.contains(&name);
+                        return self.transform_nested_namespace_exported_with_var(
+                            ns_name,
+                            export_data.export_clause,
+                            should_declare_var,
+                        );
                     }
                     self.transform_namespace_member_exported(ns_name, export_data.export_clause)
                 } else {
@@ -1780,33 +1773,33 @@ fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 // Recursively check if nested namespace is itself instantiated
-                if let Some(ns_data) = arena.get_module(stmt_node) {
-                    if body_has_value_declarations(arena, ns_data.body) {
-                        return true;
-                    }
+                if let Some(ns_data) = arena.get_module(stmt_node)
+                    && body_has_value_declarations(arena, ns_data.body)
+                {
+                    return true;
                 }
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 // Check if the exported declaration is a value declaration
-                if let Some(export_data) = arena.get_export_decl(stmt_node) {
-                    if let Some(inner_node) = arena.get(export_data.export_clause) {
-                        match inner_node.kind {
-                            k if k == syntax_kind_ext::VARIABLE_STATEMENT
-                                || k == syntax_kind_ext::FUNCTION_DECLARATION
-                                || k == syntax_kind_ext::CLASS_DECLARATION
-                                || k == syntax_kind_ext::ENUM_DECLARATION =>
+                if let Some(export_data) = arena.get_export_decl(stmt_node)
+                    && let Some(inner_node) = arena.get(export_data.export_clause)
+                {
+                    match inner_node.kind {
+                        k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                            || k == syntax_kind_ext::FUNCTION_DECLARATION
+                            || k == syntax_kind_ext::CLASS_DECLARATION
+                            || k == syntax_kind_ext::ENUM_DECLARATION =>
+                        {
+                            return true;
+                        }
+                        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                            if let Some(ns_data) = arena.get_module(inner_node)
+                                && body_has_value_declarations(arena, ns_data.body)
                             {
                                 return true;
                             }
-                            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                                if let Some(ns_data) = arena.get_module(inner_node) {
-                                    if body_has_value_declarations(arena, ns_data.body) {
-                                        return true;
-                                    }
-                                }
-                            }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
             }
@@ -1831,12 +1824,11 @@ fn is_namespace_like(arena: &NodeArena, node: &tsz_parser::parser::node::Node) -
     if node.kind == syntax_kind_ext::MODULE_DECLARATION {
         return true;
     }
-    if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-        if let Some(export_data) = arena.get_export_decl(node) {
-            if let Some(inner) = arena.get(export_data.export_clause) {
-                return inner.kind == syntax_kind_ext::MODULE_DECLARATION;
-            }
-        }
+    if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+        && let Some(export_data) = arena.get_export_decl(node)
+        && let Some(inner) = arena.get(export_data.export_clause)
+    {
+        return inner.kind == syntax_kind_ext::MODULE_DECLARATION;
     }
     false
 }
@@ -1899,15 +1891,15 @@ fn convert_function_body(arena: &NodeArena, body_idx: NodeIndex) -> Vec<IRNode> 
     };
 
     // Handle both Block and syntax_kind_ext::BLOCK
-    if body_node.kind == syntax_kind_ext::BLOCK {
-        if let Some(block) = arena.get_block(body_node) {
-            return block
-                .statements
-                .nodes
-                .iter()
-                .map(|&s| AstToIr::new(arena).convert_statement(s))
-                .collect();
-        }
+    if body_node.kind == syntax_kind_ext::BLOCK
+        && let Some(block) = arena.get_block(body_node)
+    {
+        return block
+            .statements
+            .nodes
+            .iter()
+            .map(|&s| AstToIr::new(arena).convert_statement(s))
+            .collect();
     }
 
     // Fallback for unsupported body types
@@ -1980,12 +1972,11 @@ fn collect_runtime_exported_var_names_in_stmt(
             collect_from_var_statement(stmt_node, names);
         }
         kind if kind == syntax_kind_ext::EXPORT_DECLARATION => {
-            if let Some(export_data) = arena.get_export_decl(stmt_node) {
-                if let Some(inner_node) = arena.get(export_data.export_clause) {
-                    if inner_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                        collect_from_var_statement(inner_node, names);
-                    }
-                }
+            if let Some(export_data) = arena.get_export_decl(stmt_node)
+                && let Some(inner_node) = arena.get(export_data.export_clause)
+                && inner_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            {
+                collect_from_var_statement(inner_node, names);
             }
         }
         _ => {}
@@ -2010,13 +2001,12 @@ fn convert_exported_variable_declarations(
                 if let Some(decl_node) = arena.get(decl_idx)
                     && let Some(decl) = arena.get_variable_declaration(decl_node)
                     && let Some(name) = get_identifier_text(arena, decl.name)
+                    && !decl.initializer.is_none()
                 {
-                    if !decl.initializer.is_none() {
-                        let value = AstToIr::new(arena).convert_expression(decl.initializer);
-                        assignment_targets.push((name, value));
-                    }
-                    // No initializer: tsc omits the assignment entirely in namespaces
+                    let value = AstToIr::new(arena).convert_expression(decl.initializer);
+                    assignment_targets.push((name, value));
                 }
+                // No initializer: tsc omits the assignment entirely in namespaces
             }
         }
     }
@@ -2192,10 +2182,10 @@ fn rename_namespace_refs_in_node(node: &mut IRNode, old_name: &str, new_name: &s
             }
         }
         IRNode::NamespaceIIFE { parent_name, .. } => {
-            if let Some(parent) = parent_name {
-                if parent == old_name {
-                    *parent = new_name.to_string();
-                }
+            if let Some(parent) = parent_name
+                && parent == old_name
+            {
+                *parent = new_name.to_string();
             }
         }
         IRNode::Sequence(items) => {
@@ -2469,10 +2459,9 @@ fn namespace_body_by_name(arena: &NodeArena, target_parts: &[String]) -> Option<
 
         if let Some((parts, body_idx)) =
             collect_module_decl_parts_for_body_lookup(arena, NodeIndex(idx as u32))
+            && parts == target_parts
         {
-            if parts == target_parts {
-                return Some(body_idx);
-            }
+            return Some(body_idx);
         }
     }
 
@@ -2494,10 +2483,10 @@ fn collect_module_decl_parts_for_body_lookup(
 
         let ns_data = arena.get_module(node)?;
 
-        if let Some(name_node) = arena.get(ns_data.name) {
-            if let Some(id) = arena.get_identifier(name_node) {
-                parts.push(id.escaped_text.clone());
-            }
+        if let Some(name_node) = arena.get(ns_data.name)
+            && let Some(id) = arena.get_identifier(name_node)
+        {
+            parts.push(id.escaped_text.clone());
         }
 
         let body_node = arena.get(ns_data.body)?;

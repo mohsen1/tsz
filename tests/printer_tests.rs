@@ -97,8 +97,10 @@ fn test_print_with_source_map() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrintOptions::default();
-    options.source_map = true;
+    let options = PrintOptions {
+        source_map: true,
+        ..Default::default()
+    };
 
     let result = print_with_source_map(&parser.arena, root, source, "test.ts", "test.js", options);
 

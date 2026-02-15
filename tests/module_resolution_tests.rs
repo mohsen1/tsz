@@ -71,8 +71,10 @@ fn check_with_module_exports(
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.module = crate::common::ModuleKind::CommonJS;
+    let options = CheckerOptions {
+        module: crate::common::ModuleKind::CommonJS,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -140,8 +142,10 @@ fn check_with_module_sources(
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.module = crate::common::ModuleKind::CommonJS;
+    let options = CheckerOptions {
+        module: crate::common::ModuleKind::CommonJS,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -492,8 +496,10 @@ fn test_import_equals_require_in_esm_emits_ts1202() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.module = crate::common::ModuleKind::ES2015;
+    let options = CheckerOptions {
+        module: crate::common::ModuleKind::ES2015,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -1407,8 +1413,10 @@ fn test_commonjs_import_equals_no_error() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.module = crate::common::ModuleKind::CommonJS;
+    let options = CheckerOptions {
+        module: crate::common::ModuleKind::CommonJS,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),

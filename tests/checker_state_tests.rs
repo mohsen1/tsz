@@ -6618,8 +6618,10 @@ const val = obj.someProperty;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.no_property_access_from_index_signature = true;
+    let opts = crate::checker::context::CheckerOptions {
+        no_property_access_from_index_signature: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -6659,8 +6661,10 @@ const val = obj.explicitProp;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.no_property_access_from_index_signature = true;
+    let opts = crate::checker::context::CheckerOptions {
+        no_property_access_from_index_signature: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -6699,8 +6703,10 @@ const val = obj.x;
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.no_property_access_from_index_signature = true;
+    let opts = crate::checker::context::CheckerOptions {
+        no_property_access_from_index_signature: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -8254,8 +8260,10 @@ const anon = () => { return null; };
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.strict_null_checks = true; // TS2366 requires strictNullChecks
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    }; // TS2366 requires strictNullChecks
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -9119,8 +9127,10 @@ function tryCatchFallsThrough(): number {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.strict_null_checks = true; // TS2366 requires strictNullChecks
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    }; // TS2366 requires strictNullChecks
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -9834,8 +9844,10 @@ const value = obj[key];
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.no_implicit_any = true;
+    let opts = crate::checker::context::CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -9877,8 +9889,10 @@ const value = obj[key];
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.no_implicit_any = true;
+    let opts = crate::checker::context::CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -9920,8 +9934,10 @@ const value = obj[key];
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.no_implicit_any = true;
+    let opts = crate::checker::context::CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -10195,8 +10211,10 @@ const value = obj["a"];
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.strict_null_checks = true;
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -26550,8 +26568,10 @@ const noAnnotation = () => {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.strict_null_checks = true; // TS2366 requires strictNullChecks
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    }; // TS2366 requires strictNullChecks
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -26609,8 +26629,10 @@ const noAnnotation = function() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.strict_null_checks = true; // TS2366 requires strictNullChecks
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    }; // TS2366 requires strictNullChecks
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -26657,8 +26679,10 @@ function outer(): (x: number) => string {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.strict_null_checks = true; // TS2366 requires strictNullChecks
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    }; // TS2366 requires strictNullChecks
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -26716,8 +26740,10 @@ const switchWithDefault = (value: number): string => {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.strict_null_checks = true; // TS2366 requires strictNullChecks
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    }; // TS2366 requires strictNullChecks
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -26779,8 +26805,10 @@ const tryFinallyFallthrough = (): number => {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.strict_null_checks = true; // TS2366 requires strictNullChecks
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    }; // TS2366 requires strictNullChecks
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -26836,8 +26864,10 @@ function test3(): string {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.allow_unreachable_code = Some(false);
+    let opts = crate::checker::context::CheckerOptions {
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -26885,8 +26915,10 @@ function test2(): number {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.allow_unreachable_code = Some(false);
+    let opts = crate::checker::context::CheckerOptions {
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -26936,8 +26968,10 @@ function test2(): void {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.allow_unreachable_code = Some(false);
+    let opts = crate::checker::context::CheckerOptions {
+        allow_unreachable_code: Some(false),
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -27326,8 +27360,10 @@ const obj = {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.target = tsz_common::common::ScriptTarget::ES5;
+    let opts = crate::checker::context::CheckerOptions {
+        target: tsz_common::common::ScriptTarget::ES5,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -27384,8 +27420,10 @@ const obj2 = {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.target = tsz_common::common::ScriptTarget::ES5;
+    let opts = crate::checker::context::CheckerOptions {
+        target: tsz_common::common::ScriptTarget::ES5,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
@@ -29390,8 +29428,10 @@ function createProgram(
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut opts = crate::checker::context::CheckerOptions::default();
-    opts.no_implicit_any = true;
+    let opts = crate::checker::context::CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,

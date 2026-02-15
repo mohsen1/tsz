@@ -58,10 +58,10 @@ fn contains_target_reference(
         return true;
     }
 
-    if node.kind == SyntaxKind::Identifier as u16 {
-        if let Some(identifier) = arena.get_identifier(node) {
-            return identifier.escaped_text == target.identifier_name();
-        }
+    if node.kind == SyntaxKind::Identifier as u16
+        && let Some(identifier) = arena.get_identifier(node)
+    {
+        return identifier.escaped_text == target.identifier_name();
     }
 
     target_reference_children(arena, node_idx)

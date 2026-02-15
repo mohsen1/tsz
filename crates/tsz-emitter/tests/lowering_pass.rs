@@ -22,8 +22,10 @@ fn test_lowering_pass_es6_no_transforms() {
 #[test]
 fn test_lowering_pass_es5_class() {
     let (arena, root) = parse("class Foo { constructor(x) { this.x = x; } }");
-    let mut ctx = EmitContext::default();
-    ctx.target_es5 = true;
+    let ctx = EmitContext {
+        target_es5: true,
+        ..EmitContext::default()
+    };
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -121,8 +123,10 @@ fn test_lowering_pass_commonjs_non_export_function_no_transforms() {
 #[test]
 fn test_lowering_pass_nested_arrow_in_class() {
     let (arena, root) = parse("class C { m() { const f = () => this; } }");
-    let mut ctx = EmitContext::default();
-    ctx.target_es5 = true;
+    let ctx = EmitContext {
+        target_es5: true,
+        ..EmitContext::default()
+    };
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);
@@ -137,8 +141,10 @@ fn test_lowering_pass_nested_arrow_in_class() {
 fn test_malformed_arrow_recovery_not_lowered_to_es5_function() {
     let source = "var v = (a): => {\n\n};";
     let (arena, root) = parse(source);
-    let mut ctx = EmitContext::default();
-    ctx.target_es5 = true;
+    let ctx = EmitContext {
+        target_es5: true,
+        ..EmitContext::default()
+    };
 
     let lowering = LoweringPass::new(&arena, &ctx);
     let transforms = lowering.run(root);

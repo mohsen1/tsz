@@ -383,24 +383,24 @@ impl<'a> HoverProvider<'a> {
             modifiers.push("protected");
         }
 
-        if !decl_node_idx.is_none() {
-            if let Some(ext) = self.arena.get_extended(decl_node_idx) {
-                let mflags = ext.modifier_flags;
-                if mflags & mf::AMBIENT != 0 {
-                    modifiers.push("declare");
-                }
-                if mflags & mf::ASYNC != 0 {
-                    modifiers.push("async");
-                }
-                if mflags & mf::READONLY != 0 {
-                    modifiers.push("readonly");
-                }
-                if !modifiers.contains(&"export") && mflags & mf::EXPORT != 0 {
-                    modifiers.push("export");
-                }
-                if !modifiers.contains(&"abstract") && mflags & mf::ABSTRACT != 0 {
-                    modifiers.push("abstract");
-                }
+        if !decl_node_idx.is_none()
+            && let Some(ext) = self.arena.get_extended(decl_node_idx)
+        {
+            let mflags = ext.modifier_flags;
+            if mflags & mf::AMBIENT != 0 {
+                modifiers.push("declare");
+            }
+            if mflags & mf::ASYNC != 0 {
+                modifiers.push("async");
+            }
+            if mflags & mf::READONLY != 0 {
+                modifiers.push("readonly");
+            }
+            if !modifiers.contains(&"export") && mflags & mf::EXPORT != 0 {
+                modifiers.push("export");
+            }
+            if !modifiers.contains(&"abstract") && mflags & mf::ABSTRACT != 0 {
+                modifiers.push("abstract");
             }
         }
 
@@ -527,26 +527,23 @@ impl<'a> HoverProvider<'a> {
         if let Some(data) = self.arena.get_identifier(parent_node) {
             return Some(self.arena.resolve_identifier_text(data).to_string());
         }
-        if let Some(data) = self.arena.get_class(parent_node) {
-            if let Some(name_node) = self.arena.get(data.name) {
-                if let Some(id) = self.arena.get_identifier(name_node) {
-                    return Some(self.arena.resolve_identifier_text(id).to_string());
-                }
-            }
+        if let Some(data) = self.arena.get_class(parent_node)
+            && let Some(name_node) = self.arena.get(data.name)
+            && let Some(id) = self.arena.get_identifier(name_node)
+        {
+            return Some(self.arena.resolve_identifier_text(id).to_string());
         }
-        if let Some(data) = self.arena.get_enum(parent_node) {
-            if let Some(name_node) = self.arena.get(data.name) {
-                if let Some(id) = self.arena.get_identifier(name_node) {
-                    return Some(self.arena.resolve_identifier_text(id).to_string());
-                }
-            }
+        if let Some(data) = self.arena.get_enum(parent_node)
+            && let Some(name_node) = self.arena.get(data.name)
+            && let Some(id) = self.arena.get_identifier(name_node)
+        {
+            return Some(self.arena.resolve_identifier_text(id).to_string());
         }
-        if let Some(data) = self.arena.get_interface(parent_node) {
-            if let Some(name_node) = self.arena.get(data.name) {
-                if let Some(id) = self.arena.get_identifier(name_node) {
-                    return Some(self.arena.resolve_identifier_text(id).to_string());
-                }
-            }
+        if let Some(data) = self.arena.get_interface(parent_node)
+            && let Some(name_node) = self.arena.get(data.name)
+            && let Some(id) = self.arena.get_identifier(name_node)
+        {
+            return Some(self.arena.resolve_identifier_text(id).to_string());
         }
         None
     }

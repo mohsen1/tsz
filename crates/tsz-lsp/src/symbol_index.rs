@@ -408,27 +408,27 @@ impl SymbolIndex {
         // This enables O(1) lookup for Go to Implementation and upward traversal for rename
         for i in 0..arena.nodes.len() {
             let node_idx = tsz_parser::NodeIndex(i as u32);
-            if let Some(node) = arena.get(node_idx) {
-                if node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
-                    // This is a heritage clause (extends X, implements Y)
-                    if let Some(heritage_data) = arena.get_heritage_clause(node) {
-                        // Iterate through the types in this heritage clause
-                        for type_node_idx in &heritage_data.types.nodes {
-                            if let Some(type_name) =
-                                self.extract_heritage_type_name(arena, *type_node_idx)
-                            {
-                                // Track that this file extends/implements the type (for downward lookup)
-                                self.heritage_clauses
-                                    .entry(type_name.clone())
-                                    .or_default()
-                                    .insert(file_name_owned.clone());
+            if let Some(node) = arena.get(node_idx)
+                && node.kind == syntax_kind_ext::HERITAGE_CLAUSE
+            {
+                // This is a heritage clause (extends X, implements Y)
+                if let Some(heritage_data) = arena.get_heritage_clause(node) {
+                    // Iterate through the types in this heritage clause
+                    for type_node_idx in &heritage_data.types.nodes {
+                        if let Some(type_name) =
+                            self.extract_heritage_type_name(arena, *type_node_idx)
+                        {
+                            // Track that this file extends/implements the type (for downward lookup)
+                            self.heritage_clauses
+                                .entry(type_name.clone())
+                                .or_default()
+                                .insert(file_name_owned.clone());
 
-                                // Track the reverse: which types does this file's class extend/implement
-                                // We need to find the class/interface name that owns this heritage clause
-                                // To do this efficiently, we'll scan for ClassDeclaration/InterfaceDeclaration nodes
-                                // and track their heritage clauses separately below
-                                file_symbol_names.insert(type_name);
-                            }
+                            // Track the reverse: which types does this file's class extend/implement
+                            // We need to find the class/interface name that owns this heritage clause
+                            // To do this efficiently, we'll scan for ClassDeclaration/InterfaceDeclaration nodes
+                            // and track their heritage clauses separately below
+                            file_symbol_names.insert(type_name);
                         }
                     }
                 }
@@ -443,36 +443,34 @@ impl SymbolIndex {
                 let is_class_or_interface = node.kind == syntax_kind_ext::CLASS_DECLARATION
                     || node.kind == syntax_kind_ext::INTERFACE_DECLARATION;
 
-                if is_class_or_interface {
-                    if let Some(class_name) = arena.get_identifier_text(node_idx) {
-                        let class_name = class_name.to_string();
+                if is_class_or_interface
+                    && let Some(class_name) = arena.get_identifier_text(node_idx)
+                {
+                    let class_name = class_name.to_string();
 
-                        // Look for HeritageClause nodes that follow this class declaration
-                        // In TypeScript AST, heritage clauses typically appear as siblings or children
-                        // We'll scan forward a reasonable number of nodes to find them
-                        let search_window = 50_usize; // Look ahead up to 50 nodes
-                        let start = i + 1;
-                        let end = (i + 1 + search_window).min(arena.nodes.len());
+                    // Look for HeritageClause nodes that follow this class declaration
+                    // In TypeScript AST, heritage clauses typically appear as siblings or children
+                    // We'll scan forward a reasonable number of nodes to find them
+                    let search_window = 50_usize; // Look ahead up to 50 nodes
+                    let start = i + 1;
+                    let end = (i + 1 + search_window).min(arena.nodes.len());
 
-                        for j in start..end {
-                            let heritage_idx = tsz_parser::NodeIndex(j as u32);
-                            if let Some(heritage_node) = arena.get(heritage_idx) {
-                                if heritage_node.kind == syntax_kind_ext::HERITAGE_CLAUSE {
-                                    // Extract base types from this heritage clause
-                                    if let Some(heritage_data) =
-                                        arena.get_heritage_clause(heritage_node)
+                    for j in start..end {
+                        let heritage_idx = tsz_parser::NodeIndex(j as u32);
+                        if let Some(heritage_node) = arena.get(heritage_idx)
+                            && heritage_node.kind == syntax_kind_ext::HERITAGE_CLAUSE
+                        {
+                            // Extract base types from this heritage clause
+                            if let Some(heritage_data) = arena.get_heritage_clause(heritage_node) {
+                                for type_node_idx in &heritage_data.types.nodes {
+                                    if let Some(base_name) =
+                                        self.extract_heritage_type_name(arena, *type_node_idx)
                                     {
-                                        for type_node_idx in &heritage_data.types.nodes {
-                                            if let Some(base_name) = self
-                                                .extract_heritage_type_name(arena, *type_node_idx)
-                                            {
-                                                // Track that this class extends/implements the base type
-                                                self.sub_to_bases
-                                                    .entry(class_name.clone())
-                                                    .or_default()
-                                                    .insert(base_name);
-                                            }
-                                        }
+                                        // Track that this class extends/implements the base type
+                                        self.sub_to_bases
+                                            .entry(class_name.clone())
+                                            .or_default()
+                                            .insert(base_name);
                                     }
                                 }
                             }
@@ -722,14 +720,14 @@ impl SymbolIndex {
         }
 
         // Case 2: Property access expression (e.g., `implements ns.I`)
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access_expr) = arena.get_access_expr(node) {
-                // For `ns.I`, we want the property name ("I")
-                // The name_or_argument field contains the member name
-                return arena
-                    .get_identifier_text(access_expr.name_or_argument)
-                    .map(std::string::ToString::to_string);
-            }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access_expr) = arena.get_access_expr(node)
+        {
+            // For `ns.I`, we want the property name ("I")
+            // The name_or_argument field contains the member name
+            return arena
+                .get_identifier_text(access_expr.name_or_argument)
+                .map(std::string::ToString::to_string);
         }
 
         // Case 3: Can't handle this expression type

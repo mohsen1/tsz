@@ -23,6 +23,13 @@ enum ResolvedSpan {
     Type(TypeId),
 }
 
+#[derive(Clone, Copy)]
+struct TemplateMatchSource<'a> {
+    source: &'a [ResolvedSpan],
+    source_span_index: usize,
+    source_offset: usize,
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a literal value is compatible with an intrinsic type kind.
     ///
@@ -446,10 +453,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             }
 
-            if let Some(IntrinsicKind::String) = self.apparent_primitive_kind_for_type(member) {
-                if self.match_string_wildcard(remaining, spans, span_idx) {
-                    return true;
-                }
+            if let Some(IntrinsicKind::String) = self.apparent_primitive_kind_for_type(member)
+                && self.match_string_wildcard(remaining, spans, span_idx)
+            {
+                return true;
             }
         }
         false
@@ -560,7 +567,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     ResolvedSpan::Type(t_type) => {
                         // Target type hole consuming source text characters
                         self.match_tt_target_type_consumes_text(
-                            *t_type, remaining, source, si, s_off, target, ti,
+                            *t_type,
+                            remaining,
+                            target,
+                            ti,
+                            &TemplateMatchSource {
+                                source,
+                                source_span_index: si,
+                                source_offset: s_off,
+                            },
                         )
                     }
                 }
@@ -641,11 +656,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         t_type: TypeId,
         remaining: &str,
-        source: &[ResolvedSpan],
-        si: usize,
-        s_off: usize,
         target: &[ResolvedSpan],
         ti: usize,
+        source: &TemplateMatchSource<'_>,
     ) -> bool {
         if let Some(kind) = intrinsic_kind(self.interner, t_type) {
             match kind {
@@ -659,18 +672,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // then continue matching with target[ti+1].
                     // Also try consuming past the current source text span.
                     for len in 0..=remaining.len() {
-                        if self.match_tt_recursive(source, si, s_off + len, target, ti + 1) {
+                        if self.match_tt_recursive(
+                            source.source,
+                            source.source_span_index,
+                            source.source_offset + len,
+                            target,
+                            ti + 1,
+                        ) {
                             return true;
                         }
                     }
                     // Also try consuming all text and continuing to absorb more source spans
-                    self.match_tt_string_consume_more(source, si + 1, 0, target, ti)
+                    self.match_tt_string_consume_more(
+                        source.source,
+                        source.source_span_index + 1,
+                        0,
+                        target,
+                        ti,
+                    )
                 }
                 IntrinsicKind::Number => {
                     let num_len = find_number_length(remaining);
                     for len in (1..=num_len).rev() {
                         if is_valid_number(&remaining[..len])
-                            && self.match_tt_recursive(source, si, s_off + len, target, ti + 1)
+                            && self.match_tt_recursive(
+                                source.source,
+                                source.source_span_index,
+                                source.source_offset + len,
+                                target,
+                                ti + 1,
+                            )
                         {
                             return true;
                         }
@@ -679,12 +710,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 IntrinsicKind::Boolean => {
                     if remaining.starts_with("true")
-                        && self.match_tt_recursive(source, si, s_off + 4, target, ti + 1)
+                        && self.match_tt_recursive(
+                            source.source,
+                            source.source_span_index,
+                            source.source_offset + 4,
+                            target,
+                            ti + 1,
+                        )
                     {
                         return true;
                     }
                     if remaining.starts_with("false")
-                        && self.match_tt_recursive(source, si, s_off + 5, target, ti + 1)
+                        && self.match_tt_recursive(
+                            source.source,
+                            source.source_span_index,
+                            source.source_offset + 5,
+                            target,
+                            ti + 1,
+                        )
                     {
                         return true;
                     }
@@ -693,7 +736,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 IntrinsicKind::Bigint => {
                     let int_len = find_integer_length(remaining);
                     for len in (1..=int_len).rev() {
-                        if self.match_tt_recursive(source, si, s_off + len, target, ti + 1) {
+                        if self.match_tt_recursive(
+                            source.source,
+                            source.source_span_index,
+                            source.source_offset + len,
+                            target,
+                            ti + 1,
+                        ) {
                             return true;
                         }
                     }

@@ -503,16 +503,16 @@ impl<'a> AsyncES5Transformer<'a> {
                 // Structure: VARIABLE_STATEMENT -> VARIABLE_DECLARATION_LIST -> VARIABLE_DECLARATION
                 if let Some(var_stmt) = self.arena.get_variable(node) {
                     for &decl_list_idx in &var_stmt.declarations.nodes {
-                        if let Some(decl_list_node) = self.arena.get(decl_list_idx) {
-                            if let Some(decl_list) = self.arena.get_variable(decl_list_node) {
-                                for &decl_idx in &decl_list.declarations.nodes {
-                                    self.process_variable_declaration(
-                                        decl_idx,
-                                        cases,
-                                        current_statements,
-                                        current_label,
-                                    );
-                                }
+                        if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                            && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                        {
+                            for &decl_idx in &decl_list.declarations.nodes {
+                                self.process_variable_declaration(
+                                    decl_idx,
+                                    cases,
+                                    current_statements,
+                                    current_label,
+                                );
                             }
                         }
                     }
@@ -713,52 +713,33 @@ impl<'a> AsyncES5Transformer<'a> {
         }
 
         // Check expression statements
-        if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
-            if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
-                return self.contains_await_recursive(expr_stmt.expression);
-            }
+        if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && let Some(expr_stmt) = self.arena.get_expression_statement(node)
+        {
+            return self.contains_await_recursive(expr_stmt.expression);
         }
 
         // Check return statements
-        if node.kind == syntax_kind_ext::RETURN_STATEMENT {
-            if let Some(ret) = self.arena.get_return_statement(node) {
-                return self.contains_await_recursive(ret.expression);
-            }
+        if node.kind == syntax_kind_ext::RETURN_STATEMENT
+            && let Some(ret) = self.arena.get_return_statement(node)
+        {
+            return self.contains_await_recursive(ret.expression);
         }
 
         // Check variable statements
         // Structure: VARIABLE_STATEMENT -> VARIABLE_DECLARATION_LIST -> VARIABLE_DECLARATION
-        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-            if let Some(var_stmt) = self.arena.get_variable(node) {
-                for &decl_list_idx in &var_stmt.declarations.nodes {
-                    if let Some(decl_list_node) = self.arena.get(decl_list_idx) {
-                        if let Some(decl_list) = self.arena.get_variable(decl_list_node) {
-                            for &decl_idx in &decl_list.declarations.nodes {
-                                if let Some(decl_node) = self.arena.get(decl_idx) {
-                                    if let Some(decl) =
-                                        self.arena.get_variable_declaration(decl_node)
-                                    {
-                                        if self.contains_await_recursive(decl.initializer) {
-                                            return true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check call expressions
-        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-            if let Some(call) = self.arena.get_call_expr(node) {
-                if self.contains_await_recursive(call.expression) {
-                    return true;
-                }
-                if let Some(args) = &call.arguments {
-                    for &arg_idx in &args.nodes {
-                        if self.contains_await_recursive(arg_idx) {
+        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = self.arena.get_variable(node)
+        {
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                if let Some(decl_list_node) = self.arena.get(decl_list_idx)
+                    && let Some(decl_list) = self.arena.get_variable(decl_list_node)
+                {
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        if let Some(decl_node) = self.arena.get(decl_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                            && self.contains_await_recursive(decl.initializer)
+                        {
                             return true;
                         }
                     }
@@ -766,40 +747,55 @@ impl<'a> AsyncES5Transformer<'a> {
             }
         }
 
-        // Check binary expressions
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(bin) = self.arena.get_binary_expr(node) {
-                return self.contains_await_recursive(bin.left)
-                    || self.contains_await_recursive(bin.right);
+        // Check call expressions
+        if node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call) = self.arena.get_call_expr(node)
+        {
+            if self.contains_await_recursive(call.expression) {
+                return true;
+            }
+            if let Some(args) = &call.arguments {
+                for &arg_idx in &args.nodes {
+                    if self.contains_await_recursive(arg_idx) {
+                        return true;
+                    }
+                }
             }
         }
 
+        // Check binary expressions
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(node)
+        {
+            return self.contains_await_recursive(bin.left)
+                || self.contains_await_recursive(bin.right);
+        }
+
         // Check if statements
-        if node.kind == syntax_kind_ext::IF_STATEMENT {
-            if let Some(if_stmt) = self.arena.get_if_statement(node) {
-                if self.contains_await_recursive(if_stmt.expression) {
-                    return true;
-                }
-                if self.contains_await_recursive(if_stmt.then_statement) {
-                    return true;
-                }
-                if self.contains_await_recursive(if_stmt.else_statement) {
-                    return true;
-                }
+        if node.kind == syntax_kind_ext::IF_STATEMENT
+            && let Some(if_stmt) = self.arena.get_if_statement(node)
+        {
+            if self.contains_await_recursive(if_stmt.expression) {
+                return true;
+            }
+            if self.contains_await_recursive(if_stmt.then_statement) {
+                return true;
+            }
+            if self.contains_await_recursive(if_stmt.else_statement) {
+                return true;
             }
         }
 
         // Check property/element access expressions
-        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
         {
-            if let Some(access) = self.arena.get_access_expr(node) {
-                if self.contains_await_recursive(access.expression) {
-                    return true;
-                }
-                if self.contains_await_recursive(access.name_or_argument) {
-                    return true;
-                }
+            if self.contains_await_recursive(access.expression) {
+                return true;
+            }
+            if self.contains_await_recursive(access.name_or_argument) {
+                return true;
             }
         }
 
@@ -836,24 +832,24 @@ impl<'a> AsyncES5Transformer<'a> {
                             }
                         }
                         syntax_kind_ext::SPREAD_ELEMENT => {
-                            if let Some(spread) = self.arena.get_unary_expr_ex(elem_node) {
-                                if self.contains_await_recursive(spread.expression) {
-                                    return true;
-                                }
+                            if let Some(spread) = self.arena.get_unary_expr_ex(elem_node)
+                                && self.contains_await_recursive(spread.expression)
+                            {
+                                return true;
                             }
                         }
                         syntax_kind_ext::METHOD_DECLARATION => {
-                            if let Some(method) = self.arena.get_method_decl(elem_node) {
-                                if self.computed_name_contains_await(method.name) {
-                                    return true;
-                                }
+                            if let Some(method) = self.arena.get_method_decl(elem_node)
+                                && self.computed_name_contains_await(method.name)
+                            {
+                                return true;
                             }
                         }
                         syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
-                            if let Some(accessor) = self.arena.get_accessor(elem_node) {
-                                if self.computed_name_contains_await(accessor.name) {
-                                    return true;
-                                }
+                            if let Some(accessor) = self.arena.get_accessor(elem_node)
+                                && self.computed_name_contains_await(accessor.name)
+                            {
+                                return true;
                             }
                         }
                         _ => {
@@ -868,190 +864,184 @@ impl<'a> AsyncES5Transformer<'a> {
         }
 
         // Check conditional expressions
-        if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
-            if let Some(cond) = self.arena.get_conditional_expr(node) {
-                if self.contains_await_recursive(cond.condition) {
-                    return true;
-                }
-                if self.contains_await_recursive(cond.when_true) {
-                    return true;
-                }
-                if self.contains_await_recursive(cond.when_false) {
-                    return true;
-                }
+        if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+            && let Some(cond) = self.arena.get_conditional_expr(node)
+        {
+            if self.contains_await_recursive(cond.condition) {
+                return true;
+            }
+            if self.contains_await_recursive(cond.when_true) {
+                return true;
+            }
+            if self.contains_await_recursive(cond.when_false) {
+                return true;
             }
         }
 
         // Check prefix/postfix unary expressions
-        if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+        if (node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
+            && let Some(unary) = self.arena.get_unary_expr(node)
         {
-            if let Some(unary) = self.arena.get_unary_expr(node) {
-                return self.contains_await_recursive(unary.operand);
-            }
+            return self.contains_await_recursive(unary.operand);
         }
 
         // Check parenthesized expressions
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = self.arena.get_parenthesized(node) {
-                return self.contains_await_recursive(paren.expression);
-            }
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.contains_await_recursive(paren.expression);
         }
 
         // Check try/catch/finally statements
-        if node.kind == syntax_kind_ext::TRY_STATEMENT {
-            if let Some(try_data) = self.arena.get_try(node) {
-                if self.contains_await_recursive(try_data.try_block) {
-                    return true;
-                }
-                if self.contains_await_recursive(try_data.catch_clause) {
-                    return true;
-                }
-                if self.contains_await_recursive(try_data.finally_block) {
-                    return true;
-                }
+        if node.kind == syntax_kind_ext::TRY_STATEMENT
+            && let Some(try_data) = self.arena.get_try(node)
+        {
+            if self.contains_await_recursive(try_data.try_block) {
+                return true;
+            }
+            if self.contains_await_recursive(try_data.catch_clause) {
+                return true;
+            }
+            if self.contains_await_recursive(try_data.finally_block) {
+                return true;
             }
         }
 
         // Check catch clauses
-        if node.kind == syntax_kind_ext::CATCH_CLAUSE {
-            if let Some(catch) = self.arena.get_catch_clause(node) {
-                return self.contains_await_recursive(catch.block);
-            }
+        if node.kind == syntax_kind_ext::CATCH_CLAUSE
+            && let Some(catch) = self.arena.get_catch_clause(node)
+        {
+            return self.contains_await_recursive(catch.block);
         }
 
         // Check loop statements
-        if node.kind == syntax_kind_ext::WHILE_STATEMENT
+        if (node.kind == syntax_kind_ext::WHILE_STATEMENT
             || node.kind == syntax_kind_ext::DO_STATEMENT
-            || node.kind == syntax_kind_ext::FOR_STATEMENT
+            || node.kind == syntax_kind_ext::FOR_STATEMENT)
+            && let Some(loop_data) = self.arena.get_loop(node)
         {
-            if let Some(loop_data) = self.arena.get_loop(node) {
-                if self.contains_await_recursive(loop_data.initializer) {
-                    return true;
-                }
-                if self.contains_await_recursive(loop_data.condition) {
-                    return true;
-                }
-                if self.contains_await_recursive(loop_data.incrementor) {
-                    return true;
-                }
-                if self.contains_await_recursive(loop_data.statement) {
-                    return true;
-                }
+            if self.contains_await_recursive(loop_data.initializer) {
+                return true;
+            }
+            if self.contains_await_recursive(loop_data.condition) {
+                return true;
+            }
+            if self.contains_await_recursive(loop_data.incrementor) {
+                return true;
+            }
+            if self.contains_await_recursive(loop_data.statement) {
+                return true;
             }
         }
 
         // Check for-in/for-of statements
-        if node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-            || node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+        if (node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+            || node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+            && let Some(for_data) = self.arena.get_for_in_of(node)
         {
-            if let Some(for_data) = self.arena.get_for_in_of(node) {
-                if self.contains_await_recursive(for_data.expression) {
-                    return true;
-                }
-                if self.contains_await_recursive(for_data.statement) {
-                    return true;
-                }
+            if self.contains_await_recursive(for_data.expression) {
+                return true;
+            }
+            if self.contains_await_recursive(for_data.statement) {
+                return true;
             }
         }
 
         // Check switch statements
-        if node.kind == syntax_kind_ext::SWITCH_STATEMENT {
-            if let Some(switch_data) = self.arena.get_switch(node) {
-                if self.contains_await_recursive(switch_data.expression) {
-                    return true;
-                }
-                if self.contains_await_recursive(switch_data.case_block) {
-                    return true;
-                }
+        if node.kind == syntax_kind_ext::SWITCH_STATEMENT
+            && let Some(switch_data) = self.arena.get_switch(node)
+        {
+            if self.contains_await_recursive(switch_data.expression) {
+                return true;
+            }
+            if self.contains_await_recursive(switch_data.case_block) {
+                return true;
             }
         }
 
         // Check case blocks
-        if node.kind == syntax_kind_ext::CASE_BLOCK {
-            if let Some(block_data) = self.arena.get_block(node) {
-                for &stmt_idx in &block_data.statements.nodes {
-                    if self.contains_await_recursive(stmt_idx) {
-                        return true;
-                    }
+        if node.kind == syntax_kind_ext::CASE_BLOCK
+            && let Some(block_data) = self.arena.get_block(node)
+        {
+            for &stmt_idx in &block_data.statements.nodes {
+                if self.contains_await_recursive(stmt_idx) {
+                    return true;
                 }
             }
         }
 
         // Check case/default clauses
-        if node.kind == syntax_kind_ext::CASE_CLAUSE || node.kind == syntax_kind_ext::DEFAULT_CLAUSE
+        if (node.kind == syntax_kind_ext::CASE_CLAUSE
+            || node.kind == syntax_kind_ext::DEFAULT_CLAUSE)
+            && let Some(clause_data) = self.arena.get_case_clause(node)
         {
-            if let Some(clause_data) = self.arena.get_case_clause(node) {
-                if self.contains_await_recursive(clause_data.expression) {
+            if self.contains_await_recursive(clause_data.expression) {
+                return true;
+            }
+            for &stmt_idx in &clause_data.statements.nodes {
+                if self.contains_await_recursive(stmt_idx) {
                     return true;
-                }
-                for &stmt_idx in &clause_data.statements.nodes {
-                    if self.contains_await_recursive(stmt_idx) {
-                        return true;
-                    }
                 }
             }
         }
 
         // Check new expressions
-        if node.kind == syntax_kind_ext::NEW_EXPRESSION {
-            if let Some(call) = self.arena.get_call_expr(node) {
-                if self.contains_await_recursive(call.expression) {
-                    return true;
-                }
-                if let Some(args) = &call.arguments {
-                    for &arg_idx in &args.nodes {
-                        if self.contains_await_recursive(arg_idx) {
-                            return true;
-                        }
+        if node.kind == syntax_kind_ext::NEW_EXPRESSION
+            && let Some(call) = self.arena.get_call_expr(node)
+        {
+            if self.contains_await_recursive(call.expression) {
+                return true;
+            }
+            if let Some(args) = &call.arguments {
+                for &arg_idx in &args.nodes {
+                    if self.contains_await_recursive(arg_idx) {
+                        return true;
                     }
                 }
             }
         }
 
         // Check template expressions
-        if node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
-            if let Some(template) = self.arena.get_template_expr(node) {
-                for &span_idx in &template.template_spans.nodes {
-                    if let Some(span_node) = self.arena.get(span_idx) {
-                        if let Some(span) = self.arena.get_template_span(span_node) {
-                            if self.contains_await_recursive(span.expression) {
-                                return true;
-                            }
-                        }
-                    }
+        if node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+            && let Some(template) = self.arena.get_template_expr(node)
+        {
+            for &span_idx in &template.template_spans.nodes {
+                if let Some(span_node) = self.arena.get(span_idx)
+                    && let Some(span) = self.arena.get_template_span(span_node)
+                    && self.contains_await_recursive(span.expression)
+                {
+                    return true;
                 }
             }
         }
 
         // Check with statements (uses IfStatementData)
-        if node.kind == syntax_kind_ext::WITH_STATEMENT {
-            if let Some(with_data) = self.arena.get_with_statement(node) {
-                if self.contains_await_recursive(with_data.expression) {
-                    return true;
-                }
-                if self.contains_await_recursive(with_data.then_statement) {
-                    return true;
-                }
+        if node.kind == syntax_kind_ext::WITH_STATEMENT
+            && let Some(with_data) = self.arena.get_with_statement(node)
+        {
+            if self.contains_await_recursive(with_data.expression) {
+                return true;
+            }
+            if self.contains_await_recursive(with_data.then_statement) {
+                return true;
             }
         }
 
         // Check throw statements
-        if node.kind == syntax_kind_ext::THROW_STATEMENT {
-            if let Some(throw_data) = self.arena.get_return_statement(node) {
-                if self.contains_await_recursive(throw_data.expression) {
-                    return true;
-                }
-            }
+        if node.kind == syntax_kind_ext::THROW_STATEMENT
+            && let Some(throw_data) = self.arena.get_return_statement(node)
+            && self.contains_await_recursive(throw_data.expression)
+        {
+            return true;
         }
 
         // Check labeled statements
-        if node.kind == syntax_kind_ext::LABELED_STATEMENT {
-            if let Some(labeled_data) = self.arena.get_labeled_statement(node) {
-                if self.contains_await_recursive(labeled_data.statement) {
-                    return true;
-                }
-            }
+        if node.kind == syntax_kind_ext::LABELED_STATEMENT
+            && let Some(labeled_data) = self.arena.get_labeled_statement(node)
+            && self.contains_await_recursive(labeled_data.statement)
+        {
+            return true;
         }
 
         false
@@ -1062,10 +1052,10 @@ impl<'a> AsyncES5Transformer<'a> {
             return false;
         };
 
-        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            if let Some(computed) = self.arena.get_computed_property(name_node) {
-                return self.contains_await_recursive(computed.expression);
-            }
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(name_node)
+        {
+            return self.contains_await_recursive(computed.expression);
         }
 
         false
@@ -1165,12 +1155,11 @@ impl<'a> AsyncES5Transformer<'a> {
 
     /// Get identifier text from a node
     pub fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx) {
-            if node.kind == SyntaxKind::Identifier as u16 {
-                if let Some(id) = self.arena.get_identifier(node) {
-                    return id.escaped_text.clone();
-                }
-            }
+        if let Some(node) = self.arena.get(idx)
+            && node.kind == SyntaxKind::Identifier as u16
+            && let Some(id) = self.arena.get_identifier(node)
+        {
+            return id.escaped_text.clone();
         }
         String::new()
     }
@@ -1179,10 +1168,10 @@ impl<'a> AsyncES5Transformer<'a> {
     pub fn collect_parameters(&self, params: &tsz_parser::parser::NodeList) -> Vec<String> {
         let mut result = Vec::new();
         for &param_idx in &params.nodes {
-            if let Some(param_node) = self.arena.get(param_idx) {
-                if let Some(param) = self.arena.get_parameter(param_node) {
-                    result.push(self.get_identifier_text(param.name));
-                }
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                result.push(self.get_identifier_text(param.name));
             }
         }
         result
@@ -1517,12 +1506,11 @@ impl<'a> AsyncES5Transformer<'a> {
 
         // Get head (the initial string before first ${...})
         let mut parts: Vec<IRNode> = Vec::new();
-        if let Some(head_node) = self.arena.get(template.head) {
-            if let Some(lit) = self.arena.get_literal(head_node) {
-                if !lit.text.is_empty() {
-                    parts.push(IRNode::StringLiteral(lit.text.clone()));
-                }
-            }
+        if let Some(head_node) = self.arena.get(template.head)
+            && let Some(lit) = self.arena.get_literal(head_node)
+            && !lit.text.is_empty()
+        {
+            parts.push(IRNode::StringLiteral(lit.text.clone()));
         }
 
         // Process template spans (expression + literal pairs)
@@ -1535,12 +1523,11 @@ impl<'a> AsyncES5Transformer<'a> {
                 parts.push(self.expression_to_ir(span.expression));
 
                 // Add the literal part after the expression
-                if let Some(lit_node) = self.arena.get(span.literal) {
-                    if let Some(lit) = self.arena.get_literal(lit_node) {
-                        if !lit.text.is_empty() {
-                            parts.push(IRNode::StringLiteral(lit.text.clone()));
-                        }
-                    }
+                if let Some(lit_node) = self.arena.get(span.literal)
+                    && let Some(lit) = self.arena.get_literal(lit_node)
+                    && !lit.text.is_empty()
+                {
+                    parts.push(IRNode::StringLiteral(lit.text.clone()));
                 }
             }
         }
@@ -1654,14 +1641,14 @@ impl<'a> AsyncES5Transformer<'a> {
                 continue;
             };
 
-            if param_node.kind == syntax_kind_ext::PARAMETER {
-                if let Some(param) = self.arena.get_parameter(param_node) {
-                    let name = self.get_identifier_text(param.name);
-                    if param.dot_dot_dot_token {
-                        params.push(IRParam::rest(name));
-                    } else {
-                        params.push(IRParam::new(name));
-                    }
+            if param_node.kind == syntax_kind_ext::PARAMETER
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                let name = self.get_identifier_text(param.name);
+                if param.dot_dot_dot_token {
+                    params.push(IRParam::rest(name));
+                } else {
+                    params.push(IRParam::new(name));
                 }
             }
         }
@@ -1740,19 +1727,19 @@ impl<'a> AsyncES5Transformer<'a> {
                 if let Some(var_data) = self.arena.get_variable(node) {
                     let mut decls = Vec::new();
                     for &decl_idx in &var_data.declarations.nodes {
-                        if let Some(decl_node) = self.arena.get(decl_idx) {
-                            if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                                let name = self.get_identifier_text(decl.name);
-                                let init = if decl.initializer.is_none() {
-                                    None
-                                } else {
-                                    Some(Box::new(self.expression_to_ir(decl.initializer)))
-                                };
-                                decls.push(IRNode::VarDecl {
-                                    name,
-                                    initializer: init,
-                                });
-                            }
+                        if let Some(decl_node) = self.arena.get(decl_idx)
+                            && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                        {
+                            let name = self.get_identifier_text(decl.name);
+                            let init = if decl.initializer.is_none() {
+                                None
+                            } else {
+                                Some(Box::new(self.expression_to_ir(decl.initializer)))
+                            };
+                            decls.push(IRNode::VarDecl {
+                                name,
+                                initializer: init,
+                            });
                         }
                     }
                     if decls.len() == 1 {

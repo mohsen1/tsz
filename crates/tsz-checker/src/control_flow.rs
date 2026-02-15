@@ -584,15 +584,7 @@ impl<'a> FlowAnalyzer<'a> {
                 }
 
                 // Switch clause - apply switch-specific narrowing
-                self.handle_switch_clause_iterative(
-                    reference,
-                    current_type,
-                    flow,
-                    &results,
-                    &mut worklist,
-                    &mut in_worklist,
-                    visited.clone(),
-                )
+                self.handle_switch_clause_iterative(reference, current_type, flow, &results)
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
                 // Assignment - check if it targets our reference
                 let targets_reference =
@@ -749,15 +741,7 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             } else if flow.has_any_flags(flow_flags::CALL) {
                 // Call expression - check for type predicates
-                self.handle_call_iterative(
-                    reference,
-                    current_type,
-                    flow,
-                    &results,
-                    &mut worklist,
-                    &mut in_worklist,
-                    &visited,
-                )
+                self.handle_call_iterative(reference, current_type, flow, &results)
             } else if flow.has_any_flags(flow_flags::START) {
                 // Start node - check if we're crossing a closure boundary
                 // For mutable variables (let/var), we cannot trust narrowing from outer scope
@@ -875,9 +859,6 @@ impl<'a> FlowAnalyzer<'a> {
         current_type: TypeId,
         flow: &FlowNode,
         results: &FxHashMap<FlowNodeId, TypeId>,
-        _worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
-        _in_worklist: &mut FxHashSet<FlowNodeId>,
-        _visited: FxHashSet<FlowNodeId>,
     ) -> TypeId {
         let clause_idx = flow.node;
 
@@ -982,12 +963,7 @@ impl<'a> FlowAnalyzer<'a> {
         current_type: TypeId,
         flow: &FlowNode,
         results: &FxHashMap<FlowNodeId, TypeId>,
-        _worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
-        _in_worklist: &mut FxHashSet<FlowNodeId>,
-        _visited: &FxHashSet<FlowNodeId>,
     ) -> TypeId {
-        // Note: worklist/in_worklist/visited parameters are reserved for future use
-        // in more sophisticated iterative algorithms that need to defer processing
         let pre_type = if let Some(&ant) = flow.antecedent.first() {
             *results.get(&ant).unwrap_or(&current_type)
         } else {

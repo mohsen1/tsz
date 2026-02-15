@@ -2386,12 +2386,12 @@ impl NodeArena {
     }
 
     fn collect_source_children(&self, node: &Node, children: &mut Vec<NodeIndex>) -> bool {
-        if node.kind == SOURCE_FILE {
-            if let Some(data) = self.get_source_file(node) {
-                Self::add_list(children, &data.statements);
-                children.push(data.end_of_file_token);
-                return true;
-            }
+        if node.kind == SOURCE_FILE
+            && let Some(data) = self.get_source_file(node)
+        {
+            Self::add_list(children, &data.statements);
+            children.push(data.end_of_file_token);
+            return true;
         }
         false
     }

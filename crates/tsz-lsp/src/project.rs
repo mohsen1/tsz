@@ -1434,17 +1434,16 @@ impl Project {
         // Check with extensions (TypeScript resolution logic simplified)
         // The specifier might not have an extension, so we check stems
         let normalized_path = Path::new(&normalized);
-        if let Some(target_stem) = target.file_stem() {
-            if let Some(resolved_stem) = normalized_path.file_stem() {
-                if target_stem == resolved_stem {
-                    // Normalize target as well for comparison
-                    let normalized_target = self.normalize_path(target);
-                    let normalized_target_path = Path::new(&normalized_target);
-                    // Check if parent dirs match
-                    if normalized_path.parent() == normalized_target_path.parent() {
-                        return true;
-                    }
-                }
+        if let Some(target_stem) = target.file_stem()
+            && let Some(resolved_stem) = normalized_path.file_stem()
+            && target_stem == resolved_stem
+        {
+            // Normalize target as well for comparison
+            let normalized_target = self.normalize_path(target);
+            let normalized_target_path = Path::new(&normalized_target);
+            // Check if parent dirs match
+            if normalized_path.parent() == normalized_target_path.parent() {
+                return true;
             }
         }
 
@@ -1739,12 +1738,11 @@ impl Project {
         let file_names: Vec<String> = self.files.keys().cloned().collect();
 
         for file_name in file_names {
-            if let Some(file) = self.files.get(&file_name) {
-                if file.diagnostics_dirty {
-                    if let Some(diagnostics) = self.get_diagnostics(&file_name) {
-                        result.insert(file_name, diagnostics);
-                    }
-                }
+            if let Some(file) = self.files.get(&file_name)
+                && file.diagnostics_dirty
+                && let Some(diagnostics) = self.get_diagnostics(&file_name)
+            {
+                result.insert(file_name, diagnostics);
             }
         }
 

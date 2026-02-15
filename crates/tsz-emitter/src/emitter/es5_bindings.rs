@@ -755,15 +755,15 @@ impl<'a> Printer<'a> {
     fn emit_computed_key_temp_if_needed(&mut self, key_idx: NodeIndex) -> Option<String> {
         let key_node = self.arena.get(key_idx)?;
 
-        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            if let Some(computed) = self.arena.get_computed_property(key_node) {
-                let temp_name = self.get_temp_var_name();
-                self.write(", ");
-                self.write(&temp_name);
-                self.write(" = ");
-                self.emit(computed.expression);
-                return Some(temp_name);
-            }
+        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(key_node)
+        {
+            let temp_name = self.get_temp_var_name();
+            self.write(", ");
+            self.write(&temp_name);
+            self.write(" = ");
+            self.emit(computed.expression);
+            return Some(temp_name);
         }
 
         None
@@ -957,18 +957,18 @@ impl<'a> Printer<'a> {
     ) -> Option<String> {
         let key_node = self.arena.get(key_idx)?;
 
-        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            if let Some(computed) = self.arena.get_computed_property(key_node) {
-                let temp_name = self.get_temp_var_name();
-                if !*first {
-                    self.write(", ");
-                }
-                *first = false;
-                self.write(&temp_name);
-                self.write(" = ");
-                self.emit(computed.expression);
-                return Some(temp_name);
+        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(key_node)
+        {
+            let temp_name = self.get_temp_var_name();
+            if !*first {
+                self.write(", ");
             }
+            *first = false;
+            self.write(&temp_name);
+            self.write(" = ");
+            self.emit(computed.expression);
+            return Some(temp_name);
         }
 
         None
@@ -1391,15 +1391,15 @@ impl<'a> Printer<'a> {
     ) -> Option<String> {
         let key_node = self.arena.get(key_idx)?;
 
-        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            if let Some(computed) = self.arena.get_computed_property(key_node) {
-                let temp_name = self.get_temp_var_name();
-                self.emit_param_assignment_prefix(started);
-                self.write(&temp_name);
-                self.write(" = ");
-                self.emit(computed.expression);
-                return Some(temp_name);
-            }
+        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(key_node)
+        {
+            let temp_name = self.get_temp_var_name();
+            self.emit_param_assignment_prefix(started);
+            self.write(&temp_name);
+            self.write(" = ");
+            self.emit(computed.expression);
+            return Some(temp_name);
         }
 
         None
@@ -2109,26 +2109,26 @@ impl<'a> Printer<'a> {
         };
         match init_node.kind {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                if let Some(lit) = self.arena.get_literal_expr(init_node) {
-                    if lit.elements.nodes.len() > 1 {
-                        // One extracted source temp + per-property default temps.
-                        let mut defaults = 0usize;
-                        for &elem_idx in &lit.elements.nodes {
-                            let Some(elem_node) = self.arena.get(elem_idx) else {
-                                continue;
-                            };
-                            if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                                && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                                && let Some(value_node) = self.arena.get(prop.initializer)
-                                && value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                                && let Some(bin) = self.arena.get_binary_expr(value_node)
-                                && bin.operator_token == SyntaxKind::EqualsToken as u16
-                            {
-                                defaults += 1;
-                            }
+                if let Some(lit) = self.arena.get_literal_expr(init_node)
+                    && lit.elements.nodes.len() > 1
+                {
+                    // One extracted source temp + per-property default temps.
+                    let mut defaults = 0usize;
+                    for &elem_idx in &lit.elements.nodes {
+                        let Some(elem_node) = self.arena.get(elem_idx) else {
+                            continue;
+                        };
+                        if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                            && let Some(prop) = self.arena.get_property_assignment(elem_node)
+                            && let Some(value_node) = self.arena.get(prop.initializer)
+                            && value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                            && let Some(bin) = self.arena.get_binary_expr(value_node)
+                            && bin.operator_token == SyntaxKind::EqualsToken as u16
+                        {
+                            defaults += 1;
                         }
-                        return 1 + defaults;
                     }
+                    return 1 + defaults;
                 }
                 0
             }
@@ -2252,14 +2252,14 @@ impl<'a> Printer<'a> {
         // Do NOT handle bare identifiers: `for (v of ...)` - those are assignments, not declarations
         // Note: Pre-register for both var and let/const in for-of loops because loop
         // temporaries (e.g., a_1 for array copy) create naming conflicts that must be avoided.
-        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            if let Some(decl_list) = self.arena.get_variable(init_node) {
-                for &decl_idx in &decl_list.declarations.nodes {
-                    if let Some(decl_node) = self.arena.get(decl_idx)
-                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    {
-                        self.pre_register_binding_name(decl.name);
-                    }
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && let Some(decl_list) = self.arena.get_variable(init_node)
+        {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.pre_register_binding_name(decl.name);
                 }
             }
         }
@@ -2288,14 +2288,13 @@ impl<'a> Printer<'a> {
         else if matches!(
             name_node.kind,
             syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
-        ) {
-            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
-                for &elem_idx in &pattern.elements.nodes {
-                    if let Some(elem_node) = self.arena.get(elem_idx)
-                        && let Some(elem) = self.arena.get_binding_element(elem_node)
-                    {
-                        self.pre_register_binding_name(elem.name);
-                    }
+        ) && let Some(pattern) = self.arena.get_binding_pattern(name_node)
+        {
+            for &elem_idx in &pattern.elements.nodes {
+                if let Some(elem_node) = self.arena.get(elem_idx)
+                    && let Some(elem) = self.arena.get_binding_element(elem_node)
+                {
+                    self.pre_register_binding_name(elem.name);
                 }
             }
         }
@@ -2406,25 +2405,27 @@ impl<'a> Printer<'a> {
                                     self.count_effective_bindings(pattern_node);
 
                                 // Single element at index 0: inline as name = arr[idx][0]
-                                if effective_count == 1 && !has_rest {
-                                    if self.try_emit_single_inline_from_expr(
+                                if effective_count == 1
+                                    && !has_rest
+                                    && self.try_emit_single_inline_from_expr(
                                         pattern_node,
                                         &element_expr,
                                         &mut first,
-                                    ) {
-                                        continue;
-                                    }
+                                    )
+                                {
+                                    continue;
                                 }
 
                                 // Rest-only: inline as name = arr[idx].slice(0)
-                                if effective_count == 0 && has_rest {
-                                    if self.try_emit_rest_only_from_expr(
+                                if effective_count == 0
+                                    && has_rest
+                                    && self.try_emit_rest_only_from_expr(
                                         pattern_node,
                                         &element_expr,
                                         &mut first,
-                                    ) {
-                                        continue;
-                                    }
+                                    )
+                                {
+                                    continue;
                                 }
 
                                 // Multi-binding or complex: create temp and lower
@@ -2701,66 +2702,61 @@ impl<'a> Printer<'a> {
             }
 
             // Check if element has a default value (BinaryExpression with =)
-            if elem_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                if let Some(bin) = self.arena.get_binary_expr(elem_node) {
-                    if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                        // Element with default: target = source[i] === void 0 ? default : source[i]
-                        let target_node = self.arena.get(bin.left);
-                        let is_nested = target_node.is_some_and(|n| {
-                            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        });
+            if elem_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.arena.get_binary_expr(elem_node)
+                && bin.operator_token == SyntaxKind::EqualsToken as u16
+            {
+                // Element with default: target = source[i] === void 0 ? default : source[i]
+                let target_node = self.arena.get(bin.left);
+                let is_nested = target_node.is_some_and(|n| {
+                    n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                });
 
-                        if is_nested {
-                            let extract_temp = self.make_unique_name_hoisted();
-                            let default_temp = self.make_unique_name_hoisted();
-                            self.emit_assignment_separator(first);
-                            self.write(&extract_temp);
-                            self.write(" = ");
-                            if let Some(inline_src) = inline_source {
-                                self.emit(inline_src);
-                            } else {
-                                self.write(source);
-                            }
-                            self.write("[");
-                            self.write_usize(i);
-                            self.write("], ");
-                            self.write(&default_temp);
-                            self.write(" = ");
-                            self.write(&extract_temp);
-                            self.write(" === void 0 ? ");
-                            self.emit(bin.right);
-                            self.write(" : ");
-                            self.write(&extract_temp);
-                            self.emit_assignment_nested_destructuring(
-                                bin.left,
-                                &default_temp,
-                                first,
-                            );
-                        } else {
-                            let temp = self.make_unique_name_hoisted();
-                            self.emit_assignment_separator(first);
-                            self.write(&temp);
-                            self.write(" = ");
-                            if let Some(inline_src) = inline_source {
-                                self.emit(inline_src);
-                            } else {
-                                self.write(source);
-                            }
-                            self.write("[");
-                            self.write_usize(i);
-                            self.write("], ");
-                            self.emit(bin.left);
-                            self.write(" = ");
-                            self.write(&temp);
-                            self.write(" === void 0 ? ");
-                            self.emit(bin.right);
-                            self.write(" : ");
-                            self.write(&temp);
-                        }
-                        continue;
+                if is_nested {
+                    let extract_temp = self.make_unique_name_hoisted();
+                    let default_temp = self.make_unique_name_hoisted();
+                    self.emit_assignment_separator(first);
+                    self.write(&extract_temp);
+                    self.write(" = ");
+                    if let Some(inline_src) = inline_source {
+                        self.emit(inline_src);
+                    } else {
+                        self.write(source);
                     }
+                    self.write("[");
+                    self.write_usize(i);
+                    self.write("], ");
+                    self.write(&default_temp);
+                    self.write(" = ");
+                    self.write(&extract_temp);
+                    self.write(" === void 0 ? ");
+                    self.emit(bin.right);
+                    self.write(" : ");
+                    self.write(&extract_temp);
+                    self.emit_assignment_nested_destructuring(bin.left, &default_temp, first);
+                } else {
+                    let temp = self.make_unique_name_hoisted();
+                    self.emit_assignment_separator(first);
+                    self.write(&temp);
+                    self.write(" = ");
+                    if let Some(inline_src) = inline_source {
+                        self.emit(inline_src);
+                    } else {
+                        self.write(source);
+                    }
+                    self.write("[");
+                    self.write_usize(i);
+                    self.write("], ");
+                    self.emit(bin.left);
+                    self.write(" = ");
+                    self.write(&temp);
+                    self.write(" === void 0 ? ");
+                    self.emit(bin.right);
+                    self.write(" : ");
+                    self.write(&temp);
                 }
+                continue;
             }
 
             // Check for nested array/object destructuring
@@ -2850,25 +2846,25 @@ impl<'a> Printer<'a> {
                                     None
                                 }
                             });
-                            if let Some(bin) = value_bin {
-                                if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                                    let temp = self.make_unique_name_hoisted();
-                                    self.emit_assignment_separator(first);
-                                    self.write(&temp);
-                                    self.write(" = ");
-                                    self.write(source);
-                                    self.write(".");
-                                    self.write(&key);
-                                    self.write(", ");
-                                    self.emit(bin.left);
-                                    self.write(" = ");
-                                    self.write(&temp);
-                                    self.write(" === void 0 ? ");
-                                    self.emit(bin.right);
-                                    self.write(" : ");
-                                    self.write(&temp);
-                                    continue;
-                                }
+                            if let Some(bin) = value_bin
+                                && bin.operator_token == SyntaxKind::EqualsToken as u16
+                            {
+                                let temp = self.make_unique_name_hoisted();
+                                self.emit_assignment_separator(first);
+                                self.write(&temp);
+                                self.write(" = ");
+                                self.write(source);
+                                self.write(".");
+                                self.write(&key);
+                                self.write(", ");
+                                self.emit(bin.left);
+                                self.write(" = ");
+                                self.write(&temp);
+                                self.write(" === void 0 ? ");
+                                self.emit(bin.right);
+                                self.write(" : ");
+                                self.write(&temp);
+                                continue;
                             }
                             self.emit_assignment_separator(first);
                             self.emit(prop.initializer);

@@ -788,14 +788,14 @@ impl Project {
         let class_symbol = file.binder().symbols.get(class_symbol_id)?;
 
         // Search in the class's members
-        if let Some(members) = &class_symbol.members {
-            if let Some(member_symbol_id) = members.get(member_name) {
-                // Verify it's a heritage member (not private, is a property/method/accessor)
-                if let Some(member_symbol) = file.binder().symbols.get(member_symbol_id) {
-                    if Self::is_heritage_member_symbol(file, member_symbol) {
-                        return Some(member_symbol_id);
-                    }
-                }
+        if let Some(members) = &class_symbol.members
+            && let Some(member_symbol_id) = members.get(member_name)
+        {
+            // Verify it's a heritage member (not private, is a property/method/accessor)
+            if let Some(member_symbol) = file.binder().symbols.get(member_symbol_id)
+                && Self::is_heritage_member_symbol(file, member_symbol)
+            {
+                return Some(member_symbol_id);
             }
         }
 

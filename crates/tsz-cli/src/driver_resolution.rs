@@ -234,20 +234,20 @@ pub(crate) fn resolve_type_package_entry_with_mode(
     };
 
     // Try the exports map first
-    if let Some(exports) = &package_json.exports {
-        if let Some(target) = resolve_exports_subpath(exports, ".", &conditions) {
-            let target_path = package_root.join(target.trim_start_matches("./"));
-            // Try to find a declaration file at the target
-            let package_type = package_type_from_json(Some(package_json));
-            for candidate in expand_module_path_candidates(&target_path, options, package_type) {
-                if candidate.is_file() && is_declaration_file(&candidate) {
-                    return Some(canonicalize_or_owned(&candidate));
-                }
+    if let Some(exports) = &package_json.exports
+        && let Some(target) = resolve_exports_subpath(exports, ".", &conditions)
+    {
+        let target_path = package_root.join(target.trim_start_matches("./"));
+        // Try to find a declaration file at the target
+        let package_type = package_type_from_json(Some(package_json));
+        for candidate in expand_module_path_candidates(&target_path, options, package_type) {
+            if candidate.is_file() && is_declaration_file(&candidate) {
+                return Some(canonicalize_or_owned(&candidate));
             }
-            // Try exact path
-            if target_path.is_file() && is_declaration_file(&target_path) {
-                return Some(canonicalize_or_owned(&target_path));
-            }
+        }
+        // Try exact path
+        if target_path.is_file() && is_declaration_file(&target_path) {
+            return Some(canonicalize_or_owned(&target_path));
         }
     }
 
@@ -356,10 +356,8 @@ pub(crate) fn collect_module_specifiers(
                         .is_some_and(|node| node.kind == SyntaxKind::DeclareKeyword as u16)
                 })
             });
-            if has_declare {
-                if let Some(text) = arena.get_literal_text(module_decl.name) {
-                    specifiers.push((strip_quotes(text), module_decl.name, ImportKind::EsmImport));
-                }
+            if has_declare && let Some(text) = arena.get_literal_text(module_decl.name) {
+                specifiers.push((strip_quotes(text), module_decl.name, ImportKind::EsmImport));
             }
         }
     }
@@ -1344,28 +1342,28 @@ fn resolve_package_entry(
     }
 
     // Check subpath's package.json for types/main fields
-    if path.is_dir() {
-        if let Some(pj) = read_package_json(&path.join("package.json")) {
-            let sub_type = package_type_from_json(Some(&pj));
-            // Try types/typings field
-            if let Some(types) = pj.types.or(pj.typings) {
-                let types_path = path.join(&types);
-                for candidate in expand_module_path_candidates(&types_path, options, sub_type) {
-                    if candidate.is_file() && is_valid_module_file(&candidate) {
-                        return Some(canonicalize_or_owned(&candidate));
-                    }
-                }
-                if types_path.is_file() {
-                    return Some(canonicalize_or_owned(&types_path));
+    if path.is_dir()
+        && let Some(pj) = read_package_json(&path.join("package.json"))
+    {
+        let sub_type = package_type_from_json(Some(&pj));
+        // Try types/typings field
+        if let Some(types) = pj.types.or(pj.typings) {
+            let types_path = path.join(&types);
+            for candidate in expand_module_path_candidates(&types_path, options, sub_type) {
+                if candidate.is_file() && is_valid_module_file(&candidate) {
+                    return Some(canonicalize_or_owned(&candidate));
                 }
             }
-            // Try main field
-            if let Some(main) = &pj.main {
-                let main_path = path.join(main);
-                for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
-                    if candidate.is_file() && is_valid_module_file(&candidate) {
-                        return Some(canonicalize_or_owned(&candidate));
-                    }
+            if types_path.is_file() {
+                return Some(canonicalize_or_owned(&types_path));
+            }
+        }
+        // Try main field
+        if let Some(main) = &pj.main {
+            let main_path = path.join(main);
+            for candidate in expand_module_path_candidates(&main_path, options, sub_type) {
+                if candidate.is_file() && is_valid_module_file(&candidate) {
+                    return Some(canonicalize_or_owned(&candidate));
                 }
             }
         }
@@ -1883,6 +1881,17 @@ fn match_imports_subpath(pattern: &str, subpath_key: &str) -> Option<String> {
     Some(subpath[start..end].to_string())
 }
 
+pub(crate) struct EmitOutputsContext<'a> {
+    pub(crate) program: &'a MergedProgram,
+    pub(crate) options: &'a ResolvedCompilerOptions,
+    pub(crate) base_dir: &'a Path,
+    pub(crate) root_dir: Option<&'a Path>,
+    pub(crate) out_dir: Option<&'a Path>,
+    pub(crate) declaration_dir: Option<&'a Path>,
+    pub(crate) dirty_paths: Option<&'a FxHashSet<PathBuf>>,
+    pub(crate) type_caches: &'a FxHashMap<std::path::PathBuf, tsz::checker::TypeCache>,
+}
+
 fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
     if target.contains('*') {
         target.replace('*', wildcard)
@@ -1891,21 +1900,13 @@ fn apply_exports_subpath(target: &str, wildcard: &str) -> String {
     }
 }
 
-pub(crate) fn emit_outputs(
-    program: &MergedProgram,
-    options: &ResolvedCompilerOptions,
-    base_dir: &Path,
-    root_dir: Option<&Path>,
-    out_dir: Option<&Path>,
-    declaration_dir: Option<&Path>,
-    dirty_paths: Option<&FxHashSet<PathBuf>>,
-    type_caches: &FxHashMap<std::path::PathBuf, tsz::checker::TypeCache>,
-) -> Result<Vec<OutputFile>> {
+pub(crate) fn emit_outputs(context: EmitOutputsContext<'_>) -> Result<Vec<OutputFile>> {
     let mut outputs = Vec::new();
-    let new_line = new_line_str(options.printer.new_line);
+    let new_line = new_line_str(context.options.printer.new_line);
 
     // Build mapping from arena address to file path for module resolution
-    let arena_to_path: rustc_hash::FxHashMap<usize, String> = program
+    let arena_to_path: rustc_hash::FxHashMap<usize, String> = context
+        .program
         .files
         .iter()
         .map(|file| {
@@ -1914,24 +1915,29 @@ pub(crate) fn emit_outputs(
         })
         .collect();
 
-    for (file_idx, file) in program.files.iter().enumerate() {
+    for (file_idx, file) in context.program.files.iter().enumerate() {
         let input_path = PathBuf::from(&file.file_name);
-        if let Some(dirty_paths) = dirty_paths
+        if let Some(dirty_paths) = context.dirty_paths
             && !dirty_paths.contains(&input_path)
         {
             continue;
         }
 
-        if let Some(js_path) = js_output_path(base_dir, root_dir, out_dir, options.jsx, &input_path)
-        {
+        if let Some(js_path) = js_output_path(
+            context.base_dir,
+            context.root_dir,
+            context.out_dir,
+            context.options.jsx,
+            &input_path,
+        ) {
             // Get type_only_nodes from the type cache (if available)
-            let type_only_nodes = type_caches.get(&input_path).map_or_else(
+            let type_only_nodes = context.type_caches.get(&input_path).map_or_else(
                 || std::sync::Arc::new(rustc_hash::FxHashSet::default()),
                 |cache| std::sync::Arc::new(cache.type_only_nodes.clone()),
             );
 
             // Clone and update printer options with type_only_nodes
-            let mut printer_options = options.printer.clone();
+            let mut printer_options = context.options.printer.clone();
             printer_options.type_only_nodes = type_only_nodes;
 
             // Run the lowering pass to generate transform directives
@@ -1955,7 +1961,7 @@ pub(crate) fn emit_outputs(
                 printer.set_source_text(source_text);
             }
 
-            let map_info = if options.source_map {
+            let map_info = if context.options.source_map {
                 map_output_info(&js_path)
             } else {
                 None
@@ -2002,17 +2008,18 @@ pub(crate) fn emit_outputs(
             }
         }
 
-        if options.emit_declarations {
-            let decl_base = declaration_dir.or(out_dir);
+        if context.options.emit_declarations {
+            let decl_base = context.declaration_dir.or(context.out_dir);
             if let Some(dts_path) =
-                declaration_output_path(base_dir, root_dir, decl_base, &input_path)
+                declaration_output_path(context.base_dir, context.root_dir, decl_base, &input_path)
             {
                 // Get type cache for this file if available
                 let file_path = PathBuf::from(&file.file_name);
-                let type_cache = type_caches.get(&file_path).cloned();
+                let type_cache = context.type_caches.get(&file_path).cloned();
 
                 // Reconstruct BinderState for this file to enable usage analysis
-                let binder = tsz::parallel::create_binder_from_bound_file(file, program, file_idx);
+                let binder =
+                    tsz::parallel::create_binder_from_bound_file(file, context.program, file_idx);
 
                 // Create emitter with type information and binder
                 let mut emitter = if let Some(ref cache) = type_cache {
@@ -2024,7 +2031,7 @@ pub(crate) fn emit_outputs(
                     let mut emitter = DeclarationEmitter::with_type_info(
                         &file.arena,
                         cache_view,
-                        &program.type_interner,
+                        &context.program.type_interner,
                         &binder,
                     );
                     // Set current arena and file path for foreign symbol tracking
@@ -2042,7 +2049,7 @@ pub(crate) fn emit_outputs(
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter
                 };
-                let map_info = if options.declaration_map {
+                let map_info = if context.options.declaration_map {
                     map_output_info(&dts_path)
                 } else {
                     None
@@ -2077,7 +2084,7 @@ pub(crate) fn emit_outputs(
                         &file.arena,
                         &binder,
                         &cache_view,
-                        &program.type_interner,
+                        &context.program.type_interner,
                         std::sync::Arc::clone(&file.arena),
                         &import_name_map,
                     );
