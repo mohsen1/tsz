@@ -215,20 +215,6 @@ pub trait TypeResolver {
         false
     }
 
-    /// Check whether a symbol reference denotes the global `Object` interface.
-    ///
-    /// Used as a fallback when boxed DefId registration is unavailable across contexts.
-    fn is_global_object_symbol(&self, _symbol: SymbolRef) -> bool {
-        false
-    }
-
-    /// Check whether a DefId denotes the global `Object` interface.
-    ///
-    /// Default behavior defers to boxed DefId registration for `Object`.
-    fn is_global_object_def_id(&self, def_id: DefId) -> bool {
-        self.is_boxed_def_id(def_id, IntrinsicKind::Object)
-    }
-
     /// Get the Array<T> interface type from lib.d.ts.
     /// This is used to resolve array methods via the official interface
     /// instead of hardcoding. Returns the generic Array interface type.
@@ -707,10 +693,6 @@ impl TypeResolver for TypeEnvironment {
 
     fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
         Self::is_boxed_def_id(self, def_id, kind)
-    }
-
-    fn is_global_object_def_id(&self, def_id: DefId) -> bool {
-        Self::is_boxed_def_id(self, def_id, IntrinsicKind::Object)
     }
 
     fn get_array_base_type(&self) -> Option<TypeId> {
@@ -2688,44 +2670,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Global `Object` interface from lib.d.ts (uppercase O):
-        // accepts all non-nullish values (including primitives).
-        let is_global_object_target = self
-            .resolver
-            .get_boxed_type(IntrinsicKind::Object)
-            .is_some_and(|boxed| boxed == target)
-            || lazy_def_id(self.interner, target)
-                .is_some_and(|def_id| {
-                    self.resolver.is_global_object_def_id(def_id)
-                        || self
-                            .resolver
-                            .resolve_lazy(def_id, self.interner)
-                            .and_then(|resolved| self.resolver.get_boxed_type(IntrinsicKind::Object).map(|boxed| boxed == resolved))
-                            .unwrap_or(false)
-                });
-        let is_global_object_shape_target = object_shape_id(self.interner, target)
-            .or_else(|| object_with_index_shape_id(self.interner, target))
-            .is_some_and(|shape_id| {
-                self.interner
-                    .object_shape(shape_id)
-                    .symbol
-                    .is_some_and(|sym| self.resolver.is_global_object_symbol(SymbolRef(sym.0)))
-            });
-        if is_global_object_target || is_global_object_shape_target {
-            if self.is_global_object_interface_type(source) {
-                return SubtypeResult::True;
-            }
-            if let Some(tracer) = &mut self.tracer
-                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                })
-            {
-                return SubtypeResult::False;
-            }
-            return SubtypeResult::False;
-        }
-
         // Check if target is the Function intrinsic (TypeId::FUNCTION) or the
         // Function interface from lib.d.ts. We check three ways:
         // 1. Target is the Function intrinsic (TypeId::FUNCTION)
@@ -3410,26 +3354,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         use crate::visitor::object_with_index_shape_id;
 
         // Check if target has nominal identity (is a class instance)
-        let target_symbol =
+        let target_has_symbol =
             if let Some(target_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let target_shape = self.interner.object_shape(target_shape_id);
-                target_shape.symbol
+                target_shape.symbol.is_some()
             } else {
-                None
+                false
             };
 
         // If target doesn't have nominal identity, use structural typing
-        let Some(target_symbol) = target_symbol else {
+        if !target_has_symbol {
             return true;
-        };
-
-        // Only enforce nominal inheritance for actual classes.
-        // Interfaces (including global `Object`) should remain structural.
-        if let Some(is_class_symbol) = self.is_class_symbol {
-            let target_is_class = is_class_symbol(SymbolRef(target_symbol.0));
-            if !target_is_class {
-                return true;
-            }
         }
 
         // Target has nominal identity - walk source's inheritance chain to see if we reach target
