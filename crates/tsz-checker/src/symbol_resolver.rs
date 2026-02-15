@@ -1825,7 +1825,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Supports simple wildcard patterns using `*` (e.g., "foo*baz", "*!text").
     pub(crate) fn is_ambient_module_match(&self, module_name: &str) -> bool {
-        if self.binder_has_ambient_module(&self.ctx.binder, module_name) {
+        if self.binder_has_ambient_module(self.ctx.binder, module_name) {
             return true;
         }
 

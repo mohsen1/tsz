@@ -1018,7 +1018,7 @@ impl<'a> CheckerState<'a> {
             };
             let is_type_only_decl = stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION;
-            if is_type_only_decl && self.declaration_name_matches_string(stmt_idx, &target_name) {
+            if is_type_only_decl && self.declaration_name_matches_string(stmt_idx, target_name) {
                 return true;
             }
         }

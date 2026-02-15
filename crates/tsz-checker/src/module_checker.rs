@@ -212,7 +212,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Validate named re-exports exist in target module
-            self.validate_reexported_members(&export_decl, module_name);
+            self.validate_reexported_members(export_decl, module_name);
             self.ctx.import_resolution_stack.pop();
             return;
         }
@@ -228,7 +228,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Validate named re-exports exist in target module
-            self.validate_reexported_members(&export_decl, module_name);
+            self.validate_reexported_members(export_decl, module_name);
             self.ctx.import_resolution_stack.pop();
             return;
         }

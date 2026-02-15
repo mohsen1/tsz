@@ -270,7 +270,7 @@ impl<'a> DeclarationEmitter<'a> {
                 if !import.import_clause.is_none() {
                     // Collect symbols to insert after binder is dropped
                     let symbols = self.collect_imported_symbols_from_clause(
-                        &self.arena,
+                        self.arena,
                         binder,
                         import.import_clause,
                     );
@@ -2361,11 +2361,8 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             // Collect symbols from this import clause
-            let symbols = self.collect_imported_symbols_from_clause(
-                &self.arena,
-                binder,
-                import.import_clause,
-            );
+            let symbols =
+                self.collect_imported_symbols_from_clause(self.arena, binder, import.import_clause);
 
             // Check if any symbol is in import_symbol_map (meaning it's being elided)
             for (_name, sym_id) in symbols {
@@ -2407,7 +2404,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Check if we should elide this import based on usage
-        let (default_used, named_used) = self.count_used_imports(&import);
+        let (default_used, named_used) = self.count_used_imports(import);
         if default_used == 0 && named_used == 0 {
             // No used symbols in this import - elide it
             return;

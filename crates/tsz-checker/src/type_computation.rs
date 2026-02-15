@@ -1619,7 +1619,7 @@ impl<'a> CheckerState<'a> {
         // the object type from `o?.b` includes `undefined`. Strip nullish types when this
         // element access is a continuation of an optional chain.
         let object_type = if !access.question_dot_token
-            && crate::optional_chain::is_optional_chain(&self.ctx.arena, access.expression)
+            && crate::optional_chain::is_optional_chain(self.ctx.arena, access.expression)
         {
             let (non_nullish, _) = self.split_nullish_type(object_type);
             non_nullish.unwrap_or(object_type)
