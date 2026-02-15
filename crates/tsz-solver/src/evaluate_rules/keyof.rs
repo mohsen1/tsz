@@ -306,10 +306,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     Some(TypeData::Array(_)) => return None,
                     _ => return None,
                 }
-            } else {
-                out.push(self.interner().literal_string(&index.to_string()));
-                index += 1;
             }
+            out.push(self.interner().literal_string(&index.to_string()));
+            index += 1;
         }
 
         Some(index)

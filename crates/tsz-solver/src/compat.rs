@@ -1600,10 +1600,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     }
                     // Recursively check the resolved type
                     return self.get_enum_def_id(resolved_type);
-                } else {
-                    // Lazy type couldn't be resolved yet, return None
-                    return None;
                 }
+                // Lazy type couldn't be resolved yet, return None
+                return None;
             } else {
                 type_id
             };
