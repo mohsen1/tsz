@@ -2211,7 +2211,6 @@ impl ScannerState {
     /// Scan a `JSDoc` token.
     /// Used when parsing `JSDoc` comments.
     #[wasm_bindgen(js_name = scanJsDocToken)]
-    #[allow(clippy::too_many_lines)]
     pub fn scan_jsdoc_token(&mut self) -> SyntaxKind {
         self.full_start_pos = self.pos;
         self.token_flags = 0;
@@ -2249,65 +2248,67 @@ impl ScannerState {
             return self.token;
         }
 
-        // JSDoc special tokens
+        if self.scan_jsdoc_punctuation_token(ch) {
+            return self.token;
+        }
+
+        // Check for identifier
+        if is_identifier_start(ch) {
+            return self.scan_jsdoc_identifier();
+        }
+
+        // Unknown character - advance and return Unknown (properly handle multi-byte UTF-8)
+        self.scan_jsdoc_unknown_character();
+        self.token
+    }
+
+    fn scan_jsdoc_punctuation_token(&mut self, ch: u32) -> bool {
         match ch {
             CharacterCodes::AT => {
                 self.pos += 1;
                 self.token = SyntaxKind::AtToken;
-                return self.token;
             }
             CharacterCodes::ASTERISK => {
                 self.pos += 1;
                 self.token = SyntaxKind::AsteriskToken;
-                return self.token;
             }
             CharacterCodes::OPEN_BRACE => {
                 self.pos += 1;
                 self.token = SyntaxKind::OpenBraceToken;
-                return self.token;
             }
             CharacterCodes::CLOSE_BRACE => {
                 self.pos += 1;
                 self.token = SyntaxKind::CloseBraceToken;
-                return self.token;
             }
             CharacterCodes::OPEN_BRACKET => {
                 self.pos += 1;
                 self.token = SyntaxKind::OpenBracketToken;
-                return self.token;
             }
             CharacterCodes::CLOSE_BRACKET => {
                 self.pos += 1;
                 self.token = SyntaxKind::CloseBracketToken;
-                return self.token;
             }
             CharacterCodes::LESS_THAN => {
                 self.pos += 1;
                 self.token = SyntaxKind::LessThanToken;
-                return self.token;
             }
             CharacterCodes::GREATER_THAN => {
                 self.pos += 1;
                 self.token = SyntaxKind::GreaterThanToken;
-                return self.token;
             }
             CharacterCodes::EQUALS => {
                 self.pos += 1;
                 self.token = SyntaxKind::EqualsToken;
-                return self.token;
             }
             CharacterCodes::COMMA => {
                 self.pos += 1;
                 self.token = SyntaxKind::CommaToken;
-                return self.token;
             }
             CharacterCodes::DOT => {
                 self.pos += 1;
                 self.token = SyntaxKind::DotToken;
-                return self.token;
             }
             CharacterCodes::BACKTICK => {
-                // Scan backtick-quoted string in JSDoc
                 self.pos += 1;
                 while self.pos < self.end
                     && self.char_code_unchecked(self.pos) != CharacterCodes::BACKTICK
@@ -2315,32 +2316,29 @@ impl ScannerState {
                     self.pos += 1;
                 }
                 if self.pos < self.end {
-                    self.pos += 1; // consume closing backtick
+                    self.pos += 1;
                 }
                 self.token_value = self.substring(self.token_start, self.pos);
                 self.token = SyntaxKind::NoSubstitutionTemplateLiteral;
-                return self.token;
             }
-            _ => {}
+            _ => return false,
         }
+        true
+    }
 
-        // Check for identifier
-        if is_identifier_start(ch) {
-            // Properly handle multi-byte UTF-8 characters
+    fn scan_jsdoc_identifier(&mut self) -> SyntaxKind {
+        self.pos += self.char_len_at(self.pos);
+        while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos)) {
             self.pos += self.char_len_at(self.pos);
-            while self.pos < self.end && is_identifier_part(self.char_code_unchecked(self.pos)) {
-                self.pos += self.char_len_at(self.pos);
-            }
-            self.token_value = self.substring(self.token_start, self.pos);
-            self.token =
-                crate::text_to_keyword(&self.token_value).unwrap_or(SyntaxKind::Identifier);
-            return self.token;
         }
+        self.token_value = self.substring(self.token_start, self.pos);
+        self.token = crate::text_to_keyword(&self.token_value).unwrap_or(SyntaxKind::Identifier);
+        self.token
+    }
 
-        // Unknown character - advance and return Unknown (properly handle multi-byte UTF-8)
+    fn scan_jsdoc_unknown_character(&mut self) {
         self.pos += self.char_len_at(self.pos);
         self.token = SyntaxKind::Unknown;
-        self.token
     }
 
     /// Scan `JSDoc` comment text token.

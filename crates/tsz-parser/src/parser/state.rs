@@ -541,11 +541,7 @@ impl ParserState {
     }
 
     /// Report escaped sequence diagnostics for string and template tokens.
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn report_invalid_string_or_template_escape_errors(&mut self) {
-        use tsz_common::diagnostics::diagnostic_codes;
-        use tsz_common::diagnostics::diagnostic_messages;
-
         let token_text = self.scanner.get_token_text_ref().to_string();
         if token_text.is_empty()
             || (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidEscape as u32) == 0
@@ -557,41 +553,10 @@ impl ParserState {
         let token_len = bytes.len();
         let token_start = self.token_pos() as usize;
 
-        let (content_start_offset, content_end_offset) = match self.current_token {
-            SyntaxKind::StringLiteral => {
-                if token_len < 2
-                    || (bytes[0] != b'"' && bytes[0] != b'\'')
-                    || bytes[token_len - 1] != bytes[0]
-                {
-                    return;
-                }
-                (1, token_len - 1)
-            }
-            SyntaxKind::NoSubstitutionTemplateLiteral => {
-                if bytes[0] != b'`' || bytes[token_len - 1] != b'`' {
-                    return;
-                }
-                (1, token_len - 1)
-            }
-            SyntaxKind::TemplateHead => {
-                if bytes[0] != b'`' || !bytes.ends_with(b"${") {
-                    return;
-                }
-                (1, token_len - 2)
-            }
-            SyntaxKind::TemplateMiddle | SyntaxKind::TemplateTail => {
-                if bytes[0] != b'}' {
-                    return;
-                }
-                if bytes.ends_with(b"${") {
-                    (1, token_len - 2)
-                } else if bytes.ends_with(b"`") {
-                    (1, token_len - 1)
-                } else {
-                    (1, token_len)
-                }
-            }
-            _ => return,
+        let Some((content_start_offset, content_end_offset)) =
+            self.string_template_escape_content_span(token_len, bytes)
+        else {
+            return;
         };
 
         if content_end_offset <= content_start_offset || content_end_offset > token_len {
@@ -601,8 +566,6 @@ impl ParserState {
         let raw = &bytes[content_start_offset..content_end_offset];
         let content_start = token_start + content_start_offset;
 
-        let len = raw.len();
-        let err_len = |offset: usize| u32::from(offset < len);
         let mut i = 0usize;
 
         while i < raw.len() {
@@ -610,126 +573,186 @@ impl ParserState {
                 i += 1;
                 continue;
             }
-
             if i + 1 >= raw.len() {
                 break;
             }
-
-            match raw[i + 1] {
-                b'x' => {
-                    let first = i + 2;
-                    let second = i + 3;
-                    if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
-                        self.parse_error_at(
-                            self.u32_from_usize(content_start + first),
-                            err_len(first),
-                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                        );
-                    } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
-                        self.parse_error_at(
-                            self.u32_from_usize(content_start + second),
-                            err_len(second),
-                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                        );
-                    }
-                    i += 2;
-                }
+            i = match raw[i + 1] {
+                b'x' => self.report_invalid_string_or_template_hex_escape(raw, content_start, i),
                 b'u' => {
-                    if i + 2 >= raw.len() {
-                        self.parse_error_at(
-                            self.u32_from_usize(content_start + i + 2),
-                            err_len(i + 2),
-                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                        );
-                        i += 2;
-                        continue;
-                    }
-
-                    if raw[i + 2] == b'{' {
-                        let mut close = i + 3;
-                        let mut has_digit = false;
-                        while close < raw.len() && Self::is_hex_digit(raw[close]) {
-                            has_digit = true;
-                            close += 1;
-                        }
-
-                        if close >= raw.len() {
-                            self.parse_error_at(
-                                self.u32_from_usize(content_start + close),
-                                0,
-                                diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                                diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                            );
-                        } else if raw[close] == b'}' {
-                            if !has_digit {
-                                self.parse_error_at(
-                                    self.u32_from_usize(content_start + close),
-                                    1,
-                                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                                );
-                            }
-                        } else if !has_digit {
-                            self.parse_error_at(
-                                self.u32_from_usize(content_start + i + 3),
-                                1,
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        } else {
-                            self.parse_error_at(
-                                self.u32_from_usize(content_start + close),
-                                1,
-                                diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                                diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                            );
-                        }
-
-                        i = close + 1;
-                    } else {
-                        let first = i + 2;
-                        let second = i + 3;
-                        let third = i + 4;
-                        let fourth = i + 5;
-                        if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
-                            self.parse_error_at(
-                                self.u32_from_usize(content_start + first),
-                                err_len(first),
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
-                            self.parse_error_at(
-                                self.u32_from_usize(content_start + second),
-                                err_len(second),
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
-                            self.parse_error_at(
-                                self.u32_from_usize(content_start + third),
-                                err_len(third),
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
-                            self.parse_error_at(
-                                self.u32_from_usize(content_start + fourth),
-                                err_len(fourth),
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        }
-                        i += 2;
-                    }
+                    self.report_invalid_string_or_template_unicode_escape(raw, content_start, i)
                 }
-                _ => {
-                    i += 1;
+                _ => i + 1,
+            };
+        }
+    }
+
+    fn string_template_escape_content_span(
+        &self,
+        token_len: usize,
+        bytes: &[u8],
+    ) -> Option<(usize, usize)> {
+        match self.current_token {
+            SyntaxKind::StringLiteral => {
+                if token_len < 2
+                    || (bytes[0] != b'"' && bytes[0] != b'\'')
+                    || bytes[token_len - 1] != bytes[0]
+                {
+                    return None;
+                }
+                Some((1, token_len - 1))
+            }
+            SyntaxKind::NoSubstitutionTemplateLiteral => {
+                if bytes[0] != b'`' || bytes[token_len - 1] != b'`' {
+                    return None;
+                }
+                Some((1, token_len - 1))
+            }
+            SyntaxKind::TemplateHead => {
+                if bytes[0] != b'`' || !bytes.ends_with(b"${") {
+                    return None;
+                }
+                Some((1, token_len - 2))
+            }
+            SyntaxKind::TemplateMiddle | SyntaxKind::TemplateTail => {
+                if bytes[0] != b'}' {
+                    return None;
+                }
+                if bytes.ends_with(b"${") {
+                    Some((1, token_len - 2))
+                } else if bytes.ends_with(b"`") {
+                    Some((1, token_len - 1))
+                } else {
+                    Some((1, token_len))
                 }
             }
+            _ => None,
+        }
+    }
+
+    fn report_invalid_string_or_template_hex_escape(
+        &mut self,
+        raw: &[u8],
+        content_start: usize,
+        i: usize,
+    ) -> usize {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let first = i + 2;
+        let second = i + 3;
+        let err_len = |offset: usize| u32::from(offset < raw.len());
+
+        if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+            self.parse_error_at(
+                self.u32_from_usize(content_start + first),
+                err_len(first),
+                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+            );
+        } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+            self.parse_error_at(
+                self.u32_from_usize(content_start + second),
+                err_len(second),
+                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+            );
+        }
+        i + 2
+    }
+
+    fn report_invalid_string_or_template_unicode_escape(
+        &mut self,
+        raw: &[u8],
+        content_start: usize,
+        i: usize,
+    ) -> usize {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if i + 2 >= raw.len() {
+            self.parse_error_at(
+                self.u32_from_usize(content_start + i + 2),
+                u32::from(i + 2 < raw.len()),
+                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+            );
+            return i + 2;
+        }
+
+        if raw[i + 2] == b'{' {
+            let mut close = i + 3;
+            let mut has_digit = false;
+            while close < raw.len() && Self::is_hex_digit(raw[close]) {
+                has_digit = true;
+                close += 1;
+            }
+            if close >= raw.len() {
+                self.parse_error_at(
+                    self.u32_from_usize(content_start + close),
+                    0,
+                    diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                    diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                );
+            } else if raw[close] == b'}' {
+                if !has_digit {
+                    self.parse_error_at(
+                        self.u32_from_usize(content_start + close),
+                        1,
+                        diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                        diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                    );
+                }
+            } else if !has_digit {
+                self.parse_error_at(
+                    self.u32_from_usize(content_start + i + 3),
+                    1,
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            } else {
+                self.parse_error_at(
+                    self.u32_from_usize(content_start + close),
+                    1,
+                    diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                    diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                );
+            }
+            close + 1
+        } else {
+            let first = i + 2;
+            let second = i + 3;
+            let third = i + 4;
+            let fourth = i + 5;
+            let err_len = |offset: usize| u32::from(offset < raw.len());
+
+            if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+                self.parse_error_at(
+                    self.u32_from_usize(content_start + first),
+                    err_len(first),
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+                self.parse_error_at(
+                    self.u32_from_usize(content_start + second),
+                    err_len(second),
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
+                self.parse_error_at(
+                    self.u32_from_usize(content_start + third),
+                    err_len(third),
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
+                self.parse_error_at(
+                    self.u32_from_usize(content_start + fourth),
+                    err_len(fourth),
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            }
+            i + 2
         }
     }
 
@@ -739,11 +762,7 @@ impl ParserState {
     }
 
     /// Parse regex unicode escape diagnostics for regex literals in /u or /v mode.
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn report_invalid_regular_expression_escape_errors(&mut self) {
-        use tsz_common::diagnostics::diagnostic_codes;
-        use tsz_common::diagnostics::diagnostic_messages;
-
         let token_text = self.scanner.get_token_text_ref().to_string();
         if !token_text.starts_with('/') || token_text.len() < 2 {
             return;
@@ -804,121 +823,147 @@ impl ParserState {
                 j += 1;
                 continue;
             }
-
             if j + 1 >= raw.len() {
                 break;
             }
-
             match raw[j + 1] {
                 b'x' => {
-                    let first = j + 2;
-                    let second = j + 3;
-                    if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
-                        self.parse_error_at(
-                            self.u32_from_usize(body_start + first),
-                            u32::from(first < raw.len()),
-                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                        );
-                    } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
-                        self.parse_error_at(
-                            self.u32_from_usize(body_start + second),
-                            u32::from(second < raw.len()),
-                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                        );
-                    }
-                    j += 2;
+                    j = self.report_invalid_regular_expression_hex_escape(raw, body_start, j);
                 }
                 b'u' => {
-                    if j + 2 < raw.len() && raw[j + 2] == b'{' {
-                        let mut close = j + 3;
-                        let mut has_digit = false;
-                        while close < raw.len() && Self::is_hex_digit(raw[close]) {
-                            has_digit = true;
-                            close += 1;
-                        }
-
-                        if close >= raw.len() {
-                            self.parse_error_at(
-                                self.u32_from_usize(body_start + close),
-                                0,
-                                diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                                diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                            );
-                            break;
-                        } else if raw[close] == b'}' {
-                            if !has_digit {
-                                self.parse_error_at(
-                                    self.u32_from_usize(body_start + close),
-                                    1,
-                                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                                );
-                            }
-                        } else if !has_digit {
-                            self.parse_error_at(
-                                self.u32_from_usize(body_start + j + 3),
-                                1,
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        } else {
-                            self.parse_error_at(
-                                self.u32_from_usize(body_start + close),
-                                1,
-                                diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                                diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                            );
-                            self.parse_error_at(
-                                self.u32_from_usize(body_start + close),
-                                1,
-                                diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
-                                diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
-                            );
-                        }
-                        j = close + 1;
+                    if let Some(next) =
+                        self.report_invalid_regular_expression_unicode_escape(raw, body_start, j)
+                    {
+                        j = next;
                     } else {
-                        let first = j + 2;
-                        let second = j + 3;
-                        let third = j + 4;
-                        let fourth = j + 5;
-                        if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
-                            self.parse_error_at(
-                                self.u32_from_usize(body_start + first),
-                                u32::from(first < raw.len()),
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
-                            self.parse_error_at(
-                                self.u32_from_usize(body_start + second),
-                                u32::from(second < raw.len()),
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
-                            self.parse_error_at(
-                                self.u32_from_usize(body_start + third),
-                                u32::from(third < raw.len()),
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
-                            self.parse_error_at(
-                                self.u32_from_usize(body_start + fourth),
-                                u32::from(fourth < raw.len()),
-                                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
-                                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                            );
-                        }
-                        j += 2;
+                        break;
                     }
                 }
                 _ => {
                     j += 1;
                 }
             }
+        }
+    }
+
+    fn report_invalid_regular_expression_hex_escape(
+        &mut self,
+        raw: &[u8],
+        body_start: usize,
+        j: usize,
+    ) -> usize {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let first = j + 2;
+        let second = j + 3;
+        if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+            self.parse_error_at(
+                self.u32_from_usize(body_start + first),
+                u32::from(first < raw.len()),
+                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+            );
+        } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+            self.parse_error_at(
+                self.u32_from_usize(body_start + second),
+                u32::from(second < raw.len()),
+                diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+            );
+        }
+        j + 2
+    }
+
+    fn report_invalid_regular_expression_unicode_escape(
+        &mut self,
+        raw: &[u8],
+        body_start: usize,
+        j: usize,
+    ) -> Option<usize> {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if j + 2 < raw.len() && raw[j + 2] == b'{' {
+            let mut close = j + 3;
+            let mut has_digit = false;
+            while close < raw.len() && Self::is_hex_digit(raw[close]) {
+                has_digit = true;
+                close += 1;
+            }
+            if close >= raw.len() {
+                self.parse_error_at(
+                    self.u32_from_usize(body_start + close),
+                    0,
+                    diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                    diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                );
+                return None;
+            }
+            if raw[close] == b'}' {
+                if !has_digit {
+                    self.parse_error_at(
+                        self.u32_from_usize(body_start + close),
+                        1,
+                        diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                        diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                    );
+                }
+            } else if !has_digit {
+                self.parse_error_at(
+                    self.u32_from_usize(body_start + j + 3),
+                    1,
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            } else {
+                self.parse_error_at(
+                    self.u32_from_usize(body_start + close),
+                    1,
+                    diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                    diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                );
+                self.parse_error_at(
+                    self.u32_from_usize(body_start + close),
+                    1,
+                    diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                    diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                );
+            }
+            Some(close + 1)
+        } else {
+            let first = j + 2;
+            let second = j + 3;
+            let third = j + 4;
+            let fourth = j + 5;
+            if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+                self.parse_error_at(
+                    self.u32_from_usize(body_start + first),
+                    u32::from(first < raw.len()),
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+                self.parse_error_at(
+                    self.u32_from_usize(body_start + second),
+                    u32::from(second < raw.len()),
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
+                self.parse_error_at(
+                    self.u32_from_usize(body_start + third),
+                    u32::from(third < raw.len()),
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
+                self.parse_error_at(
+                    self.u32_from_usize(body_start + fourth),
+                    u32::from(fourth < raw.len()),
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                );
+            }
+            Some(j + 2)
         }
     }
 
@@ -1168,49 +1213,91 @@ impl ParserState {
     ///
     /// `expression` is the node index of the expression that was parsed before
     /// the missing semicolon.
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_error_for_missing_semicolon_after(&mut self, expression: NodeIndex) {
         use crate::parser::spelling;
         use tsz_common::diagnostics::diagnostic_codes;
 
-        // Only handle identifier expressions.
-        // Use source text directly — arena identifier data may be empty for
-        // identifiers created during parsing before data is fully populated.
-        let expression_text = if let Some(node) = self.arena.get(expression) {
-            if node.kind == SyntaxKind::Identifier as u16 {
-                let source = self.scanner.source_text();
-                let text = &source[node.pos as usize..node.end as usize];
-                if text.is_empty() {
-                    None
-                } else {
-                    Some(text.to_string())
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let Some(expression_text) = expression_text else {
+        let Some((pos, len, expression_text)) =
+            self.missing_semicolon_after_expression_text(expression)
+        else {
             if self.should_report_error() {
                 self.error_token_expected(";");
             }
             return;
         };
 
-        let (pos, end) = if let Some(node) = self.arena.get(expression) {
-            (node.pos, node.end)
-        } else {
-            (
-                self.u32_from_usize(self.scanner.get_token_start()),
-                self.u32_from_usize(self.scanner.get_token_end()),
-            )
-        };
-        let len = end - pos;
+        if self.parse_missing_semicolon_keyword_error(pos, len, &expression_text) {
+            return;
+        }
 
-        // Handle specific known keywords that need special diagnostics.
-        match expression_text.as_str() {
+        if self.should_suppress_type_or_keyword_suggestion_for_missing_semicolon(
+            expression_text.as_str(),
+            pos,
+        ) {
+            return;
+        }
+
+        if let Some(suggestion) = spelling::suggest_keyword(&expression_text) {
+            if !self.should_suppress_type_or_keyword_suggestion_for_missing_semicolon(
+                suggestion.as_str(),
+                pos,
+            ) {
+                self.parse_error_at(
+                    pos,
+                    len,
+                    &format!("Unknown keyword or identifier. Did you mean '{suggestion}'?"),
+                    diagnostic_codes::UNKNOWN_KEYWORD_OR_IDENTIFIER_DID_YOU_MEAN,
+                );
+            }
+            return;
+        }
+
+        if self.is_token(SyntaxKind::Unknown) {
+            return;
+        }
+
+        if self.should_report_error() {
+            self.parse_error_at(
+                pos,
+                len,
+                "Unexpected keyword or identifier.",
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+            );
+        }
+    }
+
+    fn missing_semicolon_after_expression_text(
+        &self,
+        expression: NodeIndex,
+    ) -> Option<(u32, u32, String)> {
+        let Some(node) = self.arena.get(expression) else {
+            return None;
+        };
+
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        // Use source text directly — arena identifier data may be empty for
+        // identifiers created during parsing before data is fully populated.
+        let source = self.scanner.source_text();
+        let text = &source[node.pos as usize..node.end as usize];
+        if text.is_empty() {
+            return None;
+        }
+
+        Some((node.pos, node.end - node.pos, text.to_string()))
+    }
+
+    fn parse_missing_semicolon_keyword_error(
+        &mut self,
+        pos: u32,
+        len: u32,
+        expression_text: &str,
+    ) -> bool {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        match expression_text {
             "const" | "let" | "var" => {
                 self.parse_error_at(
                     pos,
@@ -1218,11 +1305,9 @@ impl ParserState {
                     "Variable declaration not allowed at this location.",
                     diagnostic_codes::VARIABLE_DECLARATION_NOT_ALLOWED_AT_THIS_LOCATION,
                 );
-                return;
+                true
             }
-            "declare" => {
-                return;
-            }
+            "declare" => true,
             "interface" => {
                 if self.is_token(SyntaxKind::OpenBraceToken) {
                     self.parse_error_at_current_token(
@@ -1236,21 +1321,23 @@ impl ParserState {
                         diagnostic_codes::EXPECTED,
                     );
                 }
-                return;
+                true
             }
             "type" => {
                 self.parse_error_at_current_token("'=' expected", diagnostic_codes::EXPECTED);
-                return;
+                true
             }
-            _ => {}
+            _ => false,
         }
+    }
 
-        // In malformed arrow-like declarations such as:
-        //   var f = (x: number, y: string);
-        // TypeScript does not emit TS1435 for `string` in this type-annotation
-        // position; it reports the surrounding missing-token errors instead.
-        let is_type_annotation_keyword = matches!(
-            expression_text.as_str(),
+    fn should_suppress_type_or_keyword_suggestion_for_missing_semicolon(
+        &self,
+        text: &str,
+        token_pos: u32,
+    ) -> bool {
+        if !matches!(
+            text,
             "string"
                 | "number"
                 | "boolean"
@@ -1263,70 +1350,16 @@ impl ParserState {
                 | "never"
                 | "unknown"
                 | "any"
-        );
-        if is_type_annotation_keyword {
-            let source = self.scanner.source_text().as_bytes();
-            let mut i = pos as usize;
-            while i > 0 && source[i - 1].is_ascii_whitespace() {
-                i -= 1;
-            }
-            if i > 0 && source[i - 1] == b':' {
-                return;
-            }
+        ) {
+            return false;
         }
 
-        // Spelling / space suggestion (TS1435).
-        if let Some(suggestion) = spelling::suggest_keyword(&expression_text) {
-            // Suppress cascading TS1435 in malformed type-annotation contexts
-            // (e.g. `var f = (x: number, y: string);`).
-            let type_keyword_suggestion = matches!(
-                suggestion.as_str(),
-                "string"
-                    | "number"
-                    | "boolean"
-                    | "symbol"
-                    | "bigint"
-                    | "object"
-                    | "void"
-                    | "undefined"
-                    | "null"
-                    | "never"
-                    | "unknown"
-                    | "any"
-            );
-            if type_keyword_suggestion {
-                let source = self.scanner.source_text().as_bytes();
-                let mut i = pos as usize;
-                while i > 0 && source[i - 1].is_ascii_whitespace() {
-                    i -= 1;
-                }
-                if i > 0 && source[i - 1] == b':' {
-                    return;
-                }
-            }
-            self.parse_error_at(
-                pos,
-                len,
-                &format!("Unknown keyword or identifier. Did you mean '{suggestion}'?"),
-                diagnostic_codes::UNKNOWN_KEYWORD_OR_IDENTIFIER_DID_YOU_MEAN,
-            );
-            return;
+        let source = self.scanner.source_text().as_bytes();
+        let mut i = token_pos as usize;
+        while i > 0 && source[i - 1].is_ascii_whitespace() {
+            i -= 1;
         }
-
-        // Unknown tokens are handled by the scanner.
-        if self.is_token(SyntaxKind::Unknown) {
-            return;
-        }
-
-        // Fallback (TS1434).
-        if self.should_report_error() {
-            self.parse_error_at(
-                pos,
-                len,
-                "Unexpected keyword or identifier.",
-                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-            );
-        }
+        i > 0 && source[i - 1] == b':'
     }
 
     /// Check if we can parse a semicolon (ASI rules)
