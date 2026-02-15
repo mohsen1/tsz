@@ -17,6 +17,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1166: Computed property name in class property declaration must have
+        // a simple literal type or a 'unique symbol' type.
+        // This check only fires when the expression is NOT an entity name expression
+        // (i.e., not a simple identifier or property access chain like a.b.c).
+        // Entity name expressions are always allowed regardless of their type.
+        self.check_class_computed_property_name(prop.name);
+
         // TS8009/TS8010: Check for TypeScript-only features in JavaScript files
         let is_js_file = self.ctx.file_name.ends_with(".js")
             || self.ctx.file_name.ends_with(".jsx")

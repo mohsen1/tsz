@@ -171,6 +171,77 @@ impl<'a> CheckerState<'a> {
     // Computed Property Name Validation
     // =========================================================================
 
+    /// Check if an expression node is an "entity name expression".
+    ///
+    /// Entity name expressions are simple identifiers or property access chains
+    /// (e.g., `a`, `a.b`, `a.b.c`). These are always allowed as computed property
+    /// names in class property declarations, regardless of their type.
+    fn is_entity_name_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return true;
+        }
+        if expr_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(expr_node) {
+                return self.is_entity_name_expression(access.expression);
+            }
+        false
+    }
+
+    /// Check a computed property name in a class property declaration (TS1166).
+    ///
+    /// In class property declarations, computed property names that are not
+    /// entity name expressions must have a type that is a string literal,
+    /// number literal, or unique symbol type. Entity name expressions (simple
+    /// identifiers or property access chains) are always allowed.
+    pub(crate) fn check_class_computed_property_name(&mut self, name_idx: NodeIndex) {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+
+        if name_node.kind != tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return;
+        }
+
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return;
+        };
+
+        // Entity name expressions (identifiers, property access chains) are always OK
+        if self.is_entity_name_expression(computed.expression) {
+            return;
+        }
+
+        // Literal expressions (string, number, no-substitution template) are always OK
+        // since they inherently have literal types
+        if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
+            let kind = expr_node.kind;
+            if kind == SyntaxKind::StringLiteral as u16
+                || kind == SyntaxKind::NumericLiteral as u16
+                || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            {
+                return;
+            }
+        }
+
+        let expr_type = self.get_type_of_node(computed.expression);
+
+        if expr_type == tsz_solver::TypeId::ERROR {
+            return;
+        }
+
+        if !tsz_solver::type_queries::is_type_usable_as_property_name(self.ctx.types, expr_type) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                name_idx,
+                diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE,
+                diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE,
+            );
+        }
+    }
+
     /// Check a computed property name for type errors (TS2464).
     ///
     /// Validates that the expression used for a computed property name
