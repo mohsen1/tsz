@@ -1856,18 +1856,40 @@ impl ParserState {
                 ));
             } else {
                 // Regular binding element: name or propertyName: name
+                let first_token = self.token();
+                let first_name_start = self.token_pos();
+                let first_name_end = self.token_end();
                 let first_name = self.parse_property_name();
 
                 let (property_name, name) = if self.parse_optional(SyntaxKind::ColonToken) {
                     // propertyName: name
+                    let name_is_reserved = self.is_reserved_word();
+                    let name_start = self.token_pos();
+                    let name_end = self.token_end();
                     let name = self.parse_binding_element_name();
                     if name.is_none() {
                         // Emit TS1109 for missing property binding element: {prop: missing}
                         self.error_expression_expected();
                     }
+                    if name_is_reserved {
+                        self.parse_error_at(
+                            name_start,
+                            name_end.saturating_sub(name_start),
+                            "':' expected.",
+                            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        );
+                    }
                     (first_name, name)
                 } else {
                     // Just name (shorthand)
+                    if first_token != SyntaxKind::Identifier {
+                        self.parse_error_at(
+                            first_name_start,
+                            first_name_end.saturating_sub(first_name_start),
+                            "':' expected.",
+                            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        );
+                    }
                     (NodeIndex::NONE, first_name)
                 };
 
@@ -2041,8 +2063,6 @@ impl ParserState {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
-        } else if self.is_identifier_or_keyword() {
-            self.parse_identifier_name()
         } else {
             self.parse_identifier()
         }
@@ -2668,7 +2688,12 @@ impl ParserState {
             self.error_expression_expected();
         }
         let end_pos = self.token_end();
-        self.parse_expected(SyntaxKind::CloseParenToken);
+        if self.is_token(SyntaxKind::CloseParenToken) {
+            self.parse_expected(SyntaxKind::CloseParenToken);
+        } else {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
+        }
 
         self.arena.add_parenthesized(
             syntax_kind_ext::PARENTHESIZED_EXPRESSION,
