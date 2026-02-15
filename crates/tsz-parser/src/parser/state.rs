@@ -40,6 +40,8 @@ pub const CONTEXT_FLAG_DISALLOW_IN: u32 = 16;
 pub const CONTEXT_FLAG_CLASS_MEMBER_NAME: u32 = 2048;
 /// Context flag: inside an ambient context (declare namespace/module)
 pub const CONTEXT_FLAG_AMBIENT: u32 = 32;
+/// Context flag: parsing a class body
+pub const CONTEXT_FLAG_IN_CLASS: u32 = 4096;
 /// Context flag: inside the 'true' branch of a conditional expression (a ? [here] : c)
 /// When set, arrow function lookahead should not treat ':' as a return type annotation
 /// because the ':' belongs to the enclosing conditional expression
@@ -353,6 +355,12 @@ impl ParserState {
         (self.context_flags & CONTEXT_FLAG_CLASS_MEMBER_NAME) != 0
     }
 
+    /// Check if we're parsing inside a class body.
+    #[inline]
+    pub(crate) fn in_class_body(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_IN_CLASS) != 0
+    }
+
     /// Check if we're inside a static block
     #[inline]
     pub(crate) fn in_static_block_context(&self) -> bool {
@@ -435,14 +443,46 @@ impl ParserState {
                 && self.scanner.get_token_value_ref() == "yield");
 
         if is_yield && self.in_generator_context() {
-            self.parse_error_at_current_token(
-                "Identifier expected. 'yield' is a reserved word that cannot be used here.",
-                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE, // Same code as await (TS1359)
-            );
+            let is_class_context = self.in_class_body() || self.in_class_member_name();
+            if is_class_context {
+                self.parse_error_at_current_token(
+                    "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "Identifier expected. 'yield' is a reserved word in strict mode.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                );
+            }
             return true;
         }
 
         false
+    }
+
+    /// Recover from invalid method/member syntax when `(` is missing after the member name.
+    /// This is used for async/generator forms like `async * get x() {}` where a single TS1005
+    /// should be emitted and the parser should skip the rest of the member to avoid cascades.
+    pub(crate) fn recover_from_missing_method_open_paren(&mut self) {
+        while !(self.is_token(SyntaxKind::OpenBraceToken)
+            || self.is_token(SyntaxKind::SemicolonToken)
+            || self.is_token(SyntaxKind::CommaToken)
+            || self.is_token(SyntaxKind::CloseBraceToken)
+            || self.is_token(SyntaxKind::EndOfFileToken))
+        {
+            self.next_token();
+        }
+
+        if self.is_token(SyntaxKind::OpenBraceToken) {
+            let body = self.parse_block();
+            let _ = body;
+            return;
+        }
+
+        if self.is_token(SyntaxKind::SemicolonToken) || self.is_token(SyntaxKind::CommaToken) {
+            self.next_token();
+        }
     }
 
     /// Parse optional token, returns true if found
@@ -1025,7 +1065,7 @@ impl ParserState {
         if self.should_report_error() {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
-                "Expression expected",
+                "Expression expected.",
                 diagnostic_codes::EXPRESSION_EXPECTED,
             );
         }
@@ -1122,6 +1162,15 @@ impl ParserState {
         if self.should_report_error() {
             use tsz_common::diagnostics::diagnostic_codes;
             let word = self.current_keyword_text();
+            if self.is_token(SyntaxKind::YieldKeyword) && self.in_generator_context() {
+                self.parse_error_at_current_token(
+                    "Identifier expected. 'yield' is a reserved word in strict mode.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                );
+                // Consume the reserved word token to prevent cascading errors
+                self.next_token();
+                return;
+            }
             self.parse_error_at_current_token(
                 &format!(
                     "Identifier expected. '{word}' is a reserved word that cannot be used here."

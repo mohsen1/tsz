@@ -117,7 +117,13 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
 ///
 /// Some harness directives (e.g. module, moduleResolution) represent multiple runs.
 pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<String, String>> {
-    const MULTI_VALUE_KEYS: &[&str] = &["module", "moduleresolution", "target", "jsx"];
+    const MULTI_VALUE_KEYS: &[&str] = &[
+        "module",
+        "moduleresolution",
+        "target",
+        "jsx",
+        "alwaysstrict",
+    ];
 
     let mut variants = vec![options.clone()];
     for key in MULTI_VALUE_KEYS {

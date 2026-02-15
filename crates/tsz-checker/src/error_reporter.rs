@@ -4263,6 +4263,16 @@ impl<'a> CheckerState<'a> {
     /// For ES2015+ types (Promise, Map, Set, Symbol, etc.), emits TS2585 with a suggestion
     /// to change the target library. For other types, emits TS2693 without the lib suggestion.
     pub fn error_type_only_value_at(&mut self, name: &str, idx: NodeIndex) {
+        if std::env::var_os("TSZ_DEBUG_PARSER_RECOVERY").is_some() && name == "yield" {
+            trace!(
+                target: "tsz_debug",
+                name,
+                file = %self.ctx.file_name,
+                idx = ?idx,
+                parse_errors = self.has_parse_errors(),
+                "tsz-debug: error_type_only_value_at"
+            );
+        }
         use tsz_binder::lib_loader;
 
         // Don't emit TS2693 for identifiers used as import equals module references.
@@ -4278,6 +4288,8 @@ impl<'a> CheckerState<'a> {
         if let Some(loc) = self.get_source_location(idx) {
             // Check if this is an ES2015+ type that requires specific lib support
             let is_es2015_type = lib_loader::is_es2015_plus_type(name);
+            let allow_in_parse_recovery =
+                self.has_type_only_value_in_parse_recovery_context(name, idx);
 
             // In syntax-error files, TS2693 often cascades from parser recovery and
             // diverges from tsc's primary-diagnostic set. Keep TS2585 behavior intact.
@@ -4301,6 +4313,7 @@ impl<'a> CheckerState<'a> {
                 && !is_es2015_type
                 && !allow_keyword_array_recovery
                 && !allow_any_in_parse_recovery
+                && !allow_in_parse_recovery
             {
                 return;
             }
@@ -4335,6 +4348,59 @@ impl<'a> CheckerState<'a> {
                 related_information: Vec::new(),
             });
         }
+    }
+
+    /// Parser-recovery exceptions for TS2693/TS2585.
+    ///
+    /// Some grammar-recovery scenarios continue checking and should still emit
+    /// type/value mismatch diagnostics even with parse errors.
+    fn has_type_only_value_in_parse_recovery_context(&self, name: &str, idx: NodeIndex) -> bool {
+        // Recovery for async-generator computed members (`async * [yield] ...`) should still
+        // report TS2693.
+        if name != "yield" {
+            return false;
+        }
+
+        let mut guard = 0;
+        let mut current = Some(idx);
+        let mut seen_computed_property_name = false;
+
+        while let Some(current_idx) = current {
+            if guard > 64 {
+                break;
+            }
+            guard += 1;
+
+            let Some(ext) = self.ctx.arena.get_extended(current_idx) else {
+                break;
+            };
+
+            let Some(parent) = self.ctx.arena.get(ext.parent) else {
+                break;
+            };
+
+            if parent.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                seen_computed_property_name = true;
+            } else if parent.kind == syntax_kind_ext::METHOD_DECLARATION
+                && seen_computed_property_name
+            {
+                return true;
+            }
+
+            current = Some(ext.parent);
+        }
+
+        if std::env::var_os("TSZ_DEBUG_PARSER_RECOVERY").is_some() && seen_computed_property_name {
+            trace!(
+                target: "tsz_debug",
+                name,
+                file = %self.ctx.file_name,
+                computed_context = seen_computed_property_name,
+                "tsz-debug: computed property diagnostic context"
+            );
+        }
+
+        false
     }
 
     /// Report TS2749: Symbol refers to a value, but is used as a type.

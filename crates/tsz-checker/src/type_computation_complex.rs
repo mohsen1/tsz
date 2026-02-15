@@ -1945,7 +1945,9 @@ impl<'a> CheckerState<'a> {
             }
             // Check symbol flags to detect type-only usage.
             // First try the main binder (fast path for local symbols).
-            let local_symbol = self.ctx.binder.get_symbol(sym_id);
+            let local_symbol = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id));
             let flags = local_symbol.map_or(0, |s| s.flags);
 
             // TS2662: Bare identifier resolving to a static class member.
