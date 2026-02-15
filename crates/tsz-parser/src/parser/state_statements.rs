@@ -2927,8 +2927,30 @@ impl ParserState {
                     || seen_async
                 {
                     use tsz_common::diagnostics::diagnostic_codes;
+                    let current_mod = match current_kind {
+                        SyntaxKind::PublicKeyword => "public",
+                        SyntaxKind::PrivateKeyword => "private",
+                        SyntaxKind::ProtectedKeyword => "protected",
+                        _ => "accessibility",
+                    };
+                    let conflicting_mod = if seen_static {
+                        "static"
+                    } else if seen_abstract {
+                        "abstract"
+                    } else if seen_readonly {
+                        "readonly"
+                    } else if seen_override {
+                        "override"
+                    } else if seen_accessor {
+                        "accessor"
+                    } else {
+                        "async"
+                    };
                     self.parse_error_at_current_token(
-                        "'accessibility modifier' must come before other modifiers.",
+                        &format!(
+                            "'{}' modifier must precede '{}' modifier.",
+                            current_mod, conflicting_mod
+                        ),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );
                 }
