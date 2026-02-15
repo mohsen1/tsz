@@ -964,7 +964,7 @@ impl<'a> CheckerState<'a> {
                                 let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
                                 self.error_at_node_msg(
                                     binding_elem.name,
-                                    diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                                    diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
                                     &[&binding_name, implicit_type],
                                 );
                             }
@@ -1009,7 +1009,7 @@ impl<'a> CheckerState<'a> {
                             let implicit_type = if is_rest_parameter { "any[]" } else { "any" };
                             self.error_at_node_msg(
                                 binding_elem.name,
-                                diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                                diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
                                 &[&binding_name, implicit_type],
                             );
                         }

@@ -2080,6 +2080,7 @@ impl<'a> Completions<'a> {
         Some(items)
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn collect_properties_for_type(
         &self,
         type_id: TypeId,
