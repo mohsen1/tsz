@@ -1312,8 +1312,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Get the type of the object
+        // Get the type of the object.
+        // When checking assignment targets (skip_flow_narrowing=true), we still need
+        // narrowing on the object expression. E.g., for `target.info.a_count = 3` inside
+        // `if (target instanceof A2)`, `target` must narrow to A2 so we can resolve `info`.
+        // Only the final property access result should skip narrowing.
+        let prev_skip = self.ctx.skip_flow_narrowing;
+        self.ctx.skip_flow_narrowing = false;
         let original_object_type = self.get_type_of_node(access.expression);
+        self.ctx.skip_flow_narrowing = prev_skip;
 
         // Evaluate Application types to resolve generic type aliases/interfaces
         // But preserve original for error messages to maintain nominal identity (e.g., D<string>)
