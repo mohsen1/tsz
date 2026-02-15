@@ -128,7 +128,7 @@ impl<'a> SelectionRangeProvider<'a> {
     ///
     /// Some internal nodes don't represent meaningful selection boundaries.
     fn should_skip_node(&self, kind: u16) -> bool {
-        use syntax_kind_ext::*;
+        use syntax_kind_ext::{EMPTY_STATEMENT, OMITTED_EXPRESSION, SEMICOLON_CLASS_ELEMENT};
 
         matches!(
             kind,
