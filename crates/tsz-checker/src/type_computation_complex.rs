@@ -1531,7 +1531,6 @@ impl<'a> CheckerState<'a> {
 
     /// Handle the result of a call evaluation, emitting diagnostics for errors
     /// and applying this-substitution/mixin refinement for successes.
-    #[allow(clippy::too_many_arguments)]
     fn handle_call_result(
         &mut self,
         result: tsz_solver::CallResult,

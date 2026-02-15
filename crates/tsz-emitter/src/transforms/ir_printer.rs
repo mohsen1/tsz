@@ -1339,7 +1339,6 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn emit_namespace_iife(
         &mut self,
         name_parts: &[String],
@@ -1853,7 +1852,6 @@ impl<'a> IRPrinter<'a> {
     /// 1. Uses flags from TransformDirective (doesn't re-calculate)
     /// 2. Uses recursive emit_node calls for the body (handles nested directives)
     /// 3. Supports class_alias for static class members
-    #[allow(clippy::too_many_arguments)]
     fn emit_arrow_function_es5_with_flags(
         &mut self,
         arena: &NodeArena,

@@ -202,7 +202,14 @@ enum EmitDirective {
     Chain(Vec<Self>),
 }
 
-type TempScopeSnapshot = (
+// =============================================================================
+// Printer
+// =============================================================================
+
+/// Maximum recursion depth for emit to prevent infinite loops
+const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
+
+type TempScopeStackEntry = (
     u32,
     FxHashSet<String>,
     bool,
@@ -212,12 +219,7 @@ type TempScopeSnapshot = (
     Vec<String>,
 );
 
-// =============================================================================
-// Printer
-// =============================================================================
-
-/// Maximum recursion depth for emit to prevent infinite loops
-const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
+type TempScopeStack = Vec<TempScopeStackEntry>;
 
 /// Printer that works with NodeArena.
 ///
@@ -271,7 +273,7 @@ pub struct Printer<'a> {
 
     /// Stack for saving/restoring temp naming state when entering function scopes.
     /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted, preallocated names, preallocated logical value names, value temps, reference temps).
-    pub(super) temp_scope_stack: Vec<TempScopeSnapshot>,
+    pub(super) temp_scope_stack: TempScopeStack,
 
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
