@@ -2601,6 +2601,25 @@ impl<'a> CheckerState<'a> {
             let message = format_message(msg_template, &[name]);
             self.error_at_node(idx, &message, code);
 
+            // For block-scoped variable TDZ reads, TypeScript also reports TS2454
+            // ("used before being assigned") in strict-null mode.
+            if self.ctx.strict_null_checks()
+                && self
+                    .ctx
+                    .binder
+                    .symbols
+                    .get(sym_id)
+                    .is_some_and(|sym| {
+                        sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                    })
+                && let Some(usage_node) = self.ctx.arena.get(idx)
+            {
+                let key = (usage_node.pos, sym_id);
+                if self.ctx.emitted_ts2454_errors.insert(key) {
+                    self.error_variable_used_before_assigned_at(name, idx);
+                }
+            }
+
             // TS2729 companion for static property initializers:
             // in `X.Y`, when `X` is in TDZ, tsc also reports that `Y` is used
             // before initialization at the property name site.
