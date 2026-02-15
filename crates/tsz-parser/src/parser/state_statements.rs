@@ -2725,6 +2725,15 @@ impl ParserState {
         *seen_implements = true;
         self.next_token();
 
+        // TS1097: 'implements' list cannot be empty.
+        if self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::ExtendsKeyword) {
+            self.parse_error_at_current_token(
+                "'implements' list cannot be empty.",
+                diagnostic_codes::LIST_CANNOT_BE_EMPTY,
+            );
+            return None;
+        }
+
         let mut types = Vec::new();
         loop {
             let type_ref = self.parse_heritage_type_reference();

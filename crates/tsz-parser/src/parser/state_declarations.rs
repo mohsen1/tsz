@@ -69,6 +69,29 @@ impl ParserState {
             let clause_start = self.token_pos();
             self.next_token();
 
+            // TS1097: 'extends' list cannot be empty.
+            if self.is_token(SyntaxKind::OpenBraceToken)
+                || self.is_token(SyntaxKind::ImplementsKeyword)
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "'extends' list cannot be empty.",
+                    diagnostic_codes::LIST_CANNOT_BE_EMPTY,
+                );
+                // Return an empty heritage clause so we can still parse the body
+                let clause_end = self.token_end();
+                let clause = self.arena.add_heritage(
+                    syntax_kind_ext::HERITAGE_CLAUSE,
+                    clause_start,
+                    clause_end,
+                    crate::parser::node::HeritageData {
+                        token: SyntaxKind::ExtendsKeyword as u16,
+                        types: self.make_node_list(vec![]),
+                    },
+                );
+                return self.make_node_list(vec![clause]);
+            }
+
             let mut types = Vec::new();
             loop {
                 let type_ref = self.parse_interface_heritage_type_reference();
