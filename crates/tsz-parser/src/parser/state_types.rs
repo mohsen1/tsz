@@ -2230,6 +2230,10 @@ impl ParserState {
 
         // Check for value: = followed by string, expression, or nested JSX
         let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+            // Rescan the next token using the JSX attribute value scanner.
+            // JSX attribute strings allow literal newlines (unlike regular JS strings),
+            // so we must rescan in JSX mode to handle multiline attribute values.
+            self.current_token = self.scanner.re_scan_jsx_attribute_value();
             if self.is_token(SyntaxKind::StringLiteral) {
                 self.parse_string_literal()
             } else if self.is_token(SyntaxKind::OpenBraceToken) {
