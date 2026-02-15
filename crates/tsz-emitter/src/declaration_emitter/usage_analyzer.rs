@@ -228,6 +228,22 @@ impl<'a> UsageAnalyzer<'a> {
                             }
                             _ => {}
                         }
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                            self.analyze_class_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                            self.analyze_interface_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                            self.analyze_type_alias_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                            self.analyze_enum_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                            self.analyze_variable_statement(export.export_clause);
+                        }
+                        _ => {}
                     }
                 }
             }
