@@ -27,6 +27,8 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+use tsz_solver::NarrowingContext;
 use tsz_solver::RelationCacheKey;
 use tsz_solver::TypeId;
 use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
@@ -36,6 +38,136 @@ use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn skip_parenthesized_for_assignability(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                return idx;
+            }
+            let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
+                return idx;
+            };
+            idx = paren.expression;
+        }
+    }
+
+    fn typeof_this_comparison_literal(
+        &self,
+        left: NodeIndex,
+        right: NodeIndex,
+        this_ref: NodeIndex,
+    ) -> Option<&str> {
+        if self.is_typeof_this_target(left, this_ref) {
+            return self.string_literal_text(right);
+        }
+        if self.is_typeof_this_target(right, this_ref) {
+            return self.string_literal_text(left);
+        }
+        None
+    }
+
+    fn is_typeof_this_target(&self, expr: NodeIndex, this_ref: NodeIndex) -> bool {
+        let expr = self.skip_parenthesized_for_assignability(expr);
+        let Some(node) = self.ctx.arena.get(expr) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return false;
+        }
+        let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
+            return false;
+        };
+        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
+            return false;
+        }
+        let operand = self.skip_parenthesized_for_assignability(unary.operand);
+        if operand == this_ref {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get(operand)
+            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16)
+    }
+
+    fn string_literal_text(&self, idx: NodeIndex) -> Option<&str> {
+        let idx = self.skip_parenthesized_for_assignability(idx);
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            return self
+                .ctx
+                .arena
+                .get_literal(node)
+                .map(|lit| lit.text.as_str());
+        }
+        None
+    }
+
+    fn narrow_this_from_enclosing_typeof_guard(
+        &self,
+        source_idx: NodeIndex,
+        source: TypeId,
+    ) -> TypeId {
+        let is_this_source = self
+            .ctx
+            .arena
+            .get(source_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
+        if !is_this_source {
+            return source;
+        }
+
+        let mut current = source_idx;
+        let mut depth = 0usize;
+        while depth < 256 {
+            depth += 1;
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if parent_node.kind != syntax_kind_ext::IF_STATEMENT {
+                continue;
+            }
+            let Some(if_stmt) = self.ctx.arena.get_if_statement(parent_node) else {
+                continue;
+            };
+            if !self.is_node_within(source_idx, if_stmt.then_statement) {
+                continue;
+            }
+            let Some(cond_node) = self.ctx.arena.get(if_stmt.expression) else {
+                continue;
+            };
+            if cond_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(bin) = self.ctx.arena.get_binary_expr(cond_node) else {
+                continue;
+            };
+            let is_equality = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16
+                || bin.operator_token == SyntaxKind::EqualsEqualsToken as u16;
+            if !is_equality {
+                continue;
+            }
+            if let Some(type_name) =
+                self.typeof_this_comparison_literal(bin.left, bin.right, source_idx)
+            {
+                return NarrowingContext::new(self.ctx.types).narrow_by_typeof(source, type_name);
+            }
+        }
+
+        source
+    }
+
     /// Ensure relation preconditions (lazy refs + application symbols) for one type.
     pub(crate) fn ensure_relation_input_ready(&mut self, type_id: TypeId) {
         self.ensure_refs_resolved(type_id);
@@ -523,6 +655,7 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
         diag_idx: NodeIndex,
     ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
         }
@@ -549,6 +682,7 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
         diag_idx: NodeIndex,
     ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
         }
