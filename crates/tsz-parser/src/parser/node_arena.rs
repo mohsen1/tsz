@@ -186,6 +186,7 @@ impl NodeArena {
     #[inline]
     #[must_use]
     fn len_u32(&self, len: usize) -> u32 {
+        let _ = self;
         u32::try_from(len).expect("node arena length exceeds u32::MAX")
     }
 
