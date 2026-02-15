@@ -1,146 +1,119 @@
-# Conformance Recovery Plan (Step-by-Step)
+# Conformance Recovery Plan (2026-02-15 Step-by-Step)
 
-## 1) Current baseline (after syncing to latest `main`)
+## 0) Starting point (after syncing to `origin/main`)
 
-Commands executed in this session:
-- `git fetch origin main`
-- `git rebase origin/main`
-- `./scripts/conformance.sh analyze`
-- `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability`
-- `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability`
-- `./scripts/conformance.sh analyze --error-code 2741 --filter assignmentCompatability`
-
-### Snapshot
-
-- Total conformance failures analyzed: `5356`
-- False positives: `743`
-- Missing diagnostics: `2448`
-- Wrong-code: `2165`
-- Close-to-passing (<=2 code diff): `1416`
-
-`TS2322` status (from current baseline):
-- Missing: `506`
-- Extra: `44` (`TS2322` among extra causes)
-- Partially implemented aggregate still: `327` single-code tests missing only `TS2322`
-
-### Assignment compatibility focused slice (`--error-code 2322 --filter assignmentCompatability`)
-
-- Total failures in slice: `33`
-- Missing `[TS2322]`: `31`
-- Wrong-code (diff=1, missing `TS2741`): `2`
-
-Missing files (all expected `TS2322`, actual `[]`):
-- `TypeScript/tests/cases/compiler/assignmentCompatability11.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability12.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability13.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability14.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability15.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability16.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability17.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability18.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability19.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability20.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability21.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability22.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability23.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability24.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability25.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability26.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability27.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability28.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability29.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability30.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability31.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability32.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability33.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability34.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability35.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability37.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability38.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability39.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability43.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability44.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability45.ts`
-
-Close-to-pass files (diff=1, missing `TS2741`):
-- `TypeScript/tests/cases/compiler/assignmentCompatability_checking-apply-member-off-of-function-interface.ts`
-- `TypeScript/tests/cases/compiler/assignmentCompatability_checking-call-member-off-of-function-interface.ts`
-
-Representative expected/actual sample (`assignmentCompatability11.ts`) confirms the pattern:
-- Namespace exports + object assignment from a richer interface to a literal-shape object
-- `expected [TS2322]`, `actual []`
-
-## 2) Failure interpretation (current best hypothesis)
-
-The current failure cluster is narrowly consistent with a relation-level object mismatch being over-accepted. Prior inspection indicates these assignments follow the same semantic shape:
-
-- Source has required and optional members (interface with required `one`, optional `two?: ...`)
-- Target is a narrow object-type value in another namespace
-- Checker flow reaches solver assignment path
-- Actual result is permissive despite required/optional incompatibility in source/target relation
-
-Most likely fault sites:
-1. Object property compatibility in solver subtype path (especially required-member enforcement and optional-handling)
-2. Namespace/value-member retrieval producing a target/source `TypeId` shape that accidentally drops requiredness/flags before relation
-3. Compatibility path not flowing through the expected assignability failure reason branch before returning success
-
-## 3) Plan of record (step-by-step)
-
-### Step 1 – Evidence freeze and reproducibility
-- Commit after adding/reconfirming this report.
-- Artifacts / verification commands:
-  - `./scripts/conformance.sh analyze`
-  - `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability`
-  - `./scripts/conformance.sh analyze --error-code 2741 --filter assignmentCompatability`
-- No code changes yet in this step.
-
-### Step 2 – Trace the active path on 1–2 canonical files
-- Reproduce with a tight trace command on:
+- Command executed: `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability --top 1000`
+- Result:
+  - Total analyzed: `33`
+  - Missing (expected diagnostics, none emitted): `31`
+  - Wrong codes: `2`
+  - False positives: `0`
+- All 31 missing are `TS2322`.
+- Missing files:
   - `TypeScript/tests/cases/compiler/assignmentCompatability11.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability12.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability13.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability14.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability15.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability16.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability17.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability18.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability19.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability20.ts`
   - `TypeScript/tests/cases/compiler/assignmentCompatability21.ts`
-- Track:
-  - resolved namespace member symbols
-  - checker-provided source/target `TypeId`
-  - solver relation result and failure reasons
-- Confirm whether drop happens in checker type retrieval or solver object compatibility.
+  - `TypeScript/tests/cases/compiler/assignmentCompatability22.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability23.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability24.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability25.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability26.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability27.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability28.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability29.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability30.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability31.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability32.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability33.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability34.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability35.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability37.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability38.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability39.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability43.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability44.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability45.ts`
+- Close-to-pass (1 missing code):
+  - `TypeScript/tests/cases/compiler/assignmentCompatability_checking-apply-member-off-of-function-interface.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability_checking-call-member-off-of-function-interface.ts`
 
-### Step 3 – Add regression fixture to isolate relation behavior
-- Create/adjust a tiny solver-focused assignment test if absent:
-  - interface with required/optional member assignment to object-like target
-  - one variant using namespace/value member path
-- Keep this test in a narrowly scoped conformance/smoke file so we can validate before/after every change.
+## 1) Working hypothesis (aligned to NORTH_STAR)
 
-### Step 4 – Fix targeted object compatibility condition (if trace points to solver relation)
-- Focus likely files:
-  - `crates/tsz-solver/src/subtype_rules/objects.rs`
-  - related compatibility helper in `crates/tsz-solver/src/compat.rs`
-- Keep change minimal and localized to required-property semantics for object-to-object checks.
-- Preserve architecture: checker remains orchestration-only and route through `assignability` boundary helpers.
+The entire failure slice is assignability semantics in the solver boundary, likely in object relation evaluation, not checker orchestration.
 
-### Step 5 – If trace points to namespace member typing
-- Localize to symbol/value-member resolution path in checker layer where namespace exports are projected into `TypeId`.
-- Do not modify flow semantics unless trace proves this is the only broken path.
+- Expected behavior in all 31 files is `TS2322` only.
+- Pattern aligns with required property checks not rejecting incompatible shapes (`two` requiredness, function-interface edges, class function-interface edges, and optional/readonly members).
+- Prior trace observations indicate checker invokes `check_assignable_to` and gets `true`, so solver object subtype compatibility is likely returning permissive results.
 
-### Step 6 – Acceptance and promotion
-- Re-run:
-  - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability`
-  - `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability`
-  - `./scripts/conformance.sh analyze`
-- Target: reduce assignmentCompatability TS2322 misses to 0; then defer broader `TS2322` sweep.
+## 2) Step-by-step execution plan
 
-## 4) Commit and sync protocol
+### Step A – Evidence capture (read-only)
 
-For each step above:
-1. Make only the smallest meaningful edits.
-2. Commit with a scoped message.
-3. `git fetch origin main && git rebase origin/main`
-4. Continue only after rebase is clean.
+1. Re-run focused conformance slice and capture canonical output:
+   - `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability --top 1000`
+2. Re-run canonical failing single case to confirm expected/actual:
+   - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability11.ts --verbose`
+3. Record per-file signatures and target/source pairs if possible from logs.
+4. No code changes in this step.
+5. Commit this evidence snapshot as `docs: record step-a conformance evidence`.
 
-## 5) Risk gate (mandatory)
+### Step B – Path tracing on two anchors
 
-- Must keep TSZ architecture invariant:
-  - no checker type-algorithm ownership
-  - relation logic in `tsz-solver`
-  - `TypeKey` private boundaries preserved
-- No broad parser/checker rewrites before object relation fault is confirmed with trace.
-- If any step unexpectedly increases unrelated failures, pause and branch into a narrower diagnostic slice before further code changes.
+1. Add temporary trace on:
+   - `TypeScript/tests/cases/compiler/assignmentCompatability11.ts`
+   - `TypeScript/tests/cases/compiler/assignmentCompatability21.ts`
+2. Capture these values in trace:
+   - resolved source/target `TypeId`
+   - relation call chain in solver assignment/subtype
+   - object shape/property pass/fail state
+3. Confirm fault layer:
+   - if source/target mapping is wrong -> checker/type-resolution fix
+   - if mapping is correct and relation still true -> solver object rule fix
+4. Commit trace findings in short notes under `docs/`.
+
+### Step C – Fix scope A (solver object subtype)
+
+1. If Step B points to solver, patch only object subtype compatibility:
+   - `crates/tsz-solver/src/subtype_rules/objects.rs`
+2. Restrict changes to required-property logic and optional-member compatibility in object/object-with-index paths.
+3. Keep relation semantics; do not alter checker ownership.
+4. Re-run:
+   - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability11.ts --verbose`
+   - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability21.ts --verbose`
+5. If pass for both, commit with `solver: tighten object required-member assignability check`.
+
+### Step D – Fix scope B (namespace member/type retrieval fallback)
+
+1. If Step B shows namespace source/target type materialization issues, isolate only name resolution/symbol typing path used in assignment checking.
+2. Inspect minimal path in `crates/tsz-checker` around `TypeData` boundaries and `query_boundaries::assignability`.
+3. Keep edits constrained to one module and one failing callsite.
+4. Re-run focused commands above.
+5. Commit with `checker: preserve assignment namespace member shape` if validated.
+
+### Step E – Acceptance gate
+
+1. Re-run:
+   - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability`
+   - `./scripts/conformance.sh analyze --error-code 2322 --filter assignmentCompatability --top 1000`
+2. Required passing condition before moving on:
+   - missing in assignmentCompatability slice must drop from `31` to `0`
+   - no increase in `TS2741` or other spurious misses in the two close-to-pass files.
+3. If gate passes, next stage begins on broader `TS2322` and then `TS2564/TS2454` families.
+
+## 3) Sync and commit protocol
+
+- One commit per step.
+- After each commit:
+  - `git fetch origin main`
+  - `git rebase origin/main`
+- Continue only when rebase is clean.
+- Keep edits minimal and local to touched file.
+- Preserve architecture: any type relation behavior change must live in `tsz-solver`; checker changes should only enforce boundary orchestration.
