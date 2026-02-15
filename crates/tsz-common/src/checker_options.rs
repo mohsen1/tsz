@@ -7,7 +7,6 @@ use crate::common::{ModuleKind, ScriptTarget};
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone, Default)]
-#[allow(clippy::struct_excessive_bools)]
 pub struct CheckerOptions {
     pub strict: bool,
     pub no_implicit_any: bool,
