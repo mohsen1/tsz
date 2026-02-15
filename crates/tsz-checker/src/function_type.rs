@@ -476,6 +476,21 @@ impl<'a> CheckerState<'a> {
                 pushed_this_type_early = true;
             }
 
+            // Push contextual yield type EARLY (before infer_return_type_from_body)
+            // so yield expressions get contextual typing during inference.
+            let early_yield_type = if is_generator && !has_type_annotation {
+                ctx_helper.as_ref().and_then(|helper| {
+                    let ret_type = helper.get_return_type()?;
+                    let ret_ctx = ContextualTypeContext::with_expected(self.ctx.types, ret_type);
+                    ret_ctx.get_generator_yield_type()
+                })
+            } else {
+                None
+            };
+            if early_yield_type.is_some() {
+                self.ctx.push_yield_type(early_yield_type);
+            }
+
             let mut has_contextual_return = false;
             if !has_type_annotation {
                 let return_context = jsdoc_return_context.or_else(|| {
@@ -750,6 +765,18 @@ impl<'a> CheckerState<'a> {
             };
 
             self.push_return_type(body_return_type);
+
+            // For generator functions with explicit annotations, push the yield type
+            // from the annotation. Contextually-typed generators already had their yield
+            // type pushed early (before infer_return_type_from_body).
+            if is_generator && has_type_annotation {
+                let yield_type = self.get_generator_yield_type_argument(return_type);
+                self.ctx.push_yield_type(yield_type);
+            } else if early_yield_type.is_none() {
+                // No early push was done, push None for stack balance
+                self.ctx.push_yield_type(None);
+            }
+
             if let Some(jsdoc_expected_return) = jsdoc_return_context
                 && let Some(body_node) = self.ctx.arena.get(body)
                 && body_node.kind != syntax_kind_ext::BLOCK
@@ -795,6 +822,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.had_outer_loop = saved_cf_context.3;
             }
             self.pop_return_type();
+            self.ctx.pop_yield_type();
 
             if pushed_this_type {
                 self.ctx.this_type_stack.pop();
