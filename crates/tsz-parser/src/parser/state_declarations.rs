@@ -1368,6 +1368,7 @@ impl ParserState {
     /// import * as x from "mod";
     /// import "mod";
     pub(crate) fn parse_import_declaration(&mut self) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ImportKeyword);
 
@@ -1382,7 +1383,28 @@ impl ParserState {
         let module_specifier = if import_clause.is_none() {
             self.parse_string_literal()
         } else {
-            self.parse_expected(SyntaxKind::FromKeyword);
+            if !self.is_token(SyntaxKind::FromKeyword) {
+                // TS1435-style token suggestions are too noisy for this branch
+                // and produce extra noise in known recovery cases.
+                // Emit the primary 'from' expected error and consume the token so
+                // we can keep parser recovery in sync.
+                if self.is_token(SyntaxKind::Identifier)
+                    && self.scanner.get_token_value_ref() == "From"
+                {
+                    self.parse_error_at_current_token(
+                        &format!(
+                            "'{}' expected.",
+                            Self::token_to_string(SyntaxKind::FromKeyword)
+                        ),
+                        diagnostic_codes::EXPECTED,
+                    );
+                    self.next_token();
+                } else {
+                    self.parse_expected(SyntaxKind::FromKeyword);
+                }
+            } else {
+                self.parse_expected(SyntaxKind::FromKeyword);
+            }
             self.parse_string_literal()
         };
 

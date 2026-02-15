@@ -1624,6 +1624,7 @@ impl ParserState {
                 | SyntaxKind::BreakKeyword
                 | SyntaxKind::ContinueKeyword
                 | SyntaxKind::ThrowKeyword
+                | SyntaxKind::YieldKeyword
                 | SyntaxKind::AsyncKeyword
                 | SyntaxKind::UsingKeyword
                 | SyntaxKind::AwaitKeyword
