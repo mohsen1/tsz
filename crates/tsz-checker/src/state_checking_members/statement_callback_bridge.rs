@@ -69,13 +69,28 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             && !func.name.is_none()
             && let Some(func_name_node) = self.ctx.arena.get(func.name)
             && let Some(ident) = self.ctx.arena.get_identifier(func_name_node)
-            && (ident.escaped_text == "arguments" || ident.escaped_text == "eval")
         {
-            self.error_at_node_msg(
-                func.name,
-                crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                &[&ident.escaped_text],
-            );
+            if ident.escaped_text == "arguments" || ident.escaped_text == "eval" {
+                self.error_at_node_msg(
+                    func.name,
+                    crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                    &[&ident.escaped_text],
+                );
+            }
+
+            // TS1212: Reserved word used as function name in strict mode
+            if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message = format_message(
+                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                    &[&ident.escaped_text],
+                );
+                self.error_at_node(
+                    func.name,
+                    &message,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                );
+            }
         }
 
         // Error 1183: An implementation cannot be declared in ambient contexts

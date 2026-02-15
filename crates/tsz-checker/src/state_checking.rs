@@ -24,7 +24,7 @@ use tsz_solver::TypeId;
 
 /// Check if a name is a strict mode reserved word (ES5 §7.6.1.2).
 /// These identifiers cannot be used as variable/function/class names in strict mode.
-fn is_strict_mode_reserved_name(name: &str) -> bool {
+pub(crate) fn is_strict_mode_reserved_name(name: &str) -> bool {
     matches!(
         name,
         "implements"
