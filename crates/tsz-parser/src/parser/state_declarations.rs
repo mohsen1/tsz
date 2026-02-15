@@ -14,6 +14,11 @@ use crate::parser::{
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
+enum TypeMemberPropertyOrMethodName {
+    Property(NodeIndex),
+    IndexSignature(NodeIndex),
+}
+
 impl ParserState {
     /// Parse interface declaration
     pub(crate) fn parse_interface_declaration(&mut self) -> NodeIndex {
@@ -272,71 +277,128 @@ impl ParserState {
             false
         };
 
-        let name = if self.is_token(SyntaxKind::Identifier)
+        let Some(name) = self.parse_type_member_property_or_method_name(start_pos, readonly) else {
+            return NodeIndex::NONE;
+        };
+
+        let name = match name {
+            TypeMemberPropertyOrMethodName::IndexSignature(index_signature) => {
+                return index_signature;
+            }
+            TypeMemberPropertyOrMethodName::Property(name) => name,
+        };
+
+        let question_token = self.parse_optional(SyntaxKind::QuestionToken);
+        let modifiers = self.readonly_modifier_node_list(start_pos, readonly);
+
+        if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken) {
+            return self.parse_type_member_method_signature(
+                start_pos,
+                name,
+                modifiers,
+                question_token,
+            );
+        }
+
+        self.parse_type_member_property_signature(
+            start_pos,
+            name,
+            modifiers,
+            question_token,
+            in_interface_declaration,
+        )
+    }
+
+    fn parse_type_member_property_or_method_name(
+        &mut self,
+        start_pos: u32,
+        readonly: bool,
+    ) -> Option<TypeMemberPropertyOrMethodName> {
+        if self.is_token(SyntaxKind::Identifier)
             || self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
             || self.is_property_name_keyword()
         {
-            self.parse_property_name()
+            Some(TypeMemberPropertyOrMethodName::Property(
+                self.parse_property_name(),
+            ))
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             if self.look_ahead_is_index_signature() {
-                let modifiers = if readonly {
-                    let mod_idx = self
-                        .arena
-                        .create_modifier(SyntaxKind::ReadonlyKeyword, start_pos);
-                    Some(self.make_node_list(vec![mod_idx]))
-                } else {
-                    None
-                };
-                return self.parse_index_signature_with_modifiers(modifiers, start_pos);
+                let modifiers = self.readonly_modifier_node_list(start_pos, readonly);
+                Some(TypeMemberPropertyOrMethodName::IndexSignature(
+                    self.parse_index_signature_with_modifiers(modifiers, start_pos),
+                ))
+            } else {
+                Some(TypeMemberPropertyOrMethodName::Property(
+                    self.parse_property_name(),
+                ))
             }
-            self.parse_property_name()
         } else {
-            return NodeIndex::NONE;
-        };
+            None
+        }
+    }
 
-        let question_token = self.parse_optional(SyntaxKind::QuestionToken);
-        let modifiers = if readonly {
+    fn readonly_modifier_node_list(
+        &mut self,
+        start_pos: u32,
+        is_readonly: bool,
+    ) -> Option<NodeList> {
+        if is_readonly {
             let mod_idx = self
                 .arena
                 .create_modifier(SyntaxKind::ReadonlyKeyword, start_pos);
             Some(self.make_node_list(vec![mod_idx]))
         } else {
             None
+        }
+    }
+
+    fn parse_type_member_method_signature(
+        &mut self,
+        start_pos: u32,
+        name: NodeIndex,
+        modifiers: Option<NodeList>,
+        question_token: bool,
+    ) -> NodeIndex {
+        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+            Some(self.parse_type_parameters())
+        } else {
+            None
         };
 
-        if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken) {
-            let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-                Some(self.parse_type_parameters())
-            } else {
-                None
-            };
+        self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = self.parse_parameter_list();
+        self.parse_expected(SyntaxKind::CloseParenToken);
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_return_type()
+        } else {
+            NodeIndex::NONE
+        };
 
-            self.parse_expected(SyntaxKind::OpenParenToken);
-            let parameters = self.parse_parameter_list();
-            self.parse_expected(SyntaxKind::CloseParenToken);
-            let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-                self.parse_return_type()
-            } else {
-                NodeIndex::NONE
-            };
+        let end_pos = self.token_end();
+        self.arena.add_signature(
+            syntax_kind_ext::METHOD_SIGNATURE,
+            start_pos,
+            end_pos,
+            crate::parser::node::SignatureData {
+                modifiers,
+                name,
+                question_token,
+                type_parameters,
+                parameters: Some(parameters),
+                type_annotation,
+            },
+        )
+    }
 
-            let end_pos = self.token_end();
-            return self.arena.add_signature(
-                syntax_kind_ext::METHOD_SIGNATURE,
-                start_pos,
-                end_pos,
-                crate::parser::node::SignatureData {
-                    modifiers,
-                    name,
-                    question_token,
-                    type_parameters,
-                    parameters: Some(parameters),
-                    type_annotation,
-                },
-            );
-        }
-
+    fn parse_type_member_property_signature(
+        &mut self,
+        start_pos: u32,
+        name: NodeIndex,
+        modifiers: Option<NodeList>,
+        question_token: bool,
+        in_interface_declaration: bool,
+    ) -> NodeIndex {
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
         } else {
@@ -2186,16 +2248,30 @@ impl ParserState {
         )
     }
 
-    /// Parse variable declaration list for for statement
-    /// Supports multiple declarations for regular for: for (let x = 0, y = 1; ...)
-    /// Single declaration for for-in/for-of: for (let x in/of ...)
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_for_variable_declaration(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let (_, flags) = self.parse_for_variable_declaration_declaration_keyword();
+        let declarations = self.parse_for_variable_declarations();
+        let declarations_list = self.make_node_list(declarations);
+        let end_pos = self.token_end();
+
+        self.arena.add_variable_with_flags(
+            syntax_kind_ext::VARIABLE_DECLARATION_LIST,
+            start_pos,
+            end_pos,
+            VariableData {
+                modifiers: None,
+                declarations: declarations_list,
+            },
+            flags,
+        )
+    }
+
+    fn parse_for_variable_declaration_declaration_keyword(&mut self) -> (SyntaxKind, u16) {
         use crate::parser::node_flags;
 
-        let start_pos = self.token_pos();
         let decl_keyword = self.token();
-        let flags: u16 = match decl_keyword {
+        let flags = match decl_keyword {
             SyntaxKind::LetKeyword => self.u16_from_node_flags(node_flags::LET),
             SyntaxKind::ConstKeyword => self.u16_from_node_flags(node_flags::CONST),
             SyntaxKind::UsingKeyword => self.u16_from_node_flags(node_flags::USING),
@@ -2207,18 +2283,85 @@ impl ParserState {
             }
             _ => 0,
         };
+
         if decl_keyword != SyntaxKind::AwaitKeyword {
             self.next_token(); // consume var/let/const/using
         }
 
-        // Check for empty declaration list: for (var in X) or for (let of X)
-        // TSC emits TS1123 "Variable declaration list cannot be empty"
-        // Special case: 'of' can be a variable name in contexts like `for (var of; ;)`.
-        // Only treat 'of' as the for-of keyword if it's NOT followed by tokens that
-        // indicate it's being used as a variable name (;, ,, =, :, ), in, of).
-        let is_empty_decl = if self.is_token(SyntaxKind::InKeyword) {
-            true
-        } else if self.is_token(SyntaxKind::OfKeyword) {
+        (decl_keyword, flags)
+    }
+
+    fn parse_for_variable_declarations(&mut self) -> Vec<NodeIndex> {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if self.is_for_variable_declaration_empty() {
+            self.parse_error_at_current_token(
+                "Variable declaration list cannot be empty.",
+                diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
+            );
+
+            return Vec::new();
+        }
+
+        let mut declarations = Vec::new();
+        loop {
+            declarations.push(self.parse_for_variable_declaration_entry());
+            if !self.parse_optional(SyntaxKind::CommaToken) {
+                break;
+            }
+        }
+        declarations
+    }
+
+    fn parse_for_variable_declaration_entry(&mut self) -> NodeIndex {
+        let decl_start = self.token_pos();
+
+        let name = if self.is_token(SyntaxKind::OpenBraceToken) {
+            self.parse_object_binding_pattern()
+        } else if self.is_token(SyntaxKind::OpenBracketToken) {
+            self.parse_array_binding_pattern()
+        } else if self.is_identifier_or_keyword() {
+            self.parse_identifier_name()
+        } else {
+            self.parse_identifier()
+        };
+
+        // Parse definite assignment assertion (!)
+        let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);
+
+        // Optional type annotation
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        // Optional initializer
+        let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+            self.parse_assignment_expression()
+        } else {
+            NodeIndex::NONE
+        };
+
+        self.arena.add_variable_declaration(
+            syntax_kind_ext::VARIABLE_DECLARATION,
+            decl_start,
+            self.token_end(),
+            VariableDeclarationData {
+                name,
+                exclamation_token,
+                type_annotation,
+                initializer,
+            },
+        )
+    }
+
+    fn is_for_variable_declaration_empty(&mut self) -> bool {
+        if self.is_token(SyntaxKind::InKeyword) {
+            return true;
+        }
+
+        if self.is_token(SyntaxKind::OfKeyword) {
             // Look ahead to see if 'of' is used as a variable name
             let snapshot = self.scanner.save_state();
             let saved_token = self.current_token;
@@ -2237,96 +2380,10 @@ impl ParserState {
             );
             self.scanner.restore_state(snapshot);
             self.current_token = saved_token;
-            !is_var_name // if 'of' is a var name, declaration is NOT empty
-        } else {
-            false
-        };
-        if is_empty_decl {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "Variable declaration list cannot be empty.",
-                diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
-            );
-            // Return empty declaration list for error recovery
-            return self.arena.add_variable_with_flags(
-                syntax_kind_ext::VARIABLE_DECLARATION_LIST,
-                start_pos,
-                self.token_end(),
-                VariableData {
-                    modifiers: None,
-                    declarations: self.make_node_list(vec![]),
-                },
-                flags,
-            );
+            return !is_var_name;
         }
 
-        let mut declarations = Vec::new();
-
-        loop {
-            let decl_start = self.token_pos();
-
-            // Parse variable name (identifier or binding pattern)
-            let name = if self.is_token(SyntaxKind::OpenBraceToken) {
-                self.parse_object_binding_pattern()
-            } else if self.is_token(SyntaxKind::OpenBracketToken) {
-                self.parse_array_binding_pattern()
-            } else if self.is_identifier_or_keyword() {
-                self.parse_identifier_name()
-            } else {
-                self.parse_identifier()
-            };
-
-            // Parse definite assignment assertion (!)
-            let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);
-
-            // Optional type annotation
-            let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-                self.parse_type()
-            } else {
-                NodeIndex::NONE
-            };
-
-            // Optional initializer
-            let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
-                self.parse_assignment_expression()
-            } else {
-                NodeIndex::NONE
-            };
-
-            let decl = self.arena.add_variable_declaration(
-                syntax_kind_ext::VARIABLE_DECLARATION,
-                decl_start,
-                self.token_end(),
-                VariableDeclarationData {
-                    name,
-                    exclamation_token,
-                    type_annotation,
-                    initializer,
-                },
-            );
-            declarations.push(decl);
-
-            // Check for comma (more declarations) or end of list
-            // For for-in/for-of, stop at 'in' or 'of' keyword
-            // For regular for, stop at ';' or ')'
-            if !self.parse_optional(SyntaxKind::CommaToken) {
-                break;
-            }
-        }
-
-        let declarations_list = self.make_node_list(declarations);
-        let end_pos = self.token_end();
-
-        self.arena.add_variable_with_flags(
-            syntax_kind_ext::VARIABLE_DECLARATION_LIST,
-            start_pos,
-            end_pos,
-            VariableData {
-                modifiers: None,
-                declarations: declarations_list,
-            },
-            flags,
-        )
+        false
     }
 
     /// Parse for-in statement after initializer: for (x in obj)
