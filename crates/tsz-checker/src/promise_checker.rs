@@ -387,9 +387,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check heritage clauses for extends Promise/PromiseLike
-        let Some(heritage_clauses) = &class.heritage_clauses else {
-            return None;
-        };
+        let heritage_clauses = class.heritage_clauses.as_ref()?;
 
         for &clause_idx in heritage_clauses.nodes.iter() {
             let heritage = self.ctx.arena.get_heritage_clause_at(clause_idx)?;

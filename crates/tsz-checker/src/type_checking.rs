@@ -1422,14 +1422,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the method name if found.
     pub(crate) fn get_method_name_from_node(&self, member_idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(member_idx)?;
 
         if let Some(method) = self.ctx.arena.get_method_decl(node) {
-            let Some(name_node) = self.ctx.arena.get(method.name) else {
-                return None;
-            };
+            let name_node = self.ctx.arena.get(method.name)?;
             // Try identifier first
             if let Some(id) = self.ctx.arena.get_identifier(name_node) {
                 return Some(id.escaped_text.clone());
@@ -2478,18 +2474,10 @@ impl<'a> CheckerState<'a> {
 
         let mut names = Vec::with_capacity(list.nodes.len());
         for &param_idx in &list.nodes {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                return None;
-            };
-            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
-                return None;
-            };
-            let Some(name_node) = self.ctx.arena.get(param.name) else {
-                return None;
-            };
-            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-                return None;
-            };
+            let param_node = self.ctx.arena.get(param_idx)?;
+            let param = self.ctx.arena.get_type_parameter(param_node)?;
+            let name_node = self.ctx.arena.get(param.name)?;
+            let ident = self.ctx.arena.get_identifier(name_node)?;
             names.push(self.ctx.arena.resolve_identifier_text(ident).to_string());
         }
 
@@ -2607,9 +2595,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_symbol_property_name_from_expr(&self, expr_idx: NodeIndex) -> Option<String> {
         use tsz_scanner::SyntaxKind;
 
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(expr_idx)?;
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
             let paren = self.ctx.arena.get_parenthesized(node)?;

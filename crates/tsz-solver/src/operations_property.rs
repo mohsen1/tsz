@@ -291,10 +291,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
-        let prop_name = match prop_name.as_deref() {
-            Some(name) => name,
-            None => return None,
-        };
+        let prop_name = prop_name.as_deref()?;
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
             None => self.interner().intern_string(prop_name),
@@ -315,10 +312,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
-        let prop_name = match prop_name.as_deref() {
-            Some(name) => name,
-            None => return None,
-        };
+        let prop_name = prop_name.as_deref()?;
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
             None => self.interner().intern_string(prop_name),
@@ -394,10 +388,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
-        let prop_name = match prop_name.as_deref() {
-            Some(name) => name,
-            None => return None,
-        };
+        let prop_name = prop_name.as_deref()?;
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
             None => self.interner().intern_string(prop_name),
@@ -465,10 +456,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
-        let prop_name = match prop_name.as_deref() {
-            Some(name) => name,
-            None => return None,
-        };
+        let prop_name = prop_name.as_deref()?;
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
             None => self.interner().intern_string(prop_name),
@@ -483,10 +471,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
-        let prop_name = match prop_name.as_deref() {
-            Some(name) => name,
-            None => return None,
-        };
+        let prop_name = prop_name.as_deref()?;
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
             None => self.interner().intern_string(prop_name),
@@ -505,10 +490,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
-        let prop_name = match prop_name.as_deref() {
-            Some(name) => name,
-            None => return None,
-        };
+        let prop_name = prop_name.as_deref()?;
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
             None => self.interner().intern_string(prop_name),
@@ -527,10 +509,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
-        let prop_name = match prop_name.as_deref() {
-            Some(name) => name,
-            None => return None,
-        };
+        let prop_name = prop_name.as_deref()?;
         let prop_atom = match prop_atom_opt.as_ref() {
             Some(&atom) => atom,
             None => self.interner().intern_string(prop_name),
@@ -543,10 +522,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         let prop_name = self.current_prop_name.borrow();
         let prop_atom_opt = self.current_prop_atom.borrow();
 
-        let prop_name = match prop_name.as_deref() {
-            Some(name) => name,
-            None => return None,
-        };
+        let prop_name = prop_name.as_deref()?;
 
         self.visit_union_impl(list_id, prop_name, prop_atom_opt.as_ref().copied())
     }

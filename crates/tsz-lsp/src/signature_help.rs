@@ -1155,12 +1155,8 @@ impl<'a> SignatureHelpProvider<'a> {
         root: NodeIndex,
         access_idx: NodeIndex,
     ) -> Option<SignatureDocs> {
-        let Some(access_node) = self.arena.get(access_idx) else {
-            return None;
-        };
-        let Some(access) = self.arena.get_access_expr(access_node) else {
-            return None;
-        };
+        let access_node = self.arena.get(access_idx)?;
+        let access = self.arena.get_access_expr(access_node)?;
         let property_name = self
             .arena
             .get_identifier_text(access.name_or_argument)
@@ -1257,9 +1253,7 @@ impl<'a> SignatureHelpProvider<'a> {
     }
 
     fn class_decls_for_expression(&self, expr: NodeIndex) -> Option<(Vec<NodeIndex>, bool)> {
-        let Some(expr_node) = self.arena.get(expr) else {
-            return None;
-        };
+        let expr_node = self.arena.get(expr)?;
         if expr_node.kind == SyntaxKind::Identifier as u16 {
             let sym_id = self.resolve_symbol_for_identifier(expr)?;
             return self.class_decls_for_symbol(sym_id);

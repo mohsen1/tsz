@@ -186,9 +186,7 @@ impl<'a> CheckerState<'a> {
                 }
                 MemberLookup::Public => return None,
                 MemberLookup::NotFound => {
-                    let Some(base_idx) = self.get_base_class_idx(current) else {
-                        return None;
-                    };
+                    let base_idx = self.get_base_class_idx(current)?;
                     current = base_idx;
                 }
             }
@@ -209,12 +207,8 @@ impl<'a> CheckerState<'a> {
         let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
 
         while visited.insert(current) {
-            let Some(node) = self.ctx.arena.get(current) else {
-                return None;
-            };
-            let Some(class) = self.ctx.arena.get_class(node) else {
-                return None;
-            };
+            let node = self.ctx.arena.get(current)?;
+            let class = self.ctx.arena.get_class(node)?;
 
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -300,9 +294,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let Some(base_idx) = self.get_base_class_idx(current) else {
-                return None;
-            };
+            let base_idx = self.get_base_class_idx(current)?;
             current = base_idx;
         }
 

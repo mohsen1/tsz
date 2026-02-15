@@ -2042,12 +2042,7 @@ impl<'a> InferenceContext<'a> {
 
         // 1. Initialize candidates from the FIRST type only.
         // This is the only time we generate a full hierarchy.
-        let mut base_candidates = if let Some(first_bases) = self.get_class_hierarchy(types[0]) {
-            first_bases
-        } else {
-            // First type is not a class type, can't find common base class
-            return None;
-        };
+        let mut base_candidates = self.get_class_hierarchy(types[0])?;
 
         // 2. For subsequent types, filter using is_subtype (cached and fast).
         // No allocations, no hierarchy traversal - just subtype checks.

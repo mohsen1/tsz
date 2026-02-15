@@ -1426,9 +1426,7 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         widen_literals_for_destructuring: bool,
     ) -> Option<TypeId> {
-        let Some(node) = self.arena.get(assignment_node) else {
-            return None;
-        };
+        let node = self.arena.get(assignment_node)?;
 
         // CRITICAL FIX: Handle compound assignments (+=, -=, *=, etc.)
         // Compound assignments compute the result of a binary operation and assign it back.
@@ -1671,9 +1669,7 @@ impl<'a> FlowAnalyzer<'a> {
         assignment_node: NodeIndex,
         reference: NodeIndex,
     ) -> Option<NodeIndex> {
-        let Some(node) = self.arena.get(assignment_node) else {
-            return None;
-        };
+        let node = self.arena.get(assignment_node)?;
 
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
             let bin = self.arena.get_binary_expr(node)?;

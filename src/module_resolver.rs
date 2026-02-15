@@ -1911,9 +1911,7 @@ impl ModuleResolver {
             }
         }
 
-        let Some(value) = best_value else {
-            return None;
-        };
+        let value = best_value?;
 
         let mut targets = Vec::new();
         match value {
@@ -2603,9 +2601,7 @@ fn try_arbitrary_extension_declaration(path: &Path, extension: &str) -> Option<P
 }
 
 fn resolve_explicit_unknown_extension(path: &Path) -> Option<PathBuf> {
-    if path.extension().is_none() {
-        return None;
-    }
+    path.extension()?;
     if split_path_extension(path).is_some() {
         return None;
     }
