@@ -2,13 +2,12 @@
 //!
 //! Common functions used by ES5 transformations.
 
-#![allow(clippy::too_many_lines)]
-
 use crate::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 /// Check if an AST node contains a reference to `this` or `super`.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(node_idx) else {
         return false;
@@ -396,6 +395,7 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
 /// Important: Regular functions have their own `arguments`, so we don't recurse
 /// into them. Only arrow functions inherit the parent's `arguments`.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn contains_arguments_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(node_idx) else {
         return false;
