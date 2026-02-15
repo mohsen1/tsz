@@ -1159,7 +1159,7 @@ impl TypeInterner {
     fn is_callable_type(&self, id: TypeId) -> bool {
         matches!(
             self.lookup(id),
-            Some(TypeData::Function(_)) | Some(TypeData::Callable(_))
+            Some(TypeData::Function(_) | TypeData::Callable(_))
         )
     }
 
@@ -1169,7 +1169,7 @@ impl TypeInterner {
     /// In intersections like `string & {}`, the empty object is redundant and can be removed.
     fn is_empty_object(&self, id: TypeId) -> bool {
         match self.lookup(id) {
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.object_shape(shape_id);
                 shape.properties.is_empty()
                     && shape.string_index.is_none()
@@ -1196,15 +1196,17 @@ impl TypeInterner {
             | TypeId::SYMBOL
             | TypeId::OBJECT => true,
             _ => match self.lookup(id) {
-                Some(TypeData::Literal(_))
-                | Some(TypeData::Object(_))
-                | Some(TypeData::ObjectWithIndex(_))
-                | Some(TypeData::Array(_))
-                | Some(TypeData::Tuple(_))
-                | Some(TypeData::Function(_))
-                | Some(TypeData::Callable(_))
-                | Some(TypeData::TemplateLiteral(_))
-                | Some(TypeData::UniqueSymbol(_)) => true,
+                Some(
+                    TypeData::Literal(_)
+                    | TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::TemplateLiteral(_)
+                    | TypeData::UniqueSymbol(_),
+                ) => true,
 
                 // Union is non-nullish only if ALL members are non-nullish
                 // (conservative: don't remove {} if any member might be nullish)
@@ -1522,7 +1524,7 @@ impl TypeInterner {
         // Check if all members are objects
         for &member in members {
             match self.lookup(member) {
-                Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     objects.push(self.object_shape(shape_id));
                 }
                 _ => return None, // Not all objects, can't merge
@@ -1657,7 +1659,7 @@ impl TypeInterner {
         // Separate objects from non-objects
         for &member in members {
             match self.lookup(member) {
-                Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
                     objects.push(member);
                 }
                 _ => {
@@ -1741,7 +1743,7 @@ impl TypeInterner {
             // mark this as disjoint.
             let mut mark_non_primitive = false;
             match self.lookup(member) {
-                Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     let shape = self.object_shape(shape_id);
                     if !(shape.properties.is_empty()
                         && shape.string_index.is_none()
@@ -1750,10 +1752,12 @@ impl TypeInterner {
                         mark_non_primitive = true;
                     }
                 }
-                Some(TypeData::Function(_))
-                | Some(TypeData::Callable(_))
-                | Some(TypeData::Array(_))
-                | Some(TypeData::Tuple(_)) => {
+                Some(
+                    TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_),
+                ) => {
                     mark_non_primitive = true;
                 }
                 _ => {}
@@ -1814,14 +1818,16 @@ impl TypeInterner {
                 match self.lookup(member) {
                     // Task #48: Empty objects ARE object types and are disjoint from null/undefined
                     // null & {} = never (null is not a non-nullish value)
-                    Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
+                    Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
                         has_object_type = true;
                     }
                     // Array, tuple, function, callable are all object types that are disjoint from null/undefined
-                    Some(TypeData::Array(_))
-                    | Some(TypeData::Tuple(_))
-                    | Some(TypeData::Function(_))
-                    | Some(TypeData::Callable(_)) => {
+                    Some(
+                        TypeData::Array(_)
+                        | TypeData::Tuple(_)
+                        | TypeData::Function(_)
+                        | TypeData::Callable(_),
+                    ) => {
                         has_object_type = true;
                     }
                     _ => {}
@@ -1897,15 +1903,15 @@ impl TypeInterner {
             | (BigInt, BigInt)
             | (Symbol, Symbol) => false,
             // String is disjoint from number, boolean, bigint, symbol
-            (String, Number) | (String, Boolean) | (String, BigInt) | (String, Symbol) => true,
+            (String, Number | Boolean | BigInt | Symbol) => true,
             // Number is disjoint from string, boolean, bigint, symbol
-            (Number, String) | (Number, Boolean) | (Number, BigInt) | (Number, Symbol) => true,
+            (Number, String | Boolean | BigInt | Symbol) => true,
             // Boolean is disjoint from string, number, bigint, symbol
-            (Boolean, String) | (Boolean, Number) | (Boolean, BigInt) | (Boolean, Symbol) => true,
+            (Boolean, String | Number | BigInt | Symbol) => true,
             // BigInt is disjoint from string, number, boolean, symbol
-            (BigInt, String) | (BigInt, Number) | (BigInt, Boolean) | (BigInt, Symbol) => true,
+            (BigInt, String | Number | Boolean | Symbol) => true,
             // Symbol is disjoint from everything except itself (already handled above)
-            (Symbol, String) | (Symbol, Number) | (Symbol, Boolean) | (Symbol, BigInt) => true,
+            (Symbol, String | Number | Boolean | BigInt) => true,
         }
     }
 

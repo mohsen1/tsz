@@ -50,7 +50,7 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
         }
 
         // Objects: recursively widen properties (critical for mutable variables)
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
             let mut new_props = Vec::with_capacity(shape.properties.len());
             let mut changed = false;

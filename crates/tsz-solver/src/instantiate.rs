@@ -726,12 +726,16 @@ impl<'a> TypeInstantiator<'a> {
                             // - The string intrinsic type
                             if let Some(
                                 TypeData::Union(_)
-                                | TypeData::Literal(LiteralValue::String(_))
-                                | TypeData::Literal(LiteralValue::Number(_))
-                                | TypeData::Literal(LiteralValue::Boolean(_))
-                                | TypeData::Intrinsic(IntrinsicKind::String)
-                                | TypeData::Intrinsic(IntrinsicKind::Number)
-                                | TypeData::Intrinsic(IntrinsicKind::Boolean),
+                                | TypeData::Literal(
+                                    LiteralValue::String(_)
+                                    | LiteralValue::Number(_)
+                                    | LiteralValue::Boolean(_),
+                                )
+                                | TypeData::Intrinsic(
+                                    IntrinsicKind::String
+                                    | IntrinsicKind::Number
+                                    | IntrinsicKind::Boolean,
+                                ),
                             ) = self.interner.lookup(inst_type)
                             {
                                 needs_evaluation = true;

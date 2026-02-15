@@ -99,7 +99,7 @@ fn test_widen_object_properties() {
     // Check that the widened type has number, not the literal 1
     let widened_key = interner.lookup(widened);
     match widened_key {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert_eq!(shape.properties[0].type_id, TypeId::NUMBER);
@@ -146,7 +146,7 @@ fn test_widen_nested_object_properties() {
     // Check that both inner and outer properties are widened
     let widened_key = interner.lookup(widened);
     match widened_key {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
 
@@ -154,8 +154,9 @@ fn test_widen_nested_object_properties() {
             let inner_type = shape.properties[0].type_id;
             let inner_key = interner.lookup(inner_type);
             match inner_key {
-                Some(TypeData::Object(inner_shape_id))
-                | Some(TypeData::ObjectWithIndex(inner_shape_id)) => {
+                Some(
+                    TypeData::Object(inner_shape_id) | TypeData::ObjectWithIndex(inner_shape_id),
+                ) => {
                     let inner_shape = interner.object_shape(inner_shape_id);
                     assert_eq!(inner_shape.properties.len(), 1);
                     // Inner property 'b' should be widened to string

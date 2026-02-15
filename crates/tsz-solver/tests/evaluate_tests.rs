@@ -18440,7 +18440,7 @@ fn test_generator_function_multiple_params() {
         result == TypeId::NEVER
             || matches!(
                 interner.lookup(result),
-                Some(TypeData::Tuple(_)) | Some(TypeData::Array(_)) | Some(_)
+                Some(TypeData::Tuple(_) | TypeData::Array(_) | _)
             )
     );
 }
@@ -18592,7 +18592,7 @@ fn test_module_augmentation_namespace_merge() {
 
     // The merged namespace should expose both sets of properties.
     match interner.lookup(merged_ns) {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             let has_version = shape.properties.iter().any(|p| p.name == version_prop);
             let has_utils = shape.properties.iter().any(|p| p.name == utils_prop);

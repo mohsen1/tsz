@@ -257,11 +257,7 @@ fn are_disjoint(interner: &dyn TypeDatabase, a: TypeId, b: TypeId) -> bool {
         (Some(TypeData::Intrinsic(k1)), Some(TypeData::Intrinsic(k2))) => {
             use IntrinsicKind::*;
             // Basic primitives are disjoint (ignoring object/Function which are more complex)
-            k1 != k2
-                && !matches!(
-                    (k1, k2),
-                    (Object, _) | (_, Object) | (Function, _) | (_, Function)
-                )
+            k1 != k2 && !matches!((k1, k2), (Object | Function, _) | (_, Object | Function))
         }
         (Some(TypeData::Literal(l1)), Some(TypeData::Literal(l2))) => l1 != l2,
         (Some(TypeData::Literal(l1)), Some(TypeData::Intrinsic(k2))) => {
@@ -509,7 +505,7 @@ impl<'a> InferenceContext<'a> {
         upper_bounds: &mut Vec<TypeId>,
     ) {
         let name = match self.interner.lookup(bound) {
-            Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info.name,
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.name,
             _ => return,
         };
 
@@ -1239,7 +1235,7 @@ impl<'a> InferenceContext<'a> {
                 //          should infer A = [number, number], not A = number
                 let target_is_type_param = matches!(
                     self.interner.lookup(target_param.type_id),
-                    Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
+                    Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
                 );
 
                 tracing::trace!(
@@ -3140,7 +3136,7 @@ impl<'a> InferenceContext<'a> {
                     self.infer_from_type(var, elem.type_id);
                 }
             }
-            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
                     self.infer_from_type(var, member);
@@ -3231,7 +3227,7 @@ impl<'a> InferenceContext<'a> {
         let root = self.table.find(var);
 
         match self.interner.lookup(ty) {
-            Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
+            Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
                 if let Some(param_var) = self.find_type_param(info.name) {
                     self.table.find(param_var) == root
                 } else {
@@ -3247,7 +3243,7 @@ impl<'a> InferenceContext<'a> {
                     .iter()
                     .any(|e| self.contains_inference_var_inner(e.type_id, var, visited, depth + 1))
             }
-            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
                 let members = self.interner.type_list(members);
                 members
                     .iter()
@@ -3369,7 +3365,7 @@ impl<'a> InferenceContext<'a> {
                     self.compute_variance_helper(elem.type_id, polarity, state);
                 }
             }
-            Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
                     self.compute_variance_helper(member, polarity, state);

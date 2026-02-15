@@ -1026,10 +1026,12 @@ impl<'a> NarrowingContext<'a> {
         use crate::types::TypeData;
 
         match self.db.lookup(type_id) {
-            Some(TypeData::Object(_))
-            | Some(TypeData::ObjectWithIndex(_))
-            | Some(TypeData::Function(_))
-            | Some(TypeData::Callable(_)) => true,
+            Some(
+                TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Function(_)
+                | TypeData::Callable(_),
+            ) => true,
 
             // Interface and class types (which are object-like)
             Some(TypeData::Application(_)) => {

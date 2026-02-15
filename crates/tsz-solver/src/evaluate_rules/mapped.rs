@@ -441,7 +441,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Check if the source is a type parameter
         matches!(
             self.interner().lookup(source),
-            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         )
     }
 

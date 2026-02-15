@@ -235,7 +235,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .interner
                     .resolve_lazy(def_id, self.interner)
                     .unwrap_or(member),
-                Some(TypeData::Application(_)) | Some(TypeData::Mapped(_)) => {
+                Some(TypeData::Application(_) | TypeData::Mapped(_)) => {
                     self.interner.evaluate_type(member)
                 }
                 _ => member,
@@ -252,8 +252,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let member = self.normalize_union_member(member);
         match self.interner.lookup(member) {
             Some(TypeData::Intrinsic(IntrinsicKind::Function)) => true,
-            Some(TypeData::Function(_)) | Some(TypeData::Callable(_)) => true,
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 let apply = self.interner.intern_string("apply");
                 let call = self.interner.intern_string("call");
@@ -1572,7 +1572,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // compare `object` (expanded) against `T` and fail, even though inference would (and
             // tsc does) infer the inner `T` to the outer `T`.
             let expanded_arg_type = match self.interner.lookup(param_type) {
-                Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_)) => *arg_type,
+                Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => *arg_type,
                 _ => self.expand_type_param(*arg_type),
             };
 
@@ -1789,7 +1789,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return type_id;
             }
             match self.interner.lookup(type_id) {
-                Some(TypeData::ReadonlyType(inner)) | Some(TypeData::NoInfer(inner)) => {
+                Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                     type_id = inner;
                 }
                 _ => return type_id,

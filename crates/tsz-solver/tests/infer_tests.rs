@@ -14483,7 +14483,7 @@ fn test_const_type_param_object_to_readonly() {
 
     // With const, object properties should be readonly
     match interner.lookup(result) {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert!(shape.properties[0].readonly, "Property should be readonly");
@@ -14516,7 +14516,7 @@ fn test_const_type_param_nested_object_readonly() {
 
     // Check outer object
     match interner.lookup(result) {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties.len(), 1);
             assert!(
@@ -14526,8 +14526,9 @@ fn test_const_type_param_nested_object_readonly() {
 
             // Check inner object
             match interner.lookup(shape.properties[0].type_id) {
-                Some(TypeData::Object(inner_shape_id))
-                | Some(TypeData::ObjectWithIndex(inner_shape_id)) => {
+                Some(
+                    TypeData::Object(inner_shape_id) | TypeData::ObjectWithIndex(inner_shape_id),
+                ) => {
                     let inner_shape = interner.object_shape(inner_shape_id);
                     assert_eq!(inner_shape.properties.len(), 1);
                     assert!(

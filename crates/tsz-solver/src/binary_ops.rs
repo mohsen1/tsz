@@ -218,12 +218,8 @@ impl<'a> OverlapChecker<'a> {
         // Fast path: top/bottom types
         if matches!(
             (self.left, right),
-            (TypeId::ANY, _)
-                | (_, TypeId::ANY)
-                | (TypeId::UNKNOWN, _)
-                | (_, TypeId::UNKNOWN)
-                | (TypeId::ERROR, _)
-                | (_, TypeId::ERROR)
+            (TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR, _)
+                | (_, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
         ) {
             return true;
         }

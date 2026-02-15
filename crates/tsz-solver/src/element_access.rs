@@ -97,13 +97,15 @@ impl<'a> ElementAccessEvaluator<'a> {
 
     fn is_indexable(&self, type_id: TypeId) -> bool {
         match self.interner.lookup(type_id) {
-            Some(TypeData::Array(_))
-            | Some(TypeData::Tuple(_))
-            | Some(TypeData::Object(_))
-            | Some(TypeData::ObjectWithIndex(_))
-            | Some(TypeData::StringIntrinsic { .. })
-            | Some(TypeData::Literal(LiteralValue::String(_)))
-            | Some(TypeData::Intersection(_)) => true,
+            Some(
+                TypeData::Array(_)
+                | TypeData::Tuple(_)
+                | TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::StringIntrinsic { .. }
+                | TypeData::Literal(LiteralValue::String(_))
+                | TypeData::Intersection(_),
+            ) => true,
             Some(TypeData::Union(members)) => {
                 let members = self.interner.type_list(members);
                 members.iter().all(|&m| self.is_indexable(m))

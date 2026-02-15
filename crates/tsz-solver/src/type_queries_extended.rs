@@ -148,13 +148,15 @@ fn is_invalid_index_type_inner(
             value,
             crate::LiteralValue::Boolean(_) | crate::LiteralValue::BigInt(_)
         ),
-        Some(TypeData::Array(_))
-        | Some(TypeData::Tuple(_))
-        | Some(TypeData::Object(_))
-        | Some(TypeData::ObjectWithIndex(_))
-        | Some(TypeData::Function(_))
-        | Some(TypeData::Callable(_)) => true,
-        Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => db
+        Some(
+            TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_),
+        ) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
             .type_list(list_id)
             .iter()
             .any(|&member| is_invalid_index_type_inner(db, member, visited)),
@@ -348,7 +350,7 @@ pub fn is_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
 /// Get the type parameter default if this is a type parameter.
 pub fn get_type_param_default(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info.default,
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.default,
         _ => None,
     }
 }
@@ -1041,7 +1043,7 @@ pub enum PrivateBrandKind {
 /// Classify a type for private brand extraction.
 pub fn classify_for_private_brand(db: &dyn TypeDatabase, type_id: TypeId) -> PrivateBrandKind {
     match db.lookup(type_id) {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             PrivateBrandKind::Object(shape_id)
         }
         Some(TypeData::Callable(shape_id)) => PrivateBrandKind::Callable(shape_id),
@@ -1145,7 +1147,7 @@ pub fn get_object_property_type(
     property_name: &str,
 ) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
             for prop in &shape.properties {
                 let prop_name = db.resolve_atom_ref(prop.name);
@@ -1200,7 +1202,7 @@ pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeK
         Some(TypeData::Array(elem)) => ArrayLikeKind::Array(elem),
         Some(TypeData::Tuple(_)) => ArrayLikeKind::Tuple,
         Some(TypeData::ReadonlyType(inner)) => ArrayLikeKind::Readonly(inner),
-        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             info.constraint.map_or(ArrayLikeKind::Other, |constraint| {
                 classify_array_like(db, constraint)
             })
@@ -1378,10 +1380,10 @@ pub fn classify_for_contains_traversal(db: &dyn TypeDatabase, type_id: TypeId) -
     match db.lookup(type_id) {
         Some(TypeData::Array(elem)) => TypeContainsKind::Array(elem),
         Some(TypeData::Tuple(list_id)) => TypeContainsKind::Tuple(list_id),
-        Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => {
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
             TypeContainsKind::Members(db.type_list(list_id).to_vec())
         }
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             TypeContainsKind::Object(shape_id)
         }
         Some(TypeData::Function(shape_id)) => TypeContainsKind::Function(shape_id),
@@ -1393,10 +1395,10 @@ pub fn classify_for_contains_traversal(db: &dyn TypeDatabase, type_id: TypeId) -
         Some(TypeData::TemplateLiteral(template_id)) => {
             TypeContainsKind::TemplateLiteral(template_id)
         }
-        Some(TypeData::KeyOf(inner)) | Some(TypeData::ReadonlyType(inner)) => {
+        Some(TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner)) => {
             TypeContainsKind::Inner(inner)
         }
-        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
             TypeContainsKind::TypeParam {
                 constraint: info.constraint,
                 default: info.default,

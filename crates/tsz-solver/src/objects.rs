@@ -161,7 +161,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                     self.collect(member);
                 }
             }
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 self.merge_shape(&shape);
             }

@@ -711,9 +711,9 @@ impl<'a> Judge for DefaultJudge<'a> {
                     (false, false) => TruthinessKind::Unknown,
                 }
             }
-            TypeData::Intrinsic(IntrinsicKind::String)
-            | TypeData::Intrinsic(IntrinsicKind::Number)
-            | TypeData::Intrinsic(IntrinsicKind::Bigint) => {
+            TypeData::Intrinsic(
+                IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Bigint,
+            ) => {
                 // Could be empty string, 0, or 0n
                 TruthinessKind::Sometimes
             }
