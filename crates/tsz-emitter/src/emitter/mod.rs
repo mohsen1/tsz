@@ -2283,14 +2283,14 @@ impl<'a> Printer<'a> {
             trimmed.starts_with("\"use strict\"") || trimmed.starts_with("'use strict'")
         });
 
-        // TypeScript only emits "use strict" when:
-        // 1. CommonJS/AMD/UMD AND the file is actually an ES module (has import/export)
-        //    Script files (with only namespaces/internal imports) don't get "use strict"
-        // 2. alwaysStrict is on AND the file is not already an ES module output
+        // TypeScript only suppresses "use strict" in two cases:
+        // 1. The source file is already an ES module (has import/export).
+        // 2. `alwaysStrict` is not set and output is CommonJS-like module syntax.
         let is_file_module = self.file_is_module(&source.statements);
         let should_emit_use_strict = !source_has_use_strict
-            && ((is_commonjs_or_amd && is_file_module)
-                || (self.ctx.options.always_strict && !(is_es_module_output && is_file_module)));
+            && (is_commonjs_or_amd
+                || !is_file_module
+                || (self.ctx.options.always_strict && !is_es_module_output));
 
         if should_emit_use_strict {
             self.write("\"use strict\";");
