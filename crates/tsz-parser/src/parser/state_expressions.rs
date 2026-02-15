@@ -2,6 +2,7 @@
 use super::state::{
     CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN,
     CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
+    CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -629,6 +630,14 @@ impl ParserState {
             } else {
                 self.token()
             };
+
+            if !self.in_parenthesized_expression_context()
+                && op == SyntaxKind::BarBarToken
+                && self.is_assignment_target_with_block_bodied_arrow(left)
+            {
+                break;
+            }
+
             let precedence = self.get_operator_precedence(op);
             if precedence == 0 || precedence < min_precedence {
                 break;
@@ -643,6 +652,70 @@ impl ParserState {
         }
 
         left
+    }
+
+    fn is_assignment_target_with_block_bodied_arrow(&self, node: NodeIndex) -> bool {
+        let mut current = node;
+        loop {
+            let Some(node_data) = self.arena.get(current) else {
+                return false;
+            };
+            if node_data.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                return false;
+            }
+
+            let Some(binary) = self.arena.get_binary_expr(node_data) else {
+                return false;
+            };
+            let operator = SyntaxKind::try_from_u16(binary.operator_token)
+                .unwrap_or(SyntaxKind::Unknown);
+            if !self.is_assignment_operator(operator) {
+                return false;
+            }
+            if self.is_block_bodied_arrow_function(binary.right) {
+                return true;
+            }
+            current = binary.right;
+        }
+    }
+
+    fn is_block_bodied_arrow_function(&self, node: NodeIndex) -> bool {
+        let Some(node_data) = self.arena.get(node) else {
+            return false;
+        };
+        if node_data.kind != syntax_kind_ext::ARROW_FUNCTION {
+            return false;
+        }
+        let Some(function_data) = self.arena.get_function(node_data) else {
+            return false;
+        };
+        let Some(body_node) = self.arena.get(function_data.body) else {
+            return false;
+        };
+
+        body_node.kind == syntax_kind_ext::BLOCK
+    }
+
+    fn is_assignment_operator(&self, operator: SyntaxKind) -> bool {
+        matches!(
+            operator,
+            SyntaxKind::EqualsToken
+                | SyntaxKind::PlusEqualsToken
+                | SyntaxKind::MinusEqualsToken
+                | SyntaxKind::AsteriskEqualsToken
+                | SyntaxKind::SlashEqualsToken
+                | SyntaxKind::PercentEqualsToken
+                | SyntaxKind::AsteriskAsteriskEqualsToken
+                | SyntaxKind::LessThanLessThanEqualsToken
+                | SyntaxKind::GreaterThanGreaterThanEqualsToken
+                | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
+                | SyntaxKind::AmpersandEqualsToken
+                | SyntaxKind::CaretEqualsToken
+                | SyntaxKind::BarEqualsToken
+                | SyntaxKind::BarBarEqualsToken
+                | SyntaxKind::AmpersandAmpersandEqualsToken
+                | SyntaxKind::QuestionQuestionEqualsToken
+        )
     }
 
     fn parse_binary_expression_remainder(
@@ -2783,6 +2856,8 @@ impl ParserState {
     /// Parse parenthesized expression
     pub(crate) fn parse_parenthesized_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        let saved_context_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_IN_PARENTHESIZED_EXPRESSION;
         self.parse_expected(SyntaxKind::OpenParenToken);
         let expression = self.parse_expression();
         if expression.is_none() {
@@ -2796,6 +2871,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
         }
+        self.context_flags = saved_context_flags;
 
         self.arena.add_parenthesized(
             syntax_kind_ext::PARENTHESIZED_EXPRESSION,
