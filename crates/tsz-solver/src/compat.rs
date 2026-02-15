@@ -360,7 +360,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Configure strict mode for `any` propagation.
-
     /// Configure strict subtype checking mode for lib.d.ts type checking.
     ///
     /// When enabled, applies additional strictness rules that reject borderline

@@ -7,7 +7,6 @@ use tsz_scanner::SyntaxKind;
 /// Represents a segment of assignment destructuring output.
 /// When the right-hand side is a simple identifier, we access properties/elements directly.
 /// When complex, we create a temp variable first.
-
 impl<'a> Printer<'a> {
     pub(super) fn emit_variable_declaration_list_es5(&mut self, node: &Node) {
         let Some(decl_list) = self.arena.get_variable(node) else {

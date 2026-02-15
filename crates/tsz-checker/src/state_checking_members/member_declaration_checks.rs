@@ -1033,11 +1033,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report an error at a specific node.
-
     /// Check an expression node for TS1359: await outside async function.
     /// Recursively checks the expression tree for await expressions.
     /// Report an error with context about a related symbol.
-
     /// Check a class member (property, method, constructor, accessor).
     pub(crate) fn check_class_member(&mut self, member_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(member_idx) else {
