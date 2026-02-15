@@ -1250,7 +1250,7 @@ pub fn process_template_escape_sequences(input: &str) -> String {
                     if let Some('{') = chars.next() {
                         // \u{X...} - Unicode code point
                         let mut code_str = String::new();
-                        while let Some(nc) = chars.next() {
+                        for nc in chars.by_ref() {
                             if nc == '}' {
                                 break;
                             }
