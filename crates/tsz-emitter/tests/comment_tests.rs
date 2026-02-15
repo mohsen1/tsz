@@ -20,9 +20,6 @@ fn test_comment_between_call_arguments() {
     let output = printer.finish().code;
 
     // The comment should be preserved before the string literal
-    if !output.contains("/*comment*/") {
-        println!("Full output:\n{}", output);
-    }
     assert!(
         output.contains("/*comment*/"),
         "Comment should be preserved in output: {}",

@@ -336,9 +336,6 @@ class C {
     // and experimentalDecorators is enabled
     let ts2318_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2318).collect();
 
-    println!("All diagnostics: {:?}", diagnostics);
-    println!("TS2318 errors: {:?}", ts2318_errors);
-
     assert!(
         !ts2318_errors.is_empty(),
         "Expected TS2318 error for TypedPropertyDescriptor without lib.d.ts, got: {:?}",
@@ -451,9 +448,6 @@ class C {
         .iter()
         .filter(|d| d.code == 2318 && d.message_text.contains("TypedPropertyDescriptor"))
         .collect();
-
-    println!("All diagnostics for b.ts: {:?}", diagnostics);
-    println!("TS2318 for TypedPropertyDescriptor: {:?}", ts2318_errors);
 
     assert!(
         !ts2318_errors.is_empty(),

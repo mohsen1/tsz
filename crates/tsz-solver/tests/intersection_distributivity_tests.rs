@@ -73,7 +73,10 @@ fn test_intersection_distributes_cardinality_guard() {
             // Let's just accept this for now
         }
         other => {
-            println!("Got: {:?}", other);
+            panic!(
+                "Expected union or intersection for cardinality guard result, got {:?}",
+                other
+            );
         }
     }
 }
