@@ -303,13 +303,7 @@ fn main() -> Result<()> {
         let test_dir_base = Path::new(&args.test_dir)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&args.test_dir));
-            match process_test_file(
-                &mut client,
-                path,
-                &temp_dir,
-                &test_dir_base,
-                &tsc_version,
-            ) {
+        match process_test_file(&mut client, path, &temp_dir, &test_dir_base, &tsc_version) {
             Ok(Some((key, entry))) => {
                 cache.insert(key, entry);
             }
