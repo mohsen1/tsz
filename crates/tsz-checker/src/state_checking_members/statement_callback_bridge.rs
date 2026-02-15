@@ -246,29 +246,26 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 self.ctx.suppress_definite_assignment_errors = prev_suppress;
             }
 
-            // TS7010 (implicit any return) is emitted for functions without
-            // return type annotations when noImplicitAny is enabled and the return
-            // type cannot be inferred (e.g., is 'any' or only returns undefined)
-            // Async functions infer Promise<void>, not 'any', so they should NOT trigger TS7010
-            // maybe_report_implicit_any_return handles the noImplicitAny check internally
-            //
-            // JSDoc type annotations suppress TS7010 in JS files.
-            // When a function has any JSDoc type info (@param, @returns, @template),
-            // tsc considers it as having explicit types and doesn't emit TS7010.
-            let has_jsdoc_return = func_decl_jsdoc
-                .as_ref()
-                .is_some_and(|j| Self::jsdoc_has_type_annotations(j));
-            if !func.is_async && !has_jsdoc_return {
-                let func_name = self.get_function_name_from_node(func_idx);
-                let name_node = (!func.name.is_none()).then_some(func.name);
-                self.maybe_report_implicit_any_return(
-                    func_name,
-                    name_node,
-                    return_type,
-                    has_type_annotation,
-                    false,
-                    func_idx,
-                );
+            // TS7010/TS7011 (implicit any return) for function declarations.
+            // For closures (function expressions and arrow functions), TS7010/TS7011
+            // is already handled by get_type_of_function which has contextual return
+            // type information. Only check here for actual function declarations.
+            if !is_closure {
+                let has_jsdoc_return = func_decl_jsdoc
+                    .as_ref()
+                    .is_some_and(|j| Self::jsdoc_has_type_annotations(j));
+                if !func.is_async && !has_jsdoc_return {
+                    let func_name = self.get_function_name_from_node(func_idx);
+                    let name_node = (!func.name.is_none()).then_some(func.name);
+                    self.maybe_report_implicit_any_return(
+                        func_name,
+                        name_node,
+                        return_type,
+                        has_type_annotation,
+                        false,
+                        func_idx,
+                    );
+                }
             }
 
             // TS2705: Async function must return Promise
