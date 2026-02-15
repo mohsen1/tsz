@@ -3462,8 +3462,35 @@ impl ParserState {
                     k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => true,
                     _ => false,
                 });
-                if !has_body {
-                    self.parse_optional(SyntaxKind::SemicolonToken);
+                let has_initializer = if !has_body {
+                    if let Some(member_node) = self.arena.get(member) {
+                        if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                            if let Some(property) = self.arena.get_property_decl(member_node) {
+                                !property.initializer.is_none()
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                let has_semicolon = self.parse_optional(SyntaxKind::SemicolonToken);
+                if !has_body
+                    && has_initializer
+                    && !has_semicolon
+                    && (self.is_token(SyntaxKind::AtToken)
+                        || self.is_token(SyntaxKind::AsteriskToken)
+                        || self.is_token(SyntaxKind::OpenBracketToken)
+                        || self.is_token(SyntaxKind::PrivateIdentifier)
+                        || self.is_property_name())
+                {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
                 }
                 members.push(member);
             }
