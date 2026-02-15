@@ -1219,7 +1219,7 @@ impl<'a> InferenceContext<'a> {
             // If source has rest param, infer all remaining target params into it
             if source_rest {
                 let source_param = source_params.next().unwrap();
-                while let Some(target_param) = target_params.next() {
+                for target_param in target_params.by_ref() {
                     self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
                 }
                 break;
@@ -1250,7 +1250,7 @@ impl<'a> InferenceContext<'a> {
                 if target_is_type_param {
                     // Collect all remaining source params into a tuple
                     let mut tuple_elements = Vec::new();
-                    while let Some(source_param) = source_params.next() {
+                    for source_param in source_params.by_ref() {
                         tuple_elements.push(TupleElement {
                             type_id: source_param.type_id,
                             name: source_param.name,
@@ -1278,7 +1278,7 @@ impl<'a> InferenceContext<'a> {
                 } else {
                     // Target rest param is not a type parameter (e.g., number[] or Array<string>)
                     // Infer each source param individually against the rest element type
-                    while let Some(source_param) = source_params.next() {
+                    for source_param in source_params.by_ref() {
                         self.infer_from_types(
                             target_param.type_id,
                             source_param.type_id,
