@@ -3056,11 +3056,24 @@ impl ParserState {
                 }
                 // Handle 'export' - not valid as class member modifier
                 SyntaxKind::ExportKeyword => {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Unexpected modifier.",
-                        diagnostic_codes::UNEXPECTED_TOKEN,
-                    );
+                    // Skip emitting generic unexpected modifier for export when it
+                    // introduces a constructor declaration. Constructor-specific
+                    // validation emits TS1031.
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+                    let next_is_constructor = self.current_token == SyntaxKind::ConstructorKeyword
+                        && !self.scanner.has_preceding_line_break();
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+
+                    if !next_is_constructor {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "Unexpected modifier.",
+                            diagnostic_codes::UNEXPECTED_TOKEN,
+                        );
+                    }
                     self.next_token();
                     self.arena
                         .create_modifier(SyntaxKind::ExportKeyword, start_pos)
@@ -3559,6 +3572,33 @@ impl ParserState {
             })
         });
 
+        let has_static_modifier = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena
+                    .nodes
+                    .get(idx.0 as usize)
+                    .is_some_and(|node| node.kind == SyntaxKind::StaticKeyword as u16)
+            })
+        });
+
+        let has_export_modifier = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena
+                    .nodes
+                    .get(idx.0 as usize)
+                    .is_some_and(|node| node.kind == SyntaxKind::ExportKeyword as u16)
+            })
+        });
+
+        let has_declare_modifier = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena
+                    .nodes
+                    .get(idx.0 as usize)
+                    .is_some_and(|node| node.kind == SyntaxKind::DeclareKeyword as u16)
+            })
+        });
+
         if self.is_token(SyntaxKind::ConstructorKeyword) && !has_var_let_modifier {
             // TS1206: Decorators are not valid on constructors
             if has_decorators {
@@ -3569,6 +3609,28 @@ impl ParserState {
                     diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                 );
             }
+
+            use tsz_common::diagnostics::diagnostic_codes;
+
+            if has_static_modifier {
+                self.parse_error_at_current_token(
+                    "'static' modifier cannot appear on a constructor declaration.",
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                );
+            }
+
+            if has_export_modifier {
+                self.parse_error_at_current_token(
+                    "'export' modifier cannot appear on class elements of this kind.",
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
+                );
+            } else if has_declare_modifier {
+                self.parse_error_at_current_token(
+                    "'declare' modifier cannot appear on class elements of this kind.",
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
+                );
+            }
+
             return self.parse_constructor_with_modifiers(modifiers);
         }
 

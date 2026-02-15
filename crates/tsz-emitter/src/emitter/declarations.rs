@@ -62,17 +62,21 @@ impl<'a> Printer<'a> {
         // No return type for JavaScript
 
         self.write_space();
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
 
         // Push temp scope and block scope for function body.
         // Each function has its own scope for variable renaming/shadowing.
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
+        self.prepare_logical_assignment_value_temps(func.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         self.emit(func.body);
         self.ctx.flags.in_generator = prev_in_generator;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.emitting_function_body_block = prev_emitting_function_body_block;
 
         // Track function name to prevent duplicate var declarations for merged namespaces.
         // Function declarations provide their own declaration, so if a namespace merges
@@ -966,10 +970,18 @@ impl<'a> Printer<'a> {
         // Skip return type for JavaScript emit
 
         self.write(" ");
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
         let prev_in_generator = self.ctx.flags.in_generator;
+        self.ctx.block_scope_state.enter_scope();
+        self.push_temp_scope();
+        self.prepare_logical_assignment_value_temps(method.body);
         self.ctx.flags.in_generator = method.asterisk_token;
         self.emit(method.body);
+        self.pop_temp_scope();
+        self.ctx.block_scope_state.exit_scope();
         self.ctx.flags.in_generator = prev_in_generator;
+        self.emitting_function_body_block = prev_emitting_function_body_block;
     }
 
     /// Emit method modifiers for JavaScript (static, async only)
@@ -1057,11 +1069,19 @@ impl<'a> Printer<'a> {
         self.write(")");
         self.write(" ");
 
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        self.ctx.block_scope_state.enter_scope();
+        self.push_temp_scope();
+        self.prepare_logical_assignment_value_temps(ctor.body);
         if param_props.is_empty() && field_inits.is_empty() {
             self.emit(ctor.body);
         } else {
             self.emit_constructor_body_with_prologue(ctor.body, &param_props, &field_inits);
         }
+        self.pop_temp_scope();
+        self.ctx.block_scope_state.exit_scope();
+        self.emitting_function_body_block = prev_emitting_function_body_block;
     }
 
     /// Collect parameter property names from constructor parameters.
@@ -1120,6 +1140,13 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        let has_function_temps = !self.hoisted_assignment_temps.is_empty()
+            || !self.hoisted_assignment_value_temps.is_empty()
+            || !self.hoisted_for_of_temps.is_empty();
+        if has_function_temps {
+            self.emit_function_body_hoisted_temps();
+        }
+
         // Emit parameter property assignments: this.<name> = <name>;
         for name in param_props {
             self.write("this.");
@@ -1168,8 +1195,16 @@ impl<'a> Printer<'a> {
         // Skip type annotation for JS emit
 
         if !accessor.body.is_none() {
+            let prev_emitting_function_body_block = self.emitting_function_body_block;
+            self.emitting_function_body_block = true;
+            self.ctx.block_scope_state.enter_scope();
+            self.push_temp_scope();
+            self.prepare_logical_assignment_value_temps(accessor.body);
             self.write(" ");
             self.emit(accessor.body);
+            self.pop_temp_scope();
+            self.ctx.block_scope_state.exit_scope();
+            self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {
             // For JS emit, add empty body for accessors without body
             self.write(" { }");
@@ -1191,8 +1226,16 @@ impl<'a> Printer<'a> {
         self.write(")");
 
         if !accessor.body.is_none() {
+            let prev_emitting_function_body_block = self.emitting_function_body_block;
+            self.emitting_function_body_block = true;
+            self.ctx.block_scope_state.enter_scope();
+            self.push_temp_scope();
+            self.prepare_logical_assignment_value_temps(accessor.body);
             self.write(" ");
             self.emit(accessor.body);
+            self.pop_temp_scope();
+            self.ctx.block_scope_state.exit_scope();
+            self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {
             // For JS emit, add empty body for accessors without body
             self.write(" { }");

@@ -1,6 +1,7 @@
 use super::Printer;
 use crate::printer::safe_slice;
 use crate::source_writer::SourcePosition;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
@@ -122,19 +123,42 @@ impl<'a> Printer<'a> {
         let saved_names = std::mem::take(&mut self.generated_temp_names);
         let saved_for_of = self.first_for_of_emitted;
         let saved_preallocated = std::mem::take(&mut self.preallocated_temp_names);
-        self.temp_scope_stack
-            .push((saved_counter, saved_names, saved_for_of, saved_preallocated));
+        let saved_preallocated_logical_value_temps =
+            std::mem::take(&mut self.preallocated_logical_assignment_value_temps);
+        let saved_hoisted = std::mem::take(&mut self.hoisted_assignment_temps);
+        let saved_value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
+        self.temp_scope_stack.push((
+            saved_counter,
+            saved_names,
+            saved_for_of,
+            saved_preallocated,
+            saved_preallocated_logical_value_temps,
+            saved_value_temps,
+            saved_hoisted,
+        ));
         self.ctx.destructuring_state.temp_var_counter = 0;
         self.first_for_of_emitted = false;
     }
 
     /// Restore the previous temp naming state when leaving a function scope.
     pub(super) fn pop_temp_scope(&mut self) {
-        if let Some((counter, names, for_of, preallocated)) = self.temp_scope_stack.pop() {
+        if let Some((
+            counter,
+            names,
+            for_of,
+            preallocated,
+            preallocated_logical,
+            value_temps,
+            hoisted,
+        )) = self.temp_scope_stack.pop()
+        {
             self.ctx.destructuring_state.temp_var_counter = counter;
             self.generated_temp_names = names;
             self.first_for_of_emitted = for_of;
             self.preallocated_temp_names = preallocated;
+            self.preallocated_logical_assignment_value_temps = preallocated_logical;
+            self.hoisted_assignment_value_temps = value_temps;
+            self.hoisted_assignment_temps = hoisted;
         }
     }
 
@@ -188,11 +212,86 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(super) fn preallocate_logical_assignment_value_temps(&mut self, count: usize) {
+        self.preallocated_logical_assignment_value_temps.clear();
+        for _ in 0..count {
+            let name = self.generate_fresh_temp_name();
+            self.preallocated_logical_assignment_value_temps
+                .push_back(name);
+        }
+    }
+
+    fn count_logical_assignment_value_temps(&self, node_idx: NodeIndex) -> usize {
+        if self.ctx.options.target.supports_es2020() || node_idx.is_none() {
+            return 0;
+        }
+
+        let mut count = 0usize;
+        let mut stack = vec![node_idx];
+
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.arena.get(current) else {
+                continue;
+            };
+
+            if let Some(binary) = self.arena.get_binary_expr(node) {
+                if binary.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16 {
+                    count += 1;
+                }
+            }
+
+            if self.is_logical_assignment_temp_scope_boundary(node) {
+                continue;
+            }
+
+            for child in self.arena.get_children(current) {
+                stack.push(child);
+            }
+        }
+
+        count
+    }
+
+    fn is_logical_assignment_temp_scope_boundary(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.arena.get_function(node).is_some()
+            || self.arena.get_method_decl(node).is_some()
+            || self.arena.get_constructor(node).is_some()
+            || self.arena.get_accessor(node).is_some()
+            || self.arena.get_class(node).is_some()
+    }
+
+    pub(super) fn prepare_logical_assignment_value_temps(&mut self, node_idx: NodeIndex) {
+        if self.ctx.options.target.supports_es2020() {
+            return;
+        }
+
+        let count = self.count_logical_assignment_value_temps(node_idx);
+        if count > 0 {
+            self.preallocate_logical_assignment_value_temps(count);
+        }
+    }
+
     /// Like make_unique_name but also records the temp for hoisting as a `var` declaration.
     /// Used for assignment destructuring temps which need `var _a, _b, ...;` at scope top.
     pub(super) fn make_unique_name_hoisted(&mut self) -> String {
         let name = self.make_unique_name();
         self.hoisted_assignment_temps.push(name.clone());
+        name
+    }
+
+    /// Like make_unique_name but also records the temp for hoisting before references.
+    /// Used for assignment target values in logical-assignment lowering.
+    pub(super) fn make_unique_name_hoisted_value(&mut self) -> String {
+        let name = if let Some(name) = self.preallocated_logical_assignment_value_temps.pop_front()
+        {
+            name
+        } else {
+            self.make_unique_name()
+        };
+        self.hoisted_assignment_value_temps.push(name.clone());
         name
     }
 
