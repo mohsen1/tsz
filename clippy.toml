@@ -5,7 +5,10 @@ too-many-lines-threshold = 360
 doc-valid-idents = [
     "CommonJS",
     "ECMAScript",
+    "NaN",
     "JavaScript",
+    "Infinity",
+    "ReadonlyArray",
     "TS",
     "TypeScript",
 ]
