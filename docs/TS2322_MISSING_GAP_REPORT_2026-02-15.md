@@ -146,3 +146,31 @@ Why it matters for this regression:
 - The current TS2322 drop is concentrated in tested behavior, not skipped behavior.
 - The presence of bare ignores in solver/control-flow paths increases confidence risk for regression tracking.
 - Keep this list as a separate quality gate while fixing conformance gaps; convert bare ignores only when behavior is intentionally unsupported.
+
+## Latest focused pass (post-breakdown)
+
+Focused run artifacts captured on current `main`:
+
+### `assignmentCompatability` slice
+- Command: `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability --verbose`
+- Result: `TS2322` missing=31, extra=0
+- Also observed: `TS2454` missing=3, `TS2741` missing=2 (no TS2322 extra)
+- Failing fixture names observed: 31/33 compiler assignment files, including:
+  - `TypeScript/tests/cases/compiler/assignmentCompatability11.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability12.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability13.ts`
+  - `...`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability45.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability_checking-apply-member-off-of-function-interface.ts`
+  - `TypeScript/tests/cases/compiler/assignmentCompatability_checking-call-member-off-of-function-interface.ts`
+
+### `typeTagPrototypeAssignment` slice
+- Command: `./scripts/conformance.sh run --error-code 2322 --filter typeTagPrototypeAssignment --verbose`
+- Result: `TS2322` missing=1, extra=0
+- Failing fixture:
+  - `TypeScript/tests/cases/conformance/jsdoc/typeTagPrototypeAssignment.ts`
+  - `expected: [TS2322], actual: []` under options `{allowjs: true, checkjs: true, noemit: true, target: es2015}`
+
+Implication:
+- The assignment compatibility block confirms a deterministic, high-confidence miss cluster where assignability is not rejecting invalid assignment in expected spots (not reporting enough errors).
+- This is stronger evidence that the next fix should stay in the solver/checker assignability boundary and not in parser/infrastructure layers.
