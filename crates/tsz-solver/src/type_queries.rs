@@ -35,7 +35,42 @@ use tsz_common::Atom;
 //
 // This preserves the public API contract relied on by the checker while keeping
 // this module as the canonical stable query surface.
-pub use crate::type_queries_extended::*;
+pub use crate::type_queries_extended::{
+    AbstractClassCheckKind, AbstractConstructorKind, ArrayLikeKind, AssignabilityEvalKind,
+    BaseInstanceMergeKind, BindingElementTypeKind, CallSignaturesKind, ClassDeclTypeKind,
+    ConstructSignatureKind, ConstructorAccessKind, ConstructorCheckKind,
+    ConstructorReturnMergeKind, ContextualLiteralAllowKind, ElementIndexableKind,
+    ExcessPropertiesKind, IndexKeyKind, InstanceTypeKind, KeyOfTypeKind, LazyTypeKind,
+    LiteralKeyKind, LiteralTypeKind, MappedConstraintKind, NamespaceMemberKind,
+    NewExpressionTypeKind, PrivateBrandKind, PromiseTypeKind, PropertyAccessResolutionKind,
+    SpreadPropertyKind, SpreadTypeKind, StringLiteralKeyKind, SymbolRefKind,
+    SymbolResolutionTraversalKind, TypeArgumentExtractionKind, TypeContainsKind, TypeDepthKind,
+    TypeParameterContentKind, TypeParameterKind, TypeQueryKind, TypeResolutionKind,
+    classify_array_like, classify_element_indexable, classify_for_abstract_check,
+    classify_for_abstract_constructor, classify_for_assignability_eval,
+    classify_for_base_instance_merge, classify_for_binding_element, classify_for_call_signatures,
+    classify_for_class_decl, classify_for_construct_signature, classify_for_constructor_access,
+    classify_for_constructor_check, classify_for_constructor_return_merge,
+    classify_for_contains_traversal, classify_for_contextual_literal,
+    classify_for_excess_properties, classify_for_instance_type, classify_for_keyof,
+    classify_for_lazy_resolution, classify_for_new_expression, classify_for_private_brand,
+    classify_for_property_access_resolution, classify_for_spread_properties,
+    classify_for_string_literal_keys, classify_for_symbol_resolution_traversal,
+    classify_for_type_argument_extraction, classify_for_type_depth,
+    classify_for_type_parameter_content, classify_for_type_resolution, classify_index_key,
+    classify_literal_key, classify_literal_type, classify_mapped_constraint,
+    classify_namespace_member, classify_promise_type, classify_spread_type, classify_symbol_ref,
+    classify_type_parameter, classify_type_query, create_boolean_literal_type,
+    create_number_literal_type, create_string_literal_type, get_application_base,
+    get_application_info, get_boolean_literal_value, get_callable_type_param_count,
+    get_conditional_type_id, get_def_id, get_enum_components, get_function_return_type,
+    get_iterable_element_type_from_db, get_keyof_inner, get_literal_value, get_mapped_type_id,
+    get_number_literal_value, get_object_property_type, get_string_literal_atom,
+    get_string_literal_value, get_tuple_list_id, get_type_identity, get_type_param_default,
+    get_widened_literal_type, is_boolean_literal, is_direct_type_parameter, is_invalid_index_type,
+    is_iterable_type_kind, is_number_literal, is_object_with_index_type, is_string_literal,
+    unwrap_readonly_for_lookup, widen_literal_to_primitive,
+};
 
 // =============================================================================
 // Core Type Queries
