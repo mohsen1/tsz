@@ -1062,12 +1062,39 @@ impl ParserState {
 
     /// Parse variable declaration with declaration flags (for using/await using checks)
     /// Flags: bits 0-2 used for LET/CONST/USING, bit 3 for catch-clause binding (suppresses TS1182)
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_variable_declaration_with_flags(&mut self, flags: u16) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_variable_declaration_with_flags_pre_checks(flags);
+
+        let name = self.parse_variable_declaration_name();
+        let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
+        let initializer = self.parse_variable_declaration_initializer();
+        self.parse_variable_declaration_after_parse_checks(flags, start_pos, name, initializer);
+
+        let end_pos =
+            self.parse_variable_declaration_end_pos(start_pos, type_annotation, name, initializer);
+
+        self.arena.add_variable_declaration(
+            syntax_kind_ext::VARIABLE_DECLARATION,
+            start_pos,
+            end_pos,
+            VariableDeclarationData {
+                name,
+                exclamation_token,
+                type_annotation,
+                initializer,
+            },
+        )
+    }
+
+    fn parse_variable_declaration_with_flags_pre_checks(&mut self, flags: u16) {
         use crate::parser::node_flags;
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-        let start_pos = self.token_pos();
 
         // Check if this is a 'using' or 'await using' declaration.
         // Only check the USING bit (bit 2). AWAIT_USING = CONST | USING = 6,
@@ -1089,7 +1116,6 @@ impl ParserState {
         // Parse name - can be identifier, keyword as identifier, or binding pattern
         // Check for illegal binding identifiers (e.g., 'await' in static blocks)
         self.check_illegal_binding_identifier();
-
         // TS18029: Check for private identifiers in variable declarations (check before parsing)
         if self.is_token(SyntaxKind::PrivateIdentifier) {
             let start = self.token_pos();
@@ -1101,44 +1127,46 @@ impl ParserState {
                 diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_IN_VARIABLE_DECLARATIONS,
             );
         }
+    }
 
-        let name = if self.is_token(SyntaxKind::OpenBraceToken) {
+    fn parse_variable_declaration_name(&mut self) -> NodeIndex {
+        if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
             self.parse_array_binding_pattern()
         } else {
             self.parse_identifier()
-        };
+        }
+    }
 
-        // Parse definite assignment assertion (!)
-        let exclamation_token = self.parse_optional(SyntaxKind::ExclamationToken);
+    fn parse_variable_declaration_initializer(&mut self) -> NodeIndex {
+        if !self.parse_optional(SyntaxKind::EqualsToken) {
+            return NodeIndex::NONE;
+        }
 
-        // Parse optional type annotation
-        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_type()
-        } else {
-            NodeIndex::NONE
-        };
+        if self.is_token(SyntaxKind::ConstKeyword)
+            || self.is_token(SyntaxKind::LetKeyword)
+            || self.is_token(SyntaxKind::VarKeyword)
+        {
+            self.error_expression_expected();
+            return NodeIndex::NONE;
+        }
 
-        // Parse optional initializer
-        let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
-            if self.is_token(SyntaxKind::ConstKeyword)
-                || self.is_token(SyntaxKind::LetKeyword)
-                || self.is_token(SyntaxKind::VarKeyword)
-            {
-                self.error_expression_expected();
-                NodeIndex::NONE
-            } else {
-                let expr = self.parse_assignment_expression();
-                if expr.is_none() {
-                    // Emit TS1109 for missing variable initializer: let x = [missing]
-                    self.error_expression_expected();
-                }
-                expr
-            }
-        } else {
-            NodeIndex::NONE
-        };
+        let expr = self.parse_assignment_expression();
+        if expr.is_none() {
+            self.error_expression_expected();
+        }
+        expr
+    }
+
+    fn parse_variable_declaration_after_parse_checks(
+        &mut self,
+        flags: u16,
+        start_pos: u32,
+        name: NodeIndex,
+        initializer: NodeIndex,
+    ) {
+        use tsz_common::diagnostics::diagnostic_codes;
 
         // TS1182: A destructuring declaration must have an initializer
         // Skip for catch clause bindings (flags bit 3 = CATCH_CLAUSE_BINDING)
@@ -1170,9 +1198,24 @@ impl ParserState {
                 );
             }
         }
+        if name == NodeIndex::NONE {
+            self.parse_error_at_current_token(
+                "Identifier expected.",
+                diagnostic_codes::IDENTIFIER_EXPECTED,
+            );
+        }
+    }
 
+    fn parse_variable_declaration_end_pos(
+        &mut self,
+        start_pos: u32,
+        type_annotation: NodeIndex,
+        name: NodeIndex,
+        initializer: NodeIndex,
+    ) -> u32 {
+        let mut end_pos = self.token_end();
         // Calculate end position from the last component present (child node, not token)
-        let end_pos = if !initializer.is_none() {
+        if !initializer.is_none() {
             self.arena
                 .get(initializer)
                 .map_or(self.token_pos(), |n| n.end)
@@ -1183,18 +1226,8 @@ impl ParserState {
         } else {
             self.arena.get(name).map_or(self.token_pos(), |n| n.end)
         };
-
-        self.arena.add_variable_declaration(
-            syntax_kind_ext::VARIABLE_DECLARATION,
-            start_pos,
-            end_pos,
-            VariableDeclarationData {
-                name,
-                exclamation_token,
-                type_annotation,
-                initializer,
-            },
-        )
+        end_pos = end_pos.max(self.token_end()).max(start_pos);
+        end_pos
     }
 
     /// Parse function declaration (optionally async)
@@ -2449,7 +2482,6 @@ impl ParserState {
     }
 
     /// Parse heritage clauses (extends, implements)
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_heritage_clauses(&mut self) -> Option<NodeList> {
         let mut clauses = Vec::new();
         let mut seen_extends = false;
@@ -2457,119 +2489,16 @@ impl ParserState {
 
         loop {
             if self.is_token(SyntaxKind::ExtendsKeyword) {
-                use tsz_common::diagnostics::diagnostic_codes;
-                let start_pos = self.token_pos();
-                let is_duplicate = seen_extends;
-                let is_after_implements = seen_implements;
-
-                if is_duplicate {
-                    self.parse_error_at_current_token(
-                        "extends clause already seen.",
-                        diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN,
-                    );
-                }
-                // Only emit "extends must precede implements" if not also a duplicate extends
-                // TypeScript suppresses TS1173 when TS1172 is also emitted at the same position
-                else if is_after_implements {
-                    self.parse_error_at_current_token(
-                        "extends clause must precede implements clause.",
-                        diagnostic_codes::EXTENDS_CLAUSE_MUST_PRECEDE_IMPLEMENTS_CLAUSE,
-                    );
-                }
-                let should_add = !seen_extends;
-                seen_extends = true;
-                self.next_token();
-
-                // Check for empty extends list: class C extends { }
-                // TSC emits TS1097 "'extends' list cannot be empty"
-                if self.is_token(SyntaxKind::OpenBraceToken)
-                    || self.is_token(SyntaxKind::ImplementsKeyword)
+                if let Some(clause) =
+                    self.parse_heritage_clause_extends(&mut seen_extends, seen_implements)
                 {
-                    self.parse_error_at_current_token(
-                        "'extends' list cannot be empty.",
-                        diagnostic_codes::LIST_CANNOT_BE_EMPTY,
-                    );
-                    // Don't add an empty clause
-                    continue;
-                }
-
-                let type_ref = self.parse_heritage_type_reference();
-
-                while self.is_token(SyntaxKind::CommaToken) {
-                    // Check for trailing comma: `extends C, {`
-                    // tsc emits TS1009 for trailing comma, TS1174 for multiple extends
-                    let comma_pos = self.token_pos();
-                    let comma_end = self.token_end();
-                    self.next_token();
-                    if self.is_token(SyntaxKind::OpenBraceToken)
-                        || self.is_token(SyntaxKind::ImplementsKeyword)
-                    {
-                        self.parse_error_at(
-                            comma_pos,
-                            comma_end - comma_pos,
-                            tsz_common::diagnostics::diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
-                            diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
-                        );
-                        break;
-                    }
-                    self.parse_error_at(
-                        comma_pos,
-                        comma_end - comma_pos,
-                        "Classes can only extend a single class.",
-                        diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
-                    );
-                    let _ = self.parse_heritage_type_reference();
-                }
-
-                let end_pos = self.token_end();
-                if should_add {
-                    let clause = self.arena.add_heritage(
-                        syntax_kind_ext::HERITAGE_CLAUSE,
-                        start_pos,
-                        end_pos,
-                        crate::parser::node::HeritageData {
-                            token: SyntaxKind::ExtendsKeyword as u16,
-                            types: self.make_node_list(vec![type_ref]),
-                        },
-                    );
                     clauses.push(clause);
                 }
                 continue;
             }
 
             if self.is_token(SyntaxKind::ImplementsKeyword) {
-                use tsz_common::diagnostics::diagnostic_codes;
-                let start_pos = self.token_pos();
-                if seen_implements {
-                    self.parse_error_at_current_token(
-                        "implements clause already seen.",
-                        diagnostic_codes::IMPLEMENTS_CLAUSE_ALREADY_SEEN,
-                    );
-                }
-                let should_add = !seen_implements;
-                seen_implements = true;
-                self.next_token();
-
-                let mut types = Vec::new();
-                loop {
-                    let type_ref = self.parse_heritage_type_reference();
-                    types.push(type_ref);
-                    if !self.parse_optional(SyntaxKind::CommaToken) {
-                        break;
-                    }
-                }
-
-                let end_pos = self.token_end();
-                if should_add {
-                    let clause = self.arena.add_heritage(
-                        syntax_kind_ext::HERITAGE_CLAUSE,
-                        start_pos,
-                        end_pos,
-                        crate::parser::node::HeritageData {
-                            token: SyntaxKind::ImplementsKeyword as u16,
-                            types: self.make_node_list(types),
-                        },
-                    );
+                if let Some(clause) = self.parse_heritage_clause_implements(&mut seen_implements) {
                     clauses.push(clause);
                 }
                 continue;
@@ -2583,6 +2512,126 @@ impl ParserState {
         } else {
             Some(self.make_node_list(clauses))
         }
+    }
+
+    fn parse_heritage_clause_extends(
+        &mut self,
+        seen_extends: &mut bool,
+        seen_implements: bool,
+    ) -> Option<NodeIndex> {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        let start_pos = self.token_pos();
+        let is_duplicate = *seen_extends;
+
+        if is_duplicate {
+            self.parse_error_at_current_token(
+                "extends clause already seen.",
+                diagnostic_codes::EXTENDS_CLAUSE_ALREADY_SEEN,
+            );
+        } else if seen_implements {
+            self.parse_error_at_current_token(
+                "extends clause must precede implements clause.",
+                diagnostic_codes::EXTENDS_CLAUSE_MUST_PRECEDE_IMPLEMENTS_CLAUSE,
+            );
+        }
+
+        let should_add = !*seen_extends;
+        *seen_extends = true;
+        self.next_token();
+
+        if self.is_token(SyntaxKind::OpenBraceToken) || self.is_token(SyntaxKind::ImplementsKeyword)
+        {
+            self.parse_error_at_current_token(
+                "'extends' list cannot be empty.",
+                diagnostic_codes::LIST_CANNOT_BE_EMPTY,
+            );
+            return None;
+        }
+
+        let type_ref = self.parse_heritage_type_reference();
+
+        while self.is_token(SyntaxKind::CommaToken) {
+            let comma_pos = self.token_pos();
+            let comma_end = self.token_end();
+            self.next_token();
+            if self.is_token(SyntaxKind::OpenBraceToken)
+                || self.is_token(SyntaxKind::ImplementsKeyword)
+            {
+                self.parse_error_at(
+                    comma_pos,
+                    comma_end - comma_pos,
+                    tsz_common::diagnostics::diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
+                    diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
+                );
+                break;
+            }
+            self.parse_error_at(
+                comma_pos,
+                comma_end - comma_pos,
+                "Classes can only extend a single class.",
+                diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
+            );
+            let _ = self.parse_heritage_type_reference();
+        }
+
+        if !should_add {
+            return None;
+        }
+
+        let end_pos = self.token_end();
+        Some(self.arena.add_heritage(
+            syntax_kind_ext::HERITAGE_CLAUSE,
+            start_pos,
+            end_pos,
+            crate::parser::node::HeritageData {
+                token: SyntaxKind::ExtendsKeyword as u16,
+                types: self.make_node_list(vec![type_ref]),
+            },
+        ))
+    }
+
+    fn parse_heritage_clause_implements(
+        &mut self,
+        seen_implements: &mut bool,
+    ) -> Option<NodeIndex> {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        let start_pos = self.token_pos();
+        if *seen_implements {
+            self.parse_error_at_current_token(
+                "implements clause already seen.",
+                diagnostic_codes::IMPLEMENTS_CLAUSE_ALREADY_SEEN,
+            );
+        }
+
+        let should_add = !*seen_implements;
+        *seen_implements = true;
+        self.next_token();
+
+        let mut types = Vec::new();
+        loop {
+            let type_ref = self.parse_heritage_type_reference();
+            types.push(type_ref);
+            if !self.parse_optional(SyntaxKind::CommaToken) {
+                break;
+            }
+        }
+
+        if !should_add {
+            return None;
+        }
+
+        let end_pos = self.token_end();
+        Some(self.arena.add_heritage(
+            syntax_kind_ext::HERITAGE_CLAUSE,
+            start_pos,
+            end_pos,
+            crate::parser::node::HeritageData {
+                token: SyntaxKind::ImplementsKeyword as u16,
+                types: self.make_node_list(types),
+            },
+        ))
     }
 
     /// Parse a heritage type reference: Foo or Foo<T> or Foo.Bar<T> or base<T>()
