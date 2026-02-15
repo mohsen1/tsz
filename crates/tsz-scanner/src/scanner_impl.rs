@@ -1987,7 +1987,6 @@ impl ScannerState {
 
     /// Scan an escape sequence in a template literal.
     /// Returns the resulting string and advances self.pos.
-    #[allow(clippy::too_many_lines)]
     fn scan_template_escape_sequence(&mut self) -> String {
         // Skip the backslash
         self.pos += 1;
@@ -2002,18 +2001,7 @@ impl ScannerState {
         self.pos += ch_len;
 
         match ch {
-            CharacterCodes::_0 => {
-                // \0 is valid only if not followed by a decimal digit
-                // \0 followed by a digit is an invalid octal escape in template literals
-                if self.pos < self.end && is_digit(self.char_code_unchecked(self.pos)) {
-                    self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
-                    // Return the raw escape sequence for tagged templates
-                    String::from("\\0")
-                } else {
-                    String::from("\0")
-                }
-            }
-            // \1 through \9 are invalid escapes in template literals (no octal allowed)
+            CharacterCodes::_0 => self.scan_template_escape_digit_zero(),
             CharacterCodes::_1
             | CharacterCodes::_2
             | CharacterCodes::_3
@@ -2022,12 +2010,7 @@ impl ScannerState {
             | CharacterCodes::_6
             | CharacterCodes::_7
             | CharacterCodes::_8
-            | CharacterCodes::_9 => {
-                self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
-                // Return the raw escape sequence for tagged templates
-                let digit = char::from_u32(ch).unwrap_or('?');
-                format!("\\{digit}")
-            }
+            | CharacterCodes::_9 => self.scan_template_escape_octal_digit(ch),
             CharacterCodes::LOWER_N => String::from("\n"),
             CharacterCodes::LOWER_R => String::from("\r"),
             CharacterCodes::LOWER_T => String::from("\t"),
@@ -2041,78 +2024,95 @@ impl ScannerState {
             CharacterCodes::DOLLAR => String::from("$"),
             CharacterCodes::LINE_FEED
             | CharacterCodes::LINE_SEPARATOR
-            | CharacterCodes::PARAGRAPH_SEPARATOR => String::new(), // Line continuation
-            CharacterCodes::CARRIAGE_RETURN => {
-                // Skip following LF if present
-                if self.pos < self.end
-                    && self.char_code_unchecked(self.pos) == CharacterCodes::LINE_FEED
-                {
-                    self.pos += 1;
-                }
-                String::new() // Line continuation
-            }
-            CharacterCodes::LOWER_X => {
-                // Hex escape \xHH
-                if self.pos + 2 <= self.end {
-                    let hex = self.substring(self.pos, self.pos + 2);
-                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                        self.pos += 2;
-                        if let Some(c) = char::from_u32(code) {
-                            return c.to_string();
-                        }
-                    }
-                }
-                self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
-                "\\x".to_string()
-            }
-            CharacterCodes::LOWER_U => {
-                // Unicode escape \uHHHH or \u{H+}
-                if self.pos < self.end
-                    && self.char_code_unchecked(self.pos) == CharacterCodes::OPEN_BRACE
-                {
-                    // \u{...}
-                    self.pos += 1;
-                    let hex_start = self.pos;
-                    while self.pos < self.end && is_hex_digit(self.char_code_unchecked(self.pos)) {
-                        self.pos += 1;
-                    }
-                    if self.pos < self.end
-                        && self.char_code_unchecked(self.pos) == CharacterCodes::CLOSE_BRACE
-                    {
-                        let hex = self.substring(hex_start, self.pos);
-                        self.pos += 1;
-                        if let Ok(code) = u32::from_str_radix(&hex, 16)
-                            && let Some(c) = char::from_u32(code)
-                        {
-                            return c.to_string();
-                        }
-                    }
-                    self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
-                    String::from("\\u")
-                } else if self.pos + 4 <= self.end {
-                    // \uHHHH
-                    let hex = self.substring(self.pos, self.pos + 4);
-                    if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                        self.pos += 4;
-                        if let Some(c) = char::from_u32(code) {
-                            return c.to_string();
-                        }
-                    }
-                    self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
-                    String::from("\\u")
-                } else {
-                    self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
-                    String::from("\\u")
+            | CharacterCodes::PARAGRAPH_SEPARATOR => String::new(),
+            CharacterCodes::CARRIAGE_RETURN => self.scan_template_escape_cr(),
+            CharacterCodes::LOWER_X => self.scan_template_hex_escape(),
+            CharacterCodes::LOWER_U => self.scan_template_unicode_escape(),
+            _ => Self::scan_template_unknown_escape(ch),
+        }
+    }
+
+    fn scan_template_escape_digit_zero(&mut self) -> String {
+        if self.pos < self.end && is_digit(self.char_code_unchecked(self.pos)) {
+            self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+            return String::from("\\0");
+        }
+        String::from("\0")
+    }
+
+    fn scan_template_escape_octal_digit(&mut self, ch: u32) -> String {
+        self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+        let digit = char::from_u32(ch).unwrap_or('?');
+        format!("\\{digit}")
+    }
+
+    fn scan_template_escape_cr(&mut self) -> String {
+        if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::LINE_FEED {
+            self.pos += 1;
+        }
+        String::new()
+    }
+
+    fn scan_template_hex_escape(&mut self) -> String {
+        if self.pos + 2 <= self.end {
+            let hex = self.substring(self.pos, self.pos + 2);
+            if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                self.pos += 2;
+                if let Some(c) = char::from_u32(code) {
+                    return c.to_string();
                 }
             }
-            _ => {
-                // Unknown escape - just return the character
-                if let Some(c) = char::from_u32(ch) {
-                    c.to_string()
-                } else {
-                    String::new()
+        }
+        self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+        "\\x".to_string()
+    }
+
+    fn scan_template_unicode_escape(&mut self) -> String {
+        if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::OPEN_BRACE {
+            return self.scan_template_brace_unicode_escape();
+        }
+
+        if self.pos + 4 <= self.end {
+            let hex = self.substring(self.pos, self.pos + 4);
+            if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                self.pos += 4;
+                if let Some(c) = char::from_u32(code) {
+                    return c.to_string();
                 }
             }
+            self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+            return String::from("\\u");
+        }
+
+        self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+        String::from("\\u")
+    }
+
+    fn scan_template_brace_unicode_escape(&mut self) -> String {
+        self.pos += 1;
+        let hex_start = self.pos;
+        while self.pos < self.end && is_hex_digit(self.char_code_unchecked(self.pos)) {
+            self.pos += 1;
+        }
+        if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::CLOSE_BRACE
+        {
+            let hex = self.substring(hex_start, self.pos);
+            self.pos += 1;
+            if let Ok(code) = u32::from_str_radix(&hex, 16)
+                && let Some(c) = char::from_u32(code)
+            {
+                return c.to_string();
+            }
+        }
+        self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+        String::from("\\u")
+    }
+
+    fn scan_template_unknown_escape(ch: u32) -> String {
+        if let Some(c) = char::from_u32(ch) {
+            c.to_string()
+        } else {
+            String::new()
         }
     }
 
