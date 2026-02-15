@@ -62,7 +62,10 @@ impl<'a> CheckerState<'a> {
     /// enclosing scope, so we need to skip past them to find the actual function that
     /// defines the `this` context.
     pub(crate) fn find_enclosing_non_arrow_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, SET_ACCESSOR,
+        };
         let mut current = idx;
         let mut iterations = 0;
         while !current.is_none() {
@@ -96,7 +99,10 @@ impl<'a> CheckerState<'a> {
     /// (FunctionDeclaration, FunctionExpression, Method, Constructor, Accessor),
     /// returns false since those have their own `arguments` binding.
     pub(crate) fn is_arguments_in_arrow_function(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, SET_ACCESSOR,
+        };
         let mut current = idx;
         let mut iterations = 0;
         while !current.is_none() {
@@ -134,7 +140,10 @@ impl<'a> CheckerState<'a> {
     /// Arrow functions don't have their own `arguments` binding, so this returns false for them.
     /// Returns false if at module/global scope (no enclosing function).
     pub(crate) fn is_in_regular_function_body(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, SET_ACCESSOR,
+        };
         let mut current = idx;
         let mut iterations = 0;
         while !current.is_none() {
@@ -174,7 +183,10 @@ impl<'a> CheckerState<'a> {
     /// an `arguments` binding is async and non-arrow. Arrow functions are excluded
     /// because they are handled by a dedicated ES5 arrow diagnostic path.
     pub(crate) fn is_arguments_in_async_non_arrow_function(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, SET_ACCESSOR,
+        };
         let mut current = idx;
         let mut iterations = 0;
         while !current.is_none() {
@@ -310,7 +322,10 @@ impl<'a> CheckerState<'a> {
     /// Used to suppress false TS2683 when `this` is contextually typed by a class
     /// or object literal but `enclosing_class` is not set on the checker context.
     pub(crate) fn this_has_contextual_owner(&self, idx: NodeIndex) -> Option<NodeIndex> {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION, PROPERTY_ASSIGNMENT, SET_ACCESSOR,
+        };
         let enclosing_fn = self.find_enclosing_non_arrow_function(idx)?;
         let fn_node = self.ctx.arena.get(enclosing_fn)?;
 
@@ -364,7 +379,10 @@ impl<'a> CheckerState<'a> {
     /// - If we reach a MODULE_DECLARATION without hitting a function boundary,
     ///   `this` is in the namespace body → return true
     pub(crate) fn is_this_in_namespace_body(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CONSTRUCTOR, DECORATOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+            GET_ACCESSOR, METHOD_DECLARATION, MODULE_DECLARATION, SET_ACCESSOR,
+        };
         let mut current = idx;
         let mut in_decorator = false;
         let mut iterations = 0;
@@ -436,7 +454,10 @@ impl<'a> CheckerState<'a> {
     ///    a derived class constructor (evaluated before super() can run)
     /// 3. `this.prop; super();` — direct constructor-body access before first super call
     pub(crate) fn is_this_before_super_in_derived_constructor(&self, idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CALL_EXPRESSION, CONSTRUCTOR, FUNCTION_DECLARATION,
+            FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION, PARAMETER, SET_ACCESSOR,
+        };
         let mut current = idx;
         let mut iterations = 0;
 
@@ -563,7 +584,10 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node is inside a constructor of a derived class.
     fn is_in_derived_class_constructor(&self, from_idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext::*;
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+            METHOD_DECLARATION,
+        };
         let mut current = from_idx;
         let mut iterations = 0;
 

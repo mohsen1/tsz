@@ -53,7 +53,7 @@
 //! var obj = Object.assign(Object.assign({}, base), { x: 1 });
 //! ```
 
-use crate::transforms::ir::*;
+use crate::transforms::ir::{IRNode, IRParam, IRProperty, IRPropertyKey, IRPropertyKind};
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};

@@ -16,7 +16,11 @@ use tsz_parser::parser::node::{IndexSignatureData, NodeArena, SignatureData, Typ
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::def::DefId;
-use tsz_solver::types::*;
+use tsz_solver::types::{
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedModifier,
+    MappedType, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan,
+    TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget, Visibility,
+};
 use tsz_solver::{QueryDatabase, SubtypeChecker, TypeDatabase, TypeResolver};
 
 /// Maximum number of type lowering operations to prevent infinite loops
