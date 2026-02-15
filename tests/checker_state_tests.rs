@@ -8277,9 +8277,10 @@ const anon = () => { return null; };
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     let count = |code| codes.iter().filter(|&&c| c == code).count();
 
-    // Current behavior: [7006, 2584, 2355, 2366, 2584, 7011]
+    // Current behavior: [7006, 2584, 2355, 2366, 2584]
     // 2584 = "Cannot find name 'console'" (test lacks full lib)
-    // 7010 is not yet emitted (missing return type with noImplicitAny)
+    // Under strictNullChecks, `return null` gives concrete `null` type, not implicit any.
+    // TSC does not emit TS7011 for `() => { return null; }` with strictNullChecks.
     assert_eq!(
         count(2355),
         1,
@@ -8300,8 +8301,8 @@ const anon = () => { return null; };
     );
     assert_eq!(
         count(7011),
-        1,
-        "Expected one 7011 error, got codes: {:?}",
+        0,
+        "Expected no TS7011 for `() => null` under strictNullChecks, got codes: {:?}",
         codes
     );
 }

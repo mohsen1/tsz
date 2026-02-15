@@ -3059,7 +3059,13 @@ impl<'a> CheckerState<'a> {
         if return_type == TypeId::VOID {
             return false;
         }
-        return_type == TypeId::ANY || self.is_null_or_undefined_only(return_type)
+        // Under strictNullChecks, null and undefined are concrete types (not implicit any).
+        // Only treat null/undefined returns as implicit any when strictNullChecks is OFF,
+        // where they widen to `any`.
+        if return_type == TypeId::ANY {
+            return true;
+        }
+        !self.ctx.strict_null_checks() && self.is_null_or_undefined_only(return_type)
     }
 
     // =========================================================================
