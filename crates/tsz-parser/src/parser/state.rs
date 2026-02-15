@@ -524,7 +524,7 @@ impl ParserState {
                     if force_emit {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
-                            &format!("'{}' expected", Self::token_to_string(kind)),
+                            &format!("'{}' expected.", Self::token_to_string(kind)),
                             diagnostic_codes::EXPECTED,
                         );
                     } else {
@@ -1148,7 +1148,7 @@ impl ParserState {
         if self.should_report_error() {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
-                &format!("'{token}' expected"),
+                &format!("'{token}' expected."),
                 diagnostic_codes::EXPECTED,
             );
         }
