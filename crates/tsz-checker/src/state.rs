@@ -815,6 +815,24 @@ impl<'a> CheckerState<'a> {
         // but get_type_of_node applies flow narrowing when returning cached identifier types
         self.ctx.node_types.insert(idx.0, result);
 
+        let should_narrow_computed = !self.ctx.skip_flow_narrowing
+            && self.ctx.arena.get(idx).is_some_and(|node| {
+                use tsz_scanner::SyntaxKind;
+                node.kind == SyntaxKind::Identifier as u16
+                    || node.kind == SyntaxKind::ThisKeyword as u16
+            });
+
+        if should_narrow_computed {
+            let narrowed = self.apply_flow_narrowing(idx, result);
+            tracing::trace!(
+                idx = idx.0,
+                type_id = result.0,
+                narrowed_type_id = narrowed.0,
+                "get_type_of_node (computed+narrowed)"
+            );
+            return narrowed;
+        }
+
         tracing::trace!(idx = idx.0, type_id = result.0, "get_type_of_node");
         result
     }

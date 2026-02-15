@@ -1129,9 +1129,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
-        let Some(_type_query) = self.ctx.arena.get_type_query(node) else {
+        let Some(type_query) = self.ctx.arena.get_type_query(node) else {
             return TypeId::ERROR;
         };
+
+        // Prefer the already-computed value-space type at this query site when available.
+        // This preserves flow-sensitive narrowing for `typeof expr` in type positions.
+        if let Some(&expr_type) = self.ctx.node_types.get(&type_query.expr_name.0)
+            && expr_type != TypeId::ERROR
+        {
+            return expr_type;
+        }
 
         // For now, delegate to TypeLowering
         // This will be expanded as we move more logic here
