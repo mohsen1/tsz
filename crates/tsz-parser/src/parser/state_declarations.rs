@@ -2628,15 +2628,12 @@ impl ParserState {
     }
 
     /// Parse switch statement
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_switch_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::SwitchKeyword);
         self.parse_expected(SyntaxKind::OpenParenToken);
 
         let expression = self.parse_expression();
-
-        // Check for missing switch expression: switch () { }
         if expression == NodeIndex::NONE {
             self.error_expression_expected();
         }
@@ -2644,111 +2641,15 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
-        // Parse case clauses
-        let mut clauses = Vec::new();
-        let mut seen_default = false;
-        while !self.is_token(SyntaxKind::CloseBraceToken)
-            && !self.is_token(SyntaxKind::EndOfFileToken)
-        {
-            if self.is_token(SyntaxKind::CaseKeyword) {
-                let clause_start = self.token_pos();
-                self.next_token();
-                let clause_expr = self.parse_expression();
-                // Emit TS1109 if the case expression is missing (e.g., `case:`)
-                if clause_expr.is_none() {
-                    self.error_expression_expected();
-                }
-                self.parse_expected(SyntaxKind::ColonToken);
-
-                let mut statements = Vec::new();
-                while !self.is_token(SyntaxKind::CaseKeyword)
-                    && !self.is_token(SyntaxKind::DefaultKeyword)
-                    && !self.is_token(SyntaxKind::CloseBraceToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                {
-                    let pos_before = self.token_pos();
-                    let stmt = self.parse_statement();
-                    if !stmt.is_none() {
-                        statements.push(stmt);
-                    }
-                    // Safety: if position didn't advance, force-skip to prevent infinite loop
-                    if self.token_pos() == pos_before {
-                        self.next_token();
-                    }
-                }
-
-                let clause_end = self.token_end();
-                clauses.push(self.arena.add_case_clause(
-                    syntax_kind_ext::CASE_CLAUSE,
-                    clause_start,
-                    clause_end,
-                    CaseClauseData {
-                        expression: clause_expr,
-                        statements: self.make_node_list(statements),
-                    },
-                ));
-            } else if self.is_token(SyntaxKind::DefaultKeyword) {
-                let clause_start = self.token_pos();
-                if seen_default {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "A 'default' clause cannot appear more than once in a 'switch' statement.",
-                        diagnostic_codes::A_DEFAULT_CLAUSE_CANNOT_APPEAR_MORE_THAN_ONCE_IN_A_SWITCH_STATEMENT,
-                    );
-                }
-                seen_default = true;
-                self.next_token();
-                self.parse_expected(SyntaxKind::ColonToken);
-
-                let mut statements = Vec::new();
-                while !self.is_token(SyntaxKind::CaseKeyword)
-                    && !self.is_token(SyntaxKind::DefaultKeyword)
-                    && !self.is_token(SyntaxKind::CloseBraceToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                {
-                    let pos_before = self.token_pos();
-                    let stmt = self.parse_statement();
-                    if !stmt.is_none() {
-                        statements.push(stmt);
-                    }
-                    // Safety: if position didn't advance, force-skip to prevent infinite loop
-                    if self.token_pos() == pos_before {
-                        self.next_token();
-                    }
-                }
-
-                let clause_end = self.token_end();
-                clauses.push(self.arena.add_case_clause(
-                    syntax_kind_ext::DEFAULT_CLAUSE,
-                    clause_start,
-                    clause_end,
-                    CaseClauseData {
-                        expression: NodeIndex::NONE,
-                        statements: self.make_node_list(statements),
-                    },
-                ));
-            } else {
-                // Unexpected token in switch body - emit error and recover
-                if self.token_pos() != self.last_error_pos {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "case or default expected.",
-                        diagnostic_codes::EXPECTED,
-                    );
-                }
-                // Skip unexpected token and continue
-                self.next_token();
-            }
-        }
+        let clauses = self.parse_switch_case_clauses();
 
         let case_block_end = self.token_end();
         self.parse_expected(SyntaxKind::CloseBraceToken);
         let end_pos = self.token_end();
 
-        // Create the case block node
         let case_block = self.arena.add_block(
             syntax_kind_ext::CASE_BLOCK,
-            start_pos, // Case block starts with the opening brace
+            start_pos,
             case_block_end,
             BlockData {
                 statements: self.make_node_list(clauses),
@@ -2765,6 +2666,102 @@ impl ParserState {
                 case_block,
             },
         )
+    }
+
+    fn parse_switch_case_clauses(&mut self) -> Vec<NodeIndex> {
+        let mut clauses = Vec::new();
+        let mut seen_default = false;
+        while !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            if self.is_token(SyntaxKind::CaseKeyword) {
+                clauses.push(self.parse_switch_case_clause());
+            } else if self.is_token(SyntaxKind::DefaultKeyword) {
+                clauses.push(self.parse_switch_default_clause(&mut seen_default));
+            } else {
+                self.parse_switch_case_recovery();
+            }
+        }
+        clauses
+    }
+
+    fn parse_switch_case_clause(&mut self) -> NodeIndex {
+        let clause_start = self.token_pos();
+        self.next_token();
+        let clause_expr = self.parse_expression();
+        if clause_expr == NodeIndex::NONE {
+            self.error_expression_expected();
+        }
+        self.parse_expected(SyntaxKind::ColonToken);
+
+        let statements = self.parse_switch_clause_statements();
+        let clause_end = self.token_end();
+        self.arena.add_case_clause(
+            syntax_kind_ext::CASE_CLAUSE,
+            clause_start,
+            clause_end,
+            CaseClauseData {
+                expression: clause_expr,
+                statements: self.make_node_list(statements),
+            },
+        )
+    }
+
+    fn parse_switch_default_clause(&mut self, seen_default: &mut bool) -> NodeIndex {
+        let clause_start = self.token_pos();
+        if *seen_default {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "A 'default' clause cannot appear more than once in a 'switch' statement.",
+                diagnostic_codes::A_DEFAULT_CLAUSE_CANNOT_APPEAR_MORE_THAN_ONCE_IN_A_SWITCH_STATEMENT,
+            );
+        }
+        *seen_default = true;
+
+        self.next_token();
+        self.parse_expected(SyntaxKind::ColonToken);
+        let statements = self.parse_switch_clause_statements();
+        let clause_end = self.token_end();
+
+        self.arena.add_case_clause(
+            syntax_kind_ext::DEFAULT_CLAUSE,
+            clause_start,
+            clause_end,
+            CaseClauseData {
+                expression: NodeIndex::NONE,
+                statements: self.make_node_list(statements),
+            },
+        )
+    }
+
+    fn parse_switch_clause_statements(&mut self) -> Vec<NodeIndex> {
+        let mut statements = Vec::new();
+        while !self.is_token(SyntaxKind::CaseKeyword)
+            && !self.is_token(SyntaxKind::DefaultKeyword)
+            && !self.is_token(SyntaxKind::CloseBraceToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            let pos_before = self.token_pos();
+            let statement = self.parse_statement();
+            if !statement.is_none() {
+                statements.push(statement);
+            }
+            if self.token_pos() == pos_before {
+                self.next_token();
+            }
+        }
+        statements
+    }
+
+    fn parse_switch_case_recovery(&mut self) {
+        if self.token_pos() != self.last_error_pos {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "case or default expected.",
+                diagnostic_codes::EXPECTED,
+            );
+        }
+        self.next_token();
     }
 
     /// Parse try statement
