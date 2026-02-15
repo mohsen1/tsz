@@ -1408,7 +1408,7 @@ impl<'a> NodeView<'a> {
     /// Create a new `NodeView`.
     #[inline]
     #[must_use]
-    pub fn new(arena: &'a NodeArena, index: NodeIndex) -> Option<NodeView<'a>> {
+    pub fn new(arena: &'a NodeArena, index: NodeIndex) -> Option<Self> {
         arena.get(index).map(|node| NodeView { node, arena, index })
     }
 
@@ -1471,7 +1471,7 @@ impl<'a> NodeView<'a> {
     /// Get a child node as a `NodeView`.
     #[inline]
     #[must_use]
-    pub fn child(&self, index: NodeIndex) -> Option<NodeView<'a>> {
+    pub fn child(&self, index: NodeIndex) -> Option<Self> {
         NodeView::new(self.arena, index)
     }
 
@@ -2417,8 +2417,8 @@ pub struct NodeInfo {
 impl NodeInfo {
     /// Create from a Node and its extended info
     #[must_use]
-    pub fn from_thin(node: &Node, ext: &ExtendedNodeInfo) -> NodeInfo {
-        NodeInfo {
+    pub fn from_thin(node: &Node, ext: &ExtendedNodeInfo) -> Self {
+        Self {
             kind: node.kind,
             flags: u32::from(node.flags),
             modifier_flags: ext.modifier_flags,

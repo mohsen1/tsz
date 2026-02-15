@@ -85,7 +85,7 @@ impl TypeResolver for IndexSignatureResolver {
 
 impl InterfaceParts {
     fn new() -> Self {
-        InterfaceParts {
+        Self {
             properties: IndexMap::new(),
             call_signatures: Vec::new(),
             construct_signatures: Vec::new(),

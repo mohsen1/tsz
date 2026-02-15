@@ -132,12 +132,12 @@ impl ParserState {
 
     /// Create a new Parser for the given source text.
     #[must_use]
-    pub fn new(file_name: String, source_text: String) -> ParserState {
+    pub fn new(file_name: String, source_text: String) -> Self {
         let estimated_nodes = source_text.len() / 20; // Rough estimate
         // Zero-copy: Pass source_text directly to scanner without cloning
         // This eliminates the 2x memory overhead from duplicating the source
         let scanner = ScannerState::new(source_text, true);
-        ParserState {
+        Self {
             scanner,
             arena: NodeArena::with_capacity(estimated_nodes),
             file_name,

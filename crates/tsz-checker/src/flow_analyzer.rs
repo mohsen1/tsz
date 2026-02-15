@@ -42,15 +42,11 @@ impl AssignmentState {
     /// - MaybeAssigned ⊓ MaybeAssigned = MaybeAssigned
     /// - MaybeAssigned ⊓ Unassigned = MaybeAssigned
     /// - Unassigned ⊓ Unassigned = Unassigned
-    fn merge(self, other: AssignmentState) -> AssignmentState {
+    fn merge(self, other: Self) -> Self {
         match (self, other) {
-            (AssignmentState::DefinitelyAssigned, AssignmentState::DefinitelyAssigned) => {
-                AssignmentState::DefinitelyAssigned
-            }
-            (AssignmentState::Unassigned, AssignmentState::Unassigned) => {
-                AssignmentState::Unassigned
-            }
-            _ => AssignmentState::MaybeAssigned,
+            (Self::DefinitelyAssigned, Self::DefinitelyAssigned) => Self::DefinitelyAssigned,
+            (Self::Unassigned, Self::Unassigned) => Self::Unassigned,
+            _ => Self::MaybeAssigned,
         }
     }
 }
@@ -92,7 +88,7 @@ impl AssignmentStateMap {
     /// Merge another state map into this one.
     ///
     /// This is used at control flow join points where multiple paths converge.
-    pub fn merge(&mut self, other: &AssignmentStateMap) {
+    pub fn merge(&mut self, other: &Self) {
         // Collect all variable IDs from both maps
         let mut all_vars: FxHashSet<u32> = self.states.keys().copied().collect();
         all_vars.extend(other.states.keys().copied());

@@ -50,7 +50,7 @@ impl Diagnostic {
     /// Create a new error diagnostic.
     #[must_use]
     pub fn error(file: String, start: u32, length: u32, message: String, code: u32) -> Self {
-        Diagnostic {
+        Self {
             file,
             start,
             length,

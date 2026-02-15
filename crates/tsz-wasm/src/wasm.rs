@@ -57,8 +57,8 @@ pub struct WasmTypeInterner {
 impl WasmTypeInterner {
     /// Create a new type interner with pre-registered intrinsics.
     #[wasm_bindgen(constructor)]
-    pub fn new() -> WasmTypeInterner {
-        WasmTypeInterner {
+    pub fn new() -> Self {
+        Self {
             inner: TypeInterner::new(),
         }
     }
@@ -105,7 +105,7 @@ pub struct WasmParseStats {
 
 impl From<ParallelStats> for WasmParseStats {
     fn from(stats: ParallelStats) -> Self {
-        WasmParseStats {
+        Self {
             file_count: stats.file_count,
             total_bytes: stats.total_bytes,
             total_nodes: stats.total_nodes,
@@ -125,7 +125,7 @@ pub struct WasmBindStats {
 
 impl From<BindStats> for WasmBindStats {
     fn from(stats: BindStats) -> Self {
-        WasmBindStats {
+        Self {
             file_count: stats.file_count,
             total_nodes: stats.total_nodes,
             total_symbols: stats.total_symbols,
@@ -144,7 +144,7 @@ pub struct WasmCheckStats {
 
 impl From<CheckStats> for WasmCheckStats {
     fn from(stats: CheckStats) -> Self {
-        WasmCheckStats {
+        Self {
             file_count: stats.file_count,
             function_count: stats.function_count,
             diagnostic_count: stats.diagnostic_count,
@@ -165,8 +165,8 @@ pub struct WasmParallelParser {
 impl WasmParallelParser {
     /// Create a new parallel parser.
     #[wasm_bindgen(constructor)]
-    pub fn new() -> WasmParallelParser {
-        WasmParallelParser { files: Vec::new() }
+    pub fn new() -> Self {
+        Self { files: Vec::new() }
     }
 
     /// Add a file to be parsed.
@@ -253,8 +253,8 @@ pub struct WasmParallelChecker {
 impl WasmParallelChecker {
     /// Create a new parallel checker.
     #[wasm_bindgen(constructor)]
-    pub fn new() -> WasmParallelChecker {
-        WasmParallelChecker { files: Vec::new() }
+    pub fn new() -> Self {
+        Self { files: Vec::new() }
     }
 
     /// Add a file to be checked.

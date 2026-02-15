@@ -59,8 +59,8 @@ impl Node {
     /// Create a new thin node with no associated data
     #[inline]
     #[must_use]
-    pub fn new(kind: u16, pos: u32, end: u32) -> Node {
-        Node {
+    pub fn new(kind: u16, pos: u32, end: u32) -> Self {
+        Self {
             kind,
             flags: 0,
             pos,
@@ -72,8 +72,8 @@ impl Node {
     /// Create a new thin node with data index
     #[inline]
     #[must_use]
-    pub fn with_data(kind: u16, pos: u32, end: u32, data_index: u32) -> Node {
-        Node {
+    pub fn with_data(kind: u16, pos: u32, end: u32, data_index: u32) -> Self {
+        Self {
             kind,
             flags: 0,
             pos,
@@ -85,8 +85,8 @@ impl Node {
     /// Create a new thin node with data index and flags
     #[inline]
     #[must_use]
-    pub fn with_data_and_flags(kind: u16, pos: u32, end: u32, data_index: u32, flags: u16) -> Node {
-        Node {
+    pub fn with_data_and_flags(kind: u16, pos: u32, end: u32, data_index: u32, flags: u16) -> Self {
+        Self {
             kind,
             flags,
             pos,
@@ -1054,7 +1054,7 @@ pub struct ExtendedNodeInfo {
 
 impl Default for ExtendedNodeInfo {
     fn default() -> Self {
-        ExtendedNodeInfo {
+        Self {
             parent: NodeIndex::NONE,
             id: 0,
             modifier_flags: 0,

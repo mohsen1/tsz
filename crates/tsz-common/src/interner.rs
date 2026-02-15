@@ -21,13 +21,13 @@ pub struct Atom(pub u32);
 
 impl Atom {
     /// A sentinel value representing no atom / empty string.
-    pub const NONE: Atom = Atom(0);
+    pub const NONE: Self = Self(0);
 
     /// Returns `Atom::NONE` - used for serde default.
     #[must_use]
     #[inline]
-    pub fn none() -> Atom {
-        Atom::NONE
+    pub fn none() -> Self {
+        Self::NONE
     }
 
     /// Check if this is the empty/none atom.
@@ -188,7 +188,7 @@ impl Interner {
     /// Create a new interner with the empty string pre-interned at index 0.
     #[must_use]
     pub fn new() -> Self {
-        let mut interner = Interner {
+        let mut interner = Self {
             map: FxHashMap::default(),
             strings: Vec::with_capacity(1024), // Pre-allocate for common case
         };
@@ -279,7 +279,7 @@ struct InternerShard {
 impl InternerShard {
     #[must_use]
     fn new() -> Self {
-        InternerShard {
+        Self {
             state: RwLock::new(ShardState::default()),
         }
     }
@@ -307,7 +307,7 @@ impl ShardedInterner {
         // Note: If lock is poisoned during initialization, we continue anyway
         // The empty string initialization is an optimization, not critical for correctness
 
-        ShardedInterner { shards }
+        Self { shards }
     }
 
     /// Intern a string, returning its Atom handle.

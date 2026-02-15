@@ -23,7 +23,7 @@ impl CommentRange {
     /// Create a new comment range.
     #[must_use]
     pub fn new(pos: u32, end: u32, is_multi_line: bool, has_trailing_new_line: bool) -> Self {
-        CommentRange {
+        Self {
             pos,
             end,
             is_multi_line,

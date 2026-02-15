@@ -2724,9 +2724,7 @@ enum MergeDefaultImport {
 impl ImportRemoval {
     fn name(&self) -> &str {
         match self {
-            ImportRemoval::Default { name }
-            | ImportRemoval::Namespace { name }
-            | ImportRemoval::Named { name, .. } => name,
+            Self::Default { name } | Self::Namespace { name } | Self::Named { name, .. } => name,
         }
     }
 }

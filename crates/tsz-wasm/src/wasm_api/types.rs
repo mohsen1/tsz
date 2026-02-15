@@ -88,8 +88,8 @@ pub struct TsType {
 impl TsType {
     /// Create a new type wrapper
     #[wasm_bindgen(constructor)]
-    pub fn new(handle: u32, flags: u32) -> TsType {
-        TsType { handle, flags }
+    pub fn new(handle: u32, flags: u32) -> Self {
+        Self { handle, flags }
     }
 
     /// Get the type handle
@@ -181,8 +181,8 @@ pub struct TsSymbol {
 impl TsSymbol {
     /// Create a new symbol wrapper
     #[wasm_bindgen(constructor)]
-    pub fn new(handle: u32, flags: u32, name: String) -> TsSymbol {
-        TsSymbol {
+    pub fn new(handle: u32, flags: u32, name: String) -> Self {
+        Self {
             handle,
             flags,
             name,
@@ -257,8 +257,8 @@ pub struct TsSignature {
 impl TsSignature {
     /// Create a new signature wrapper
     #[wasm_bindgen(constructor)]
-    pub fn new(handle: u32) -> TsSignature {
-        TsSignature {
+    pub fn new(handle: u32) -> Self {
+        Self {
             handle,
             declaration_handle: None,
         }

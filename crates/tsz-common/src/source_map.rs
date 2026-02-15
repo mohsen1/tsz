@@ -62,7 +62,7 @@ pub struct SourceMapGenerator {
 impl SourceMapGenerator {
     #[must_use]
     pub fn new(file: String) -> Self {
-        SourceMapGenerator {
+        Self {
             file,
             source_root: String::new(),
             sources: Vec::new(),

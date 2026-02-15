@@ -40,18 +40,18 @@ pub enum EnumValue {
 impl EnumValue {
     /// Check if this is a numeric value
     pub fn is_number(&self) -> bool {
-        matches!(self, EnumValue::Number(_))
+        matches!(self, Self::Number(_))
     }
 
     /// Check if this is a string value
     pub fn is_string(&self) -> bool {
-        matches!(self, EnumValue::String(_))
+        matches!(self, Self::String(_))
     }
 
     /// Get the numeric value if available
     pub fn as_number(&self) -> Option<i64> {
         match self {
-            EnumValue::Number(n) => Some(*n),
+            Self::Number(n) => Some(*n),
             _ => None,
         }
     }
@@ -59,7 +59,7 @@ impl EnumValue {
     /// Get the string value if available
     pub fn as_string(&self) -> Option<&str> {
         match self {
-            EnumValue::String(s) => Some(s),
+            Self::String(s) => Some(s),
             _ => None,
         }
     }
@@ -67,9 +67,9 @@ impl EnumValue {
     /// Convert to JavaScript literal representation
     pub fn to_js_literal(&self) -> String {
         match self {
-            EnumValue::Number(n) => n.to_string(),
-            EnumValue::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
-            EnumValue::Computed => "0 /* computed */".to_string(),
+            Self::Number(n) => n.to_string(),
+            Self::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+            Self::Computed => "0 /* computed */".to_string(),
         }
     }
 }

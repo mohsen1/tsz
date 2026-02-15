@@ -113,123 +113,123 @@ pub trait TypeDatabase {
 
 impl TypeDatabase for TypeInterner {
     fn intern(&self, key: TypeData) -> TypeId {
-        TypeInterner::intern(self, key)
+        Self::intern(self, key)
     }
 
     fn lookup(&self, id: TypeId) -> Option<TypeData> {
-        TypeInterner::lookup(self, id)
+        Self::lookup(self, id)
     }
 
     fn intern_string(&self, s: &str) -> Atom {
-        TypeInterner::intern_string(self, s)
+        Self::intern_string(self, s)
     }
 
     fn resolve_atom(&self, atom: Atom) -> String {
-        TypeInterner::resolve_atom(self, atom)
+        Self::resolve_atom(self, atom)
     }
 
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str> {
-        TypeInterner::resolve_atom_ref(self, atom)
+        Self::resolve_atom_ref(self, atom)
     }
 
     fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
-        TypeInterner::type_list(self, id)
+        Self::type_list(self, id)
     }
 
     fn tuple_list(&self, id: TupleListId) -> Arc<[TupleElement]> {
-        TypeInterner::tuple_list(self, id)
+        Self::tuple_list(self, id)
     }
 
     fn template_list(&self, id: TemplateLiteralId) -> Arc<[TemplateSpan]> {
-        TypeInterner::template_list(self, id)
+        Self::template_list(self, id)
     }
 
     fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
-        TypeInterner::object_shape(self, id)
+        Self::object_shape(self, id)
     }
 
     fn object_property_index(&self, shape_id: ObjectShapeId, name: Atom) -> PropertyLookup {
-        TypeInterner::object_property_index(self, shape_id, name)
+        Self::object_property_index(self, shape_id, name)
     }
 
     fn function_shape(&self, id: FunctionShapeId) -> Arc<FunctionShape> {
-        TypeInterner::function_shape(self, id)
+        Self::function_shape(self, id)
     }
 
     fn callable_shape(&self, id: CallableShapeId) -> Arc<CallableShape> {
-        TypeInterner::callable_shape(self, id)
+        Self::callable_shape(self, id)
     }
 
     fn conditional_type(&self, id: ConditionalTypeId) -> Arc<ConditionalType> {
-        TypeInterner::conditional_type(self, id)
+        Self::conditional_type(self, id)
     }
 
     fn mapped_type(&self, id: MappedTypeId) -> Arc<MappedType> {
-        TypeInterner::mapped_type(self, id)
+        Self::mapped_type(self, id)
     }
 
     fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
-        TypeInterner::type_application(self, id)
+        Self::type_application(self, id)
     }
 
     fn literal_string(&self, value: &str) -> TypeId {
-        TypeInterner::literal_string(self, value)
+        Self::literal_string(self, value)
     }
 
     fn literal_number(&self, value: f64) -> TypeId {
-        TypeInterner::literal_number(self, value)
+        Self::literal_number(self, value)
     }
 
     fn literal_boolean(&self, value: bool) -> TypeId {
-        TypeInterner::literal_boolean(self, value)
+        Self::literal_boolean(self, value)
     }
 
     fn literal_bigint(&self, value: &str) -> TypeId {
-        TypeInterner::literal_bigint(self, value)
+        Self::literal_bigint(self, value)
     }
 
     fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId {
-        TypeInterner::literal_bigint_with_sign(self, negative, digits)
+        Self::literal_bigint_with_sign(self, negative, digits)
     }
 
     fn union(&self, members: Vec<TypeId>) -> TypeId {
-        TypeInterner::union(self, members)
+        Self::union(self, members)
     }
 
     fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
-        TypeInterner::union2(self, left, right)
+        Self::union2(self, left, right)
     }
 
     fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId {
-        TypeInterner::union3(self, first, second, third)
+        Self::union3(self, first, second, third)
     }
 
     fn intersection(&self, members: Vec<TypeId>) -> TypeId {
-        TypeInterner::intersection(self, members)
+        Self::intersection(self, members)
     }
 
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
-        TypeInterner::intersection2(self, left, right)
+        Self::intersection2(self, left, right)
     }
 
     fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
-        TypeInterner::intersect_types_raw2(self, left, right)
+        Self::intersect_types_raw2(self, left, right)
     }
 
     fn array(&self, element: TypeId) -> TypeId {
-        TypeInterner::array(self, element)
+        Self::array(self, element)
     }
 
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
-        TypeInterner::tuple(self, elements)
+        Self::tuple(self, elements)
     }
 
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
-        TypeInterner::object(self, properties)
+        Self::object(self, properties)
     }
 
     fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId {
-        TypeInterner::object_with_flags(self, properties, flags)
+        Self::object_with_flags(self, properties, flags)
     }
 
     fn object_with_flags_and_symbol(
@@ -238,103 +238,103 @@ impl TypeDatabase for TypeInterner {
         flags: ObjectFlags,
         symbol: Option<SymbolId>,
     ) -> TypeId {
-        TypeInterner::object_with_flags_and_symbol(self, properties, flags, symbol)
+        Self::object_with_flags_and_symbol(self, properties, flags, symbol)
     }
 
     fn object_with_index(&self, shape: ObjectShape) -> TypeId {
-        TypeInterner::object_with_index(self, shape)
+        Self::object_with_index(self, shape)
     }
 
     fn function(&self, shape: FunctionShape) -> TypeId {
-        TypeInterner::function(self, shape)
+        Self::function(self, shape)
     }
 
     fn callable(&self, shape: CallableShape) -> TypeId {
-        TypeInterner::callable(self, shape)
+        Self::callable(self, shape)
     }
 
     fn template_literal(&self, spans: Vec<TemplateSpan>) -> TypeId {
-        TypeInterner::template_literal(self, spans)
+        Self::template_literal(self, spans)
     }
 
     fn conditional(&self, conditional: ConditionalType) -> TypeId {
-        TypeInterner::conditional(self, conditional)
+        Self::conditional(self, conditional)
     }
 
     fn mapped(&self, mapped: MappedType) -> TypeId {
-        TypeInterner::mapped(self, mapped)
+        Self::mapped(self, mapped)
     }
 
     fn reference(&self, symbol: SymbolRef) -> TypeId {
-        TypeInterner::reference(self, symbol)
+        Self::reference(self, symbol)
     }
 
     fn lazy(&self, def_id: DefId) -> TypeId {
-        TypeInterner::lazy(self, def_id)
+        Self::lazy(self, def_id)
     }
 
     fn bound_parameter(&self, index: u32) -> TypeId {
-        TypeInterner::bound_parameter(self, index)
+        Self::bound_parameter(self, index)
     }
 
     fn recursive(&self, depth: u32) -> TypeId {
-        TypeInterner::recursive(self, depth)
+        Self::recursive(self, depth)
     }
 
     fn type_param(&self, info: TypeParamInfo) -> TypeId {
-        TypeInterner::type_param(self, info)
+        Self::type_param(self, info)
     }
 
     fn type_query(&self, symbol: SymbolRef) -> TypeId {
-        TypeInterner::type_query(self, symbol)
+        Self::type_query(self, symbol)
     }
 
     fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
-        TypeInterner::enum_type(self, def_id, structural_type)
+        Self::enum_type(self, def_id, structural_type)
     }
 
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId {
-        TypeInterner::application(self, base, args)
+        Self::application(self, base, args)
     }
 
     fn literal_string_atom(&self, atom: Atom) -> TypeId {
-        TypeInterner::literal_string_atom(self, atom)
+        Self::literal_string_atom(self, atom)
     }
 
     fn union_preserve_members(&self, members: Vec<TypeId>) -> TypeId {
-        TypeInterner::union_preserve_members(self, members)
+        Self::union_preserve_members(self, members)
     }
 
     fn readonly_type(&self, inner: TypeId) -> TypeId {
-        TypeInterner::readonly_type(self, inner)
+        Self::readonly_type(self, inner)
     }
 
     fn keyof(&self, inner: TypeId) -> TypeId {
-        TypeInterner::keyof(self, inner)
+        Self::keyof(self, inner)
     }
 
     fn index_access(&self, object_type: TypeId, index_type: TypeId) -> TypeId {
-        TypeInterner::index_access(self, object_type, index_type)
+        Self::index_access(self, object_type, index_type)
     }
 
     fn this_type(&self) -> TypeId {
-        TypeInterner::this_type(self)
+        Self::this_type(self)
     }
 
     fn no_infer(&self, inner: TypeId) -> TypeId {
-        TypeInterner::no_infer(self, inner)
+        Self::no_infer(self, inner)
     }
 
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId {
-        TypeInterner::unique_symbol(self, symbol)
+        Self::unique_symbol(self, symbol)
     }
 
     fn infer(&self, info: TypeParamInfo) -> TypeId {
-        TypeInterner::infer(self, info)
+        Self::infer(self, info)
     }
 
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId {
-        TypeInterner::string_intrinsic(self, kind, type_arg)
+        Self::string_intrinsic(self, kind, type_arg)
     }
 
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
@@ -344,7 +344,7 @@ impl TypeDatabase for TypeInterner {
     }
 
     fn is_unit_type(&self, type_id: TypeId) -> bool {
-        TypeInterner::is_unit_type(self, type_id)
+        Self::is_unit_type(self, type_id)
     }
 }
 

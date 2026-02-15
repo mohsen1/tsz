@@ -91,10 +91,10 @@ enum PrimitiveKind {
 impl PrimitiveKind {
     fn from_literal(literal: &LiteralValue) -> Self {
         match literal {
-            LiteralValue::String(_) => PrimitiveKind::String,
-            LiteralValue::Number(_) => PrimitiveKind::Number,
-            LiteralValue::Boolean(_) => PrimitiveKind::Boolean,
-            LiteralValue::BigInt(_) => PrimitiveKind::BigInt,
+            LiteralValue::String(_) => Self::String,
+            LiteralValue::Number(_) => Self::Number,
+            LiteralValue::Boolean(_) => Self::Boolean,
+            LiteralValue::BigInt(_) => Self::BigInt,
         }
     }
 }
@@ -110,7 +110,7 @@ impl LiteralSet {
         let domain = literal_domain(&literal);
         let mut values = FxHashSet::default();
         values.insert(literal);
-        LiteralSet { domain, values }
+        Self { domain, values }
     }
 }
 
@@ -145,7 +145,7 @@ struct TypeShard {
 
 impl TypeShard {
     fn new() -> Self {
-        TypeShard {
+        Self {
             inner: OnceLock::new(),
             next_index: AtomicU32::new(0),
         }
@@ -185,7 +185,7 @@ where
     T: Eq + Hash + Clone + Send + Sync + 'static,
 {
     fn new() -> Self {
-        ConcurrentSliceInterner {
+        Self {
             inner: OnceLock::new(),
             next_id: AtomicU32::new(1), // Reserve 0 for empty
         }
@@ -265,7 +265,7 @@ where
     T: Eq + Hash + Clone + Send + Sync + 'static,
 {
     fn new() -> Self {
-        ConcurrentValueInterner {
+        Self {
             inner: OnceLock::new(),
             next_id: AtomicU32::new(0),
         }
@@ -360,7 +360,7 @@ impl TypeInterner {
     pub fn new() -> Self {
         let shards: Vec<TypeShard> = (0..SHARD_COUNT).map(|_| TypeShard::new()).collect();
 
-        TypeInterner {
+        Self {
             shards,
             // String interner - common strings are interned on-demand for faster startup
             string_interner: ShardedInterner::new(),

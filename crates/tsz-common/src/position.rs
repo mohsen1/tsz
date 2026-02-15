@@ -15,7 +15,7 @@ pub struct Position {
 impl Position {
     #[must_use]
     pub fn new(line: u32, character: u32) -> Self {
-        Position { line, character }
+        Self { line, character }
     }
 }
 
@@ -29,7 +29,7 @@ pub struct Range {
 impl Range {
     #[must_use]
     pub fn new(start: Position, end: Position) -> Self {
-        Range { start, end }
+        Self { start, end }
     }
 }
 
@@ -44,7 +44,7 @@ pub struct Location {
 impl Location {
     #[must_use]
     pub fn new(file_path: String, range: Range) -> Self {
-        Location { file_path, range }
+        Self { file_path, range }
     }
 }
 
@@ -62,7 +62,7 @@ pub struct SourceLocation {
 impl SourceLocation {
     #[must_use]
     pub fn new(offset: u32, line: u32, character: u32) -> Self {
-        SourceLocation {
+        Self {
             offset,
             line,
             character,
@@ -99,7 +99,7 @@ impl LineMap {
             }
         }
 
-        LineMap { line_starts }
+        Self { line_starts }
     }
 
     /// Convert a byte offset to a Position (line, character).

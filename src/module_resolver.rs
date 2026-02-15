@@ -146,64 +146,58 @@ impl ModuleExtension {
 
         // Check compound extensions first
         if path_str.ends_with(".d.ts") {
-            return ModuleExtension::Dts;
+            return Self::Dts;
         }
         if path_str.ends_with(".d.mts") {
-            return ModuleExtension::DmTs;
+            return Self::DmTs;
         }
         if path_str.ends_with(".d.cts") {
-            return ModuleExtension::DCts;
+            return Self::DCts;
         }
 
         match path.extension().and_then(|e| e.to_str()) {
-            Some("ts") => ModuleExtension::Ts,
-            Some("tsx") => ModuleExtension::Tsx,
-            Some("js") => ModuleExtension::Js,
-            Some("jsx") => ModuleExtension::Jsx,
-            Some("mjs") => ModuleExtension::Mjs,
-            Some("cjs") => ModuleExtension::Cjs,
-            Some("mts") => ModuleExtension::Mts,
-            Some("cts") => ModuleExtension::Cts,
-            Some("json") => ModuleExtension::Json,
-            _ => ModuleExtension::Unknown,
+            Some("ts") => Self::Ts,
+            Some("tsx") => Self::Tsx,
+            Some("js") => Self::Js,
+            Some("jsx") => Self::Jsx,
+            Some("mjs") => Self::Mjs,
+            Some("cjs") => Self::Cjs,
+            Some("mts") => Self::Mts,
+            Some("cts") => Self::Cts,
+            Some("json") => Self::Json,
+            _ => Self::Unknown,
         }
     }
 
     /// Get the extension string
     pub fn as_str(&self) -> &'static str {
         match self {
-            ModuleExtension::Ts => ".ts",
-            ModuleExtension::Tsx => ".tsx",
-            ModuleExtension::Dts => ".d.ts",
-            ModuleExtension::DmTs => ".d.mts",
-            ModuleExtension::DCts => ".d.cts",
-            ModuleExtension::Js => ".js",
-            ModuleExtension::Jsx => ".jsx",
-            ModuleExtension::Mjs => ".mjs",
-            ModuleExtension::Cjs => ".cjs",
-            ModuleExtension::Mts => ".mts",
-            ModuleExtension::Cts => ".cts",
-            ModuleExtension::Json => ".json",
-            ModuleExtension::Unknown => "",
+            Self::Ts => ".ts",
+            Self::Tsx => ".tsx",
+            Self::Dts => ".d.ts",
+            Self::DmTs => ".d.mts",
+            Self::DCts => ".d.cts",
+            Self::Js => ".js",
+            Self::Jsx => ".jsx",
+            Self::Mjs => ".mjs",
+            Self::Cjs => ".cjs",
+            Self::Mts => ".mts",
+            Self::Cts => ".cts",
+            Self::Json => ".json",
+            Self::Unknown => "",
         }
     }
 
     /// Check if this extension forces ESM mode
     /// .mts, .mjs, .d.mts files are always ESM
     pub fn forces_esm(&self) -> bool {
-        matches!(
-            self,
-            ModuleExtension::Mts | ModuleExtension::Mjs | ModuleExtension::DmTs
-        )
+        matches!(self, Self::Mts | Self::Mjs | Self::DmTs)
     }
 
     /// Check if this extension forces CommonJS mode
     /// .cts, .cjs, .d.cts files are always CommonJS
     pub fn forces_cjs(&self) -> bool {
-        matches!(
-            self,
-            ModuleExtension::Cts | ModuleExtension::Cjs | ModuleExtension::DCts
-        )
+        matches!(self, Self::Cts | Self::Cjs | Self::DCts)
     }
 }
 
@@ -334,7 +328,7 @@ impl ResolutionFailure {
     /// "Cannot find module '{specifier}' or its corresponding type declarations."
     pub fn to_diagnostic(&self) -> Diagnostic {
         match self {
-            ResolutionFailure::NotFound {
+            Self::NotFound {
                 specifier,
                 containing_file,
                 span,
@@ -347,7 +341,7 @@ impl ResolutionFailure {
                 ),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::InvalidSpecifier {
+            Self::InvalidSpecifier {
                 message,
                 containing_file,
                 span,
@@ -360,7 +354,7 @@ impl ResolutionFailure {
                 ),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::PackageJsonError {
+            Self::PackageJsonError {
                 message,
                 containing_file,
                 span,
@@ -373,7 +367,7 @@ impl ResolutionFailure {
                 ),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::CircularResolution {
+            Self::CircularResolution {
                 message,
                 containing_file,
                 span,
@@ -386,7 +380,7 @@ impl ResolutionFailure {
                 ),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::PathMappingFailed {
+            Self::PathMappingFailed {
                 message,
                 containing_file,
                 span,
@@ -399,7 +393,7 @@ impl ResolutionFailure {
                 ),
                 CANNOT_FIND_MODULE,
             ),
-            ResolutionFailure::ImportPathNeedsExtension {
+            Self::ImportPathNeedsExtension {
                 specifier,
                 suggested_extension,
                 containing_file,
@@ -426,7 +420,7 @@ impl ResolutionFailure {
                     )
                 }
             }
-            ResolutionFailure::ImportingTsExtensionNotAllowed {
+            Self::ImportingTsExtensionNotAllowed {
                 extension,
                 containing_file,
                 span,
@@ -439,7 +433,7 @@ impl ResolutionFailure {
                 ),
                 IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED,
             ),
-            ResolutionFailure::JsxNotEnabled {
+            Self::JsxNotEnabled {
                 specifier,
                 resolved_path,
                 containing_file,
@@ -454,7 +448,7 @@ impl ResolutionFailure {
                 ),
                 MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET,
             ),
-            ResolutionFailure::ModuleResolutionModeMismatch {
+            Self::ModuleResolutionModeMismatch {
                 specifier,
                 containing_file,
                 span,
@@ -467,7 +461,7 @@ impl ResolutionFailure {
                 ),
                 MODULE_RESOLUTION_MODE_MISMATCH,
             ),
-            ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+            Self::JsonModuleWithoutResolveJsonModule {
                 specifier,
                 containing_file,
                 span,
@@ -486,34 +480,34 @@ impl ResolutionFailure {
     /// Get the containing file for this resolution failure
     pub fn containing_file(&self) -> &str {
         match self {
-            ResolutionFailure::NotFound {
+            Self::NotFound {
                 containing_file, ..
             }
-            | ResolutionFailure::InvalidSpecifier {
+            | Self::InvalidSpecifier {
                 containing_file, ..
             }
-            | ResolutionFailure::PackageJsonError {
+            | Self::PackageJsonError {
                 containing_file, ..
             }
-            | ResolutionFailure::CircularResolution {
+            | Self::CircularResolution {
                 containing_file, ..
             }
-            | ResolutionFailure::PathMappingFailed {
+            | Self::PathMappingFailed {
                 containing_file, ..
             }
-            | ResolutionFailure::ImportPathNeedsExtension {
+            | Self::ImportPathNeedsExtension {
                 containing_file, ..
             }
-            | ResolutionFailure::ImportingTsExtensionNotAllowed {
+            | Self::ImportingTsExtensionNotAllowed {
                 containing_file, ..
             }
-            | ResolutionFailure::JsxNotEnabled {
+            | Self::JsxNotEnabled {
                 containing_file, ..
             }
-            | ResolutionFailure::ModuleResolutionModeMismatch {
+            | Self::ModuleResolutionModeMismatch {
                 containing_file, ..
             }
-            | ResolutionFailure::JsonModuleWithoutResolveJsonModule {
+            | Self::JsonModuleWithoutResolveJsonModule {
                 containing_file, ..
             } => containing_file,
         }
@@ -522,22 +516,22 @@ impl ResolutionFailure {
     /// Get the span for this resolution failure
     pub fn span(&self) -> Span {
         match self {
-            ResolutionFailure::NotFound { span, .. }
-            | ResolutionFailure::InvalidSpecifier { span, .. }
-            | ResolutionFailure::PackageJsonError { span, .. }
-            | ResolutionFailure::CircularResolution { span, .. }
-            | ResolutionFailure::PathMappingFailed { span, .. }
-            | ResolutionFailure::ImportPathNeedsExtension { span, .. }
-            | ResolutionFailure::ImportingTsExtensionNotAllowed { span, .. }
-            | ResolutionFailure::JsxNotEnabled { span, .. }
-            | ResolutionFailure::ModuleResolutionModeMismatch { span, .. }
-            | ResolutionFailure::JsonModuleWithoutResolveJsonModule { span, .. } => *span,
+            Self::NotFound { span, .. }
+            | Self::InvalidSpecifier { span, .. }
+            | Self::PackageJsonError { span, .. }
+            | Self::CircularResolution { span, .. }
+            | Self::PathMappingFailed { span, .. }
+            | Self::ImportPathNeedsExtension { span, .. }
+            | Self::ImportingTsExtensionNotAllowed { span, .. }
+            | Self::JsxNotEnabled { span, .. }
+            | Self::ModuleResolutionModeMismatch { span, .. }
+            | Self::JsonModuleWithoutResolveJsonModule { span, .. } => *span,
         }
     }
 
     /// Check if this is a NotFound error
     pub fn is_not_found(&self) -> bool {
-        matches!(self, ResolutionFailure::NotFound { .. })
+        matches!(self, Self::NotFound { .. })
     }
 }
 
@@ -588,7 +582,7 @@ impl ModuleResolver {
             options.module_suffixes.clone()
         };
 
-        ModuleResolver {
+        Self {
             resolution_kind,
             base_url: options.base_url.clone(),
             path_mappings: options.paths.clone().unwrap_or_default(),
@@ -611,7 +605,7 @@ impl ModuleResolver {
 
     /// Create a resolver with default Node resolution
     pub fn node_resolver() -> Self {
-        ModuleResolver {
+        Self {
             resolution_kind: ModuleResolutionKind::Node,
             base_url: None,
             path_mappings: Vec::new(),
@@ -2494,7 +2488,7 @@ struct SemVer {
 }
 
 impl SemVer {
-    const ZERO: SemVer = SemVer {
+    const ZERO: Self = Self {
         major: 0,
         minor: 0,
         patch: 0,
@@ -2669,8 +2663,8 @@ pub struct PackageJson {
 #[derive(Debug, Clone)]
 pub enum PackageExports {
     String(String),
-    Map(FxHashMap<String, PackageExports>),
-    Conditional(Vec<(String, PackageExports)>),
+    Map(FxHashMap<String, Self>),
+    Conditional(Vec<(String, Self)>),
     /// null in JSON — indicates an explicitly blocked export
     Null,
 }

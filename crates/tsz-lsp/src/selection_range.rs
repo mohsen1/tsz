@@ -19,7 +19,7 @@ pub struct SelectionRange {
     pub range: Range,
     /// The parent selection range (one level up).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent: Option<Box<SelectionRange>>,
+    pub parent: Option<Box<Self>>,
 }
 
 impl SelectionRange {
@@ -32,7 +32,7 @@ impl SelectionRange {
     }
 
     /// Create a selection range with a parent.
-    pub fn with_parent(range: Range, parent: SelectionRange) -> Self {
+    pub fn with_parent(range: Range, parent: Self) -> Self {
         Self {
             range,
             parent: Some(Box::new(parent)),

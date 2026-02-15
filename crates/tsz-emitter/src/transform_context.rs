@@ -98,7 +98,7 @@ pub enum TransformDirective {
         /// Whether this is a default export
         is_default: bool,
         /// The inner directive to apply first
-        inner: Box<TransformDirective>,
+        inner: Box<Self>,
     },
 
     /// CommonJS default export for anonymous class/function declarations.
@@ -313,7 +313,7 @@ pub enum TransformDirective {
 
     /// Chain multiple transforms (composition)
     /// Transforms are applied in order.
-    Chain(Vec<TransformDirective>),
+    Chain(Vec<Self>),
 }
 
 /// Module formats that require wrapping transforms
@@ -345,7 +345,7 @@ pub struct TransformContext {
 impl TransformContext {
     /// Create a new empty transform context
     pub fn new() -> Self {
-        TransformContext {
+        Self {
             directives: FxHashMap::default(),
             helpers: HelpersNeeded::default(),
             helpers_populated: false,

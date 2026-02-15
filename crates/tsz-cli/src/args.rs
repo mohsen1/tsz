@@ -715,19 +715,19 @@ pub enum Target {
 impl Target {
     pub fn to_script_target(self) -> ScriptTarget {
         match self {
-            Target::Es3 => ScriptTarget::ES3,
-            Target::Es5 => ScriptTarget::ES5,
-            Target::Es2015 => ScriptTarget::ES2015,
-            Target::Es2016 => ScriptTarget::ES2016,
-            Target::Es2017 => ScriptTarget::ES2017,
-            Target::Es2018 => ScriptTarget::ES2018,
-            Target::Es2019 => ScriptTarget::ES2019,
-            Target::Es2020 => ScriptTarget::ES2020,
-            Target::Es2021 => ScriptTarget::ES2021,
-            Target::Es2022 => ScriptTarget::ES2022,
-            Target::Es2023 => ScriptTarget::ES2022, // Map to ES2022 until ES2023 support is added
-            Target::Es2024 => ScriptTarget::ES2022, // Map to ES2022 until ES2024 support is added
-            Target::EsNext => ScriptTarget::ESNext,
+            Self::Es3 => ScriptTarget::ES3,
+            Self::Es5 => ScriptTarget::ES5,
+            Self::Es2015 => ScriptTarget::ES2015,
+            Self::Es2016 => ScriptTarget::ES2016,
+            Self::Es2017 => ScriptTarget::ES2017,
+            Self::Es2018 => ScriptTarget::ES2018,
+            Self::Es2019 => ScriptTarget::ES2019,
+            Self::Es2020 => ScriptTarget::ES2020,
+            Self::Es2021 => ScriptTarget::ES2021,
+            Self::Es2022 => ScriptTarget::ES2022,
+            Self::Es2023 => ScriptTarget::ES2022, // Map to ES2022 until ES2023 support is added
+            Self::Es2024 => ScriptTarget::ES2022, // Map to ES2022 until ES2024 support is added
+            Self::EsNext => ScriptTarget::ESNext,
         }
     }
 }
@@ -761,20 +761,20 @@ pub enum Module {
 impl Module {
     pub fn to_module_kind(self) -> ModuleKind {
         match self {
-            Module::None => ModuleKind::None,
-            Module::CommonJs => ModuleKind::CommonJS,
-            Module::Amd => ModuleKind::AMD,
-            Module::Umd => ModuleKind::UMD,
-            Module::System => ModuleKind::System,
-            Module::Es2015 => ModuleKind::ES2015,
-            Module::Es2020 => ModuleKind::ES2020,
-            Module::Es2022 => ModuleKind::ES2022,
-            Module::EsNext => ModuleKind::ESNext,
-            Module::Node16 => ModuleKind::Node16,
-            Module::Node18 => ModuleKind::Node16, // Map to Node16 until separate support
-            Module::Node20 => ModuleKind::Node16, // Map to Node16 until separate support
-            Module::NodeNext => ModuleKind::NodeNext,
-            Module::Preserve => ModuleKind::ESNext, // Map to ESNext for preserve mode
+            Self::None => ModuleKind::None,
+            Self::CommonJs => ModuleKind::CommonJS,
+            Self::Amd => ModuleKind::AMD,
+            Self::Umd => ModuleKind::UMD,
+            Self::System => ModuleKind::System,
+            Self::Es2015 => ModuleKind::ES2015,
+            Self::Es2020 => ModuleKind::ES2020,
+            Self::Es2022 => ModuleKind::ES2022,
+            Self::EsNext => ModuleKind::ESNext,
+            Self::Node16 => ModuleKind::Node16,
+            Self::Node18 => ModuleKind::Node16, // Map to Node16 until separate support
+            Self::Node20 => ModuleKind::Node16, // Map to Node16 until separate support
+            Self::NodeNext => ModuleKind::NodeNext,
+            Self::Preserve => ModuleKind::ESNext, // Map to ESNext for preserve mode
         }
     }
 }
@@ -815,11 +815,11 @@ pub enum ModuleResolution {
 impl ModuleResolution {
     pub fn to_module_resolution_kind(self) -> ModuleResolutionKind {
         match self {
-            ModuleResolution::Classic => ModuleResolutionKind::Classic,
-            ModuleResolution::Node10 => ModuleResolutionKind::Node,
-            ModuleResolution::Node16 => ModuleResolutionKind::Node16,
-            ModuleResolution::NodeNext => ModuleResolutionKind::NodeNext,
-            ModuleResolution::Bundler => ModuleResolutionKind::Bundler,
+            Self::Classic => ModuleResolutionKind::Classic,
+            Self::Node10 => ModuleResolutionKind::Node,
+            Self::Node16 => ModuleResolutionKind::Node16,
+            Self::NodeNext => ModuleResolutionKind::NodeNext,
+            Self::Bundler => ModuleResolutionKind::Bundler,
         }
     }
 }

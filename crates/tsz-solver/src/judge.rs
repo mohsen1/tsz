@@ -190,7 +190,7 @@ pub struct JudgeConfig {
 
 impl Default for JudgeConfig {
     fn default() -> Self {
-        JudgeConfig {
+        Self {
             strict_null_checks: true,
             strict_function_types: true,
             exact_optional_property_types: false,

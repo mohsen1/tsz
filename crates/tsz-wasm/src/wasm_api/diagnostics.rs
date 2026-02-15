@@ -42,8 +42,8 @@ impl TsDiagnostic {
         message_text: String,
         category: DiagnosticCategory,
         code: u32,
-    ) -> TsDiagnostic {
-        TsDiagnostic {
+    ) -> Self {
+        Self {
             file_name,
             start,
             length,

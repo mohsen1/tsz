@@ -58,11 +58,11 @@ pub enum SubtypeResult {
 
 impl SubtypeResult {
     pub fn is_true(self) -> bool {
-        matches!(self, SubtypeResult::True | SubtypeResult::CycleDetected)
+        matches!(self, Self::True | Self::CycleDetected)
     }
 
     pub fn is_false(self) -> bool {
-        matches!(self, SubtypeResult::False)
+        matches!(self, Self::False)
     }
 }
 
@@ -95,8 +95,8 @@ impl AnyPropagationMode {
     #[inline]
     fn allows_any_at_depth(self, depth: u32) -> bool {
         match self {
-            AnyPropagationMode::All => true,
-            AnyPropagationMode::TopLevelOnly => depth == 0,
+            Self::All => true,
+            Self::TopLevelOnly => depth == 0,
         }
     }
 }
@@ -432,7 +432,7 @@ pub struct TypeEnvironment {
 
 impl TypeEnvironment {
     pub fn new() -> Self {
-        TypeEnvironment {
+        Self {
             types: FxHashMap::default(),
             type_params: FxHashMap::default(),
             boxed_types: FxHashMap::default(),
@@ -581,7 +581,7 @@ impl TypeEnvironment {
 
     /// Merge def entries (types and type params) from this environment into another.
     /// Used to propagate cross-file type alias information from child to parent checker.
-    pub fn merge_defs_into(&self, target: &mut TypeEnvironment) {
+    pub fn merge_defs_into(&self, target: &mut Self) {
         for (&key, &type_id) in &self.def_types {
             target.def_types.entry(key).or_insert(type_id);
         }
@@ -680,19 +680,19 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
-        TypeEnvironment::get_boxed_type(self, kind)
+        Self::get_boxed_type(self, kind)
     }
 
     fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
-        TypeEnvironment::is_boxed_def_id(self, def_id, kind)
+        Self::is_boxed_def_id(self, def_id, kind)
     }
 
     fn get_array_base_type(&self) -> Option<TypeId> {
-        TypeEnvironment::get_array_base_type(self)
+        Self::get_array_base_type(self)
     }
 
     fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
-        TypeEnvironment::get_array_base_type_params(self)
+        Self::get_array_base_type_params(self)
     }
 
     fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
@@ -704,15 +704,15 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
-        TypeEnvironment::get_def_kind(self, def_id)
+        Self::get_def_kind(self, def_id)
     }
 
     fn is_numeric_enum(&self, def_id: DefId) -> bool {
-        TypeEnvironment::is_numeric_enum(self, def_id)
+        Self::is_numeric_enum(self, def_id)
     }
 
     fn get_enum_parent_def_id(&self, member_def_id: DefId) -> Option<DefId> {
-        TypeEnvironment::get_enum_parent(self, member_def_id)
+        Self::get_enum_parent(self, member_def_id)
     }
 
     fn is_user_enum_def(&self, _def_id: DefId) -> bool {
@@ -1463,7 +1463,7 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
 
 impl<'a> SubtypeChecker<'a, NoopResolver> {
     /// Create a new SubtypeChecker without a resolver (basic mode).
-    pub fn new(interner: &'a dyn TypeDatabase) -> SubtypeChecker<'a, NoopResolver> {
+    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         static NOOP: NoopResolver = NoopResolver;
         SubtypeChecker {
             interner,
