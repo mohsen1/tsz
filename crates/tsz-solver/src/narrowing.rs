@@ -558,14 +558,8 @@ impl<'a> NarrowingContext<'a> {
             let resolved_member = self.resolve_type(member);
 
             // Handle Intersection types: check all intersection members for the property
-            let intersection_members =
-                if let Some(members_id) = intersection_list_id(self.db, resolved_member) {
-                    // Intersection type: check all members
-                    Some(self.db.type_list(members_id).to_vec())
-                } else {
-                    // Not an intersection: treat as single member
-                    None
-                };
+            let intersection_members = intersection_list_id(self.db, resolved_member)
+                .map(|members_id| self.db.type_list(members_id).to_vec());
 
             // Helper function to check if a type has a matching property at the path
             let check_member_for_property = |check_type_id: TypeId| -> bool {
@@ -706,14 +700,8 @@ impl<'a> NarrowingContext<'a> {
             let resolved_member = self.resolve_type(member);
 
             // Handle Intersection types: check all intersection members for the property
-            let intersection_members =
-                if let Some(members_id) = intersection_list_id(self.db, resolved_member) {
-                    // Intersection type: check all members
-                    Some(self.db.type_list(members_id).to_vec())
-                } else {
-                    // Not an intersection: treat as single member
-                    None
-                };
+            let intersection_members = intersection_list_id(self.db, resolved_member)
+                .map(|members_id| self.db.type_list(members_id).to_vec());
 
             // Helper function to check if a member should be excluded
             // Returns true if member should be KEPT (not excluded)
