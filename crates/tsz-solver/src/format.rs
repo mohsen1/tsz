@@ -73,10 +73,11 @@ impl<'a> TypeFormatter<'a> {
 
     fn atom(&mut self, atom: Atom) -> Arc<str> {
         if let Some(value) = self.atom_cache.get(&atom) {
-            return value.clone();
+            return std::sync::Arc::clone(value);
         }
         let resolved = self.interner.resolve_atom_ref(atom);
-        self.atom_cache.insert(atom, resolved.clone());
+        self.atom_cache
+            .insert(atom, std::sync::Arc::clone(&resolved));
         resolved
     }
 

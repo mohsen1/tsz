@@ -1814,26 +1814,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             literal_value(self.interner, a),
             intrinsic_kind(self.interner, b),
         ) {
-            return match (a_lit, b_kind) {
-                (LiteralValue::String(_), IntrinsicKind::String) => true,
-                (LiteralValue::Number(_), IntrinsicKind::Number) => true,
-                (LiteralValue::BigInt(_), IntrinsicKind::Bigint) => true,
-                (LiteralValue::Boolean(_), IntrinsicKind::Boolean) => true,
-                _ => false,
-            };
+            return matches!(
+                (a_lit, b_kind),
+                (LiteralValue::String(_), IntrinsicKind::String)
+                    | (LiteralValue::Number(_), IntrinsicKind::Number)
+                    | (LiteralValue::BigInt(_), IntrinsicKind::Bigint)
+                    | (LiteralValue::Boolean(_), IntrinsicKind::Boolean)
+            );
         }
 
         if let (Some(a_kind), Some(b_lit)) = (
             intrinsic_kind(self.interner, a),
             literal_value(self.interner, b),
         ) {
-            return match (a_kind, b_lit) {
-                (IntrinsicKind::String, LiteralValue::String(_)) => true,
-                (IntrinsicKind::Number, LiteralValue::Number(_)) => true,
-                (IntrinsicKind::Bigint, LiteralValue::BigInt(_)) => true,
-                (IntrinsicKind::Boolean, LiteralValue::Boolean(_)) => true,
-                _ => false,
-            };
+            return matches!(
+                (a_kind, b_lit),
+                (IntrinsicKind::String, LiteralValue::String(_))
+                    | (IntrinsicKind::Number, LiteralValue::Number(_))
+                    | (IntrinsicKind::Bigint, LiteralValue::BigInt(_))
+                    | (IntrinsicKind::Boolean, LiteralValue::Boolean(_))
+            );
         }
 
         false
