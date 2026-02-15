@@ -113,6 +113,22 @@ fn content_appears_binary(content: &str) -> bool {
         return true;
     }
 
+    let control_count = check_slice
+        .chars()
+        .filter(|&ch| {
+            let code = ch as u32;
+            code <= 0x1f
+                && code != 0x09
+                && code != 0x0A
+                && code != 0x0D
+                && code != 0x0B
+                && code != 0x0C
+        })
+        .count();
+    if control_count >= 4 {
+        return true;
+    }
+
     false
 }
 
