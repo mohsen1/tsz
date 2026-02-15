@@ -550,7 +550,11 @@ impl<'a> CheckerState<'a> {
             "check_index_signature_parameter_type: validation result"
         );
 
-        if !is_valid {
+        // Suppress TS1268 when the parameter already has grammar errors (rest/optional)
+        // — tsc doesn't report invalid param types on already-malformed index signatures.
+        let has_param_grammar_error = param_data.dot_dot_dot_token || param_data.question_token;
+
+        if !is_valid && !has_param_grammar_error {
             self.error_at_node(
                 param_idx,
                 diagnostic_messages::AN_INDEX_SIGNATURE_PARAMETER_TYPE_MUST_BE_STRING_NUMBER_SYMBOL_OR_A_TEMPLATE_LIT,

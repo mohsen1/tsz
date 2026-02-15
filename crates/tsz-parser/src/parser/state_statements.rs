@@ -3913,6 +3913,9 @@ impl ParserState {
 
     /// Look ahead to see if this is an index signature: [key: Type]: `ValueType`
     /// vs a computed property: [expr]: Type or [computed]()
+    ///
+    /// Matches tsc's `isUnambiguouslyIndexSignature`. Recognizes:
+    ///   [id:    [id,    [id?:    [id?,    [id?]    [...    [modifier id
     pub(crate) fn look_ahead_is_index_signature(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -3920,12 +3923,27 @@ impl ParserState {
         // Skip '['
         self.next_token();
 
-        // Check for identifier followed by ':'
-        let is_index_sig = if self.is_identifier_or_keyword() {
-            self.next_token();
-            self.is_token(SyntaxKind::ColonToken)
-        } else {
+        // `[...` — unambiguously index signature (malformed rest param).
+        // Note: we do NOT match `[]` (CloseBracketToken) here because `[]` is used
+        // for empty tuple types in type contexts (e.g., `unknown[] | []`).
+        let is_index_sig = if self.is_token(SyntaxKind::DotDotDotToken) {
+            true
+        } else if !self.is_identifier_or_keyword() {
             false
+        } else {
+            self.next_token();
+            if self.is_token(SyntaxKind::ColonToken) || self.is_token(SyntaxKind::CommaToken) {
+                // `[id:` or `[id,`
+                true
+            } else if self.is_token(SyntaxKind::QuestionToken) {
+                // `[id?` — check what follows: `:`, `,`, or `]` means index signature
+                self.next_token();
+                self.is_token(SyntaxKind::ColonToken)
+                    || self.is_token(SyntaxKind::CommaToken)
+                    || self.is_token(SyntaxKind::CloseBracketToken)
+            } else {
+                false
+            }
         };
 
         self.scanner.restore_state(snapshot);
@@ -3983,5 +4001,36 @@ mod tests {
         let sf = parser.get_arena().get_source_file_at(root).unwrap();
 
         assert!(!sf.statements.nodes.is_empty());
+    }
+
+    #[test]
+    fn parse_index_signature_optional_param_emits_ts1019() {
+        let (parser, _root) = parse_source("interface Foo { [p2?: string]; }");
+        let diags = parser.get_diagnostics();
+        let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+        // Should emit TS1019 (optional param in index sig), NOT TS1109 (expression expected)
+        assert!(
+            codes.contains(&1019),
+            "Expected TS1019, got codes: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&1109),
+            "Should NOT emit TS1109, got codes: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn parse_index_signature_rest_param_emits_ts1017() {
+        let (parser, _root) = parse_source("interface Foo { [...p3: any[]]; }");
+        let diags = parser.get_diagnostics();
+        let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1017),
+            "Expected TS1017, got codes: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&1109),
+            "Should NOT emit TS1109, got codes: {codes:?}"
+        );
     }
 }

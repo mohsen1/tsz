@@ -240,12 +240,15 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
+                // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
+                let has_param_grammar_error =
+                    param_data.dot_dot_dot_token || param_data.question_token;
                 let is_valid_index_type = key_type == TypeId::STRING
                     || key_type == TypeId::NUMBER
                     || key_type == TypeId::SYMBOL
                     || is_template_literal_type(self.ctx.types, key_type);
 
-                if !is_valid_index_type {
+                if !is_valid_index_type && !has_param_grammar_error {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         param_idx,
