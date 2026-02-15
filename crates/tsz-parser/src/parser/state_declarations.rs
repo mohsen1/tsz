@@ -2835,20 +2835,20 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ThrowKeyword);
 
         // TypeScript requires an expression after throw
-        // If there's a line break immediately after throw, emit TS1109 (EXPRESSION_EXPECTED)
+        // If there's a line break immediately after throw, emit TS1142
         let expression = if self.scanner.has_preceding_line_break()
             && !self.is_token(SyntaxKind::SemicolonToken)
             && !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
-            // Line break after throw without semicolon/brace/EOF - emit error
-            let start = self.token_pos();
-            let end = self.token_end();
+            // Line break after throw - TS1142: Line break not permitted here
+            // The error position should be at the end of the `throw` keyword
+            let throw_end = start_pos + 5; // "throw" is 5 chars
             self.parse_error_at(
-                start,
-                end - start,
-                "Expression expected",
-                diagnostic_codes::EXPRESSION_EXPECTED,
+                throw_end,
+                0,
+                "Line break not permitted here.",
+                diagnostic_codes::LINE_BREAK_NOT_PERMITTED_HERE,
             );
             NodeIndex::NONE
         } else if self.is_token(SyntaxKind::SemicolonToken)
