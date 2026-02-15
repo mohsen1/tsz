@@ -196,21 +196,15 @@ impl Default for AnyPropagationRules {
     }
 }
 
-// =============================================================================
-// TypeScript Quirks Summary
-// =============================================================================
-
 #[cfg(test)]
 /// Summary of TypeScript quirks handled by the Lawyer layer.
 ///
-/// This struct provides documentation and helper methods for understanding
-/// and configuring the various TypeScript compatibility behaviors.
-#[allow(dead_code)]
+/// Kept as a test-visible contract for parity regression coverage.
 pub struct TypeScriptQuirks;
 
 #[cfg(test)]
 impl TypeScriptQuirks {
-    /// List of all TypeScript quirks handled by the Lawyer layer.
+    /// List of TypeScript quirks handled by the Lawyer layer.
     pub const QUIRKS: &'static [(&'static str, &'static str)] = &[
         (
             "any-propagation",

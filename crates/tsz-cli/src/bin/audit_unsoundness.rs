@@ -78,7 +78,7 @@ fn main() {
                 2 => ImplementationPhase::Phase2,
                 3 => ImplementationPhase::Phase3,
                 4 => ImplementationPhase::Phase4,
-                _ => unreachable!(),
+                _ => panic!("internal error: parsed phase must be between 1 and 4"),
             };
 
             println!("# Phase {} Rules: {}\n", phase_num, phase);
@@ -126,7 +126,7 @@ fn main() {
                 "partial" => "Partially Implemented",
                 "missing" => "Not Implemented",
                 "blocked" => "Blocked",
-                _ => unreachable!(),
+                _ => panic!("internal error: unsupported status value"),
             };
 
             println!("# {} Rules\n", status_name);
