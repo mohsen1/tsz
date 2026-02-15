@@ -2460,15 +2460,28 @@ impl ParserState {
     /// Parse template expression: `hello ${name}!`
     pub(crate) fn parse_template_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        let head = self.parse_template_head();
+        let (end_pos, template_spans) = self.parse_template_expression_spans();
 
-        // Parse template head: `hello ${
+        self.arena.add_template_expr(
+            syntax_kind_ext::TEMPLATE_EXPRESSION,
+            start_pos,
+            end_pos,
+            TemplateExprData {
+                head,
+                template_spans,
+            },
+        )
+    }
+
+    fn parse_template_head(&mut self) -> NodeIndex {
         let head_text = self.scanner.get_token_value_ref().to_string();
         let head_start = self.token_pos();
         let head_end = self.token_end();
         self.report_invalid_string_or_template_escape_errors();
         self.parse_expected(SyntaxKind::TemplateHead);
 
-        let head = self.arena.add_literal(
+        self.arena.add_literal(
             SyntaxKind::TemplateHead as u16,
             head_start,
             head_end,
@@ -2477,146 +2490,128 @@ impl ParserState {
                 raw_text: None,
                 value: None,
             },
-        );
+        )
+    }
 
-        // Parse template spans
+    fn parse_template_expression_spans(&mut self) -> (u32, NodeList) {
         let mut spans = Vec::new();
         let end_pos = loop {
-            // Parse expression in ${ }
-            let expression = self.parse_expression();
-
-            // Check for missing expression in template literal: `prefix${}tail`
-            if expression.is_none() {
-                self.error_expression_expected();
-                // Continue parsing for error recovery
+            let (end_pos, span, is_tail) = self.parse_template_expression_span();
+            spans.push(span);
+            if is_tail {
+                break end_pos;
             }
+        };
 
-            if !self.is_token(SyntaxKind::CloseBraceToken) {
-                // Unterminated template expression - report and synthesize tail to avoid looping.
-                self.error_token_expected("}");
-                let literal_start = self.token_pos();
-                let literal_end = self.token_end();
-                let literal = self.arena.add_literal(
-                    SyntaxKind::TemplateTail as u16,
-                    literal_start,
-                    literal_end,
-                    LiteralData {
-                        text: String::new(),
-                        raw_text: None,
-                        value: None,
-                    },
-                );
-                let span_start = self
-                    .arena
-                    .get(expression)
-                    .map_or(literal_start, |node| node.pos);
-                let span = self.arena.add_template_span(
-                    syntax_kind_ext::TEMPLATE_SPAN,
-                    span_start,
-                    literal_end,
-                    TemplateSpanData {
-                        expression,
-                        literal,
-                    },
-                );
-                spans.push(span);
-                break literal_end;
-            }
+        (end_pos, self.make_node_list(spans))
+    }
 
-            // Now we need to rescan the } as a template continuation
-            // The scanner needs to be told to rescan as template
-            self.scanner.re_scan_template_token(false);
-            self.current_token = self.scanner.get_token();
+    fn parse_template_expression_span(&mut self) -> (u32, NodeIndex, bool) {
+        let expression = self.parse_expression();
+        if expression.is_none() {
+            self.error_expression_expected();
+        }
 
-            // Parse template middle or tail
+        if !self.is_token(SyntaxKind::CloseBraceToken) {
+            self.error_token_expected("}");
             let literal_start = self.token_pos();
-            let is_tail = self.is_token(SyntaxKind::TemplateTail);
-            let is_middle = self.is_token(SyntaxKind::TemplateMiddle);
-            if !is_tail && !is_middle {
-                // Unexpected token after template span - report and finish.
-                self.error_token_expected("`");
-                let literal_end = self.token_end();
-                let literal = self.arena.add_literal(
-                    SyntaxKind::TemplateTail as u16,
-                    literal_start,
-                    literal_end,
-                    LiteralData {
-                        text: String::new(),
-                        raw_text: None,
-                        value: None,
-                    },
-                );
-                let span_start = self
-                    .arena
-                    .get(expression)
-                    .map_or(literal_start, |node| node.pos);
-                let span = self.arena.add_template_span(
-                    syntax_kind_ext::TEMPLATE_SPAN,
-                    span_start,
-                    literal_end,
-                    TemplateSpanData {
-                        expression,
-                        literal,
-                    },
-                );
-                spans.push(span);
-                break literal_end;
-            }
-
-            let is_unterminated = self.scanner.is_unterminated();
-            let literal_text = self.scanner.get_token_value_ref().to_string();
-            let literal_kind = if is_tail {
-                SyntaxKind::TemplateTail
-            } else {
-                SyntaxKind::TemplateMiddle
-            };
-
             let literal_end = self.token_end();
-            self.report_invalid_string_or_template_escape_errors();
-            self.next_token();
-
             let literal = self.arena.add_literal(
-                literal_kind as u16,
+                SyntaxKind::TemplateTail as u16,
                 literal_start,
                 literal_end,
                 LiteralData {
-                    text: literal_text,
+                    text: String::new(),
                     raw_text: None,
                     value: None,
                 },
             );
-            if is_unterminated {
-                self.error_unterminated_template_literal_at(literal_start, literal_end);
-            }
+            let span_start = self
+                .arena
+                .get(expression)
+                .map_or(literal_start, |node| node.pos);
+            let span =
+                self.add_template_expression_span(expression, literal, span_start, literal_end);
+            return (literal_end, span, true);
+        }
 
-            let span_start = if let Some(node) = self.arena.get(expression) {
-                node.pos
-            } else {
-                literal_start
-            };
-            let span = self.arena.add_template_span(
-                syntax_kind_ext::TEMPLATE_SPAN,
-                span_start,
+        self.scanner.re_scan_template_token(false);
+        self.current_token = self.scanner.get_token();
+
+        let literal_start = self.token_pos();
+        let is_tail = self.is_token(SyntaxKind::TemplateTail);
+        let is_middle = self.is_token(SyntaxKind::TemplateMiddle);
+        if !is_tail && !is_middle {
+            self.error_token_expected("`");
+            let literal_end = self.token_end();
+            let literal = self.arena.add_literal(
+                SyntaxKind::TemplateTail as u16,
+                literal_start,
                 literal_end,
-                TemplateSpanData {
-                    expression,
-                    literal,
+                LiteralData {
+                    text: String::new(),
+                    raw_text: None,
+                    value: None,
                 },
             );
-            spans.push(span);
+            let span_start = self
+                .arena
+                .get(expression)
+                .map_or(literal_start, |node| node.pos);
+            let span =
+                self.add_template_expression_span(expression, literal, span_start, literal_end);
+            return (literal_end, span, true);
+        }
 
-            if is_tail {
-                break literal_end;
-            }
+        let is_unterminated = self.scanner.is_unterminated();
+        let literal_text = self.scanner.get_token_value_ref().to_string();
+        let literal_kind = if is_tail {
+            SyntaxKind::TemplateTail
+        } else {
+            SyntaxKind::TemplateMiddle
         };
 
-        self.arena.add_template_expr(
-            syntax_kind_ext::TEMPLATE_EXPRESSION,
-            start_pos,
-            end_pos,
-            TemplateExprData {
-                head,
-                template_spans: self.make_node_list(spans),
+        let literal_end = self.token_end();
+        self.report_invalid_string_or_template_escape_errors();
+        self.next_token();
+
+        let literal = self.arena.add_literal(
+            literal_kind as u16,
+            literal_start,
+            literal_end,
+            LiteralData {
+                text: literal_text,
+                raw_text: None,
+                value: None,
+            },
+        );
+        if is_unterminated {
+            self.error_unterminated_template_literal_at(literal_start, literal_end);
+        }
+
+        let span_start = if let Some(node) = self.arena.get(expression) {
+            node.pos
+        } else {
+            literal_start
+        };
+        let span = self.add_template_expression_span(expression, literal, span_start, literal_end);
+        (literal_end, span, is_tail)
+    }
+
+    fn add_template_expression_span(
+        &mut self,
+        expression: NodeIndex,
+        literal: NodeIndex,
+        span_start: u32,
+        span_end: u32,
+    ) -> NodeIndex {
+        self.arena.add_template_span(
+            syntax_kind_ext::TEMPLATE_SPAN,
+            span_start,
+            span_end,
+            TemplateSpanData {
+                expression,
+                literal,
             },
         )
     }
