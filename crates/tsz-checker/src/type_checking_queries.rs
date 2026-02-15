@@ -652,9 +652,10 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
                 if expr_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-                        return Some(ident.escaped_text.clone());
-                    }
+                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+                {
+                    return Some(ident.escaped_text.clone());
+                }
 
                 if matches!(
                     expr_node.kind,

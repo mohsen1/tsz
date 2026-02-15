@@ -1428,9 +1428,10 @@ impl<'a> CheckerState<'a> {
 
         if let Some(method) = self.ctx.arena.get_method_decl(node) {
             if let Some(name_node) = self.ctx.arena.get(method.name)
-                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    return self.get_method_name_from_computed_property(name_node, method.name);
-                }
+                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            {
+                return self.get_method_name_from_computed_property(name_node, method.name);
+            }
 
             return self.get_property_name(method.name);
         }
@@ -1455,31 +1456,32 @@ impl<'a> CheckerState<'a> {
 
         if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
             if expr_node.kind == SyntaxKind::Identifier as u16
-                && let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-                    if self.identifier_refers_to_unique_symbol(computed.expression) {
-                        return Some(ident.escaped_text.clone());
-                    }
-
-                    if self.identifier_refers_to_plain_symbol(computed.expression) {
-                        return None;
-                    }
-
+                && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+            {
+                if self.identifier_refers_to_unique_symbol(computed.expression) {
                     return Some(ident.escaped_text.clone());
                 }
+
+                if self.identifier_refers_to_plain_symbol(computed.expression) {
+                    return None;
+                }
+
+                return Some(ident.escaped_text.clone());
+            }
 
             if matches!(
                 expr_node.kind,
                 k if k == SyntaxKind::StringLiteral as u16
                     || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                     || k == SyntaxKind::NumericLiteral as u16
-            )
-                && let Some(lit) = self.ctx.arena.get_literal(expr_node) {
-                    if expr_node.kind == SyntaxKind::NumericLiteral as u16 {
-                        return tsz_solver::utils::canonicalize_numeric_name(&lit.text);
-                    }
-
-                    return Some(lit.text.clone());
+            ) && let Some(lit) = self.ctx.arena.get_literal(expr_node)
+            {
+                if expr_node.kind == SyntaxKind::NumericLiteral as u16 {
+                    return tsz_solver::utils::canonicalize_numeric_name(&lit.text);
                 }
+
+                return Some(lit.text.clone());
+            }
         }
 
         None
@@ -1656,7 +1658,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(symbol_name) =
                     self.get_symbol_property_name_from_expr(computed.expression)
                 {
-                    return Some(format!("[{}]", symbol_name));
+                    return Some(format!("[{symbol_name}]"));
                 }
 
                 if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
@@ -1675,7 +1677,7 @@ impl<'a> CheckerState<'a> {
                                 if let Some(canonical) =
                                     tsz_solver::utils::canonicalize_numeric_name(&lit.text)
                                 {
-                                    format!("[{}]", canonical)
+                                    format!("[{canonical}]")
                                 } else {
                                     format!("[{}]", lit.text)
                                 }
