@@ -162,13 +162,9 @@ impl InheritanceGraph {
         drop(nodes); // Release for MRO check
         let mro_a = self.get_resolution_order(a);
 
-        for ancestor in mro_a {
-            if self.is_derived_from(b, ancestor) {
-                return Some(ancestor);
-            }
-        }
-
-        None
+        mro_a
+            .into_iter()
+            .find(|&ancestor| self.is_derived_from(b, ancestor))
     }
 
     /// Detects if adding an edge would create a cycle.
