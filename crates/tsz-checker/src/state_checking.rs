@@ -22,6 +22,23 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// Check if a name is a strict mode reserved word (ES5 §7.6.1.2).
+/// These identifiers cannot be used as variable/function/class names in strict mode.
+fn is_strict_mode_reserved_name(name: &str) -> bool {
+    matches!(
+        name,
+        "implements"
+            | "interface"
+            | "let"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+            | "static"
+            | "yield"
+    )
+}
+
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Source File Checking (Full Traversal)
@@ -1365,6 +1382,24 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
+
+        // TS1212: Identifier expected. '{0}' is a reserved word in strict mode.
+        // Check if variable name is a strict-mode reserved word used in strict context.
+        if self.is_strict_mode_for_node(var_decl.name)
+            && let Some(ref name) = var_name
+            && is_strict_mode_reserved_name(name)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                &[name],
+            );
+            self.error_at_node(
+                var_decl.name,
+                &message,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+            );
+        }
 
         // TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
         if let Some(ref name) = var_name
