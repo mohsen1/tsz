@@ -2981,11 +2981,6 @@ impl<'a> Printer<'a> {
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
-                        if !first {
-                            self.write(", ");
-                        }
-                        first = false;
-
                         // Check if name is a binding pattern (array or object destructuring)
                         if self.is_binding_pattern(decl.name) {
                             // For downlevelIteration with binding patterns, use __read
@@ -2997,6 +2992,10 @@ impl<'a> Printer<'a> {
                                 &mut first,
                             );
                         } else {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
                             // Simple identifier binding
                             self.emit(decl.name);
                             self.write(" = ");
