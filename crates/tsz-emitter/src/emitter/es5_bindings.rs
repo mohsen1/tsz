@@ -1,4 +1,5 @@
 use super::{ParamTransformPlan, Printer};
+use tracing::debug;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{BindingElementData, BindingPatternData, ForInOfData, Node};
 use tsz_parser::parser::syntax_kind_ext;
@@ -1032,9 +1033,8 @@ impl<'a> Printer<'a> {
         source_expr: NodeIndex,
         _first: &mut bool,
     ) {
-        #[allow(clippy::print_stderr)]
         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-            eprintln!("emit_es5_destructuring_with_read_node entered");
+            debug!("emit_es5_destructuring_with_read_node entered");
         }
 
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
@@ -1069,7 +1069,9 @@ impl<'a> Printer<'a> {
         let read_temp = self.get_temp_var_name();
         self.write(&read_temp);
         self.write(" = __read(");
+        self.destructuring_read_depth += 1;
         self.emit(source_expr);
+        self.destructuring_read_depth -= 1;
         if element_count > 0 {
             self.write(", ");
             self.write(&element_count.to_string());
@@ -1111,14 +1113,13 @@ impl<'a> Printer<'a> {
             }
 
             let unwrapped_name = self.unwrap_parenthesized_binding_pattern(elem.name);
-            #[allow(clippy::print_stderr)]
             if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
                 let elem_kind = self.arena.get(elem.name).map(|n| n.kind).unwrap_or(0);
-                eprintln!(
+                debug!(
                     "downlevel-bp-element index={} elem_name={:?} unwrapped={:?} kind={}",
                     index, elem.name, unwrapped_name, elem_kind
                 );
-                eprintln!(
+                debug!(
                     "downlevel-bp-kind-bytes: elem={} unwrapped={}",
                     self.arena.get(unwrapped_name).map(|n| n.kind).unwrap_or(0),
                     SyntaxKind::Identifier as u16
@@ -1153,9 +1154,8 @@ impl<'a> Printer<'a> {
                     };
                     let elem_source = format!("{}[{}]", read_temp, index);
                     if unwrapped_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-                        #[allow(clippy::print_stderr)]
                         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-                            eprintln!(
+                            debug!(
                                 "downlevel-nested-array index={} unwrapped={} source={}",
                                 index, unwrapped_name.0, elem_source
                             );
