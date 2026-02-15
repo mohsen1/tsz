@@ -2476,6 +2476,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Skip TDZ check for type-only contexts (interface extends, type parameters, etc.)
+        // Types are resolved at compile-time, so they don't have temporal dead zones.
+        if self.is_in_type_only_context(usage_idx) {
+            return false;
+        }
+
         // Skip cross-file symbols — TDZ position comparison only makes sense
         // within the same file.
         if symbol.decl_file_idx != u32::MAX
@@ -2535,6 +2541,12 @@ impl<'a> CheckerState<'a> {
                 | symbol_flags::BLOCK_SCOPED_VARIABLE))
             != 0;
         if !is_block_scoped {
+            return false;
+        }
+
+        // Skip TDZ check for type-only contexts (type annotations, typeof in types, etc.)
+        // Types are resolved at compile-time, so they don't have temporal dead zones.
+        if self.is_in_type_only_context(usage_idx) {
             return false;
         }
 
@@ -2694,6 +2706,66 @@ impl<'a> CheckerState<'a> {
                     && mod_node.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16
                 {
                     return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a node is in a type-only context (type annotation, type query, heritage clause).
+    /// References in type-only positions don't need TDZ checks because types are
+    /// resolved at compile-time, not runtime.
+    fn is_in_type_only_context(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = idx;
+        while !current.is_none() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
+                return false;
+            };
+
+            // Type node kinds indicate we're in a type-only context
+            match parent_node.kind {
+                // Core type nodes
+                syntax_kind_ext::TYPE_PREDICATE
+                | syntax_kind_ext::TYPE_REFERENCE
+                | syntax_kind_ext::FUNCTION_TYPE
+                | syntax_kind_ext::CONSTRUCTOR_TYPE
+                | syntax_kind_ext::TYPE_QUERY // typeof T in type position
+                | syntax_kind_ext::TYPE_LITERAL
+                | syntax_kind_ext::ARRAY_TYPE
+                | syntax_kind_ext::TUPLE_TYPE
+                | syntax_kind_ext::OPTIONAL_TYPE
+                | syntax_kind_ext::REST_TYPE
+                | syntax_kind_ext::UNION_TYPE
+                | syntax_kind_ext::INTERSECTION_TYPE
+                | syntax_kind_ext::CONDITIONAL_TYPE
+                | syntax_kind_ext::INFER_TYPE
+                | syntax_kind_ext::PARENTHESIZED_TYPE
+                | syntax_kind_ext::THIS_TYPE
+                | syntax_kind_ext::TYPE_OPERATOR
+                | syntax_kind_ext::INDEXED_ACCESS_TYPE
+                | syntax_kind_ext::MAPPED_TYPE
+                | syntax_kind_ext::LITERAL_TYPE
+                | syntax_kind_ext::NAMED_TUPLE_MEMBER
+                | syntax_kind_ext::TEMPLATE_LITERAL_TYPE
+                | syntax_kind_ext::IMPORT_TYPE
+                | syntax_kind_ext::HERITAGE_CLAUSE
+                | syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => return true,
+
+                // Stop at boundaries that separate type from value context
+                syntax_kind_ext::TYPE_OF_EXPRESSION // typeof x in value position
+                | syntax_kind_ext::SOURCE_FILE => return false,
+
+                _ => {
+                    // Continue walking up
+                    current = ext.parent;
                 }
             }
         }
