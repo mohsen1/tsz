@@ -209,6 +209,7 @@ impl InheritanceGraph {
         self.compute_closure_recursive(symbol_id, &mut nodes, &mut path, max_len);
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn compute_closure_recursive(
         &self,
         current: SymbolId,

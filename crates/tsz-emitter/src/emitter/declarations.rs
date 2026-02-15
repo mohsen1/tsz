@@ -1286,12 +1286,6 @@ impl<'a> Printer<'a> {
                 }
                 count
             }
-            syntax_kind_ext::IF_STATEMENT
-            | syntax_kind_ext::FOR_IN_STATEMENT
-            | syntax_kind_ext::FOR_OF_STATEMENT
-            | syntax_kind_ext::WHILE_STATEMENT
-            | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::SWITCH_STATEMENT => 0,
             _ => 0,
         }
     }
@@ -1372,7 +1366,8 @@ impl<'a> Printer<'a> {
                     .get(binary.right)
                     .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
                 let left = self.arena.get(binary.left);
-                let count_right = if binary.operator_token == SyntaxKind::CommaToken as u16 {
+
+                if binary.operator_token == SyntaxKind::CommaToken as u16 {
                     self.estimate_destructuring_assignment_temps(binary.left)
                         + self.estimate_destructuring_assignment_temps(binary.right)
                 } else if binary.operator_token == SyntaxKind::EqualsToken as u16
@@ -1391,8 +1386,7 @@ impl<'a> Printer<'a> {
                     }
                 } else {
                     0
-                };
-                count_right
+                }
             }
             _ => 0,
         }
@@ -1419,13 +1413,11 @@ impl<'a> Printer<'a> {
                     };
                     if let Some(elem) = self.arena.get_binding_element(elem_node) {
                         let target = self.arena.get(elem.name);
-                        if let Some(target_node) = target {
-                            if target_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                || target_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                            {
-                                count +=
-                                    self.estimate_destructuring_pattern_temps(target_node, false);
-                            }
+                        if let Some(target_node) = target
+                            && (target_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || target_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN)
+                        {
+                            count += self.estimate_destructuring_pattern_temps(target_node, false);
                         }
                         if let Some(bin) = self.arena.get_binary_expr(elem_node)
                             && bin.operator_token == SyntaxKind::EqualsToken as u16
@@ -1452,34 +1444,33 @@ impl<'a> Printer<'a> {
                     let Some(elem_node) = self.arena.get(elem_idx) else {
                         continue;
                     };
-                    if let Some(prop) = self.arena.get_property_assignment(elem_node) {
-                        if let Some(value_node) = self.arena.get(prop.initializer) {
-                            if matches!(
-                                value_node.kind,
-                                syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                    | syntax_kind_ext::OBJECT_BINDING_PATTERN
-                            ) {
-                                count +=
-                                    self.estimate_destructuring_pattern_temps(value_node, false);
-                            } else if value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                                && let Some(bin) = self.arena.get_binary_expr(value_node)
-                                && bin.operator_token == SyntaxKind::EqualsToken as u16
-                            {
-                                let left = self.arena.get(bin.left);
-                                if let Some(left_node) = left {
-                                    if matches!(
-                                        left_node.kind,
-                                        syntax_kind_ext::ARRAY_BINDING_PATTERN
-                                            | syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                    ) {
-                                        count += self
-                                            .estimate_destructuring_pattern_temps(left_node, false);
-                                    } else {
-                                        count += 1;
-                                    }
+                    if let Some(prop) = self.arena.get_property_assignment(elem_node)
+                        && let Some(value_node) = self.arena.get(prop.initializer)
+                    {
+                        if matches!(
+                            value_node.kind,
+                            syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                | syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        ) {
+                            count += self.estimate_destructuring_pattern_temps(value_node, false);
+                        } else if value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                            && let Some(bin) = self.arena.get_binary_expr(value_node)
+                            && bin.operator_token == SyntaxKind::EqualsToken as u16
+                        {
+                            let left = self.arena.get(bin.left);
+                            if let Some(left_node) = left {
+                                if matches!(
+                                    left_node.kind,
+                                    syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                        | syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                ) {
+                                    count +=
+                                        self.estimate_destructuring_pattern_temps(left_node, false);
                                 } else {
                                     count += 1;
                                 }
+                            } else {
+                                count += 1;
                             }
                         }
                     }
