@@ -305,9 +305,6 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 self.interner.mapped(c_mapped)
             }
 
-            // Primitives and literals are already canonical
-            TypeData::Intrinsic(_) | TypeData::Literal(_) | TypeData::Error => type_id,
-
             // Object types: canonicalize property types while preserving metadata
             TypeData::Object(shape_id) => self.canonicalize_object(shape_id, false),
 
