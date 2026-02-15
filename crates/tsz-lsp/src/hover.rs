@@ -9,7 +9,7 @@
 
 use crate::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
-use crate::utils::find_node_at_or_before_offset;
+use crate::utils::{find_node_at_or_before_offset, is_symbol_query_node};
 use tsz_checker::state::CheckerState;
 use tsz_common::position::{Position, Range};
 use tsz_parser::NodeIndex;
@@ -86,6 +86,10 @@ impl<'a> HoverProvider<'a> {
         let node_idx = find_node_at_or_before_offset(self.arena, offset, self.source_text);
 
         if node_idx.is_none() {
+            return None;
+        }
+
+        if !is_symbol_query_node(self.arena, node_idx) {
             return None;
         }
 

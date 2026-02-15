@@ -3,7 +3,7 @@
 //! Given a position in the source, finds where the symbol at that position is defined.
 
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
-use crate::utils::find_node_at_offset;
+use crate::utils::{find_node_at_offset, is_symbol_query_node};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::position::{Location, Position, Range};
 use tsz_parser::NodeIndex;
@@ -224,6 +224,10 @@ impl<'a> GoToDefinition<'a> {
         // 2. Find the most specific node at this offset
         let node_idx = find_node_at_offset(self.arena, offset);
         if node_idx.is_none() {
+            return None;
+        }
+
+        if !is_symbol_query_node(self.arena, node_idx) {
             return None;
         }
 
@@ -534,6 +538,10 @@ impl<'a> GoToDefinition<'a> {
 
         let node_idx = find_node_at_offset(self.arena, offset);
         if node_idx.is_none() {
+            return None;
+        }
+
+        if !is_symbol_query_node(self.arena, node_idx) {
             return None;
         }
 

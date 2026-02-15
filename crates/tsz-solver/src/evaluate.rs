@@ -337,12 +337,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(resolved) = resolved {
                     // Pre-expand type arguments that are TypeQuery or Application
                     let expanded_args = self.expand_type_args(&app.args);
+                    let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+
+                    if let Some(db) = self.query_db
+                        && let Some(cached) = db.lookup_application_eval_cache(
+                            def_id,
+                            &expanded_args,
+                            no_unchecked_indexed_access,
+                        )
+                    {
+                        if let Some(d) = self.def_depth.get_mut(&def_id) {
+                            *d = d.saturating_sub(1);
+                        }
+                        return cached;
+                    }
 
                     // Instantiate the resolved type with the type arguments
                     let instantiated =
                         instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
                     // Recursively evaluate the result
-                    self.evaluate(instantiated)
+                    let evaluated = self.evaluate(instantiated);
+                    if let Some(db) = self.query_db {
+                        db.insert_application_eval_cache(
+                            def_id,
+                            &expanded_args,
+                            no_unchecked_indexed_access,
+                            evaluated,
+                        );
+                    }
+                    evaluated
                 } else {
                     self.interner.application(app.base, app.args.clone())
                 }
@@ -352,6 +375,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if !extracted_params.is_empty() && extracted_params.len() == app.args.len() {
                     // Pre-expand type arguments
                     let expanded_args = self.expand_type_args(&app.args);
+                    let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+
+                    if let Some(db) = self.query_db
+                        && let Some(cached) = db.lookup_application_eval_cache(
+                            def_id,
+                            &expanded_args,
+                            no_unchecked_indexed_access,
+                        )
+                    {
+                        if let Some(d) = self.def_depth.get_mut(&def_id) {
+                            *d = d.saturating_sub(1);
+                        }
+                        return cached;
+                    }
 
                     let instantiated = instantiate_generic(
                         self.interner,
@@ -359,7 +396,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &extracted_params,
                         &expanded_args,
                     );
-                    self.evaluate(instantiated)
+                    let evaluated = self.evaluate(instantiated);
+                    if let Some(db) = self.query_db {
+                        db.insert_application_eval_cache(
+                            def_id,
+                            &expanded_args,
+                            no_unchecked_indexed_access,
+                            evaluated,
+                        );
+                    }
+                    evaluated
                 } else {
                     self.interner.application(app.base, app.args.clone())
                 }
