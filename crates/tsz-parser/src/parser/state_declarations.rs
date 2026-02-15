@@ -337,7 +337,7 @@ impl ParserState {
                 self.parse_property_name(),
             ))
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
-            if self.look_ahead_is_index_signature() {
+            if self.look_ahead_is_index_signature() || self.look_ahead_is_empty_index_signature() {
                 let modifiers = self.readonly_modifier_node_list(start_pos, readonly);
                 Some(TypeMemberPropertyOrMethodName::IndexSignature(
                     self.parse_index_signature_with_modifiers(modifiers, start_pos),
@@ -530,6 +530,34 @@ impl ParserState {
         use tsz_common::diagnostics::diagnostic_codes;
 
         self.parse_expected(SyntaxKind::OpenBracketToken);
+
+        // TS1096: empty index signature `[]` — no parameters at all
+        if self.is_token(SyntaxKind::CloseBracketToken) {
+            self.parse_error_at_current_token(
+                "An index signature must have exactly one parameter.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+            );
+            self.next_token(); // consume `]`
+
+            // Still need the type annotation
+            let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+                self.parse_type()
+            } else {
+                NodeIndex::NONE
+            };
+
+            let end_pos = self.token_end();
+            return self.arena.add_index_signature(
+                syntax_kind_ext::INDEX_SIGNATURE,
+                start_pos,
+                end_pos,
+                crate::parser::node::IndexSignatureData {
+                    modifiers,
+                    parameters: self.make_node_list(vec![]),
+                    type_annotation,
+                },
+            );
+        }
 
         // Parse first parameter, handling malformed forms
         let param_start = self.token_pos();
