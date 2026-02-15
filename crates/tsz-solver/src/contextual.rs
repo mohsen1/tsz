@@ -1021,6 +1021,16 @@ impl<'a> ContextualTypeContext<'a> {
             _ => {}
         }
 
+        // Handle TypeParameter - use its constraint for property extraction
+        // Example: Actions extends ActionsObject<State>
+        // When getting property from Actions, use ActionsObject<State> instead
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(self.interner, expected)
+        {
+            let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
+            return ctx.get_property_type(name);
+        }
+
         // Use visitor for Object types
         let mut extractor = PropertyExtractor::new(self.interner, name.to_string());
         extractor.extract(expected)

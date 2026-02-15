@@ -281,7 +281,18 @@ impl<'a> TypeInstantiator<'a> {
                 if let Some(substituted) = self.substitution.get(info.name) {
                     substituted
                 } else {
-                    // No substitution found, return original type parameter
+                    // No direct substitution found. If the type parameter has a constraint
+                    // that references substituted type parameters, instantiate the constraint.
+                    // Example: Actions extends ActionsObject<State>, with {State: number}
+                    // → use ActionsObject<number> instead of Actions
+                    if let Some(constraint) = info.constraint {
+                        let instantiated_constraint = self.instantiate(constraint);
+                        // Only use the constraint if instantiation changed it
+                        if instantiated_constraint != constraint {
+                            return instantiated_constraint;
+                        }
+                    }
+                    // No substitution and no instantiated constraint, return original
                     self.interner.intern(key.clone())
                 }
             }
