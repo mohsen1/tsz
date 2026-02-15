@@ -179,7 +179,7 @@ pub fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>> {
 
 /// Merge lib file symbols into a target symbol table.
 ///
-/// **DEPRECATED**: This function copies raw SymbolIds from lib binders, which can
+/// **DEPRECATED**: This function copies raw `SymbolIds` from lib binders, which can
 /// collide across different lib files. Use `BinderState::merge_lib_contexts_into_binder`
 /// instead, which properly remaps `SymbolIds` to avoid collisions.
 #[deprecated(note = "Use BinderState::merge_lib_contexts_into_binder instead")]
