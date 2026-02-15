@@ -63,7 +63,9 @@ impl<'a> Printer<'a> {
         let should_emit_single_line = is_single_statement
             && self.is_single_line(node)
             && !needs_this_capture
-            && !is_function_body_block;
+            && (!is_function_body_block
+                || (self.hoisted_assignment_value_temps.is_empty()
+                    && self.hoisted_for_of_temps.is_empty()));
 
         if should_emit_single_line {
             self.ctx.block_scope_state.enter_scope();

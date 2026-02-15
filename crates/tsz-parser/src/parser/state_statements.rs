@@ -126,9 +126,13 @@ impl ParserState {
     /// Uses resynchronization to recover from errors and continue parsing.
     pub(crate) fn parse_source_file_statements(&mut self) -> NodeList {
         let mut statements = Vec::new();
+        let mut skip_after_binary_payload = false;
 
         while !self.is_token(SyntaxKind::EndOfFileToken) {
             let pos_before = self.token_pos();
+            if skip_after_binary_payload {
+                break;
+            }
 
             // Handle Unknown tokens (invalid characters) - must be checked FIRST
             if self.is_token(SyntaxKind::Unknown) {
@@ -137,7 +141,7 @@ impl ParserState {
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
                 );
-                self.next_token();
+                self.resync_after_error_with_statement_starts(false);
                 continue;
             }
 
@@ -157,6 +161,34 @@ impl ParserState {
                 continue;
             }
 
+            if self.is_token(SyntaxKind::AtToken) {
+                let snapshot = self.scanner.save_state();
+                let at_token = self.current_token;
+                self.next_token();
+                if self.is_token(SyntaxKind::Unknown) {
+                    self.current_token = at_token;
+                    self.next_token();
+                    self.parse_error_at_current_token(
+                        "Invalid character.",
+                        tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+                    );
+
+                    self.next_token();
+                    if !self.is_token(SyntaxKind::EndOfFileToken) {
+                        self.parse_error_at_current_token(
+                            "Declaration or statement expected.",
+                            tsz_common::diagnostics::diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                        );
+                    }
+
+                    skip_after_binary_payload = true;
+                    continue;
+                }
+                self.scanner.restore_state(snapshot);
+                self.current_token = at_token;
+            }
+
+            let statement_start_token = self.token();
             let stmt = self.parse_statement();
             if stmt.is_none() {
                 // Statement parsing failed, resync to recover
@@ -172,7 +204,12 @@ impl ParserState {
                     );
                 }
                 // Resync to next statement boundary to continue parsing
-                self.resync_after_error();
+                let allow_statement_starts = if statement_start_token == SyntaxKind::AtToken {
+                    false
+                } else {
+                    !self.is_statement_start()
+                };
+                self.resync_after_error_with_statement_starts(allow_statement_starts);
             } else {
                 statements.push(stmt);
             }
@@ -206,10 +243,11 @@ impl ParserState {
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
                 );
-                self.next_token();
+                self.resync_after_error_with_statement_starts(false);
                 continue;
             }
 
+            let statement_start_token = self.token();
             let stmt = self.parse_statement();
             if stmt.is_none() {
                 // Statement parsing failed, resync to recover
@@ -226,7 +264,12 @@ impl ParserState {
                     );
                 }
                 // Resync to next statement boundary to continue parsing
-                self.resync_after_error();
+                let allow_statement_starts = if statement_start_token == SyntaxKind::AtToken {
+                    false
+                } else {
+                    !self.is_statement_start()
+                };
+                self.resync_after_error_with_statement_starts(allow_statement_starts);
             } else {
                 statements.push(stmt);
             }
@@ -2319,7 +2362,14 @@ impl ParserState {
         }
 
         let start_pos = self.token_pos();
+        let snapshot = self.scanner.save_state();
+        let at_token = self.current_token;
         self.next_token(); // consume @
+        if self.is_token(SyntaxKind::Unknown) {
+            self.scanner.restore_state(snapshot);
+            self.current_token = at_token;
+            return None;
+        }
 
         // Parse the decorator expression (identifier, member access, or call)
         // Set CONTEXT_FLAG_IN_DECORATOR so that '[' is NOT treated as element access
