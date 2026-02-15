@@ -1127,6 +1127,13 @@ impl ParserState {
 
     /// Error: '{token}' expected (TS1005)
     pub(crate) fn error_token_expected(&mut self, token: &str) {
+        // Suppress TS1005 when the current token is Unknown (invalid character).
+        // The Unknown token will produce its own TS1127 when processed, matching
+        // TypeScript's behavior where the scanner-emitted TS1127 suppresses the
+        // position-duplicate TS1005 via its same-position dedup in parseErrorAt.
+        if self.is_token(SyntaxKind::Unknown) {
+            return;
+        }
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading errors when parse_semicolon() and similar functions call this
         // Use centralized error suppression heuristic
