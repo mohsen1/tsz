@@ -144,6 +144,37 @@ impl<'a> CheckerState<'a> {
         (decl_flags & node_flags::CONST != 0).then_some(name)
     }
 
+    /// Emit TS1100 when assigning to strict-mode reserved identifiers.
+    ///
+    /// `arguments` and `eval` are disallowed in strict mode for assignments.
+    /// This mirrors existing declaration-site checks and keeps diagnostics in
+    /// parity with TypeScript's behavior for strict-mode built-ins.
+    fn check_strict_assignment_target(&mut self, target_idx: NodeIndex) {
+        let inner = self.skip_parenthesized_expression(target_idx);
+        if !self.is_strict_mode_for_node(inner) {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(inner) else {
+            return;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return;
+        }
+
+        let Some(id_data) = self.ctx.arena.get_identifier(node) else {
+            return;
+        };
+        if id_data.escaped_text != "arguments" && id_data.escaped_text != "eval" {
+            return;
+        }
+
+        self.error_at_node_msg(
+            inner,
+            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+            &[&id_data.escaped_text],
+        );
+    }
+
     /// Strip wrappers that preserve assignment target identity for symbol checks.
     ///
     /// Examples:
@@ -343,6 +374,8 @@ impl<'a> CheckerState<'a> {
         // TS2630: Cannot assign to 'x' because it is a function.
         // This check must come after valid assignment target check but before type checking.
         let is_function_assignment = self.check_function_assignment(left_idx);
+
+        self.check_strict_assignment_target(left_idx);
 
         // Set destructuring flag when LHS is an object/array pattern to suppress
         // TS1117 (duplicate property) checks in destructuring targets.
@@ -694,6 +727,8 @@ impl<'a> CheckerState<'a> {
 
         // TS2629/TS2628/TS2630: Cannot assign to class/enum/function.
         let is_function_assignment = self.check_function_assignment(left_idx);
+
+        self.check_strict_assignment_target(left_idx);
 
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);

@@ -108,10 +108,11 @@ impl<'a> CheckerState<'a> {
             // Push a Function-typed placeholder so the solver's is_contextually_sensitive
             // recognizes it and skips inference for this slot.
             if let Some(skip_mask) = skip_sensitive_indices
+                && let Some(sensitive_placeholder) = sensitive_placeholder
                 && i < skip_mask.len()
                 && skip_mask[i]
             {
-                arg_types.push(sensitive_placeholder.unwrap());
+                arg_types.push(sensitive_placeholder);
                 effective_index += 1;
                 continue;
             }

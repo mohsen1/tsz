@@ -610,40 +610,104 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_strict_mode_for_node(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_strict_mode_for_node(&self, idx: NodeIndex) -> bool {
         if self.ctx.compiler_options.always_strict {
             return true;
         }
+
+        let is_external_module = self
+            .ctx
+            .is_external_module_by_file
+            .as_ref()
+            .is_some_and(|map| map.get(&self.ctx.file_name).is_some_and(|is_ext| *is_ext))
+            || self.ctx.binder.is_external_module();
+
+        if is_external_module {
+            return true;
+        }
+
+        let statement_is_use_strict = |stmt_idx: NodeIndex, ctx: &Self| -> bool {
+            ctx.ctx
+                .arena
+                .get(stmt_idx)
+                .filter(|stmt| stmt.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
+                .and_then(|stmt| ctx.ctx.arena.get_expression_statement(stmt))
+                .and_then(|expr_stmt| ctx.ctx.arena.get(expr_stmt.expression))
+                .filter(|expr_node| expr_node.kind == SyntaxKind::StringLiteral as u16)
+                .and_then(|expr_node| ctx.ctx.arena.get_literal(expr_node))
+                .is_some_and(|lit| lit.text == "use strict")
+        };
+        let block_has_use_strict = |block_idx: NodeIndex, ctx: &Self| -> bool {
+            let Some(block_node) = ctx.ctx.arena.get(block_idx) else {
+                return false;
+            };
+            let Some(block) = ctx.ctx.arena.get_block(block_node) else {
+                return false;
+            };
+            for &stmt_idx in &block.statements.nodes {
+                if statement_is_use_strict(stmt_idx, ctx) {
+                    return true;
+                }
+                let Some(stmt_node) = ctx.ctx.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    break;
+                }
+            }
+            false
+        };
 
         let mut current = idx;
         loop {
             let Some(node) = self.ctx.arena.get(current) else {
                 return false;
             };
-            if node.kind == syntax_kind_ext::SOURCE_FILE
-                && let Some(sf) = self.ctx.arena.get_source_file(node)
+
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
             {
-                return sf.statements.nodes.iter().any(|stmt_idx| {
-                    self.ctx
-                        .arena
-                        .get(*stmt_idx)
-                        .filter(|stmt| stmt.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
-                        .and_then(|stmt| self.ctx.arena.get_expression_statement(stmt))
-                        .and_then(|expr_stmt| self.ctx.arena.get(expr_stmt.expression))
-                        .filter(|expr_node| expr_node.kind == SyntaxKind::StringLiteral as u16)
-                        .and_then(|expr_node| self.ctx.arena.get_literal(expr_node))
-                        .is_some_and(|lit| lit.text == "use strict")
-                });
+                return true;
             }
 
-            let parent = self
-                .ctx
-                .arena
-                .get_extended(current)
-                .map_or(NodeIndex::NONE, |ext| ext.parent);
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
             if parent.is_none() {
                 return false;
             }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+
+            match parent_node.kind {
+                k if k == syntax_kind_ext::SOURCE_FILE => {
+                    if let Some(sf) = self.ctx.arena.get_source_file(parent_node)
+                        && sf
+                            .statements
+                            .nodes
+                            .iter()
+                            .any(|stmt_idx| statement_is_use_strict(*stmt_idx, self))
+                        {
+                            return true;
+                        }
+                    return false;
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    if let Some(func) = self.ctx.arena.get_function(parent_node)
+                        && !func.body.is_none()
+                        && block_has_use_strict(func.body, self)
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+
             current = parent;
         }
     }

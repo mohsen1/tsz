@@ -970,12 +970,14 @@ impl<'a> FlowGraphBuilder<'a> {
     /// Handle a break statement.
     fn handle_break(&mut self, stmt_idx: NodeIndex) {
         // Check if this break has a label
-        let break_label =
-            if let Some(jump_data) = self.arena.get_jump_data(self.arena.get(stmt_idx).unwrap()) {
-                jump_data.label
-            } else {
-                NodeIndex::NONE
-            };
+        let break_label = if let Some(stmt_node) = self.arena.get(stmt_idx) {
+            self.arena
+                .get_jump_data(stmt_node)
+                .map(|jump_data| jump_data.label)
+                .unwrap_or(NodeIndex::NONE)
+        } else {
+            NodeIndex::NONE
+        };
 
         // First pass: collect finally blocks and find target
         let mut finally_blocks: Vec<NodeIndex> = Vec::new();
@@ -1030,12 +1032,14 @@ impl<'a> FlowGraphBuilder<'a> {
     /// Handle a continue statement.
     fn handle_continue(&mut self, stmt_idx: NodeIndex) {
         // Check if this continue has a label
-        let continue_label_idx =
-            if let Some(jump_data) = self.arena.get_jump_data(self.arena.get(stmt_idx).unwrap()) {
-                jump_data.label
-            } else {
-                NodeIndex::NONE
-            };
+        let continue_label_idx = if let Some(stmt_node) = self.arena.get(stmt_idx) {
+            self.arena
+                .get_jump_data(stmt_node)
+                .map(|jump_data| jump_data.label)
+                .unwrap_or(NodeIndex::NONE)
+        } else {
+            NodeIndex::NONE
+        };
 
         // First pass: collect finally blocks and find target
         let mut finally_blocks: Vec<NodeIndex> = Vec::new();

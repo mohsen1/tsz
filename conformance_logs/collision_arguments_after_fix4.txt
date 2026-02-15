@@ -1,0 +1,19 @@
+[1;33mCleaning TypeScript submodule (git checkout + clean -xfd)...[0m
+[0;32m✓ TypeScript submodule clean[0m
+
+[0;32mBinaries are up-to-date (profile: dist-fast)[0m
+[0;32mTypeScript cache version matches pinned version: 6.0.0-dev.20260215[0m
+[0;32mRunning conformance tests...[0m
+Cache file: /Users/mohsenazimi/code/tsz-1/tsc-cache-full.json
+Workers: 16
+
+
+============================================================
+FINAL RESULTS: 7/7 passed (100.0%)
+  Skipped: 0
+  Crashed: 0
+  Timeout: 0
+  Time: 0.2s
+============================================================
+
+[0;32mTests completed[0m

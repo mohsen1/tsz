@@ -456,6 +456,11 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(func_type) = self.ctx.arena.get_function_type(node) {
                 // Check each parameter for parameter property modifiers
+                self.check_strict_mode_reserved_parameter_names(
+                    &func_type.parameters.nodes,
+                    type_idx,
+                    self.ctx.enclosing_class.is_some(),
+                );
                 self.check_parameter_properties(&func_type.parameters.nodes);
                 for &param_idx in &func_type.parameters.nodes {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)

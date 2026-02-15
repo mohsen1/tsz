@@ -20,6 +20,51 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn check_strict_mode_reserved_parameter_names(
+        &mut self,
+        params: &[NodeIndex],
+        strict_context_node: NodeIndex,
+        use_class_strict_message: bool,
+    ) {
+        if !self.is_strict_mode_for_node(strict_context_node) {
+            return;
+        }
+
+        for &param_idx in params {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+            if ident.escaped_text != "arguments" && ident.escaped_text != "eval" {
+                continue;
+            }
+
+            if use_class_strict_message && self.ctx.enclosing_class.is_some() {
+                self.error_at_node_msg(
+                    param.name,
+                    crate::diagnostics::diagnostic_codes
+                        ::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                    &[&ident.escaped_text],
+                );
+            } else {
+                self.error_at_node_msg(
+                    param.name,
+                    crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                    &[&ident.escaped_text],
+                );
+            }
+        }
+    }
+
     fn is_immediately_invoked_function_like(&self, node_idx: NodeIndex) -> bool {
         let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
             return false;

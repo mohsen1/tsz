@@ -362,7 +362,9 @@ impl<'a> CheckerState<'a> {
             return (self.get_type_from_type_node(type_annotation), None);
         };
 
-        let node = self.ctx.arena.get(predicate_node_idx).unwrap();
+        let Some(node) = self.ctx.arena.get(predicate_node_idx) else {
+            return (TypeId::BOOLEAN, None);
+        };
         let Some(data) = self.ctx.arena.get_type_predicate(node) else {
             return (TypeId::BOOLEAN, None);
         };
@@ -441,7 +443,9 @@ impl<'a> CheckerState<'a> {
             );
         };
 
-        let node = self.ctx.arena.get(predicate_node_idx).unwrap();
+        let Some(node) = self.ctx.arena.get(predicate_node_idx) else {
+            return (TypeId::BOOLEAN, None);
+        };
         let Some(data) = self.ctx.arena.get_type_predicate(node) else {
             return (TypeId::BOOLEAN, None);
         };

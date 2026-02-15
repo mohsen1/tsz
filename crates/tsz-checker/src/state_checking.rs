@@ -1499,38 +1499,25 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        // TS1100: Invalid use of 'arguments'/'eval' in strict mode
-        // Applies regardless of target when alwaysStrict is enabled
-        if self.ctx.compiler_options.always_strict
+        // TS1100/TS1210: invalid use of 'arguments'/'eval' in strict mode
+        // Use class-specific messaging in class bodies.
+        if self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
             && (name == "arguments" || name == "eval")
         {
             use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                var_decl.name,
-                diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                &[name],
-            );
-        }
-
-        // TS1210: 'arguments'/'eval' as variable name inside class body (implicit strict mode)
-        tracing::trace!(
-            "Checking TS1210: enclosing_class={}, var_name={:?}",
-            self.ctx.enclosing_class.is_some(),
-            var_name
-        );
-        if self.ctx.enclosing_class.is_some()
-            && let Some(ref name) = var_name
-        {
-            tracing::trace!("TS1210 check: name='{}', in_class=true", name);
-            if name == "arguments" || name == "eval" {
-                tracing::trace!("TS1210: Emitting error for '{}'", name);
-                use crate::diagnostics::diagnostic_codes;
+            if self.ctx.enclosing_class.is_some() {
                 self.error_at_node_msg(
-                        var_decl.name,
-                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
-                        &[name],
-                    );
+                    var_decl.name,
+                    diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                    &[name],
+                );
+            } else {
+                self.error_at_node_msg(
+                    var_decl.name,
+                    diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                    &[name],
+                );
             }
         }
 
@@ -1565,6 +1552,7 @@ impl<'a> CheckerState<'a> {
                 // Check for undefined type names in nested types (e.g., function type parameters)
                 // Skip top-level TYPE_REFERENCE to avoid duplicates with get_type_from_type_node
                 checker.check_type_for_missing_names_skip_top_level_ref(var_decl.type_annotation);
+                checker.check_type_for_parameter_properties(var_decl.type_annotation);
                 let type_id = checker.get_type_from_type_node(var_decl.type_annotation);
 
                 // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
@@ -4233,12 +4221,13 @@ impl<'a> CheckerState<'a> {
                     }
                     _ => None,
                 };
+                let Some(member_name_idx) = member_name_idx else {
+                    continue;
+                };
 
                 // Check if member has a private identifier name
-                let is_private_identifier = member_name_idx
-                    .filter(|idx| !idx.is_none())
-                    .and_then(|idx| self.ctx.arena.get(idx))
-                    .is_some_and(|node| {
+                let is_private_identifier =
+                    self.ctx.arena.get(member_name_idx).is_some_and(|node| {
                         node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
                     });
 
@@ -4253,7 +4242,7 @@ impl<'a> CheckerState<'a> {
                     );
                     if is_es5_or_lower {
                         self.error_at_node(
-                            member_name_idx.unwrap(),
+                            member_name_idx,
                             diagnostic_messages::PRIVATE_IDENTIFIERS_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ECMASCRIPT_2015_AND_HIGHER,
                             diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_AVAILABLE_WHEN_TARGETING_ECMASCRIPT_2015_AND_HIGHER,
                         );
@@ -4262,7 +4251,7 @@ impl<'a> CheckerState<'a> {
                     // TS18019: Check for private identifiers in ambient classes
                     if is_declared {
                         self.error_at_node(
-                            member_name_idx.unwrap(),
+                            member_name_idx,
                             diagnostic_messages::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
                             diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
                         );
