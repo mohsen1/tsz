@@ -208,51 +208,53 @@ impl<'a> DefiniteAssignmentAnalyzer<'a> {
             };
 
             // For nodes with multiple predecessors, merge states from all predecessors
-            let state_before = if flow_node.antecedent.len() > 1 {
-                // Multiple predecessors - merge their states
-                let mut merged_state = AssignmentStateMap::new();
-                let mut has_predecessor = false;
-
-                for &pred in &flow_node.antecedent {
+            let state_before = match flow_node.antecedent.len() {
+                0 => {
+                    if flow_id == entry {
+                        initial_state.clone()
+                    } else {
+                        AssignmentStateMap::new()
+                    }
+                }
+                1 => {
+                    let pred = flow_node.antecedent[0];
                     if pred.is_none() {
-                        continue;
-                    }
-                    if let Some(pred_state) = self.node_states.get(&pred) {
-                        if has_predecessor {
-                            merged_state.merge(pred_state);
-                        } else {
-                            merged_state = pred_state.clone();
-                            has_predecessor = true;
-                        }
+                        initial_state.clone()
+                    } else if let Some(pred_state) = self.node_states.get(&pred) {
+                        pred_state.clone()
                     } else if pred == entry {
-                        // This predecessor is the entry point, use initial state
-                        if has_predecessor {
-                            merged_state.merge(&initial_state);
-                        } else {
-                            merged_state = initial_state.clone();
-                            has_predecessor = true;
-                        }
+                        initial_state.clone()
+                    } else {
+                        AssignmentStateMap::new()
                     }
                 }
-                merged_state
-            } else if flow_node.antecedent.len() == 1 {
-                // Single predecessor
-                let pred = flow_node.antecedent[0];
-                if pred.is_none() {
-                    initial_state.clone()
-                } else if let Some(pred_state) = self.node_states.get(&pred) {
-                    pred_state.clone()
-                } else if pred == entry {
-                    initial_state.clone()
-                } else {
-                    AssignmentStateMap::new()
-                }
-            } else {
-                // No predecessors (entry node or unreachable)
-                if flow_id == entry {
-                    initial_state.clone()
-                } else {
-                    AssignmentStateMap::new()
+                _ => {
+                    // Multiple predecessors - merge their states
+                    let mut merged_state = AssignmentStateMap::new();
+                    let mut has_predecessor = false;
+
+                    for &pred in &flow_node.antecedent {
+                        if pred.is_none() {
+                            continue;
+                        }
+                        if let Some(pred_state) = self.node_states.get(&pred) {
+                            if has_predecessor {
+                                merged_state.merge(pred_state);
+                            } else {
+                                merged_state = pred_state.clone();
+                                has_predecessor = true;
+                            }
+                        } else if pred == entry {
+                            // This predecessor is the entry point, use initial state
+                            if has_predecessor {
+                                merged_state.merge(&initial_state);
+                            } else {
+                                merged_state = initial_state.clone();
+                                has_predecessor = true;
+                            }
+                        }
+                    }
+                    merged_state
                 }
             };
 
