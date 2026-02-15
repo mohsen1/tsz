@@ -81,25 +81,6 @@ impl TsTypeChecker {
         formatter.format(type_id)
     }
 
-    /// Fallback type formatting for basic/intrinsic types
-    fn format_basic_type(&self, type_id: TypeId) -> String {
-        match type_id {
-            t if t == TypeId::ANY => "any".to_string(),
-            t if t == TypeId::UNKNOWN => "unknown".to_string(),
-            t if t == TypeId::STRING => "string".to_string(),
-            t if t == TypeId::NUMBER => "number".to_string(),
-            t if t == TypeId::BOOLEAN => "boolean".to_string(),
-            t if t == TypeId::VOID => "void".to_string(),
-            t if t == TypeId::UNDEFINED => "undefined".to_string(),
-            t if t == TypeId::NULL => "null".to_string(),
-            t if t == TypeId::NEVER => "never".to_string(),
-            t if t == TypeId::OBJECT => "object".to_string(),
-            t if t == TypeId::SYMBOL => "symbol".to_string(),
-            t if t == TypeId::BIGINT => "bigint".to_string(),
-            _ => format!("Type({})", type_id.0),
-        }
-    }
-
     /// Format a symbol as a string
     #[wasm_bindgen(js_name = symbolToString)]
     pub fn symbol_to_string(&self, _symbol_handle: u32) -> String {

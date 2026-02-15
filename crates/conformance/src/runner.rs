@@ -148,7 +148,6 @@ impl Runner {
                         cache,
                         tsz_binary,
                         compare_fingerprints,
-                        verbose,
                         print_test_files,
                         timeout_secs,
                     )
@@ -466,7 +465,6 @@ impl Runner {
         cache: Arc<crate::cache::TscCache>,
         tsz_binary: String,
         compare_fingerprints: bool,
-        _verbose: bool,
         print_test_files: bool,
         timeout_secs: u64,
     ) -> anyhow::Result<TestResult> {
