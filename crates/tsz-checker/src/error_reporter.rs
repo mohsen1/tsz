@@ -2421,7 +2421,7 @@ impl<'a> CheckerState<'a> {
         {
             let ident_pos = node.pos;
             for &err_pos in &self.ctx.syntax_parse_error_positions {
-                if err_pos <= ident_pos && (ident_pos - err_pos) <= 8 {
+                if err_pos < ident_pos && (ident_pos - err_pos) <= 8 {
                     return;
                 }
             }
