@@ -1570,8 +1570,32 @@ impl ParserState {
         }
 
         // export import X = Y (re-export of import equals)
+        // export import X from "..." (ES6 import with export modifier — TS1191)
         if self.is_token(SyntaxKind::ImportKeyword) {
-            return self.parse_export_import_equals(start_pos);
+            if self.look_ahead_is_import_equals() {
+                return self.parse_export_import_equals(start_pos);
+            }
+            // ES6 import with export modifier — emit TS1191 and parse as import
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "An import declaration cannot have modifiers.",
+                diagnostic_codes::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
+            );
+            let import_decl = self.parse_import_declaration();
+            let end_pos = self.token_end();
+            return self.arena.add_export_decl(
+                syntax_kind_ext::EXPORT_DECLARATION,
+                start_pos,
+                end_pos,
+                ExportDeclData {
+                    modifiers: None,
+                    is_type_only: false,
+                    is_default_export: false,
+                    export_clause: import_decl,
+                    module_specifier: NodeIndex::NONE,
+                    attributes: NodeIndex::NONE,
+                },
+            );
         }
 
         // export * from "mod"
