@@ -111,10 +111,10 @@ pub struct ParseResult {
 /// This is optimal for initial parsing before symbol resolution.
 ///
 /// # Arguments
-/// * `files` - Vector of (file_name, source_text) pairs
+/// * `files` - Vector of (`file_name`, `source_text`) pairs
 ///
 /// # Returns
-/// Vector of ParseResult for each file
+/// Vector of `ParseResult` for each file
 pub fn parse_files_parallel(files: Vec<(String, String)>) -> Vec<ParseResult> {
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
@@ -200,7 +200,7 @@ pub struct BindResult {
     /// Global augmentations (interface declarations inside `declare global` blocks)
     pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
-    /// Maps module specifier -> [ModuleAugmentation]
+    /// Maps module specifier -> [`ModuleAugmentation`]
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     pub reexports: Reexports,
@@ -211,13 +211,13 @@ pub struct BindResult {
     pub lib_binders: Vec<Arc<BinderState>>,
     /// Symbol IDs that originated from lib files (pre-merge local IDs)
     pub lib_symbol_ids: FxHashSet<SymbolId>,
-    /// Reverse mapping from user-local lib symbol IDs to (lib_binder_ptr, original_local_id)
+    /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`)
     pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
     /// Flow nodes for control flow analysis
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
-    /// Map from switch clause NodeIndex to parent switch statement NodeIndex
+    /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
     /// Used by control flow analysis for switch exhaustiveness checking
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     /// Whether this file is an external module (has imports/exports)
@@ -230,10 +230,10 @@ pub struct BindResult {
 /// file-local symbols which can later be merged into a global scope.
 ///
 /// # Arguments
-/// * `files` - Vector of (file_name, source_text) pairs
+/// * `files` - Vector of (`file_name`, `source_text`) pairs
 ///
 /// # Returns
-/// Vector of BindResult for each file
+/// Vector of `BindResult` for each file
 pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> {
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
@@ -391,10 +391,10 @@ pub fn parse_and_bind_with_stats(files: Vec<(String, String)>) -> (Vec<BindResul
     (results, stats)
 }
 
-/// Load lib.d.ts files and create LibContext objects for the binder.
+/// Load lib.d.ts files and create `LibContext` objects for the binder.
 ///
 /// This function loads the specified lib.d.ts files (e.g., lib.dom.d.ts, lib.es*.d.ts)
-/// and returns LibContext objects that can be used during binding to resolve global
+/// and returns `LibContext` objects that can be used during binding to resolve global
 /// symbols like `console`, `Array`, `Promise`, etc.
 ///
 /// This is similar to `load_lib_files_for_contexts` in driver.rs but returns
@@ -503,11 +503,11 @@ pub fn load_lib_files_for_binding_strict(
 /// merged into its binder.
 ///
 /// # Arguments
-/// * `files` - Vector of (file_name, source_text) pairs
+/// * `files` - Vector of (`file_name`, `source_text`) pairs
 /// * `lib_files` - Optional list of lib file paths to load
 ///
 /// # Returns
-/// Vector of BindResult for each file
+/// Vector of `BindResult` for each file
 pub fn parse_and_bind_parallel_with_lib_files(
     files: Vec<(String, String)>,
     lib_files: &[&Path],
@@ -527,11 +527,11 @@ pub fn parse_and_bind_parallel_with_lib_files(
 /// enabling resolution of global symbols like `console`, `Array`, etc.
 ///
 /// # Arguments
-/// * `files` - Vector of (file_name, source_text) pairs
+/// * `files` - Vector of (`file_name`, `source_text`) pairs
 /// * `lib_files` - Lib files to merge into each binder
 ///
 /// # Returns
-/// Vector of BindResult for each file
+/// Vector of `BindResult` for each file
 pub fn parse_and_bind_parallel_with_libs(
     files: Vec<(String, String)>,
     lib_files: &[Arc<lib_loader::LibFile>],
@@ -659,7 +659,7 @@ pub struct BoundFile {
     pub flow_nodes: FlowNodeArena,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
-    /// Map from switch clause NodeIndex to parent switch statement NodeIndex
+    /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
     /// Used by control flow analysis for switch exhaustiveness checking
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     /// Whether this file is an external module (has imports/exports)
@@ -677,7 +677,7 @@ pub struct MergedProgram {
     /// Symbol-to-arena mapping for declaration lookup (legacy, stores last arena)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    /// Key: (SymbolId, NodeIndex of declaration) -> Arena containing that declaration
+    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena containing that declaration
     pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
     /// Global symbol table (exports from all files)
     pub globals: SymbolTable,
@@ -691,10 +691,10 @@ pub struct MergedProgram {
     /// This enables cross-file module resolution: import { X } from './file' can find X's symbol
     pub module_exports: FxHashMap<String, SymbolTable>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
-    /// Maps (current_file, exported_name) -> (source_module, original_name)
+    /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
     pub reexports: Reexports,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
-    /// Maps current_file -> Vec of source_modules
+    /// Maps `current_file` -> Vec of `source_modules`
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     /// Lib binders for global type resolution (Array, String, Promise, etc.)
     /// These contain symbols from lib.d.ts files and enable resolution of built-in types
@@ -712,7 +712,7 @@ pub struct MergedProgram {
 /// - Namespace + Namespace (declaration merging)
 /// - Class + Interface (merging for class declarations)
 /// - Function + Function (overloads - handled per-file)
-fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bool {
+const fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bool {
     use crate::binder::symbol_flags;
 
     // Interface can merge with interface
@@ -816,13 +816,13 @@ fn append_unique_declarations(existing: &mut Vec<NodeIndex>, incoming: &[NodeInd
 /// This is a sequential operation that combines:
 /// - All symbol arenas into a single global arena
 /// - Merges symbols with the same name across files (for interfaces, namespaces, etc.)
-/// - Remaps symbol IDs in node_symbols to use global IDs
+/// - Remaps symbol IDs in `node_symbols` to use global IDs
 ///
 /// # Arguments
-/// * `results` - Vector of BindResult from parallel binding
+/// * `results` - Vector of `BindResult` from parallel binding
 ///
 /// # Returns
-/// MergedProgram with unified symbol space
+/// `MergedProgram` with unified symbol space
 pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
     let refs: Vec<&BindResult> = results.iter().collect();
     merge_bind_results_ref(&refs)
@@ -1737,7 +1737,7 @@ fn collect_functions_from_node(
 /// * `program` - The merged program with global symbols
 ///
 /// # Returns
-/// CheckResult with diagnostics from all functions
+/// `CheckResult` with diagnostics from all functions
 pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
     // First, collect all functions from all files (sequential)
     let mut all_functions: Vec<(usize, NodeIndex)> = Vec::new();
@@ -1874,7 +1874,7 @@ pub fn check_files_parallel(
     }
 }
 
-/// Create a BinderState from a BoundFile for type checking
+/// Create a `BinderState` from a `BoundFile` for type checking
 pub fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
