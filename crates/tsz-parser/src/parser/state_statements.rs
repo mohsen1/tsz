@@ -334,7 +334,8 @@ impl ParserState {
             | SyntaxKind::OverrideKeyword
             | SyntaxKind::ReadonlyKeyword => self.parse_statement_top_level_modifier(),
             SyntaxKind::DefaultKeyword => {
-                self.error_unexpected_token();
+                // 'default' is only valid after 'export': emit TS1005 "'export' expected"
+                self.parse_error_at_current_token("'export' expected.", diagnostic_codes::EXPECTED);
                 self.next_token();
                 self.parse_statement()
             }
