@@ -344,9 +344,12 @@ impl<'a> Printer<'a> {
             if c.pos >= from_pos && c.end <= to_pos {
                 // Found a comment in our range - emit it
                 let comment_text = safe_slice::slice(text, c.pos as usize, c.end as usize);
+                let has_trailing_new_line = c.has_trailing_new_line;
                 if !comment_text.is_empty() {
                     self.write(comment_text);
-                    self.write_space();
+                    if !has_trailing_new_line {
+                        self.write_space();
+                    }
                 }
                 // Advance the main index past this comment
                 self.comment_emit_idx = scan_idx + 1;
