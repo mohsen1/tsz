@@ -73,7 +73,6 @@ complexity = { level = "warn", priority = -1 }
 too_many_arguments = "allow"
 collapsible_if = "allow"
 unnested_or_patterns = "allow"
-collapsible_match = "allow"
 only_used_in_recursion = "allow"
 needless_pass_by_value = "allow"
 
