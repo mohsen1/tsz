@@ -945,9 +945,8 @@ impl BinderState {
         arena: &NodeArena,
         node_idx: NodeIndex,
     ) -> (Vec<SymbolId>, bool) {
-        let node = match arena.get(node_idx) {
-            Some(node) => node,
-            None => return (Vec::new(), false),
+        let Some(node) = arena.get(node_idx) else {
+            return (Vec::new(), false);
         };
         let name = match arena.get_identifier(node) {
             Some(ident) => ident.escaped_text.as_str(),
@@ -2388,9 +2387,8 @@ impl BinderState {
             return;
         }
 
-        let node = match arena.get(idx) {
-            Some(n) => n,
-            None => return,
+        let Some(node) = arena.get(idx) else {
+            return;
         };
 
         if node.kind == syntax_kind_ext::ARROW_FUNCTION

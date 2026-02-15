@@ -161,27 +161,27 @@ impl<'a> LoweringPass<'a> {
         match node.kind {
             k if k == syntax_kind_ext::CLASS_DECLARATION => self.visit_class_declaration(node, idx),
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.visit_function_declaration(node, idx)
+                self.visit_function_declaration(node, idx);
             }
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-                self.visit_function_expression(node, idx)
+                self.visit_function_expression(node, idx);
             }
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.visit_arrow_function(node, idx),
             k if k == syntax_kind_ext::CONSTRUCTOR => self.visit_constructor(node, idx),
             k if k == syntax_kind_ext::CALL_EXPRESSION => self.visit_call_expression(node, idx),
             k if k == syntax_kind_ext::NEW_EXPRESSION => self.visit_new_expression(node),
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                self.visit_variable_statement(node, idx)
+                self.visit_variable_statement(node, idx);
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => self.visit_enum_declaration(node, idx),
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.visit_module_declaration(node, idx)
+                self.visit_module_declaration(node, idx);
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                self.visit_export_declaration(node, idx)
+                self.visit_export_declaration(node, idx);
             }
             k if k == syntax_kind_ext::IMPORT_DECLARATION => {
-                self.visit_import_declaration(node, idx)
+                self.visit_import_declaration(node, idx);
             }
             k if k == syntax_kind_ext::FOR_IN_STATEMENT => self.visit_for_in_statement(node),
             k if k == syntax_kind_ext::FOR_OF_STATEMENT => self.visit_for_of_statement(node, idx),

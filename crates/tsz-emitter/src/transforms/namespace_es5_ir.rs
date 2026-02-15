@@ -1996,7 +1996,7 @@ fn collect_runtime_exported_var_names_in_stmt(
 
     match stmt_node.kind {
         kind if kind == syntax_kind_ext::VARIABLE_STATEMENT => {
-            collect_from_var_statement(stmt_node, names)
+            collect_from_var_statement(stmt_node, names);
         }
         kind if kind == syntax_kind_ext::EXPORT_DECLARATION => {
             if let Some(export_data) = arena.get_export_decl(stmt_node) {
@@ -2263,10 +2263,10 @@ fn rewrite_exported_var_refs(
             rewrite_exported_var_refs(right, ns_name, names);
         }
         IRNode::PrefixUnaryExpr { operand, .. } => {
-            rewrite_exported_var_refs(operand, ns_name, names)
+            rewrite_exported_var_refs(operand, ns_name, names);
         }
         IRNode::PostfixUnaryExpr { operand, .. } => {
-            rewrite_exported_var_refs(operand, ns_name, names)
+            rewrite_exported_var_refs(operand, ns_name, names);
         }
         IRNode::CallExpr {
             callee, arguments, ..
@@ -2409,7 +2409,7 @@ fn rewrite_exported_var_refs(
             }
         }
         IRNode::LabeledStatement { statement, .. } => {
-            rewrite_exported_var_refs(statement, ns_name, names)
+            rewrite_exported_var_refs(statement, ns_name, names);
         }
         IRNode::SwitchStatement { expression, cases } => {
             rewrite_exported_var_refs(expression, ns_name, names);
