@@ -8,7 +8,9 @@
 //! - Template literal type matching (using backtracking)
 //! - Template-to-template literal subtype matching (generalized pattern matching)
 
-use crate::types::*;
+use crate::types::{
+    IntrinsicKind, LiteralValue, TemplateLiteralId, TemplateSpan, TypeId, TypeListId,
+};
 use crate::visitor::{intrinsic_kind, literal_value, template_literal_id, union_list_id};
 use tsz_common::interner::Atom;
 

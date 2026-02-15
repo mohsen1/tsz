@@ -10,7 +10,9 @@
 //!   - Readonly target properties only check read type (no write access)
 //! - Private brand checking for nominal class typing
 
-use crate::types::*;
+use crate::types::{
+    ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, PropertyLookup, TypeId, Visibility,
+};
 use crate::utils;
 use tsz_common::interner::Atom;
 

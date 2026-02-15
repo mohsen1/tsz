@@ -227,9 +227,9 @@ fn test_concurrent_property_map_building() {
     // All lookups should succeed
     for lookup in &lookups {
         match lookup {
-            crate::PropertyLookup::Found(_) => {}
-            crate::PropertyLookup::NotFound => panic!("Property should be found"),
-            crate::PropertyLookup::Uncached => {} // OK for small objects
+            PropertyLookup::Found(_) => {}
+            PropertyLookup::NotFound => panic!("Property should be found"),
+            PropertyLookup::Uncached => {} // OK for small objects
         }
     }
 }
@@ -439,3 +439,4 @@ fn test_concurrent_template_literal_creation() {
         assert!(interner.lookup(type_id).is_some());
     }
 }
+use crate::types::PropertyLookup;

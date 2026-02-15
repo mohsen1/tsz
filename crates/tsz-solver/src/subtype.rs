@@ -16,7 +16,15 @@ use crate::db::QueryDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 use crate::instantiate::{TypeSubstitution, instantiate_type};
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    CallableShapeId, ConditionalTypeId, FunctionShape, FunctionShapeId, IntrinsicKind,
+    LiteralValue, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo,
+    RelationCacheKey, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan,
+    TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
+    Visibility,
+};
 use crate::utils;
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,

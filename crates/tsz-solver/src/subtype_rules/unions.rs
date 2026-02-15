@@ -6,7 +6,7 @@
 //! - Distributivity rules between unions and intersections
 //! - Type parameter compatibility in union/intersection contexts
 
-use crate::types::*;
+use crate::types::{TypeId, TypeParamInfo};
 use crate::visitor::type_param_info;
 
 use super::super::{SubtypeChecker, SubtypeFailureReason, SubtypeResult, TypeResolver};

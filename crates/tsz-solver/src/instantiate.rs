@@ -10,7 +10,13 @@
 //! - Handling of constraints and defaults
 
 use crate::TypeDatabase;
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, IntrinsicKind,
+    LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
+    TypeData, TypeId, TypeParamInfo, TypePredicate,
+};
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 

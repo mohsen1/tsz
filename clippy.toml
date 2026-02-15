@@ -3,4 +3,7 @@
 warn-on-all-wildcard-imports = true
 too-many-arguments-threshold = 8
 type-complexity-threshold = 250
-cognitive-complexity-threshold = 30
+cognitive-complexity-threshold = 24
+
+# Avoiding hidden convenience that masks missing boundary discipline.
+allow-unwrap-in-tests = false

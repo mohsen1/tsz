@@ -7,7 +7,10 @@
 //! - Uncapitalize<T>
 
 use crate::subtype::TypeResolver;
-use crate::types::*;
+use crate::types::{
+    IntrinsicKind, LiteralValue, StringIntrinsicKind, TemplateLiteralId, TemplateSpan, TypeData,
+    TypeId,
+};
 
 use super::super::evaluate::TypeEvaluator;
 

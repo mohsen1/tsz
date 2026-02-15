@@ -16,7 +16,13 @@ use crate::db::QueryDatabase;
 use crate::def::DefId;
 use crate::instantiate::instantiate_generic;
 use crate::subtype::{NoopResolver, TypeResolver};
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    ConditionalType, ConditionalTypeId, MappedType, MappedTypeId, StringIntrinsicKind,
+    TemplateLiteralId, TemplateSpan, TypeApplicationId, TypeData, TypeId, TypeListId,
+    TypeParamInfo,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Result of conditional type evaluation

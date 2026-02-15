@@ -2868,7 +2868,7 @@ fn test_unique_symbol_nominal_assignability() {
 fn test_template_literal_expansion_limit_widens_to_string() {
     let interner = TypeInterner::new();
 
-    let count = crate::TEMPLATE_LITERAL_EXPANSION_LIMIT + 1;
+    let count = crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT + 1;
     let mut members = Vec::with_capacity(count);
     for idx in 0..count {
         let literal = interner.literal_string(&format!("k{idx}"));

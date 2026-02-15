@@ -36,7 +36,7 @@
 use crate::TypeDatabase;
 use crate::judge::JudgeConfig;
 use crate::subtype::{SubtypeChecker, TypeEnvironment};
-use crate::types::*;
+use crate::types::{TypeData, TypeId};
 
 // =============================================================================
 // Sound Mode Diagnostics

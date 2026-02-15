@@ -31,7 +31,7 @@ use crate::{TypeData, TypeDatabase, TypeId};
 use tsz_common::Atom;
 
 // Re-export extended type queries so callers can use `type_queries::*`
-pub use crate::type_queries_extended::*;
+pub use crate::type_queries_extended::get_application_info;
 
 // =============================================================================
 // Core Type Queries

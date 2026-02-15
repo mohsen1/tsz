@@ -7,7 +7,10 @@
 //! - Apparent primitive shapes (for object-like operations on primitives)
 
 use crate::types::Visibility;
-use crate::types::*;
+use crate::types::{
+    FunctionShape, IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape,
+    PropertyInfo, TypeId,
+};
 use crate::visitor::{
     application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
     intrinsic_kind, is_this_type, literal_value, mapped_type_id, object_shape_id,

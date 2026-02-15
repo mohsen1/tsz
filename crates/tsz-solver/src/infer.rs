@@ -12,7 +12,14 @@
 
 use crate::TypeDatabase;
 use crate::instantiate::TypeSubstitution;
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    CallSignature, CallableShape, FunctionShape, FunctionShapeId, InferencePriority, IntrinsicKind,
+    LiteralValue, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo, PropertyLookup,
+    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
+    TypeId, TypeListId,
+};
 use crate::utils;
 use crate::visitor::{self, is_literal_type};
 use crate::widening;

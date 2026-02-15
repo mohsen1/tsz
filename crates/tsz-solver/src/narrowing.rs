@@ -31,7 +31,12 @@ use crate::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::subtype::{SubtypeChecker, TypeResolver, is_subtype_of};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::Visibility;
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    FunctionShape, IntrinsicKind, LiteralValue, ObjectShapeId, ParamInfo, PropertyInfo, TypeData,
+    TypeId, TypeListId, TypeParamInfo,
+};
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
 use crate::visitor::{
     TypeVisitor, index_access_parts, intersection_list_id, is_function_type_db, is_literal_type_db,

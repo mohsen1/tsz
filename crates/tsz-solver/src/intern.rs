@@ -21,7 +21,15 @@
 //! This design allows true parallel type checking without lock contention.
 
 use crate::def::DefId;
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    CallSignature, CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId,
+    FunctionShape, FunctionShapeId, IndexSignature, IntrinsicKind, LiteralValue, MappedType,
+    MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId, OrderedFloat, PropertyInfo,
+    PropertyLookup, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
+    TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Visibility,
+};
 use crate::visitor::{is_literal_type, is_unit_type};
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;

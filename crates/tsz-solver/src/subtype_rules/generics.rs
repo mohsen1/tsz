@@ -9,7 +9,7 @@
 
 use crate::def::DefId;
 use crate::types::Visibility;
-use crate::types::*;
+use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
     application_id, index_access_parts, keyof_inner_type, lazy_def_id, literal_value,
     object_shape_id, object_with_index_shape_id, ref_symbol, type_param_info, union_list_id,

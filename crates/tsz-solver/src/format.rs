@@ -7,7 +7,11 @@ use crate::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
     get_message_template,
 };
-use crate::types::*;
+use crate::types::{
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IntrinsicKind, LiteralValue,
+    MappedType, ObjectShape, ParamInfo, PropertyInfo, StringIntrinsicKind, TemplateSpan,
+    TupleElement, TypeData, TypeId, TypeParamInfo,
+};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tracing::trace;

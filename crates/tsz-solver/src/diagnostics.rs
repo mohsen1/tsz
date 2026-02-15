@@ -25,7 +25,7 @@
 use crate::TypeDatabase;
 use crate::TypeFormatter;
 use crate::def::DefinitionStore;
-use crate::types::*;
+use crate::types::{TypeId, Visibility};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
@@ -519,8 +519,6 @@ pub mod codes {
     pub use dc::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_MISSING;
     pub use dc::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS as PROPERTY_VISIBILITY_MISMATCH;
     pub use dc::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A as PROPERTY_NOMINAL_MISMATCH;
-    pub use dc::THE_THIS_CONTEXT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_METHODS_THIS_OF_TYPE as THIS_CONTEXT_MISMATCH;
-    pub use dc::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT as CONSTRAINT_NOT_SATISFIED;
     pub use dc::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE as NO_COMMON_PROPERTIES;
     pub use dc::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE as MISSING_PROPERTIES;
     pub use dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
@@ -537,13 +535,9 @@ pub mod codes {
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N as CANNOT_FIND_NAME_TEST_RUNNER;
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE as CANNOT_FIND_NAME_NODE;
     pub use dc::EXPECTED_ARGUMENTS_BUT_GOT as ARG_COUNT_MISMATCH;
-    pub use dc::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_OR_METHOD_MUST_BE_THE_GLOBAL_PROMISE_T_TYPE as NEVER_ASYNC_RETURN;
     pub use dc::THIS_EXPRESSION_IS_NOT_CALLABLE as NOT_CALLABLE;
 
     // Null/undefined errors
-    pub use dc::OBJECT_IS_OF_TYPE_UNKNOWN as OBJECT_IS_UNKNOWN;
-    pub use dc::OBJECT_IS_POSSIBLY_NULL as OBJECT_POSSIBLY_NULL;
-    pub use dc::OBJECT_IS_POSSIBLY_UNDEFINED as OBJECT_POSSIBLY_UNDEFINED;
 
     // Implicit any errors (7xxx series)
     pub use dc::FUNCTION_EXPRESSION_WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN as IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION;
@@ -553,7 +547,6 @@ pub mod codes {
     pub use dc::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE as IMPLICIT_ANY_RETURN;
 
     // Type instantiation errors
-    pub use dc::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE as INSTANTIATION_TOO_DEEP;
 }
 
 /// Map well-known names to their specialized "cannot find name" diagnostic codes.
@@ -1688,6 +1681,9 @@ impl<'a> DiagnosticCollector<'a> {
             .collect()
     }
 }
+
+#[cfg(test)]
+use crate::types::*;
 
 #[cfg(test)]
 #[path = "../tests/diagnostics_tests.rs"]

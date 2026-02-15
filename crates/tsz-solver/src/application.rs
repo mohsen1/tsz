@@ -12,6 +12,8 @@
 
 use crate::subtype::TypeResolver;
 use crate::type_queries;
+use crate::types::TypeId;
+#[cfg(test)]
 use crate::types::*;
 use crate::{TypeDatabase, TypeSubstitution, instantiate_type};
 use std::cell::RefCell;

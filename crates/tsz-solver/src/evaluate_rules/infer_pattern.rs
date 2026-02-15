@@ -14,7 +14,11 @@
 use crate::TypeDatabase;
 use crate::application::ApplicationEvaluator;
 use crate::subtype::{SubtypeChecker, TypeResolver};
-use crate::types::*;
+use crate::types::{
+    CallSignature, CallableShape, CallableShapeId, ConditionalType, FunctionShape, FunctionShapeId,
+    IndexSignature, IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, ParamInfo,
+    PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
+};
 use crate::utils;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;

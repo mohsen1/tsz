@@ -26,7 +26,12 @@
 
 use crate::TypeDatabase;
 use crate::diagnostics::{SubtypeFailureReason, SubtypeTracer};
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShape, PropertyInfo, TupleListId, TypeData,
+    TypeId, TypeListId,
+};
 
 /// Tracer-based subtype checker.
 ///

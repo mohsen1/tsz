@@ -6,7 +6,10 @@
 use crate::apparent::apparent_primitive_members;
 use crate::subtype::TypeResolver;
 use crate::types::Visibility;
-use crate::types::*;
+use crate::types::{
+    FunctionShape, IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape,
+    ParamInfo, PropertyInfo, TypeId,
+};
 use crate::{ApparentMemberKind, TypeDatabase};
 
 use super::super::evaluate::TypeEvaluator;

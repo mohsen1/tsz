@@ -4,7 +4,7 @@
 
 use crate::TypeDatabase;
 use crate::subtype::TypeResolver;
-use crate::types::*;
+use crate::types::{IntrinsicKind, LiteralValue, TupleElement, TypeData, TypeId, TypeListId};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
