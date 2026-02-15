@@ -66,8 +66,8 @@ pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 pub(crate) const MAX_INTERNED_TYPES: usize = 5_000_000;
 
 type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
-type ObjectPropertyMap =
-    OnceLock<DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>>;
+type ObjectPropertyIndex = DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>;
+type ObjectPropertyMap = OnceLock<ObjectPropertyIndex>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum PrimitiveClass {
@@ -414,9 +414,7 @@ impl TypeInterner {
 
     /// Get the object property maps, initializing on first access
     #[inline]
-    fn get_object_property_maps(
-        &self,
-    ) -> &DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher> {
+    fn get_object_property_maps(&self) -> &ObjectPropertyIndex {
         self.object_property_maps
             .get_or_init(|| DashMap::with_hasher(FxBuildHasher))
     }

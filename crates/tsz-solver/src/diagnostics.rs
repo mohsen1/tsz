@@ -100,6 +100,7 @@ impl<T: SubtypeTracer> DynSubtypeTracer for T {
     }
 }
 
+#[cfg(test)]
 /// Fast tracer that returns immediately on mismatch (zero-cost abstraction).
 ///
 /// This tracer is used for fast subtype checks where we only care about the
@@ -118,6 +119,7 @@ impl<T: SubtypeTracer> DynSubtypeTracer for T {
 #[derive(Clone, Copy, Debug)]
 pub struct FastTracer;
 
+#[cfg(test)]
 impl SubtypeTracer for FastTracer {
     /// Always return `false` to stop checking immediately.
     ///
@@ -129,6 +131,7 @@ impl SubtypeTracer for FastTracer {
     }
 }
 
+#[cfg(test)]
 /// Diagnostic tracer that collects detailed failure reasons.
 ///
 /// This tracer is used when we need to generate detailed error messages.
@@ -149,6 +152,7 @@ pub struct DiagnosticTracer {
     failure: Option<SubtypeFailureReason>,
 }
 
+#[cfg(test)]
 impl DiagnosticTracer {
     /// Create a new diagnostic tracer.
     pub fn new() -> Self {
@@ -171,12 +175,14 @@ impl DiagnosticTracer {
     }
 }
 
+#[cfg(test)]
 impl Default for DiagnosticTracer {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(test)]
 impl SubtypeTracer for DiagnosticTracer {
     /// Collect the failure reason and stop checking.
     ///
@@ -514,8 +520,6 @@ pub mod codes {
     pub use dc::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE as ARG_NOT_ASSIGNABLE;
     pub use dc::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY as READONLY_PROPERTY;
     pub use dc::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE as EXCESS_PROPERTY;
-    pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE as PROPERTY_NOT_EXIST;
-    pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN as PROPERTY_NOT_EXIST_DID_YOU_MEAN;
     pub use dc::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_MISSING;
     pub use dc::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS as PROPERTY_VISIBILITY_MISMATCH;
     pub use dc::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A as PROPERTY_NOMINAL_MISMATCH;
@@ -525,6 +529,7 @@ pub mod codes {
 
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
 
+    #[cfg(test)]
     /// Same code as TYPE_NOT_ASSIGNABLE (TS2322) — used for nested property elaboration.
     pub const NESTED_TYPE_MISMATCH: u32 = dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
 
@@ -535,6 +540,8 @@ pub mod codes {
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N as CANNOT_FIND_NAME_TEST_RUNNER;
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE as CANNOT_FIND_NAME_NODE;
     pub use dc::EXPECTED_ARGUMENTS_BUT_GOT as ARG_COUNT_MISMATCH;
+    pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE as PROPERTY_NOT_EXIST;
+    pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN as PROPERTY_NOT_EXIST_DID_YOU_MEAN;
     pub use dc::THIS_EXPRESSION_IS_NOT_CALLABLE as NOT_CALLABLE;
 
     // Null/undefined errors
@@ -594,7 +601,6 @@ pub fn get_message_template(code: u32) -> &'static str {
 
 // TypeFormatter is now in format.rs
 
-// =============================================================================
 // Diagnostic Builder
 // =============================================================================
 
@@ -1248,6 +1254,22 @@ impl SubtypeFailureReason {
 }
 
 impl PendingDiagnosticBuilder {
+    /// Create an "Argument not assignable" pending diagnostic.
+    pub fn argument_not_assignable(arg_type: TypeId, param_type: TypeId) -> PendingDiagnostic {
+        PendingDiagnostic::error(
+            codes::ARG_NOT_ASSIGNABLE,
+            vec![arg_type.into(), param_type.into()],
+        )
+    }
+
+    /// Create an "Expected N arguments but got M" pending diagnostic.
+    pub fn argument_count_mismatch(expected: usize, got: usize) -> PendingDiagnostic {
+        PendingDiagnostic::error(codes::ARG_COUNT_MISMATCH, vec![expected.into(), got.into()])
+    }
+}
+
+#[cfg(test)]
+impl PendingDiagnosticBuilder {
     /// Create a "Type X is not assignable to type Y" pending diagnostic.
     pub fn type_not_assignable(source: TypeId, target: TypeId) -> PendingDiagnostic {
         PendingDiagnostic::error(
@@ -1272,14 +1294,6 @@ impl PendingDiagnosticBuilder {
         )
     }
 
-    /// Create an "Argument not assignable" pending diagnostic.
-    pub fn argument_not_assignable(arg_type: TypeId, param_type: TypeId) -> PendingDiagnostic {
-        PendingDiagnostic::error(
-            codes::ARG_NOT_ASSIGNABLE,
-            vec![arg_type.into(), param_type.into()],
-        )
-    }
-
     /// Create a "Cannot find name" pending diagnostic.
     pub fn cannot_find_name(name: &str) -> PendingDiagnostic {
         let code = cannot_find_name_code(name);
@@ -1289,11 +1303,6 @@ impl PendingDiagnosticBuilder {
     /// Create a "Type is not callable" pending diagnostic.
     pub fn not_callable(type_id: TypeId) -> PendingDiagnostic {
         PendingDiagnostic::error(codes::NOT_CALLABLE, vec![type_id.into()])
-    }
-
-    /// Create an "Expected N arguments but got M" pending diagnostic.
-    pub fn argument_count_mismatch(expected: usize, got: usize) -> PendingDiagnostic {
-        PendingDiagnostic::error(codes::ARG_COUNT_MISMATCH, vec![expected.into(), got.into()])
     }
 
     /// Create a "Cannot assign to readonly property" pending diagnostic.

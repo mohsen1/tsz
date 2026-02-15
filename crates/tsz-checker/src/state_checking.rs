@@ -2253,6 +2253,17 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        let property_optional_type = |property_type: TypeId, optional: bool| {
+            if optional {
+                self.ctx
+                    .types
+                    .factory()
+                    .union(vec![property_type, TypeId::UNDEFINED])
+            } else {
+                property_type
+            }
+        };
+
         // Get the property name or index
         if !element_data.property_name.is_none() {
             // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
@@ -2366,7 +2377,8 @@ impl<'a> CheckerState<'a> {
                         for prop in shape.properties.as_slice() {
                             if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str
                             {
-                                prop_types.push(prop.type_id);
+                                prop_types
+                                    .push(property_optional_type(prop.type_id, prop.optional));
                                 break;
                             }
                         }
@@ -2383,7 +2395,7 @@ impl<'a> CheckerState<'a> {
                 // Find the property by comparing names
                 for prop in shape.properties.as_slice() {
                     if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str {
-                        return prop.type_id;
+                        return property_optional_type(prop.type_id, prop.optional);
                     }
                 }
                 TypeId::ANY

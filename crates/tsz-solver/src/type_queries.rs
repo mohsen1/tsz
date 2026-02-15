@@ -30,8 +30,12 @@
 use crate::{TypeData, TypeDatabase, TypeId};
 use tsz_common::Atom;
 
-// Re-export extended type queries so callers can use `type_queries::*`
-pub use crate::type_queries_extended::get_application_info;
+// Re-export extended type queries so callers can use `type_queries::*` without
+// depending on `type_queries_extended`.
+//
+// This preserves the public API contract relied on by the checker while keeping
+// this module as the canonical stable query surface.
+pub use crate::type_queries_extended::*;
 
 // =============================================================================
 // Core Type Queries

@@ -11,6 +11,7 @@ use crate::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
+use std::sync::RwLock;
 use tracing::{Level, debug, span};
 use tsz_common::common::ScriptTarget;
 use tsz_common::interner::{Atom, Interner};
@@ -21,6 +22,14 @@ use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
+
+type ReexportTarget = (String, Option<String>);
+type FileReexports = FxHashMap<String, ReexportTarget>;
+type FileReexportsMap = FxHashMap<String, FileReexports>;
+type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
+type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
+type ExportCacheStorage = RwLock<ExportCache>;
+type IdentifierCacheStorage = RwLock<IdentifierCache>;
 
 /// Bitflags tracking which language features are used in a source file.
 ///
@@ -266,7 +275,7 @@ pub struct BinderState {
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
     /// Example: ("./a.ts", "foo", "./b.ts") means a.ts re-exports "foo" from b.ts
-    pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+    pub reexports: FileReexportsMap,
 
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
@@ -278,12 +287,12 @@ pub struct BinderState {
     /// This cache dramatically speeds up barrel file imports where the same export
     /// is looked up multiple times across different files.
     /// Uses `RwLock` for thread-safety in parallel compilation.
-    resolved_export_cache: std::sync::RwLock<FxHashMap<(String, String), Option<SymbolId>>>,
+    resolved_export_cache: ExportCacheStorage,
     /// Cache for identifier resolution by AST node.
     /// Key: (`arena_pointer`, `node_index`) -> resolved `SymbolId` (or None if not found).
     /// This avoids repeated scope walks for hot checker paths that ask for the same
     /// identifier symbol many times (e.g. large switch/flow analysis files).
-    resolved_identifier_cache: std::sync::RwLock<FxHashMap<(usize, u32), Option<SymbolId>>>,
+    resolved_identifier_cache: IdentifierCacheStorage,
 
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
     /// Imports from these modules should resolve to `any` type
@@ -343,7 +352,7 @@ pub struct BinderStateScopeInputs {
     pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
     pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
     pub module_exports: FxHashMap<String, SymbolTable>,
-    pub reexports: FxHashMap<String, FxHashMap<String, (String, Option<String>)>>,
+    pub reexports: FileReexportsMap,
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
