@@ -1186,16 +1186,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                     }
                     // If the pattern param doesn't contain infer, skip parameter matching entirely
-                } else {
-                    if !self.match_signature_params(
-                        source_params,
-                        &pattern_fn.params,
-                        bindings,
-                        &mut local_visited,
-                        checker,
-                    ) {
-                        return false;
-                    }
+                } else if !self.match_signature_params(
+                    source_params,
+                    &pattern_fn.params,
+                    bindings,
+                    &mut local_visited,
+                    checker,
+                ) {
+                    return false;
                 }
                 if !self.match_infer_pattern(
                     source_return,
