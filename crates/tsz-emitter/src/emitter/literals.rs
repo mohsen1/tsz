@@ -74,9 +74,7 @@ impl<'a> Printer<'a> {
                         b'/' if !escaped => {
                             i += 1; // Include closing /
                             // Include any flags (g, i, m, etc.)
-                            while i < max_end
-                                && matches!(text.as_bytes()[i], b'a'..=b'z' | b'A'..=b'Z')
-                            {
+                            while i < max_end && text.as_bytes()[i].is_ascii_alphabetic() {
                                 i += 1;
                             }
                             self.write(&text[regex_start..i]);
