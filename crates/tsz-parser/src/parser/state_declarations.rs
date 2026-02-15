@@ -148,13 +148,61 @@ impl ParserState {
     }
 
     /// Parse a single type member (property signature, method signature, call signature, construct signature)
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_type_member(&mut self, in_interface_declaration: bool) -> NodeIndex {
         let start_pos = self.token_pos();
+        if let Some(member) = self.parse_type_member_explicit_signature(start_pos) {
+            member
+        } else {
+            self.parse_type_member_property_or_method(start_pos, in_interface_declaration)
+        }
+    }
 
-        // Handle invalid access modifiers (private/protected/public) on type members.
-        // But NOT if the keyword is being used as a property name (e.g., "public: Type")
-        // Also NOT if there's a line break after the keyword (ASI: "protected\n p" means two properties)
+    fn parse_type_member_explicit_signature(&mut self, start_pos: u32) -> Option<NodeIndex> {
+        if let Some(node) = self.parse_type_member_visibility_modifier_error(start_pos) {
+            return Some(node);
+        }
+
+        self.parse_async_type_member_restriction();
+
+        if self.is_token(SyntaxKind::LessThanToken) {
+            return Some(self.parse_call_signature(start_pos));
+        }
+        if self.is_token(SyntaxKind::OpenParenToken) {
+            return Some(self.parse_call_signature(start_pos));
+        }
+
+        if self.is_token(SyntaxKind::NewKeyword) {
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            self.next_token();
+            let is_property_name = self.is_token(SyntaxKind::ColonToken)
+                || self.is_token(SyntaxKind::QuestionToken)
+                || self.is_token(SyntaxKind::SemicolonToken)
+                || self.is_token(SyntaxKind::CommaToken)
+                || self.is_token(SyntaxKind::CloseBraceToken);
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+            if !is_property_name {
+                return Some(self.parse_construct_signature(start_pos));
+            }
+        }
+
+        if self.is_token(SyntaxKind::GetKeyword)
+            && !self.look_ahead_is_property_name_after_keyword()
+        {
+            return Some(self.parse_get_accessor_signature(start_pos));
+        }
+
+        if self.is_token(SyntaxKind::SetKeyword)
+            && !self.look_ahead_is_property_name_after_keyword()
+        {
+            return Some(self.parse_set_accessor_signature(start_pos));
+        }
+
+        None
+    }
+
+    fn parse_type_member_visibility_modifier_error(&mut self, start_pos: u32) -> Option<NodeIndex> {
         if matches!(
             self.token(),
             SyntaxKind::PrivateKeyword
@@ -166,10 +214,8 @@ impl ParserState {
         {
             use tsz_common::diagnostics::diagnostic_codes;
 
-            // Save the modifier name for error message
             let modifier_text = self.scanner.get_token_text().clone();
 
-            // Check if this is an index signature - peek ahead to determine the right error
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
             self.next_token();
@@ -179,13 +225,11 @@ impl ParserState {
             self.current_token = current;
 
             if is_index_signature {
-                // TS1071: '{0}' modifier cannot appear on an index signature.
                 self.parse_error_at_current_token(
                     &format!("'{modifier_text}' modifier cannot appear on an index signature."),
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATURE,
                 );
             } else {
-                // TS1184: Modifiers cannot appear here.
                 self.parse_error_at_current_token(
                     "Modifiers cannot appear here.",
                     diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
@@ -194,12 +238,14 @@ impl ParserState {
 
             self.next_token();
             if is_index_signature {
-                return self.parse_index_signature_with_modifiers(None, start_pos);
+                return Some(self.parse_index_signature_with_modifiers(None, start_pos));
             }
         }
 
-        // TS1070: 'async' modifier cannot appear on a type member
-        // Check if async is being used as a modifier (not as a property name)
+        None
+    }
+
+    fn parse_async_type_member_restriction(&mut self) {
         if self.is_token(SyntaxKind::AsyncKeyword)
             && !self.look_ahead_is_property_name_after_keyword()
         {
@@ -208,61 +254,15 @@ impl ParserState {
                 "'async' modifier cannot appear on a type member.",
                 diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
             );
-            // Consume the async keyword and continue parsing
             self.next_token();
-            // After async, we likely have a method signature - continue parsing normally
         }
+    }
 
-        // Handle generic call signature: <T>(): returnType
-        if self.is_token(SyntaxKind::LessThanToken) {
-            return self.parse_call_signature(start_pos);
-        }
-
-        // Handle call signature: (): returnType
-        if self.is_token(SyntaxKind::OpenParenToken) {
-            return self.parse_call_signature(start_pos);
-        }
-
-        // Handle construct signature: new (): returnType
-        // But not if 'new' is used as property name (new: T, new?: T, new;, etc.)
-        // Note: new ( or new < starts a construct signature, not a property name
-        if self.is_token(SyntaxKind::NewKeyword) {
-            // For 'new' specifically, check if followed by property name indicators
-            // new ( or new < starts a construct signature, not a property
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token();
-            let is_property_name = self.is_token(SyntaxKind::ColonToken)
-                || self.is_token(SyntaxKind::QuestionToken)
-                || self.is_token(SyntaxKind::SemicolonToken)
-                || self.is_token(SyntaxKind::CommaToken)
-                || self.is_token(SyntaxKind::CloseBraceToken);
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-
-            if !is_property_name {
-                return self.parse_construct_signature(start_pos);
-            }
-        }
-
-        // Handle get accessor: get foo(): type
-        // But not if 'get' is used as property name (get: T or get?: T or get() or get<T>())
-        if self.is_token(SyntaxKind::GetKeyword)
-            && !self.look_ahead_is_property_name_after_keyword()
-        {
-            return self.parse_get_accessor_signature(start_pos);
-        }
-
-        // Handle set accessor: set foo(v: type)
-        // But not if 'set' is used as property name
-        if self.is_token(SyntaxKind::SetKeyword)
-            && !self.look_ahead_is_property_name_after_keyword()
-        {
-            return self.parse_set_accessor_signature(start_pos);
-        }
-
-        // Parse optional readonly modifier
-        // But not if 'readonly' is used as property name
+    fn parse_type_member_property_or_method(
+        &mut self,
+        start_pos: u32,
+        in_interface_declaration: bool,
+    ) -> NodeIndex {
         let readonly = if self.is_token(SyntaxKind::ReadonlyKeyword)
             && !self.look_ahead_is_property_name_after_keyword()
         {
@@ -272,8 +272,6 @@ impl ParserState {
             false
         };
 
-        // Parse property/method name
-        // Include keywords that can be property names
         let name = if self.is_token(SyntaxKind::Identifier)
             || self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
@@ -281,10 +279,7 @@ impl ParserState {
         {
             self.parse_property_name()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {
-            // Check if it's an index signature: [key: string]: value
-            // vs computed property name: [Symbol.iterator](): type
             if self.look_ahead_is_index_signature() {
-                // Build modifiers list if readonly was present
                 let modifiers = if readonly {
                     let mod_idx = self
                         .arena
@@ -295,16 +290,12 @@ impl ParserState {
                 };
                 return self.parse_index_signature_with_modifiers(modifiers, start_pos);
             }
-            // Computed property name
             self.parse_property_name()
         } else {
             return NodeIndex::NONE;
         };
 
-        // Optional question mark
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
-
-        // Build modifiers list if readonly was present
         let modifiers = if readonly {
             let mod_idx = self
                 .arena
@@ -314,22 +305,16 @@ impl ParserState {
             None
         };
 
-        // Check if it's a method signature or property signature
-        // Method signature: foo(): T or foo<T>(): U
         if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken) {
-            // Parse optional type parameters: foo<T, U>()
             let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
                 Some(self.parse_type_parameters())
             } else {
                 None
             };
 
-            // Method signature
             self.parse_expected(SyntaxKind::OpenParenToken);
             let parameters = self.parse_parameter_list();
             self.parse_expected(SyntaxKind::CloseParenToken);
-
-            // Return type (supports type predicates: param is T)
             let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
                 self.parse_return_type()
             } else {
@@ -337,7 +322,7 @@ impl ParserState {
             };
 
             let end_pos = self.token_end();
-            self.arena.add_signature(
+            return self.arena.add_signature(
                 syntax_kind_ext::METHOD_SIGNATURE,
                 start_pos,
                 end_pos,
@@ -349,51 +334,46 @@ impl ParserState {
                     parameters: Some(parameters),
                     type_annotation,
                 },
-            )
-        } else {
-            // Property signature
-            let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-                self.parse_type()
-            } else {
-                NodeIndex::NONE
-            };
-
-            // Parse/skip initializer if present (invalid in type context) while preserving recovery.
-            // Example: { bar: number = 5 } / interface I { bar: number = 5 }
-            if self.parse_optional(SyntaxKind::EqualsToken) {
-                use tsz_common::diagnostics::diagnostic_codes;
-
-                let (message, code) = if in_interface_declaration {
-                    (
-                        "An interface property cannot have an initializer.",
-                        diagnostic_codes::AN_INTERFACE_PROPERTY_CANNOT_HAVE_AN_INITIALIZER,
-                    )
-                } else {
-                    (
-                        "A type literal property cannot have an initializer.",
-                        diagnostic_codes::A_TYPE_LITERAL_PROPERTY_CANNOT_HAVE_AN_INITIALIZER,
-                    )
-                };
-
-                self.parse_error_at_current_token(message, code);
-                self.parse_assignment_expression();
-            }
-
-            let end_pos = self.token_end();
-            self.arena.add_signature(
-                syntax_kind_ext::PROPERTY_SIGNATURE,
-                start_pos,
-                end_pos,
-                crate::parser::node::SignatureData {
-                    modifiers,
-                    name,
-                    question_token,
-                    type_parameters: None,
-                    parameters: None,
-                    type_annotation,
-                },
-            )
+            );
         }
+
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
+
+        if self.parse_optional(SyntaxKind::EqualsToken) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let (message, code) = if in_interface_declaration {
+                (
+                    "An interface property cannot have an initializer.",
+                    diagnostic_codes::AN_INTERFACE_PROPERTY_CANNOT_HAVE_AN_INITIALIZER,
+                )
+            } else {
+                (
+                    "A type literal property cannot have an initializer.",
+                    diagnostic_codes::A_TYPE_LITERAL_PROPERTY_CANNOT_HAVE_AN_INITIALIZER,
+                )
+            };
+            self.parse_error_at_current_token(message, code);
+            self.parse_assignment_expression();
+        }
+
+        let end_pos = self.token_end();
+        self.arena.add_signature(
+            syntax_kind_ext::PROPERTY_SIGNATURE,
+            start_pos,
+            end_pos,
+            crate::parser::node::SignatureData {
+                modifiers,
+                name,
+                question_token,
+                type_parameters: None,
+                parameters: None,
+                type_annotation,
+            },
+        )
     }
 
     /// Parse call signature: (): returnType or <T>(): returnType
