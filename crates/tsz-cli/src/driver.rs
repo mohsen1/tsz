@@ -2352,7 +2352,10 @@ fn collect_diagnostics(
         // TypeInterner (DashMap) and QueryCache (RwLock) are already thread-safe.
         #[cfg(not(target_arch = "wasm32"))]
         let file_results: Vec<Vec<Diagnostic>> = {
-            use rayon::prelude::*;
+            use rayon::iter::{
+                IntoParallelIterator, IntoParallelRefIterator, IndexedParallelIterator,
+                ParallelIterator,
+            };
             work_items
                 .par_iter()
                 .zip(per_file_binders.into_par_iter())
