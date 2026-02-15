@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
+use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 use tsz::binder::BinderState;
 use tsz::checker::context::CheckerOptions;

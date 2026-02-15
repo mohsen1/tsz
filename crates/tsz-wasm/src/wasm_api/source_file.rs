@@ -3,7 +3,7 @@
 //! Provides the `TsSourceFile` struct which implements TypeScript's SourceFile interface.
 
 use std::sync::Arc;
-use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
+use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 use tsz::parser::syntax_kind_ext;
 use tsz::parser::{NodeArena, NodeIndex, ParserState};
