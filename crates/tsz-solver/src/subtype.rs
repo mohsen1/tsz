@@ -2703,6 +2703,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
+        // Check if target is the global `Object` interface from lib.d.ts.
+        // This is a separate path from intrinsic `object`:
+        // - `object` (lowercase) includes callable values.
+        // - `Object` (capitalized interface) should follow TS structural rules and
+        //   exclude bare callable types from primitive-style object assignability.
+        if lazy_def_id(self.interner, target)
+            .is_some_and(|t_def| self.resolver.is_boxed_def_id(t_def, IntrinsicKind::Object))
+        {
+            let source_eval = self.evaluate_type(source);
+            if self.is_global_object_interface_type(source_eval) {
+                return SubtypeResult::True;
+            }
+
+            if let Some(tracer) = &mut self.tracer
+                && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                })
+            {
+                return SubtypeResult::False;
+            }
+            return SubtypeResult::False;
+        }
+
         if let (Some(s_elem), Some(t_elem)) = (
             array_element_type(self.interner, source),
             array_element_type(self.interner, target),
