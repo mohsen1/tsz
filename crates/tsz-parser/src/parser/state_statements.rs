@@ -1,7 +1,5 @@
 //! Parser state - statement and declaration parsing methods
 
-#![allow(clippy::too_many_lines)]
-
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC,
     CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT,
@@ -249,6 +247,7 @@ impl ParserState {
     }
 
     /// Parse a statement
+    #[allow(clippy::too_many_lines)]
     pub fn parse_statement(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::OpenBraceToken => self.parse_block(),
@@ -1063,6 +1062,7 @@ impl ParserState {
 
     /// Parse variable declaration with declaration flags (for using/await using checks)
     /// Flags: bits 0-2 used for LET/CONST/USING, bit 3 for catch-clause binding (suppresses TS1182)
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_variable_declaration_with_flags(&mut self, flags: u16) -> NodeIndex {
         use crate::parser::node_flags;
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -2449,6 +2449,7 @@ impl ParserState {
     }
 
     /// Parse heritage clauses (extends, implements)
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_heritage_clauses(&mut self) -> Option<NodeList> {
         let mut clauses = Vec::new();
         let mut seen_extends = false;
@@ -2631,6 +2632,7 @@ impl ParserState {
 
     /// Parse left-hand expression for heritage clauses: Foo, Foo.Bar, or Mixin(Parent)
     /// This is a subset of member expression that allows identifiers, dots, and call expressions
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_heritage_left_hand_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -2807,6 +2809,7 @@ impl ParserState {
     }
 
     /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_class_member_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
 
@@ -3470,6 +3473,7 @@ impl ParserState {
     }
 
     /// Parse a single class member
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_class_member(&mut self) -> NodeIndex {
         use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
