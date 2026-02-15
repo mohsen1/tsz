@@ -153,7 +153,8 @@ if (!IS_WORKER) {
   // ===========================================================================
   // MAIN PROCESS
   // ===========================================================================
-  const args = parseArgs(process.argv.slice(2));
+const args = parseArgs(process.argv.slice(2));
+const resolvedTsVersion = args.typescriptVersion || 'unknown';
 
   // Resolve testDir to an absolute path for consistent relative path computation
   const testDirAbs = resolve(args.testDir);
@@ -242,11 +243,15 @@ if (!IS_WORKER) {
             if (r.error) {
               errors++;
             } else {
-              cache[r.key] = {
-                metadata: { mtime_ms: r.mtimeMs, size: r.size },
-                error_codes: r.errorCodes,
-                diagnostic_fingerprints: r.diagnosticFingerprints || [],
-              };
+                cache[r.key] = {
+                  metadata: {
+                    mtime_ms: r.mtimeMs,
+                    size: r.size,
+                    typescript_version: r.typescriptVersion || resolvedTsVersion,
+                  },
+                  error_codes: r.errorCodes,
+                  diagnostic_fingerprints: r.diagnosticFingerprints || [],
+                };
             }
             processed++;
           }
@@ -322,14 +327,15 @@ if (!IS_WORKER) {
       const results = [];
       for (const file of msg.files) {
         try {
-          const { errorCodes, diagnosticFingerprints } = processFile(ts, file, libSourceFileCache);
-          results.push({
-            key: file.key,
-            mtimeMs: file.mtimeMs,
-            size: file.size,
-            errorCodes,
-            diagnosticFingerprints,
-          });
+            const { errorCodes, diagnosticFingerprints } = processFile(ts, file, libSourceFileCache);
+            results.push({
+              key: file.key,
+              mtimeMs: file.mtimeMs,
+              size: file.size,
+              errorCodes,
+              diagnosticFingerprints,
+              typescriptVersion: ts.version || resolvedTsVersion,
+            });
         } catch (err) {
           results.push({ key: file.key, error: err.message });
         }
@@ -533,6 +539,7 @@ function parseArgs(argv) {
     max: 0,
     verbose: false,
     tsPath: null,
+    typescriptVersion: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -542,6 +549,9 @@ function parseArgs(argv) {
       case '--workers': args.workers = parseInt(argv[++i], 10); break;
       case '--max': args.max = parseInt(argv[++i], 10); break;
       case '--verbose': case '-v': args.verbose = true; break;
+      case '--typescript-version':
+        args.typescriptVersion = argv[++i];
+        break;
       case '--ts-path': args.tsPath = argv[++i]; break;
     }
   }
