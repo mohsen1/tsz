@@ -37,6 +37,8 @@ Commands:
   run         Run conformance tests against TSC cache
   analyze     Analyze failures: categorize, rank by impact, find easy wins
               Shows which error codes to implement for maximum conformance gain
+  areas       Analyze pass/fail rates by test directory area (parser, types, salsa, etc.)
+              Shows which feature areas need the most attention
   all         Generate cache (if needed) and run tests (default)
   clean       Remove cache file
 
@@ -56,6 +58,11 @@ Analyze options:
   --category CAT    Filter by category: false-positive, all-missing, wrong-code, close
   --top N           Show top N items per section (default: 20)
 
+Areas options:
+  --depth N         Grouping depth: 1=top-level, 2=sub-areas (default: 1)
+  --min-tests N     Minimum tests in area to display (default: 5)
+  --drilldown AREA  Drill into a specific area (e.g., "types", "statements")
+
 Examples:
   ./scripts/conformance.sh run --max 100              # Test first 100 files
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
@@ -66,6 +73,11 @@ Examples:
   ./scripts/conformance.sh analyze --category false-positive  # Show only false positives
   ./scripts/conformance.sh analyze --category close    # Tests closest to passing
   ./scripts/conformance.sh analyze --top 30            # Show top 30 items per section
+
+  ./scripts/conformance.sh areas                         # Top-level area pass/fail rates
+  ./scripts/conformance.sh areas --depth 2               # Sub-area breakdown
+  ./scripts/conformance.sh areas --drilldown types        # Drill into 'types' sub-areas
+  ./scripts/conformance.sh areas --min-tests 20           # Only show areas with 20+ tests
 
 Analysis output includes:
   - Error codes NOT IMPLEMENTED (never emitted by tsz) - highest priority!
@@ -492,6 +504,8 @@ run_tests() {
 
     echo ""
     echo -e "${GREEN}Tests completed${NC}"
+    echo ""
+    echo -e "${YELLOW}Tip:${NC} Run './scripts/conformance.sh areas' to see pass/fail rates by feature area"
 }
 
 analyze_tests() {
@@ -538,6 +552,57 @@ analyze_tests() {
 
     # Use python to analyze the output
     python3 "$REPO_ROOT/scripts/analyze-conformance.py" "$tmpfile" "$category_filter" "$top_n"
+}
+
+areas_analysis() {
+    local depth=""
+    local min_tests=""
+    local drilldown=""
+    local extra_args=()
+
+    # Parse areas-specific args
+    local args=("$@")
+    local i=0
+    while [ $i -lt ${#args[@]} ]; do
+        case "${args[$i]}" in
+            --depth)
+                i=$((i + 1))
+                depth="${args[$i]}"
+                ;;
+            --min-tests)
+                i=$((i + 1))
+                min_tests="${args[$i]}"
+                ;;
+            --drilldown)
+                i=$((i + 1))
+                drilldown="${args[$i]}"
+                ;;
+            *)
+                extra_args+=("${args[$i]}")
+                ;;
+        esac
+        i=$((i + 1))
+    done
+
+    echo -e "${GREEN}Running conformance tests for area analysis...${NC}"
+
+    cd "$REPO_ROOT"
+
+    # Run with --print-test to get PASS/FAIL per test
+    local tmpfile
+    tmpfile=$(mktemp)
+    trap "rm -f '$tmpfile'" EXIT
+
+    $RUNNER_BIN \
+        --test-dir "$TEST_DIR" \
+        --cache-file "$CACHE_FILE" \
+        --tsz-binary "$TSZ_BIN" \
+        --workers $WORKERS \
+        --print-test \
+        "${extra_args[@]}" > "$tmpfile" 2>/dev/null || true
+
+    # Use python to analyze by area
+    python3 "$REPO_ROOT/scripts/analyze-conformance-areas.py" "$tmpfile" "$depth" "$min_tests" "$drilldown"
 }
 
 clean_cache() {
@@ -656,6 +721,16 @@ case "$COMMAND" in
             ensure_cache
         fi
         analyze_tests "${REMAINING_ARGS[@]}"
+        ;;
+    areas)
+        check_submodule_clean
+        ensure_binaries
+        if [ "$NO_CACHE" = "true" ]; then
+            generate_cache "true"
+        else
+            ensure_cache
+        fi
+        areas_analysis "${REMAINING_ARGS[@]}"
         ;;
     all)
         check_submodule_clean
