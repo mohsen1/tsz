@@ -2128,10 +2128,10 @@ impl ParserState {
     /// Parse a string literal (used for module specifiers)
     pub(crate) fn parse_string_literal(&mut self) -> NodeIndex {
         if !self.is_token(SyntaxKind::StringLiteral) {
-            use tsz_common::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.parse_error_at_current_token(
-                "String literal expected",
-                diagnostic_codes::EXPECTED,
+                diagnostic_messages::STRING_LITERAL_EXPECTED,
+                diagnostic_codes::STRING_LITERAL_EXPECTED,
             );
             return NodeIndex::NONE;
         }

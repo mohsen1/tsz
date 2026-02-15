@@ -184,9 +184,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if expr_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && let Some(access) = self.ctx.arena.get_access_expr(expr_node) {
-                return self.is_entity_name_expression(access.expression);
-            }
+            && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+        {
+            return self.is_entity_name_expression(access.expression);
+        }
         false
     }
 
