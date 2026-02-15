@@ -639,12 +639,10 @@ to prevent stack overflow. This is expected for pathological inputs.
 ### ⚠️ GAP: Interface & Type Alias Emission (`declarations.rs`)
 
 ```rust
-#[allow(dead_code)]
 fn emit_interface_declaration(&mut self, ...) { ... }
 
-#[allow(dead_code)]
 fn emit_type_alias_declaration(&mut self, ...) { ... }
-```
+``` 
 
 **Note**: Types are stripped in JavaScript output - these are infrastructure only for potential .d.ts emission
 
