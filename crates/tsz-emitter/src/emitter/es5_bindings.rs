@@ -3042,11 +3042,20 @@ impl<'a> Printer<'a> {
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
             && let Some(decl_list) = self.arena.get_variable(init_node)
         {
+            let is_var_declaration = {
+                let flags = init_node.flags as u32;
+                (flags & tsz_parser::parser::node_flags::LET) == 0
+                    && (flags & tsz_parser::parser::node_flags::CONST) == 0
+            };
             for &decl_idx in &decl_list.declarations.nodes {
                 if let Some(decl_node) = self.arena.get(decl_idx)
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 {
-                    self.pre_register_binding_name(decl.name);
+                    if is_var_declaration {
+                        self.pre_register_var_binding_name(decl.name);
+                    } else {
+                        self.pre_register_binding_name(decl.name);
+                    }
                 }
             }
         }
@@ -3108,8 +3117,8 @@ impl<'a> Printer<'a> {
         } else if matches!(
             name_node.kind,
             syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
-        ) {
-            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+        )
+            && let Some(pattern) = self.arena.get_binding_pattern(name_node) {
                 for &elem_idx in &pattern.elements.nodes {
                     if let Some(elem_node) = self.arena.get(elem_idx)
                         && let Some(elem) = self.arena.get_binding_element(elem_node)
@@ -3118,16 +3127,6 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
-                for &elem_idx in &pattern.elements.nodes {
-                    if let Some(elem_node) = self.arena.get(elem_idx)
-                        && let Some(elem) = self.arena.get_binding_element(elem_node)
-                    {
-                        self.pre_register_var_binding_name(elem.name);
-                    }
-                }
-            }
-        }
     }
 
     /// Emit variable binding for array-indexed for-of pattern:
