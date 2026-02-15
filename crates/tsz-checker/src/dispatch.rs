@@ -222,8 +222,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         expression_type,
                         false,
                     )
-                    .map(|info| info.yield_type)
-                    .unwrap_or(TypeId::ANY)
+                    .map_or(TypeId::ANY, |info| info.yield_type)
                 }
             } else {
                 expression_type

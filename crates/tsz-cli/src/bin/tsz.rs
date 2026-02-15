@@ -328,8 +328,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
     for path in &result.files_read {
         let count = std::fs::read_to_string(path)
             .ok()
-            .map(|text| text.lines().count() as u64)
-            .unwrap_or(0);
+            .map_or(0, |text| text.lines().count() as u64);
         let name = path.to_string_lossy();
         if name.contains("lib.") && name.ends_with(".d.ts") {
             lines_of_library += count;
@@ -499,7 +498,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         })
         .or_else(|| {
             let default_path = cwd.join("tsconfig.json");
-            default_path.exists().then(|| default_path)
+            default_path.exists().then_some(default_path)
         });
 
     let config = if let Some(path) = tsconfig_path.as_ref() {
@@ -704,7 +703,7 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         })
         .or_else(|| {
             let default_path = cwd.join("tsconfig.json");
-            default_path.exists().then(|| default_path)
+            default_path.exists().then_some(default_path)
         });
 
     let config = if let Some(path) = tsconfig_path.as_ref() {
@@ -789,7 +788,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
         })
         .or_else(|| {
             let default_path = cwd.join("tsconfig.json");
-            default_path.exists().then(|| default_path)
+            default_path.exists().then_some(default_path)
         });
 
     let Some(ref root_config_path) = tsconfig_path else {

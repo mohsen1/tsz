@@ -213,12 +213,11 @@ pub fn format_ts_diagnostics_with_color_and_context(
 
             if start < source.len() {
                 // Find line start
-                let line_start = source[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let line_start = source[..start].rfind('\n').map_or(0, |i| i + 1);
                 // Find line end
                 let line_end = source[start..]
                     .find('\n')
-                    .map(|i| start + i)
-                    .unwrap_or(source.len());
+                    .map_or(source.len(), |i| start + i);
 
                 // Get the line
                 if line_start < line_end && line_end <= source.len() {

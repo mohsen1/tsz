@@ -124,9 +124,7 @@ impl<'a> SoundFlowAnalyzer<'a> {
         target: TypeId,
         source_symbol: Option<SymbolId>,
     ) -> Option<SoundDiagnostic> {
-        let is_fresh = source_symbol
-            .map(|s| self.freshness.is_binding_fresh(s))
-            .unwrap_or(false)
+        let is_fresh = source_symbol.is_some_and(|s| self.freshness.is_binding_fresh(s))
             || freshness::is_fresh_object_type(self.db, source);
 
         if !is_fresh {

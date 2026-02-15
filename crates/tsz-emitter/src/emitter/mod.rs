@@ -2246,13 +2246,10 @@ impl<'a> Printer<'a> {
         );
 
         // Check if source already has "use strict" directive
-        let source_has_use_strict = self
-            .source_text
-            .map(|text| {
-                let trimmed = text.trim_start();
-                trimmed.starts_with("\"use strict\"") || trimmed.starts_with("'use strict'")
-            })
-            .unwrap_or(false);
+        let source_has_use_strict = self.source_text.is_some_and(|text| {
+            let trimmed = text.trim_start();
+            trimmed.starts_with("\"use strict\"") || trimmed.starts_with("'use strict'")
+        });
 
         // TypeScript only emits "use strict" when:
         // 1. CommonJS/AMD/UMD AND the file is actually an ES module (has import/export)
@@ -2276,8 +2273,7 @@ impl<'a> Printer<'a> {
             .nodes
             .first()
             .and_then(|&idx| self.arena.get(idx))
-            .map(|n| self.skip_trivia_forward(n.pos, n.end))
-            .unwrap_or(node.end);
+            .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
 
         let mut deferred_reference_comments: Vec<(String, bool)> = Vec::new();
         if let Some(text) = self.source_text {

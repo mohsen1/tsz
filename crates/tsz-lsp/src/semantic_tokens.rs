@@ -268,7 +268,7 @@ impl<'a> SemanticTokensProvider<'a> {
             {
                 self.arena
                     .get_function(parent)
-                    .and_then(|f| (f.name == ident_idx).then(|| true))
+                    .and_then(|f| (f.name == ident_idx).then_some(true))
                     .unwrap_or(false)
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION

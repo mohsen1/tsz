@@ -165,7 +165,7 @@ impl<'a> EnumEvaluator<'a> {
                     EnumValue::Computed
                 } else {
                     // Either first member or previous was numeric
-                    let next_val = last_numeric_value.map(|v| v + 1).unwrap_or(0);
+                    let next_val = last_numeric_value.map_or(0, |v| v + 1);
                     last_numeric_value = Some(next_val);
                     EnumValue::Number(next_val)
                 }

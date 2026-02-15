@@ -27,16 +27,18 @@ pub fn decode_source_text(bytes: &[u8]) -> DecodedSourceText {
 
     // UTF-16 LE BOM
     if bytes.starts_with(&[0xFF, 0xFE]) {
-        return decode_utf16_with_endianness(&bytes[2..], true)
-            .map(DecodedSourceText::Text)
-            .unwrap_or_else(|_| DecodedSourceText::Binary(bytes.to_vec()));
+        return decode_utf16_with_endianness(&bytes[2..], true).map_or_else(
+            |_| DecodedSourceText::Binary(bytes.to_vec()),
+            DecodedSourceText::Text,
+        );
     }
 
     // UTF-16 BE BOM
     if bytes.starts_with(&[0xFE, 0xFF]) {
-        return decode_utf16_with_endianness(&bytes[2..], false)
-            .map(DecodedSourceText::Text)
-            .unwrap_or_else(|_| DecodedSourceText::Binary(bytes.to_vec()));
+        return decode_utf16_with_endianness(&bytes[2..], false).map_or_else(
+            |_| DecodedSourceText::Binary(bytes.to_vec()),
+            DecodedSourceText::Text,
+        );
     }
 
     // Plain UTF-8

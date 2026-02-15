@@ -433,8 +433,10 @@ impl TsProgram {
                 .file_name
                 .strip_suffix(".ts")
                 .or_else(|| bound_file.file_name.strip_suffix(".tsx"))
-                .map(|s| format!("{}.js", s))
-                .unwrap_or_else(|| format!("{}.js", bound_file.file_name));
+                .map_or_else(
+                    || format!("{}.js", bound_file.file_name),
+                    |s| format!("{}.js", s),
+                );
 
             emitted_files.push(serde_json::json!({
                 "name": output_name,

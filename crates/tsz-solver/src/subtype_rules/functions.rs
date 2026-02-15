@@ -398,7 +398,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for tp in &source.type_params {
             let inferred_ty = inferred
                 .iter()
-                .find_map(|(name, ty)| (*name == tp.name).then(|| *ty));
+                .find_map(|(name, ty)| (*name == tp.name).then_some(*ty));
             let fallback = if self.strict_function_types {
                 TypeId::UNKNOWN
             } else {
@@ -556,7 +556,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for tp in &target.type_params {
             let inferred_ty = inferred
                 .iter()
-                .find_map(|(name, ty)| (*name == tp.name).then(|| *ty));
+                .find_map(|(name, ty)| (*name == tp.name).then_some(*ty));
             substitution.insert(tp.name, inferred_ty.unwrap_or(TypeId::ANY));
         }
         substitution
@@ -624,16 +624,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .zip(target_instantiated.type_params.iter())
                 .all(|(source_tp, target_tp)| {
                     let source_constraint = source_tp.constraint.unwrap_or(TypeId::UNKNOWN);
-                    let target_constraint = target_tp
-                        .constraint
-                        .map(|constraint| {
+                    let target_constraint =
+                        target_tp.constraint.map_or(TypeId::UNKNOWN, |constraint| {
                             instantiate_type(
                                 self.interner,
                                 constraint,
                                 &target_to_source_substitution,
                             )
-                        })
-                        .unwrap_or(TypeId::UNKNOWN);
+                        });
 
                     self.check_subtype(target_constraint, source_constraint)
                         .is_true()

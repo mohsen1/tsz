@@ -687,8 +687,7 @@ impl<'a> Completions<'a> {
                 .as_bytes()
                 .get((offset - 1) as usize)
                 .copied()
-                .map(|ch| ch == b'.')
-                .unwrap_or(false)
+                .is_some_and(|ch| ch == b'.')
         } else {
             false
         }
@@ -749,8 +748,7 @@ impl<'a> Completions<'a> {
         // Find the last word before cursor
         let last_word_start = trimmed
             .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-            .map(|p| p + 1)
-            .unwrap_or(0);
+            .map_or(0, |p| p + 1);
         let last_word = &trimmed[last_word_start..];
 
         // Keywords after which we are creating a new identifier (name declaration position).
@@ -835,10 +833,7 @@ impl<'a> Completions<'a> {
         let i = offset as usize;
         if i > 0 {
             // Check for line comments: if we find // before offset on same line
-            let line_start = self.source_text[..i]
-                .rfind('\n')
-                .map(|p| p + 1)
-                .unwrap_or(0);
+            let line_start = self.source_text[..i].rfind('\n').map_or(0, |p| p + 1);
             let line_prefix = &self.source_text[line_start..i];
             if line_prefix.contains("//") {
                 // Check that the // is not inside a string
@@ -978,8 +973,7 @@ impl<'a> Completions<'a> {
         // Extract the last word from trimmed text
         let last_word_start = trimmed
             .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
-            .map(|p| p + 1)
-            .unwrap_or(0);
+            .map_or(0, |p| p + 1);
         let last_word = &trimmed[last_word_start..];
 
         // Check if we have whitespace after the last word (before cursor)
@@ -1198,8 +1192,7 @@ impl<'a> Completions<'a> {
                         {
                             let word_start = before_paren
                                 .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
-                                .map(|p| p + 1)
-                                .unwrap_or(0);
+                                .map_or(0, |p| p + 1);
                             let word = &before_paren[word_start..];
                             let before_word = before_paren[..word_start].trim_end();
                             // "function foo(" or "function* foo("
@@ -1229,8 +1222,7 @@ impl<'a> Completions<'a> {
                                                     .rfind(|c: char| {
                                                         !c.is_alphanumeric() && c != '_' && c != '$'
                                                     })
-                                                    .map(|p| p + 1)
-                                                    .unwrap_or(0);
+                                                    .map_or(0, |p| p + 1);
                                                 let bw = before_angle[..ws].trim_end();
                                                 if bw.ends_with("function")
                                                     || bw.ends_with("function*")
@@ -1296,8 +1288,7 @@ impl<'a> Completions<'a> {
         }
         let word_start = before_angle
             .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
-            .map(|p| p + 1)
-            .unwrap_or(0);
+            .map_or(0, |p| p + 1);
         let before_word = before_angle[..word_start].trim_end();
         let type_param_keywords = ["class", "interface", "function", "type"];
         // "class A<", "interface B<", etc.

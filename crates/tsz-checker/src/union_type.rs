@@ -37,9 +37,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns 0 if the type is not a union.
     pub fn union_member_count(&self, type_id: TypeId) -> usize {
-        query::union_members(self.ctx.types, type_id)
-            .map(|members| members.len())
-            .unwrap_or(0)
+        query::union_members(self.ctx.types, type_id).map_or(0, |members| members.len())
     }
 
     // =========================================================================
@@ -52,8 +50,7 @@ impl<'a> CheckerState<'a> {
     /// (string, number, boolean, null, undefined, etc.).
     pub fn is_primitive_union(&self, type_id: TypeId) -> bool {
         query::union_members(self.ctx.types, type_id)
-            .map(|members| members.iter().all(|&m| self.is_primitive_type(m)))
-            .unwrap_or(false)
+            .is_some_and(|members| members.iter().all(|&m| self.is_primitive_type(m)))
     }
 
     /// Check if a union type contains a specific type.
@@ -61,8 +58,7 @@ impl<'a> CheckerState<'a> {
     /// Calls the primary union_contains implementation in type_checking.rs.
     pub fn union_has_type(&self, union_type: TypeId, target: TypeId) -> bool {
         query::union_members(self.ctx.types, union_type)
-            .map(|members| members.contains(&target))
-            .unwrap_or(false)
+            .is_some_and(|members| members.contains(&target))
     }
 
     // =========================================================================

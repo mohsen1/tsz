@@ -179,9 +179,8 @@ impl WatchState {
         changed_paths: Option<Vec<PathBuf>>,
     ) -> Result<()> {
         let changed_paths_ref = changed_paths.as_deref();
-        let needs_full_rebuild = changed_paths_ref
-            .map(|paths| self.needs_full_rebuild(paths))
-            .unwrap_or(false);
+        let needs_full_rebuild =
+            changed_paths_ref.is_some_and(|paths| self.needs_full_rebuild(paths));
         if needs_full_rebuild {
             self.type_cache.clear();
         }

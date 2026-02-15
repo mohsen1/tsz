@@ -209,7 +209,7 @@ pub(crate) fn resolve_type_package_entry(
             &conditions,
             options,
         )?;
-        is_declaration_file(&resolved).then(|| resolved)
+        is_declaration_file(&resolved).then_some(resolved)
     }
 }
 
@@ -1925,10 +1925,10 @@ pub(crate) fn emit_outputs(
         if let Some(js_path) = js_output_path(base_dir, root_dir, out_dir, options.jsx, &input_path)
         {
             // Get type_only_nodes from the type cache (if available)
-            let type_only_nodes = type_caches
-                .get(&input_path)
-                .map(|cache| std::sync::Arc::new(cache.type_only_nodes.clone()))
-                .unwrap_or_else(|| std::sync::Arc::new(rustc_hash::FxHashSet::default()));
+            let type_only_nodes = type_caches.get(&input_path).map_or_else(
+                || std::sync::Arc::new(rustc_hash::FxHashSet::default()),
+                |cache| std::sync::Arc::new(cache.type_only_nodes.clone()),
+            );
 
             // Clone and update printer options with type_only_nodes
             let mut printer_options = options.printer.clone();

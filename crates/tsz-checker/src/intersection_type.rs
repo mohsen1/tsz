@@ -37,9 +37,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns 0 if the type is not an intersection.
     pub fn intersection_member_count(&self, type_id: TypeId) -> usize {
-        query::intersection_members(self.ctx.types, type_id)
-            .map(|members| members.len())
-            .unwrap_or(0)
+        query::intersection_members(self.ctx.types, type_id).map_or(0, |members| members.len())
     }
 
     // =========================================================================
@@ -51,8 +49,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the given member type is in the intersection.
     pub fn intersection_contains(&self, intersection_type: TypeId, member: TypeId) -> bool {
         query::intersection_members(self.ctx.types, intersection_type)
-            .map(|members| members.contains(&member))
-            .unwrap_or(false)
+            .is_some_and(|members| members.contains(&member))
     }
 
     /// Check if an intersection type contains only object types.
@@ -60,8 +57,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if all intersection members are object types.
     pub fn is_object_intersection(&self, type_id: TypeId) -> bool {
         query::intersection_members(self.ctx.types, type_id)
-            .map(|members| members.iter().all(|&m| self.is_object_type(m)))
-            .unwrap_or(false)
+            .is_some_and(|members| members.iter().all(|&m| self.is_object_type(m)))
     }
 
     /// Check if an intersection type contains callable members.
@@ -69,8 +65,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if any member has call signatures.
     pub fn intersection_has_callable(&self, type_id: TypeId) -> bool {
         query::intersection_members(self.ctx.types, type_id)
-            .map(|members| members.iter().any(|&m| self.has_call_signature(m)))
-            .unwrap_or(false)
+            .is_some_and(|members| members.iter().any(|&m| self.has_call_signature(m)))
     }
 
     // =========================================================================
@@ -86,13 +81,11 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         intersection_type: TypeId,
     ) -> bool {
-        query::intersection_members(self.ctx.types, intersection_type)
-            .map(|members| {
-                members
-                    .iter()
-                    .all(|&member| self.is_assignable_to(source, member))
-            })
-            .unwrap_or(false)
+        query::intersection_members(self.ctx.types, intersection_type).is_some_and(|members| {
+            members
+                .iter()
+                .all(|&member| self.is_assignable_to(source, member))
+        })
     }
 
     /// Get the most restrictive type from an intersection.

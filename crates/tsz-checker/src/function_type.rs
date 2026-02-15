@@ -1145,8 +1145,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(data.name)
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .map(|id_data| id_data.escaped_text.clone())
-                    .unwrap_or_else(|| "T".to_string());
+                    .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
                 let atom = self.ctx.types.intern_string(&name);
 
                 let info = tsz_solver::TypeParamInfo {
@@ -1184,12 +1183,11 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(data.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map(|id_data| id_data.escaped_text.clone())
-                .unwrap_or_else(|| "T".to_string());
+                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
             let atom = self.ctx.types.intern_string(&name);
 
             let constraint_type = self.get_type_from_type_node(data.constraint);
-            let constraint = (constraint_type != TypeId::ERROR).then(|| constraint_type);
+            let constraint = (constraint_type != TypeId::ERROR).then_some(constraint_type);
 
             // Update scope with constrained version
             let info = tsz_solver::TypeParamInfo {

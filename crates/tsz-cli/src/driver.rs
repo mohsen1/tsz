@@ -198,15 +198,14 @@ impl CompilationCache {
             }
 
             if roots.is_empty() {
-                let has_star_export = self
-                    .star_export_dependencies
-                    .get(&path)
-                    .map(|deps| {
-                        changed
-                            .iter()
-                            .any(|changed_path| deps.contains(changed_path))
-                    })
-                    .unwrap_or(false);
+                let has_star_export =
+                    self.star_export_dependencies
+                        .get(&path)
+                        .is_some_and(|deps| {
+                            changed
+                                .iter()
+                                .any(|changed_path| deps.contains(changed_path))
+                        });
                 if has_star_export {
                     if let Some(cache) = self.type_caches.get_mut(&path) {
                         cache.node_types.clear();
@@ -750,8 +749,7 @@ fn compile_inner(
         // Emit TS18003: No inputs were found in config file.
         let config_name = tsconfig_path
             .as_deref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "tsconfig.json".to_string());
+            .map_or_else(|| "tsconfig.json".to_string(), |p| p.display().to_string());
         let include_str = discovery
             .include
             .as_ref()
@@ -1100,8 +1098,7 @@ fn build_file_infos(
     // Get include patterns if available
     let include_patterns = config
         .and_then(|c| c.include.as_ref())
-        .map(|patterns| patterns.join(", "))
-        .unwrap_or_else(|| "**/*".to_string());
+        .map_or_else(|| "**/*".to_string(), |patterns| patterns.join(", "));
 
     sources
         .iter()
@@ -1171,8 +1168,7 @@ fn build_program_with_cache(
                 let cached_ok = cache
                     .bind_cache
                     .get(&source.path)
-                    .map(|entry| entry.hash == hash)
-                    .unwrap_or(false);
+                    .is_some_and(|entry| entry.hash == hash);
                 if !cached_ok {
                     dirty_paths.insert(source.path.clone());
                     to_parse.push((file_name.clone(), text));
@@ -2191,8 +2187,7 @@ fn collect_diagnostics(
         // If no cache or cache miss, file needs to be checked
         let needs_check = cache
             .as_deref()
-            .map(|c| !c.type_caches.contains_key(&file_path))
-            .unwrap_or(true); // No cache at all -> check everything
+            .is_none_or(|c| !c.type_caches.contains_key(&file_path)); // No cache at all -> check everything
 
         if needs_check {
             work_queue.push_back(idx);
@@ -2568,8 +2563,7 @@ fn detect_missing_tslib_helper_diagnostic(
     let tslib_exports_empty = program
         .module_exports
         .get(&tslib_file.file_name)
-        .map(|exports| exports.is_empty())
-        .unwrap_or(true);
+        .is_none_or(|exports| exports.is_empty());
 
     if !tslib_exports_empty {
         return None;
@@ -2956,8 +2950,7 @@ fn collect_local_named_export_signatures(
             exported_name
         };
         let type_id = find_local_declaration(arena, source_file, local_name)
-            .map(|decl_idx| checker.get_type_of_node(decl_idx))
-            .unwrap_or(TypeId::ANY);
+            .map_or(TypeId::ANY, |decl_idx| checker.get_type_of_node(decl_idx));
         let type_str = formatter.format(type_id);
         signatures.push(format!("{type_prefix}{exported_name}:{type_str}"));
     }

@@ -1082,7 +1082,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // `x` based on `x.kind`, the base `x` must match target `x`.
                 // Without this check, narrowing `x.prop` based on `x.kind` would
                 // incorrectly try to find `kind` on the type of `x.prop`.
-                self.is_matching_reference(base, target).then(|| path)
+                self.is_matching_reference(base, target).then_some(path)
             })
     }
 
@@ -1972,8 +1972,7 @@ impl<'a> FlowAnalyzer<'a> {
                 .binder
                 .scopes
                 .get(scope_id.0 as usize)
-                .map(|scope| scope.parent)
-                .unwrap_or(ScopeId::NONE);
+                .map_or(ScopeId::NONE, |scope| scope.parent);
 
             iterations += 1;
         }

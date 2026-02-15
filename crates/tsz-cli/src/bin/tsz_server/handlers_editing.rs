@@ -1188,7 +1188,7 @@ impl Server {
             while prev_line_idx > 0 && lines[prev_line_idx].trim().is_empty() {
                 prev_line_idx -= 1;
             }
-            let prev_trimmed = lines.get(prev_line_idx).map(|l| l.trim()).unwrap_or("");
+            let prev_trimmed = lines.get(prev_line_idx).map_or("", |l| l.trim());
 
             // Adjust: if previous line ends with opener, we've already counted it in depth
             // The depth represents how many unclosed openers exist before this line

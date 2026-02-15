@@ -1851,7 +1851,7 @@ impl<'a> ScopeWalker<'a> {
             .for_each_child(current, |walker, child_idx| {
                 walker
                     .walk_for_scope(child_idx, target, result)
-                    .then(|| true)
+                    .then_some(true)
             })
             .is_some();
 

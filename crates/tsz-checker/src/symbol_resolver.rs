@@ -133,8 +133,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .symbols
             .get(sym_id)
-            .map(|symbol| symbol.is_exported)
-            .unwrap_or(false)
+            .is_some_and(|symbol| symbol.is_exported)
     }
 
     /// Check if a symbol is type-only (e.g., from `import type`).
@@ -145,8 +144,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .symbols
             .get(sym_id)
-            .map(|symbol| symbol.is_type_only)
-            .unwrap_or(false)
+            .is_some_and(|symbol| symbol.is_type_only)
     }
 
     // =========================================================================
@@ -187,8 +185,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .symbols
             .get(sym_id)
-            .map(|symbol| (symbol.flags & flag) != 0)
-            .unwrap_or(false)
+            .is_some_and(|symbol| (symbol.flags & flag) != 0)
     }
 
     /// Safely get symbol flags, returning 0 if symbol doesn't exist.
@@ -200,8 +197,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .symbols
             .get(sym_id)
-            .map(|symbol| symbol.flags)
-            .unwrap_or(0)
+            .map_or(0, |symbol| symbol.flags)
     }
 
     /// Safely get symbol flags with lib binders fallback.
@@ -215,8 +211,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .binder
             .get_symbol_with_libs(sym_id, lib_binders)
-            .map(|symbol| symbol.flags)
-            .unwrap_or(0)
+            .map_or(0, |symbol| symbol.flags)
     }
 
     // =========================================================================
@@ -460,11 +455,7 @@ impl<'a> CheckerState<'a> {
                     };
                     if !should_skip_lib_symbol(sym_id) {
                         // Check flags using lib binder (lib_sym_id is valid in lib binder)
-                        let flags = lib_ctx
-                            .binder
-                            .get_symbol(lib_sym_id)
-                            .map(|s| s.flags)
-                            .unwrap_or(0);
+                        let flags = lib_ctx.binder.get_symbol(lib_sym_id).map_or(0, |s| s.flags);
 
                         // Namespaces and modules are value-only but should be allowed in type position
                         let is_namespace_or_module = (flags
@@ -486,8 +477,7 @@ impl<'a> CheckerState<'a> {
                                     .ctx
                                     .binder
                                     .get_symbol_with_libs(target_sym_id, &lib_binders)
-                                    .map(|s| s.flags)
-                                    .unwrap_or(0);
+                                    .map_or(0, |s| s.flags);
                                 if (target_flags
                                     & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
                                     != 0
@@ -520,8 +510,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(sym_id, &lib_binders)
-                .map(|s| s.flags)
-                .unwrap_or(0);
+                .map_or(0, |s| s.flags);
 
             // Namespaces and modules are value-only but should be allowed in type position
             // because they can contain types (e.g., MyNamespace.ValueInterface)
@@ -541,8 +530,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol_with_libs(target_sym_id, &lib_binders)
-                        .map(|s| s.flags)
-                        .unwrap_or(0);
+                        .map_or(0, |s| s.flags);
                     if (target_flags
                         & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
                         != 0
@@ -589,8 +577,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .binder
                 .get_symbol_with_libs(sym_id, &lib_binders)
-                .map(|s| s.escaped_name.as_str() == name)
-                .unwrap_or(false)
+                .is_some_and(|s| s.escaped_name.as_str() == name)
         });
         if let Some(sym_id) = resolved {
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
@@ -603,8 +590,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol_with_libs(target_sym_id, &lib_binders)
-                        .map(|s| s.flags)
-                        .unwrap_or(0);
+                        .map_or(0, |s| s.flags);
                     let target_is_namespace_module = (target_flags
                         & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
                         != 0;

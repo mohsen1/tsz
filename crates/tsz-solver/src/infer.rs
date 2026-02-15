@@ -1194,8 +1194,8 @@ impl<'a> InferenceContext<'a> {
         let mut target_params = target_sig.params.iter().peekable();
 
         loop {
-            let source_rest = source_params.peek().map(|p| p.rest).unwrap_or(false);
-            let target_rest = target_params.peek().map(|p| p.rest).unwrap_or(false);
+            let source_rest = source_params.peek().is_some_and(|p| p.rest);
+            let target_rest = target_params.peek().is_some_and(|p| p.rest);
 
             tracing::trace!(
                 source_rest,

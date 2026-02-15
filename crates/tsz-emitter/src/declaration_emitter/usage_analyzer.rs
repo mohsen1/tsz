@@ -1100,21 +1100,15 @@ impl<'a> UsageAnalyzer<'a> {
 
         // Check if this symbol is from the current file by checking if any of its
         // declarations are in the current arena using the declaration_arenas map
-        let is_local = self
-            .binder
-            .symbols
-            .get(sym_id)
-            .map(|symbol| {
-                // Check if any declaration is in the current file's arena
-                symbol.declarations.iter().any(|&decl_idx| {
-                    self.binder
-                        .declaration_arenas
-                        .get(&(sym_id, decl_idx))
-                        .map(|arena| Arc::ptr_eq(arena, &self.current_arena))
-                        .unwrap_or(false)
-                })
+        let is_local = self.binder.symbols.get(sym_id).is_some_and(|symbol| {
+            // Check if any declaration is in the current file's arena
+            symbol.declarations.iter().any(|&decl_idx| {
+                self.binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .is_some_and(|arena| Arc::ptr_eq(arena, &self.current_arena))
             })
-            .unwrap_or(false);
+        });
 
         debug!(
             "[DEBUG] mark_symbol_used: sym_id={:?} is_local={}",

@@ -1010,12 +1010,7 @@ impl<'a> CheckerState<'a> {
         // Sort symbols so type-defining symbols (functions, classes, interfaces, type aliases)
         // are processed BEFORE variable/parameter symbols.
         symbols.sort_by_key(|&sym_id| {
-            let flags = self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .map(|s| s.flags)
-                .unwrap_or(0);
+            let flags = self.ctx.binder.get_symbol(sym_id).map_or(0, |s| s.flags);
             let is_type_defining = flags
                 & (symbol_flags::FUNCTION
                     | symbol_flags::CLASS
@@ -1034,12 +1029,7 @@ impl<'a> CheckerState<'a> {
         for sym_id in symbols {
             // Skip variable and parameter symbols - their types will be computed
             // lazily during statement checking with proper class context
-            let flags = self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .map(|s| s.flags)
-                .unwrap_or(0);
+            let flags = self.ctx.binder.get_symbol(sym_id).map_or(0, |s| s.flags);
             if flags
                 & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
                 != 0

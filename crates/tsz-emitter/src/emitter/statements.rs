@@ -400,13 +400,11 @@ impl<'a> Printer<'a> {
             let cond_end = self
                 .arena
                 .get(if_stmt.expression)
-                .map(|n| n.end as usize)
-                .unwrap_or(node.pos as usize);
+                .map_or(node.pos as usize, |n| n.end as usize);
             let then_start = self
                 .arena
                 .get(if_stmt.then_statement)
-                .map(|n| n.pos as usize)
-                .unwrap_or(node.end as usize);
+                .map_or(node.end as usize, |n| n.pos as usize);
             if cond_end >= then_start || then_start > text.len() {
                 return false;
             }
@@ -428,13 +426,11 @@ impl<'a> Printer<'a> {
             && self
                 .arena
                 .get(if_stmt.then_statement)
-                .map(|n| n.kind != syntax_kind_ext::BLOCK)
-                .unwrap_or(false))
+                .is_some_and(|n| n.kind != syntax_kind_ext::BLOCK))
             || self
                 .arena
                 .get(if_stmt.then_statement)
-                .map(|n| n.pos >= n.end && n.kind != syntax_kind_ext::BLOCK)
-                .unwrap_or(false);
+                .is_some_and(|n| n.pos >= n.end && n.kind != syntax_kind_ext::BLOCK);
 
         self.write("if (");
         self.emit(if_stmt.expression);
@@ -442,8 +438,7 @@ impl<'a> Printer<'a> {
         let then_is_block = self
             .arena
             .get(if_stmt.then_statement)
-            .map(|n| n.kind == syntax_kind_ext::BLOCK)
-            .unwrap_or(false);
+            .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
         if then_is_multiline_in_source {
             self.write_line();
             if !then_is_block {
@@ -637,11 +632,7 @@ impl<'a> Printer<'a> {
         self.write(":");
 
         // Use expression end position for same-line detection
-        let label_end = self
-            .arena
-            .get(clause.expression)
-            .map(|n| n.end)
-            .unwrap_or(0);
+        let label_end = self.arena.get(clause.expression).map_or(0, |n| n.end);
         self.emit_case_clause_body(&clause.statements, label_end);
     }
 

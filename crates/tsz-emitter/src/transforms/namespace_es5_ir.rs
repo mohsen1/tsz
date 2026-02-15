@@ -398,7 +398,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Detect collision: if a member name matches the innermost namespace name,
         // rename the IIFE parameter (e.g., A -> A_1)
-        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
         let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         // Root name is the first part
@@ -528,7 +528,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         let runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
 
         // The innermost namespace name (last part) is used for member exports
-        let ns_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let ns_name = name_parts.last().map_or("", |s| s.as_str());
 
         let Some(body_node) = self.arena.get(body_idx) else {
             return result;
@@ -1149,7 +1149,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Detect collision: if a member name matches the innermost namespace name,
         // rename the IIFE parameter (e.g., A -> A_1)
-        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
         let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
@@ -1207,7 +1207,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Detect collision: if a member name matches the innermost namespace name,
         // rename the IIFE parameter (e.g., A -> A_1)
-        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
         let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
@@ -1279,7 +1279,7 @@ impl<'a> NamespaceTransformContext<'a> {
 
         // Detect collision: if a member name matches the innermost namespace name,
         // rename the IIFE parameter (e.g., A -> A_1)
-        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
         let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
@@ -1349,7 +1349,7 @@ impl<'a> NamespaceTransformContext<'a> {
     fn transform_namespace_body(&self, body_idx: NodeIndex, name_parts: &[String]) -> Vec<IRNode> {
         let mut result = Vec::new();
         let runtime_exported_vars = collect_runtime_exported_var_names(self.arena, body_idx);
-        let ns_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let ns_name = name_parts.last().map_or("", |s| s.as_str());
 
         let Some(body_node) = self.arena.get(body_idx) else {
             return result;
@@ -1673,7 +1673,7 @@ impl<'a> NamespaceTransformContext<'a> {
 
         // Detect collision: if a member name matches the innermost namespace name,
         // rename the IIFE parameter (e.g., A -> A_1)
-        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
         let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();
@@ -1726,7 +1726,7 @@ impl<'a> NamespaceTransformContext<'a> {
 
         // Detect collision: if a member name matches the innermost namespace name,
         // rename the IIFE parameter (e.g., A -> A_1)
-        let innermost_name = name_parts.last().map(|s| s.as_str()).unwrap_or("");
+        let innermost_name = name_parts.last().map_or("", |s| s.as_str());
         let param_name = detect_and_apply_param_rename(&mut body, innermost_name);
 
         let name = name_parts.first().cloned().unwrap_or_default();

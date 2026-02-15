@@ -1512,9 +1512,7 @@ impl Server {
                     };
                     // Try to find the matching completion item
                     let item = items.iter().find(|i| i.label == name);
-                    let kind = item
-                        .map(|i| Self::completion_kind_to_str(i.kind))
-                        .unwrap_or("property");
+                    let kind = item.map_or("property", |i| Self::completion_kind_to_str(i.kind));
                     let kind_modifiers =
                         item.and_then(|i| i.kind_modifiers.as_deref()).unwrap_or("");
                     let display_parts = Self::build_completion_display_parts(
@@ -1638,7 +1636,7 @@ impl Server {
                 } else {
                     let keyword =
                         Self::get_var_keyword_from_source(name, binder, arena, source_text)
-                            .unwrap_or_else(|| {
+                            .unwrap_or({
                                 if let Some(ref detail) = item.detail {
                                     match detail.as_str() {
                                         "var" => "var",
@@ -2222,7 +2220,7 @@ impl Server {
 
             // Compute the end span based on source text length
             let total_lines = source_text.lines().count();
-            let last_line_len = source_text.lines().last().map(|l| l.len()).unwrap_or(0);
+            let last_line_len = source_text.lines().last().map_or(0, |l| l.len());
             Some(serde_json::json!({
                 "text": "<global>",
                 "kind": "script",
@@ -2320,7 +2318,7 @@ impl Server {
             let mut items = Vec::new();
             // Root item
             let total_lines = source_text.lines().count();
-            let last_line_len = source_text.lines().last().map(|l| l.len()).unwrap_or(0);
+            let last_line_len = source_text.lines().last().map_or(0, |l| l.len());
             let child_items: Vec<serde_json::Value> = symbols
                 .iter()
                 .map(|sym| {
@@ -3274,11 +3272,8 @@ impl Server {
             );
 
             // Extract the range from arguments, default to entire file
-            let start = request
-                .arguments
-                .get("start")
-                .and_then(|v| v.as_u64())
-                .map(|_| {
+            let start = match request.arguments.get("start").and_then(|v| v.as_u64()) {
+                Some(_) => {
                     let line = request
                         .arguments
                         .get("startLine")
@@ -3290,13 +3285,11 @@ impl Server {
                         .and_then(|v| v.as_u64())
                         .unwrap_or(1) as u32;
                     Self::tsserver_to_lsp_position(line, offset)
-                })
-                .unwrap_or_else(|| Position::new(0, 0));
-            let end = request
-                .arguments
-                .get("end")
-                .and_then(|v| v.as_u64())
-                .map(|_| {
+                }
+                None => Position::new(0, 0),
+            };
+            let end = match request.arguments.get("end").and_then(|v| v.as_u64()) {
+                Some(_) => {
                     let line = request
                         .arguments
                         .get("endLine")
@@ -3308,8 +3301,9 @@ impl Server {
                         .and_then(|v| v.as_u64())
                         .unwrap_or(u32::MAX as u64) as u32;
                     Self::tsserver_to_lsp_position(line, offset)
-                })
-                .unwrap_or_else(|| Position::new(u32::MAX, u32::MAX));
+                }
+                None => Position::new(u32::MAX, u32::MAX),
+            };
             let range = Range::new(start, end);
 
             let hints = provider.provide_inlay_hints(root, range);
@@ -3936,10 +3930,7 @@ impl Server {
             (!lib_files.is_empty()).then(|| std::sync::Arc::clone(&lib_files[0].binder));
 
         // Count lib symbols to set base offset in user binders
-        let lib_symbol_count = unified_lib_binder
-            .as_ref()
-            .map(|b| b.symbols.len())
-            .unwrap_or(0);
+        let lib_symbol_count = unified_lib_binder.as_ref().map_or(0, |b| b.symbols.len());
 
         let mut bound_files: Vec<BoundFile> = Vec::with_capacity(files.len());
         let mut binary_file_errors: Vec<(String, i32)> = Vec::new();
@@ -4140,10 +4131,10 @@ impl Server {
 
         // Phase 4: Create a unified LibFile
         // Use the first arena as representative (the unified binder tracks symbol_arenas)
-        let unified_arena = lib_files
-            .first()
-            .map(|lib| Arc::clone(&lib.arena))
-            .unwrap_or_else(|| Arc::new(tsz::parser::node::NodeArena::new()));
+        let unified_arena = lib_files.first().map_or_else(
+            || Arc::new(tsz::parser::node::NodeArena::new()),
+            |lib| Arc::clone(&lib.arena),
+        );
 
         let unified_lib = Arc::new(LibFile::new(
             "unified-libs".to_string(),
@@ -4233,10 +4224,10 @@ impl Server {
                     self.load_lib_recursive(ref_lib, result, loaded)?;
                 }
 
-                let file_name = candidate
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| format!("lib.{}.d.ts", normalized));
+                let file_name = candidate.file_name().map_or_else(
+                    || format!("lib.{}.d.ts", normalized),
+                    |s| s.to_string_lossy().to_string(),
+                );
                 let mut parser = ParserState::new(file_name.clone(), content);
                 let root_idx = parser.parse_source_file();
                 let mut binder = BinderState::new();
@@ -4327,27 +4318,24 @@ impl Server {
     }
 
     fn parse_target(target: &Option<String>) -> ScriptTarget {
-        target
-            .as_ref()
-            .map(|t| {
-                // Handle comma-separated targets (e.g., "es2015,es2017") by taking the first one
-                // This matches how TSC runs multi-target tests - one iteration per target
-                let first_target = t.split(',').next().unwrap_or(t).trim().to_lowercase();
-                match first_target.as_str() {
-                    "es3" => ScriptTarget::ES3,
-                    "es5" => ScriptTarget::ES5,
-                    "es6" | "es2015" => ScriptTarget::ES2015,
-                    "es2016" => ScriptTarget::ES2016,
-                    "es2017" => ScriptTarget::ES2017,
-                    "es2018" => ScriptTarget::ES2018,
-                    "es2019" => ScriptTarget::ES2019,
-                    "es2020" => ScriptTarget::ES2020,
-                    "es2021" => ScriptTarget::ES2021,
-                    "es2022" | "es2023" => ScriptTarget::ES2022,
-                    _ => ScriptTarget::ESNext,
-                }
-            })
-            .unwrap_or(ScriptTarget::ES5)
+        target.as_ref().map_or(ScriptTarget::ES5, |t| {
+            // Handle comma-separated targets (e.g., "es2015,es2017") by taking the first one
+            // This matches how TSC runs multi-target tests - one iteration per target
+            let first_target = t.split(',').next().unwrap_or(t).trim().to_lowercase();
+            match first_target.as_str() {
+                "es3" => ScriptTarget::ES3,
+                "es5" => ScriptTarget::ES5,
+                "es6" | "es2015" => ScriptTarget::ES2015,
+                "es2016" => ScriptTarget::ES2016,
+                "es2017" => ScriptTarget::ES2017,
+                "es2018" => ScriptTarget::ES2018,
+                "es2019" => ScriptTarget::ES2019,
+                "es2020" => ScriptTarget::ES2020,
+                "es2021" => ScriptTarget::ES2021,
+                "es2022" | "es2023" => ScriptTarget::ES2022,
+                _ => ScriptTarget::ESNext,
+            }
+        })
     }
 
     fn build_checker_options(&self, options: &CheckOptions) -> CheckerOptions {

@@ -836,8 +836,10 @@ impl<'a> TypeLowering<'a> {
             .arena
             .get(data.name)
             .and_then(|name_node| self.arena.get_identifier(name_node))
-            .map(|id_data| self.interner.intern_string(&id_data.escaped_text))
-            .unwrap_or_else(|| self.interner.intern_string("T"));
+            .map_or_else(
+                || self.interner.intern_string("T"),
+                |id_data| self.interner.intern_string(&id_data.escaped_text),
+            );
 
         let constraint =
             (data.constraint != NodeIndex::NONE).then(|| self.lower_type(data.constraint));
@@ -1061,8 +1063,9 @@ impl<'a> TypeLowering<'a> {
                             .first()
                             .and_then(|&param_idx| self.arena.get(param_idx))
                             .and_then(|param_node| self.arena.get_parameter(param_node))
-                            .map(|param| self.lower_type(param.type_annotation))
-                            .unwrap_or(TypeId::UNKNOWN);
+                            .map_or(TypeId::UNKNOWN, |param| {
+                                self.lower_type(param.type_annotation)
+                            });
                         if let Some(existing) = properties.iter_mut().find(|p| p.name == name) {
                             existing.write_type = setter_type;
                             existing.readonly = false;
@@ -1404,8 +1407,9 @@ impl<'a> TypeLowering<'a> {
                         .first()
                         .and_then(|&param_idx| self.arena.get(param_idx))
                         .and_then(|param_node| self.arena.get_parameter(param_node))
-                        .map(|param| self.lower_type(param.type_annotation))
-                        .unwrap_or(TypeId::UNKNOWN);
+                        .map_or(TypeId::UNKNOWN, |param| {
+                            self.lower_type(param.type_annotation)
+                        });
                     match parts.properties.entry(name) {
                         indexmap::map::Entry::Occupied(mut entry) => {
                             // Update existing property with setter type as write type
@@ -1611,12 +1615,8 @@ impl<'a> TypeLowering<'a> {
             return true;
         }
 
-        let skip_string = string_index
-            .map(|idx| self.contains_meta_type(idx.value_type))
-            .unwrap_or(false);
-        let skip_number = number_index
-            .map(|idx| self.contains_meta_type(idx.value_type))
-            .unwrap_or(false);
+        let skip_string = string_index.is_some_and(|idx| self.contains_meta_type(idx.value_type));
+        let skip_number = number_index.is_some_and(|idx| self.contains_meta_type(idx.value_type));
 
         let resolver = IndexSignatureResolver;
         let mut checker = SubtypeChecker::with_resolver(self.interner, &resolver);
@@ -2227,8 +2227,10 @@ impl<'a> TypeLowering<'a> {
                 .arena
                 .get(param_data.name)
                 .and_then(|ident_node| self.arena.get_identifier(ident_node))
-                .map(|ident| self.interner.intern_string(&ident.escaped_text))
-                .unwrap_or_else(|| self.interner.intern_string("K"));
+                .map_or_else(
+                    || self.interner.intern_string("K"),
+                    |ident| self.interner.intern_string(&ident.escaped_text),
+                );
 
             let constraint = (param_data.constraint != NodeIndex::NONE)
                 .then(|| self.lower_type(param_data.constraint));
@@ -2662,8 +2664,7 @@ impl<'a> TypeLowering<'a> {
                                 .type_arguments
                                 .as_ref()
                                 .and_then(|args| args.nodes.first().copied())
-                                .map(|idx| self.lower_type(idx))
-                                .unwrap_or(TypeId::UNKNOWN);
+                                .map_or(TypeId::UNKNOWN, |idx| self.lower_type(idx));
                             let array_type = self.interner.array(elem_type);
                             if name == "ReadonlyArray" {
                                 return self.interner.readonly_type(array_type);

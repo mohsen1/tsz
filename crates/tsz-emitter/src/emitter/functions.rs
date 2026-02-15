@@ -115,8 +115,7 @@ impl<'a> Printer<'a> {
         let body_is_block = self
             .arena
             .get(func.body)
-            .map(|n| n.kind == syntax_kind_ext::BLOCK)
-            .unwrap_or(false);
+            .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
         if !body_is_block && self.concise_body_needs_parens(func.body) {
             self.write("(");
             self.emit(func.body);
@@ -153,9 +152,7 @@ impl<'a> Printer<'a> {
         self.ctx.emit_await_as_yield = true;
 
         let body_node = self.arena.get(func.body);
-        let is_block = body_node
-            .map(|n| n.kind == syntax_kind_ext::BLOCK)
-            .unwrap_or(false);
+        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
 
         if is_block {
             // Block body: emit statements directly
