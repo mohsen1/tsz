@@ -501,27 +501,101 @@ impl ParserState {
     }
 
     /// Parse index signature with modifiers (static, readonly, etc.): static [key: string]: value
+    ///
+    /// Handles malformed index signatures with rest params (`...`), optional params (`?`),
+    /// initializers (`= expr`), and multiple params — emitting the same error codes as tsc.
     pub(crate) fn parse_index_signature_with_modifiers(
         &mut self,
         modifiers: Option<NodeList>,
         start_pos: u32,
     ) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+
         self.parse_expected(SyntaxKind::OpenBracketToken);
 
-        // Parse parameter
+        // Parse first parameter, handling malformed forms
         let param_start = self.token_pos();
-        let param_name = self.parse_identifier();
-        self.parse_expected(SyntaxKind::ColonToken);
-        // Capture the token kind before parsing — used to detect invalid param types.
-        let param_type_token = self.token();
-        let param_type = self.parse_type(); // Type of the index parameter (e.g., string, number)
 
-        // Check for trailing comma (TS1025: invalid syntax)
+        // TS1017: rest parameter in index signature
+        let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
+        if dot_dot_dot_token {
+            self.parse_error_at(
+                param_start,
+                3,
+                "An index signature cannot have a rest parameter.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_CANNOT_HAVE_A_REST_PARAMETER,
+            );
+        }
+
+        let param_name = self.parse_identifier();
+
+        // TS1019: optional parameter in index signature
+        let question_token = self.parse_optional(SyntaxKind::QuestionToken);
+        if question_token {
+            let q_end = self.token_pos();
+            self.parse_error_at(
+                q_end - 1,
+                1,
+                "An index signature parameter cannot have a question mark.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_A_QUESTION_MARK,
+            );
+        }
+
+        // Parse colon and parameter type
+        self.parse_expected(SyntaxKind::ColonToken);
+        let param_type_token = self.token();
+        let param_type = self.parse_type();
+
+        // TS1020: initializer in index signature
+        let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+            let init_start = self.token_pos();
+            let init = self.parse_assignment_expression();
+            self.parse_error_at(
+                init_start,
+                self.token_pos() - init_start,
+                "An index signature parameter cannot have an initializer.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
+            );
+            init
+        } else {
+            NodeIndex::NONE
+        };
+
+        let param_end = self.token_end();
+
+        // TS1096: multiple parameters — consume remaining params for error recovery
+        let mut has_multiple_params = false;
         if self.parse_optional(SyntaxKind::CommaToken) {
-            use tsz_common::diagnostics::diagnostic_codes;
+            has_multiple_params = true;
+            // Consume remaining parameters for recovery
+            while !self.is_token(SyntaxKind::CloseBracketToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+            {
+                // Skip rest token
+                self.parse_optional(SyntaxKind::DotDotDotToken);
+                if self.is_identifier_or_keyword() {
+                    self.next_token();
+                }
+                // Skip optional marker
+                self.parse_optional(SyntaxKind::QuestionToken);
+                // Skip type annotation
+                if self.parse_optional(SyntaxKind::ColonToken) {
+                    let _ = self.parse_type();
+                }
+                // Skip initializer
+                if self.parse_optional(SyntaxKind::EqualsToken) {
+                    let _ = self.parse_assignment_expression();
+                }
+                if !self.parse_optional(SyntaxKind::CommaToken) {
+                    break;
+                }
+            }
+        }
+
+        if has_multiple_params {
             self.parse_error_at_current_token(
-                "An index signature cannot have a trailing comma.",
-                diagnostic_codes::AN_INDEX_SIGNATURE_CANNOT_HAVE_A_TRAILING_COMMA,
+                "An index signature must have exactly one parameter.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER,
             );
         }
 
@@ -543,11 +617,12 @@ impl ParserState {
         );
 
         // Index signatures must have a type annotation (TS1021).
-        // Skip when the parameter type is already invalid (TS1268) — matches TSC behavior.
+        // Suppress when the parameter type is already invalid (TS1268),
+        // or when other index signature errors were already emitted — matches tsc behavior.
+        let has_param_errors = dot_dot_dot_token || question_token || has_multiple_params;
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
-        } else if !has_invalid_param_type {
-            use tsz_common::diagnostics::diagnostic_codes;
+        } else if !has_invalid_param_type && !has_param_errors {
             self.parse_error_at_current_token(
                 "An index signature must have a type annotation.",
                 diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_A_TYPE_ANNOTATION,
@@ -557,18 +632,17 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let param_end = self.token_end();
         let param_node = self.arena.add_parameter(
             syntax_kind_ext::PARAMETER,
             param_start,
             param_end,
             ParameterData {
                 modifiers: None,
-                dot_dot_dot_token: false,
+                dot_dot_dot_token,
                 name: param_name,
-                question_token: false,
+                question_token,
                 type_annotation: param_type,
-                initializer: NodeIndex::NONE,
+                initializer,
             },
         );
 
