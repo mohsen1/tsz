@@ -3061,6 +3061,34 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.symbol_to_def.borrow().get(&sym_id).copied()
     }
 
+    fn is_global_object_symbol(&self, symbol: tsz_solver::SymbolRef) -> bool {
+        use tsz_binder::SymbolId;
+
+        let sym_id = SymbolId(symbol.0);
+        self.binder
+            .symbols
+            .get(sym_id)
+            .is_some_and(|sym| sym.escaped_name.as_str() == "Object")
+    }
+
+    fn is_global_object_def_id(&self, def_id: tsz_solver::DefId) -> bool {
+        if let Some(sym_id) = self.def_to_symbol_id(def_id)
+            && self
+                .binder
+                .symbols
+                .get(sym_id)
+                .is_some_and(|sym| sym.escaped_name.as_str() == "Object")
+        {
+            return true;
+        }
+
+        if let Ok(env) = self.type_env.try_borrow() {
+            env.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Object)
+        } else {
+            false
+        }
+    }
+
     /// Check if a TypeId represents a full Enum type (not a specific member).
     ///
     /// Used to distinguish between:

@@ -280,11 +280,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         _target: TypeId,
         sym: SymbolRef,
     ) -> SubtypeResult {
+        if self.resolver.is_global_object_symbol(sym) {
+            return if self.is_global_object_interface_type(source) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if let Some(def_id) = self.resolver.symbol_to_def_id(sym)
+            && self.resolver.is_global_object_def_id(def_id)
+        {
+            return if self.is_global_object_interface_type(source) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
         let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             self.resolver.resolve_symbol_ref(sym, self.interner)
         };
+        if resolved.is_some_and(|t| {
+            self.resolver
+                .get_boxed_type(IntrinsicKind::Object)
+                .is_some_and(|boxed| boxed == t)
+        }) {
+            return if self.is_global_object_interface_type(source) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
         match resolved {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
             None => SubtypeResult::False,
@@ -316,11 +345,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         _target: TypeId,
         sym: SymbolRef,
     ) -> SubtypeResult {
+        if self.resolver.is_global_object_symbol(sym) {
+            return if self.is_global_object_interface_type(source) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
+        if let Some(def_id) = self.resolver.symbol_to_def_id(sym)
+            && self.resolver.is_global_object_def_id(def_id)
+        {
+            return if self.is_global_object_interface_type(source) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
+
         let resolved = if let Some(def_id) = self.resolver.symbol_to_def_id(sym) {
             self.resolver.resolve_lazy(def_id, self.interner)
         } else {
             self.resolver.resolve_symbol_ref(sym, self.interner)
         };
+        if resolved.is_some_and(|t| {
+            self.resolver
+                .get_boxed_type(IntrinsicKind::Object)
+                .is_some_and(|boxed| boxed == t)
+        }) {
+            return if self.is_global_object_interface_type(source) {
+                SubtypeResult::True
+            } else {
+                SubtypeResult::False
+            };
+        }
         match resolved {
             Some(t_resolved) => self.check_subtype(source, t_resolved),
             None => SubtypeResult::False,
