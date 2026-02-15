@@ -547,4 +547,61 @@ mod tests {
 
         assert!(result.is_passed());
     }
+
+    #[test]
+    fn test_isolated_runner_helpers_are_accessed() {
+        let limits = ResourceLimits::with_timeout(Duration::from_secs(9));
+        let limits = ResourceLimits {
+            max_memory_mb: Some(128),
+            ..limits
+        };
+        assert_eq!(
+            ResourceLimits::with_memory_mb(256).max_memory_mb,
+            Some(256)
+        );
+        assert_eq!(limits.max_memory_mb, Some(128));
+        assert_eq!(limits.timeout, Duration::from_secs(9));
+        assert_eq!(limits.max_file_descriptors, Some(1024));
+        assert!(limits.enable_monitoring);
+
+        let config = IsolatedTestConfig {
+            limits,
+            test_binary_path: Some("path/to/test".to_string()),
+            verbosity: 2,
+            ..Default::default()
+        };
+        assert_eq!(config.test_binary_path.as_deref(), Some("path/to/test"));
+        assert_eq!(config.verbosity, 2);
+
+        let monitored = MonitoredTestResult {
+            result: TestResult::Failed {
+                message: "x".to_string(),
+                duration: Duration::from_secs(1),
+            },
+            peak_memory_bytes: Some(1024),
+            was_terminated: false,
+            termination_signal: None,
+        };
+
+        let test_result = monitored.to_test_result();
+        assert!(matches!(
+            test_result,
+            TestResult::Failed { message: _, duration: _ }
+        ));
+
+        assert!(!monitored.was_killed());
+        assert_eq!(monitored.termination_reason(), None);
+        assert_eq!(monitored.peak_memory_bytes, Some(1024));
+
+        let enhanced = EnhancedTestResult::from_monitored("helper".to_string(), monitored, false);
+        assert_eq!(enhanced.test_name, "helper");
+        assert!(!enhanced.is_passed());
+        assert!(!enhanced.was_isolated);
+
+        if let Some(memory_info) = &enhanced.memory_info {
+            assert_eq!(memory_info.peak_bytes, 1024);
+            assert_eq!(memory_info.limit_bytes, None);
+            assert_eq!(memory_info.limit_percent, None);
+        }
+    }
 }
