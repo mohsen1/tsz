@@ -854,11 +854,7 @@ impl<'a> FindReferences<'a> {
                     return None;
                 }
                 let clause_node = self.arena.get(import.import_clause)?;
-                if clause_node.kind == SyntaxKind::Identifier as u16 {
-                    Some(import.import_clause)
-                } else {
-                    None
-                }
+                (clause_node.kind == SyntaxKind::Identifier as u16).then_some(import.import_clause)
             }
             k if k == syntax_kind_ext::TYPE_PARAMETER => {
                 let param = self.arena.get_type_parameter(node)?;

@@ -1083,11 +1083,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // `x` based on `x.kind`, the base `x` must match target `x`.
                 // Without this check, narrowing `x.prop` based on `x.kind` would
                 // incorrectly try to find `kind` on the type of `x.prop`.
-                if self.is_matching_reference(base, target) {
-                    Some(path)
-                } else {
-                    None
-                }
+                self.is_matching_reference(base, target).then(|| path)
             })
     }
 

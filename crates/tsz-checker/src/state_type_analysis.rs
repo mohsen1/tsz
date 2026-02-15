@@ -3025,11 +3025,8 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
         let ctx_type = self.ctx.contextual_type?;
-        if self.contextual_type_allows_literal(ctx_type, literal_type) {
-            Some(literal_type)
-        } else {
-            None
-        }
+        self.contextual_type_allows_literal(ctx_type, literal_type)
+            .then(|| literal_type)
     }
 
     pub(crate) fn contextual_type_allows_literal(

@@ -29,7 +29,7 @@ impl<'a> Printer<'a> {
             // all_comments[comment_emit_idx - 1].end has already been emitted.
             if self.comment_emit_idx > 0 {
                 let last_emitted = &self.all_comments[self.comment_emit_idx - 1];
-                if comment.end as u32 <= last_emitted.end {
+                if comment.end <= last_emitted.end {
                     continue;
                 }
             }
@@ -45,10 +45,10 @@ impl<'a> Printer<'a> {
             // won't be emitted again by the end-of-file comment sweep.
             while self.comment_emit_idx < self.all_comments.len() {
                 let c = &self.all_comments[self.comment_emit_idx];
-                if c.pos >= comment.pos as u32 && c.end <= comment.end as u32 {
+                if c.pos >= comment.pos && c.end <= comment.end {
                     self.comment_emit_idx += 1;
                     break;
-                } else if c.end > comment.end as u32 {
+                } else if c.end > comment.end {
                     break;
                 }
                 self.comment_emit_idx += 1;

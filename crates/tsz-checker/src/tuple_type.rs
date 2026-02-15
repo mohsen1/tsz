@@ -218,13 +218,8 @@ impl<'a> CheckerState<'a> {
     /// or None otherwise.
     pub fn get_homogeneous_tuple_element_type(&self, tuple_type: TypeId) -> Option<TypeId> {
         if self.is_homogeneous_tuple(tuple_type) {
-            query::tuple_elements(self.ctx.types, tuple_type).and_then(|elements| {
-                if !elements.is_empty() {
-                    Some(elements[0].type_id)
-                } else {
-                    None
-                }
-            })
+            query::tuple_elements(self.ctx.types, tuple_type)
+                .and_then(|elements| (!elements.is_empty()).then(|| elements[0].type_id))
         } else {
             None
         }

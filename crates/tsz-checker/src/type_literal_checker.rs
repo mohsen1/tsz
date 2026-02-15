@@ -581,23 +581,18 @@ impl<'a> CheckerState<'a> {
                         });
                     }
                 } else {
-                    let setter_type =
-                        accessor
-                            .parameters
-                            .nodes
-                            .first()
-                            .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                            .and_then(|param| {
-                                if !param.type_annotation.is_none() {
-                                    Some(self.get_type_from_type_node_in_type_literal(
-                                        param.type_annotation,
-                                    ))
-                                } else {
-                                    None
-                                }
+                    let setter_type = accessor
+                        .parameters
+                        .nodes
+                        .first()
+                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                        .and_then(|param| {
+                            (!param.type_annotation.is_none()).then(|| {
+                                self.get_type_from_type_node_in_type_literal(param.type_annotation)
                             })
-                            .unwrap_or(TypeId::UNKNOWN);
+                        })
+                        .unwrap_or(TypeId::UNKNOWN);
                     if let Some(existing) = properties.iter_mut().find(|p| p.name == name_atom) {
                         existing.write_type = setter_type;
                         existing.readonly = false;

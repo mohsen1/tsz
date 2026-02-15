@@ -937,11 +937,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         let then_result = self.analyze_statement(if_stmt.then_statement, assigned_in, tracked);
 
         // Analyze else branch if present
-        let else_result = if !if_stmt.else_statement.is_none() {
-            Some(self.analyze_statement(if_stmt.else_statement, assigned_in, tracked))
-        } else {
-            None
-        };
+        let else_result = (!if_stmt.else_statement.is_none())
+            .then(|| self.analyze_statement(if_stmt.else_statement, assigned_in, tracked));
 
         // For if-else, we need the intersection of both branches
         // For if-only, we need to intersect with the input (property might not be assigned if condition is false)
@@ -999,18 +996,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         let try_result = self.analyze_statement(try_stmt.try_block, assigned_in, tracked);
 
         // Analyze catch block if present
-        let catch_result = if !try_stmt.catch_clause.is_none() {
-            Some(self.analyze_statement(try_stmt.catch_clause, assigned_in, tracked))
-        } else {
-            None
-        };
+        let catch_result = (!try_stmt.catch_clause.is_none())
+            .then(|| self.analyze_statement(try_stmt.catch_clause, assigned_in, tracked));
 
         // Analyze finally block if present
-        let finally_result = if !try_stmt.finally_block.is_none() {
-            Some(self.analyze_statement(try_stmt.finally_block, assigned_in, tracked))
-        } else {
-            None
-        };
+        let finally_result = (!try_stmt.finally_block.is_none())
+            .then(|| self.analyze_statement(try_stmt.finally_block, assigned_in, tracked));
 
         // Conservative approach: only count assignments that are in all paths
         // For try-catch, we need the intersection

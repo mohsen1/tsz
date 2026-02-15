@@ -62,11 +62,8 @@ impl<'a> IRPrinter<'a> {
         let IRNode::Identifier(identifier_name) = &**value else {
             return None;
         };
-        if export_name == name && identifier_name == name {
-            Some((name.as_str(), members, namespace.as_str()))
-        } else {
-            None
-        }
+        (export_name == name && identifier_name == name)
+            .then(|| (name.as_str(), members, namespace.as_str()))
     }
 
     fn emit_namespace_bound_enum_iife(

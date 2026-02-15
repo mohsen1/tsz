@@ -164,13 +164,10 @@ pub fn transpile_module(source: &str, options_json: &str) -> String {
     let output_text = printer.get_output().to_string();
 
     // Generate declaration file if requested
-    let declaration_text = if options.declaration.unwrap_or(false) {
+    let declaration_text = options.declaration.unwrap_or(false).then(|| {
         let mut decl_emitter = DeclarationEmitter::new(&arena);
-        let decl_output = decl_emitter.emit(root_idx);
-        Some(decl_output)
-    } else {
-        None
-    };
+        decl_emitter.emit(root_idx)
+    });
 
     // Build result
     let result = TranspileOutput {

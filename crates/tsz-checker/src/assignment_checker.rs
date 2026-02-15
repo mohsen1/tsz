@@ -141,11 +141,7 @@ impl<'a> CheckerState<'a> {
             decl_flags |= parent_node.flags as u32;
         }
 
-        if decl_flags & node_flags::CONST != 0 {
-            Some(name)
-        } else {
-            None
-        }
+        (decl_flags & node_flags::CONST != 0).then_some(name)
     }
 
     /// Strip wrappers that preserve assignment target identity for symbol checks.

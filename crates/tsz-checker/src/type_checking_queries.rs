@@ -2033,11 +2033,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Explicit `this` parameter must have a type annotation
-        if is_this && !param.type_annotation.is_none() {
-            Some(param.type_annotation)
-        } else {
-            None
-        }
+        (is_this && !param.type_annotation.is_none()).then(|| param.type_annotation)
     }
 
     /// Get the this type for a class member.

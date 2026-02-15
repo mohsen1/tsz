@@ -430,11 +430,7 @@ impl<'a> CheckerState<'a> {
         // expands Application types (like Promise<string>) into concrete object shapes,
         // which is useful for body checking but destroys type identity needed by callers
         // (e.g., await unwrapping needs to see Promise<T> as an Application).
-        let annotated_return_type = if has_type_annotation {
-            Some(return_type)
-        } else {
-            None
-        };
+        let annotated_return_type = has_type_annotation.then_some(return_type);
 
         // Evaluate Application types in return type to get their structural form
         // This allows proper comparison of return expressions against type alias applications like Reducer<S, A>
@@ -1193,11 +1189,7 @@ impl<'a> CheckerState<'a> {
             let atom = self.ctx.types.intern_string(&name);
 
             let constraint_type = self.get_type_from_type_node(data.constraint);
-            let constraint = if constraint_type != TypeId::ERROR {
-                Some(constraint_type)
-            } else {
-                None
-            };
+            let constraint = (constraint_type != TypeId::ERROR).then(|| constraint_type);
 
             // Update scope with constrained version
             let info = tsz_solver::TypeParamInfo {
