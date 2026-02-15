@@ -125,8 +125,7 @@ fn test_new_commands_are_recognized() {
                     .as_deref()
                     .unwrap_or("")
                     .contains("Unrecognized"),
-            "Command '{}' was not recognized",
-            cmd
+            "Command '{cmd}' was not recognized"
         );
     }
 }
@@ -147,47 +146,38 @@ fn test_unrecognized_command() {
 /// Helper to validate that a JSON value has valid tsserver start/end spans.
 fn assert_valid_span(value: &serde_json::Value, context: &str) {
     let start = value.get("start");
-    assert!(start.is_some(), "{}: missing 'start' field", context);
+    assert!(start.is_some(), "{context}: missing 'start' field");
     let start = start.unwrap();
     assert!(
         start.get("line").is_some(),
-        "{}: missing 'start.line'",
-        context
+        "{context}: missing 'start.line'"
     );
     assert!(
         start.get("offset").is_some(),
-        "{}: missing 'start.offset'",
-        context
+        "{context}: missing 'start.offset'"
     );
     let line = start.get("line").unwrap().as_u64().unwrap();
     let offset = start.get("offset").unwrap().as_u64().unwrap();
-    assert!(line >= 1, "{}: start.line must be >= 1 (1-based)", context);
+    assert!(line >= 1, "{context}: start.line must be >= 1 (1-based)");
     assert!(
         offset >= 1,
-        "{}: start.offset must be >= 1 (1-based)",
-        context
+        "{context}: start.offset must be >= 1 (1-based)"
     );
 
     let end = value.get("end");
-    assert!(end.is_some(), "{}: missing 'end' field", context);
+    assert!(end.is_some(), "{context}: missing 'end' field");
     let end = end.unwrap();
-    assert!(end.get("line").is_some(), "{}: missing 'end.line'", context);
+    assert!(end.get("line").is_some(), "{context}: missing 'end.line'");
     assert!(
         end.get("offset").is_some(),
-        "{}: missing 'end.offset'",
-        context
+        "{context}: missing 'end.offset'"
     );
     let end_line = end.get("line").unwrap().as_u64().unwrap();
     let end_offset = end.get("offset").unwrap().as_u64().unwrap();
-    assert!(
-        end_line >= 1,
-        "{}: end.line must be >= 1 (1-based)",
-        context
-    );
+    assert!(end_line >= 1, "{context}: end.line must be >= 1 (1-based)");
     assert!(
         end_offset >= 1,
-        "{}: end.offset must be >= 1 (1-based)",
-        context
+        "{context}: end.offset must be >= 1 (1-based)"
     );
 }
 
@@ -300,11 +290,10 @@ x;"
     // The body is an array; each entry must have start/end and file
     if let Some(arr) = body.as_array() {
         for (i, entry) in arr.iter().enumerate() {
-            assert_valid_span(entry, &format!("definition entry {}", i));
+            assert_valid_span(entry, &format!("definition entry {i}"));
             assert!(
                 entry.get("file").is_some(),
-                "definition entry {} must have 'file'",
-                i
+                "definition entry {i} must have 'file'"
             );
         }
     }
@@ -395,7 +384,7 @@ x;"
     let refs = body.get("refs").expect("references must have refs array");
     if let Some(arr) = refs.as_array() {
         for (i, entry) in arr.iter().enumerate() {
-            assert_valid_span(entry, &format!("reference entry {}", i));
+            assert_valid_span(entry, &format!("reference entry {i}"));
         }
     }
     assert!(

@@ -5,7 +5,7 @@
 //! with concrete types throughout the type structure.
 //!
 //! Key features:
-//! - Type substitution map (type parameter name -> TypeId)
+//! - Type substitution map (type parameter name -> `TypeId`)
 //! - Deep recursive substitution through nested types
 //! - Handling of constraints and defaults
 
@@ -43,7 +43,7 @@ impl TypeSubstitution {
     /// `type_params` - The declared type parameters (e.g., `<T, U>`)
     /// `type_args` - The provided type arguments (e.g., `<string, number>`)
     ///
-    /// When type_args has fewer elements than type_params, default values
+    /// When `type_args` has fewer elements than `type_params`, default values
     /// from the type parameters are used for the remaining parameters.
     ///
     /// IMPORTANT: Defaults may reference earlier type parameters, so they need
@@ -104,7 +104,7 @@ impl TypeSubstitution {
     /// Get a reference to the internal substitution map.
     ///
     /// This is useful for building new substitutions based on existing ones.
-    pub fn map(&self) -> &FxHashMap<Atom, TypeId> {
+    pub const fn map(&self) -> &FxHashMap<Atom, TypeId> {
         &self.map
     }
 }
@@ -270,7 +270,7 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
-    /// Instantiate a TypeData.
+    /// Instantiate a `TypeData`.
     fn instantiate_key(&mut self, key: &TypeData) -> TypeId {
         match key {
             // Type parameters get substituted

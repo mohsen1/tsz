@@ -26,7 +26,7 @@ pub struct SymbolInformation {
 
 impl SymbolInformation {
     /// Create a new symbol information entry.
-    pub fn new(name: String, kind: SymbolKind, location: Location) -> Self {
+    pub const fn new(name: String, kind: SymbolKind, location: Location) -> Self {
         Self {
             name,
             kind,
@@ -59,7 +59,7 @@ impl<'a> WorkspaceSymbolsProvider<'a> {
     ///
     /// # Arguments
     /// * `index` - The project-wide symbol index to search
-    pub fn new(index: &'a SymbolIndex) -> Self {
+    pub const fn new(index: &'a SymbolIndex) -> Self {
         Self { index }
     }
 
@@ -132,12 +132,12 @@ impl<'a> WorkspaceSymbolsProvider<'a> {
     /// Infer the symbol kind from the symbol name.
     ///
     /// Uses naming conventions to guess the kind:
-    /// - PascalCase names starting with "I" followed by uppercase -> Interface
-    /// - PascalCase names -> Class
-    /// - SCREAMING_SNAKE_CASE -> Constant
+    /// - `PascalCase` names starting with "I" followed by uppercase -> Interface
+    /// - `PascalCase` names -> Class
+    /// - `SCREAMING_SNAKE_CASE` -> Constant
     /// - All other names -> Variable
     ///
-    /// This is a heuristic; the SymbolIndex does not currently store kind information.
+    /// This is a heuristic; the `SymbolIndex` does not currently store kind information.
     fn infer_symbol_kind(name: &str) -> SymbolKind {
         if name.is_empty() {
             return SymbolKind::Variable;

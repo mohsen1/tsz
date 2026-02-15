@@ -1,14 +1,14 @@
 //! TypeScript Unsoundness Catalog Implementation Audit
 //!
 //! This module tracks the implementation status of all 44 TypeScript unsoundness
-//! rules from docs/specs/TS_UNSOUNDNESS_CATALOG.md against the actual solver implementation.
+//! rules from `docs/specs/TS_UNSOUNDNESS_CATALOG.md` against the actual solver implementation.
 //!
 //! ## Audit Matrix
 //!
 //! The audit maps each catalog rule to its implementation status:
-//! - ✅ FULLY_IMPLEMENTED: Rule is complete and tested
-//! - ⚠️ PARTIALLY_IMPLEMENTED: Partial implementation with gaps
-//! - ❌ NOT_IMPLEMENTED: Rule is missing
+//! - ✅ `FULLY_IMPLEMENTED`: Rule is complete and tested
+//! - ⚠️ `PARTIALLY_IMPLEMENTED`: Partial implementation with gaps
+//! - ❌ `NOT_IMPLEMENTED`: Rule is missing
 //! - 🚫 BLOCKED: Rule cannot be implemented yet (dependencies missing)
 //!
 //! ## Usage
@@ -41,22 +41,21 @@ pub enum ImplementationStatus {
 
 impl ImplementationStatus {
     /// Returns true if the rule is at least partially implemented
-    pub fn is_implemented(self) -> bool {
+    pub const fn is_implemented(self) -> bool {
         matches!(self, Self::FullyImplemented | Self::PartiallyImplemented)
     }
 
     /// Returns the completion percentage (0.0, 0.5, or 1.0)
-    pub fn completion_ratio(self) -> f32 {
+    pub const fn completion_ratio(self) -> f32 {
         match self {
-            Self::FullyImplemented => 1.0,
+            Self::FullyImplemented | Self::NotApplicable => 1.0,
             Self::PartiallyImplemented => 0.5,
             Self::NotImplemented | Self::Blocked => 0.0,
-            Self::NotApplicable => 1.0,
         }
     }
 
     /// Returns the emoji representation for display
-    pub fn emoji(self) -> &'static str {
+    pub const fn emoji(self) -> &'static str {
         match self {
             Self::FullyImplemented => "✅",
             Self::PartiallyImplemented => "⚠️",

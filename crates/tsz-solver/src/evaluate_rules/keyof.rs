@@ -70,7 +70,7 @@ impl KeyofKeySet {
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Helper to recursively evaluate keyof while respecting depth limits.
-    /// Creates a KeyOf type and evaluates it through the main evaluate() method.
+    /// Creates a `KeyOf` type and evaluates it through the main `evaluate()` method.
     fn recurse_keyof(&mut self, operand: TypeId) -> TypeId {
         let keyof = self.interner().keyof(operand);
         self.evaluate(keyof)
@@ -303,7 +303,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             None => return None,
                         }
                     }
-                    Some(TypeData::Array(_)) => return None,
                     _ => return None,
                 }
             }

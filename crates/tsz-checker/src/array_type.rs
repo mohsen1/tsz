@@ -1,6 +1,6 @@
 //! Array Type Utilities Module
 //!
-//! This module contains array type utility methods for CheckerState
+//! This module contains array type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Array type compatibility
 //! - Array type predicates
 //!
-//! This module extends CheckerState with utilities for array type
+//! This module extends `CheckerState` with utilities for array type
 //! operations, providing cleaner APIs for array type checking.
 
 use crate::query_boundaries::array_type as query;
@@ -127,7 +127,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the common element type if array is homogeneous.
     ///
-    /// Returns Some(element_type) if the array has a single element type,
+    /// Returns `Some(element_type)` if the array has a single element type,
     /// or None if it's a union array or not an array.
     pub fn get_homogeneous_element_type(&self, type_id: TypeId) -> Option<TypeId> {
         query::array_element_type(self.ctx.types, type_id)

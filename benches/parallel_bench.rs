@@ -1,7 +1,7 @@
 //! Parallel Type Checking Benchmarks
 //!
 //! This benchmark suite tests the scaling of parallel type checking
-//! with the lock-free TypeInterner architecture.
+//! with the lock-free `TypeInterner` architecture.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
@@ -99,7 +99,7 @@ fn bench_scaling_efficiency(c: &mut Criterion) {
         let interner = TypeInterner::new();
         let start = std::time::Instant::now();
         for i in 0..100000 {
-            let _ = interner.intern_string(&format!("key_{}", i));
+            let _ = interner.intern_string(&format!("key_{i}"));
             let _ = interner.literal_number(i as f64);
         }
         start.elapsed().as_nanos() as f64
@@ -119,7 +119,7 @@ fn bench_scaling_efficiency(c: &mut Criterion) {
                     let interner = Arc::new(TypeInterner::new());
                     pool.scope(|_s| {
                         (0..100000).into_par_iter().for_each(|i| {
-                            let _ = interner.intern_string(&format!("key_{}", i));
+                            let _ = interner.intern_string(&format!("key_{i}"));
                             let _ = interner.literal_number(i as f64);
                         });
                     });
@@ -149,7 +149,7 @@ fn bench_contention_check(c: &mut Criterion) {
                 // All threads intern the same 100 strings repeatedly
                 (0..10000).into_par_iter().for_each(|i| {
                     let key = i % 100;
-                    let _ = interner.intern_string(&format!("shared_key_{}", key));
+                    let _ = interner.intern_string(&format!("shared_key_{key}"));
                     let _ = interner.literal_number(key as f64);
                 });
             });
@@ -168,7 +168,7 @@ fn bench_contention_check(c: &mut Criterion) {
             pool.scope(|_s| {
                 (0..10000).into_par_iter().for_each(|i| {
                     // Different keys per thread due to rayon's work distribution
-                    let _ = interner.intern_string(&format!("unique_key_{}", i));
+                    let _ = interner.intern_string(&format!("unique_key_{i}"));
                     let _ = interner.literal_number(i as f64);
                 });
             });
@@ -191,7 +191,7 @@ fn bench_property_lookup(c: &mut Criterion) {
         // Create a small object (under cache threshold)
         let props = (0..5)
             .map(|i| PropertyInfo {
-                name: interner.intern_string(&format!("prop_{}", i)),
+                name: interner.intern_string(&format!("prop_{i}")),
                 type_id: TypeId::STRING,
                 write_type: TypeId::STRING,
                 optional: false,
@@ -209,7 +209,7 @@ fn bench_property_lookup(c: &mut Criterion) {
             number_index: None,
             symbol: None,
         };
-        let shape_id = interner.intern_object_shape(shape.clone());
+        let shape_id = interner.intern_object_shape(shape);
 
         b.iter(|| {
             let _ = interner.object_property_index(shape_id, interner.intern_string("prop_2"));
@@ -223,7 +223,7 @@ fn bench_property_lookup(c: &mut Criterion) {
         // Create a large object (above cache threshold)
         let props = (0..30)
             .map(|i| PropertyInfo {
-                name: interner.intern_string(&format!("prop_{}", i)),
+                name: interner.intern_string(&format!("prop_{i}")),
                 type_id: TypeId::STRING,
                 write_type: TypeId::STRING,
                 optional: false,
@@ -241,7 +241,7 @@ fn bench_property_lookup(c: &mut Criterion) {
             number_index: None,
             symbol: None,
         };
-        let shape_id = interner.intern_object_shape(shape.clone());
+        let shape_id = interner.intern_object_shape(shape);
 
         b.iter(|| {
             let _ = interner.object_property_index(shape_id, interner.intern_string("prop_15"));

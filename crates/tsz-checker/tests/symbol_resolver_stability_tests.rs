@@ -1,4 +1,4 @@
-//! Tests for parse_test_option_bool stability fixes
+//! Tests for `parse_test_option_bool` stability fixes
 
 use crate::CheckerState;
 

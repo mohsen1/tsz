@@ -749,7 +749,7 @@ fn test_signature_help_constructor_overload_jsdoc_rest() {
 // New tests for improved signature help (prefix/suffix, callee name, generics)
 // ============================================================================
 
-/// Helper to set up a SignatureHelpProvider from source code.
+/// Helper to set up a `SignatureHelpProvider` from source code.
 fn setup_provider(
     source: &str,
 ) -> (

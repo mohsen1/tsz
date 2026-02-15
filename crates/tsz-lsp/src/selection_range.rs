@@ -24,7 +24,7 @@ pub struct SelectionRange {
 
 impl SelectionRange {
     /// Create a new selection range.
-    pub fn new(range: Range) -> Self {
+    pub const fn new(range: Range) -> Self {
         Self {
             range,
             parent: None,
@@ -56,7 +56,7 @@ impl<'a> SelectionRangeProvider<'a> {
 
     /// Get the selection range at a specific position.
     ///
-    /// Returns a nested structure where each SelectionRange points to its parent,
+    /// Returns a nested structure where each `SelectionRange` points to its parent,
     /// representing successively larger semantic regions.
     pub fn get_selection_range(&self, position: Position) -> Option<SelectionRange> {
         // Convert position to byte offset
@@ -127,7 +127,7 @@ impl<'a> SelectionRangeProvider<'a> {
     /// Determine if a node kind should be skipped in the selection chain.
     ///
     /// Some internal nodes don't represent meaningful selection boundaries.
-    fn should_skip_node(&self, kind: u16) -> bool {
+    const fn should_skip_node(&self, kind: u16) -> bool {
         use syntax_kind_ext::{EMPTY_STATEMENT, OMITTED_EXPRESSION, SEMICOLON_CLASS_ELEMENT};
 
         matches!(

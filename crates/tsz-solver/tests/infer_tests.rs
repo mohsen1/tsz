@@ -4429,7 +4429,7 @@ fn test_resolve_bounds_function_this_parameter_mismatch() {
 /// Test resolving bounds for function `this` parameter with optional target
 ///
 /// NOTE: Currently ignored - bounds resolution for function `this` parameters with
-/// optional targets is not fully implemented. The solver panics with a BoundsViolation
+/// optional targets is not fully implemented. The solver panics with a `BoundsViolation`
 /// error when trying to resolve this case.
 #[test]
 fn test_resolve_bounds_function_this_parameter_optional_target() {
@@ -14361,7 +14361,7 @@ fn test_best_common_type_union_fallback() {
 /// Test BCT with intersection types
 ///
 /// Verifies that BCT can handle intersection types without crashing.
-/// The key functionality is that collect_class_hierarchy recurses into
+/// The key functionality is that `collect_class_hierarchy` recurses into
 /// intersection members to extract commonality.
 #[test]
 fn test_best_common_type_with_intersections() {
@@ -14407,7 +14407,7 @@ fn test_const_type_param_preserves_literal_string() {
     assert_eq!(result, hello_lit);
     match interner.lookup(result) {
         Some(TypeData::Literal(LiteralValue::String(_))) => {} // Expected
-        other => panic!("Expected Literal(String), got {:?}", other),
+        other => panic!("Expected Literal(String), got {other:?}"),
     }
 }
 
@@ -14430,7 +14430,7 @@ fn test_const_type_param_preserves_literal_number() {
     assert_eq!(result, forty_two);
     match interner.lookup(result) {
         Some(TypeData::Literal(LiteralValue::Number(_))) => {} // Expected
-        other => panic!("Expected Literal(Number), got {:?}", other),
+        other => panic!("Expected Literal(Number), got {other:?}"),
     }
 }
 
@@ -14458,10 +14458,10 @@ fn test_const_type_param_array_to_readonly_tuple() {
             // Inner should be a tuple with literal elements
             match interner.lookup(inner) {
                 Some(TypeData::Tuple(_)) => {} // Expected
-                other => panic!("Expected Tuple inside ReadonlyType, got {:?}", other),
+                other => panic!("Expected Tuple inside ReadonlyType, got {other:?}"),
             }
         }
-        other => panic!("Expected ReadonlyType, got {:?}", other),
+        other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
 
@@ -14490,7 +14490,7 @@ fn test_const_type_param_object_to_readonly() {
             // Property type should still be literal 1, not number
             assert_eq!(shape.properties[0].type_id, one);
         }
-        other => panic!("Expected Object type, got {:?}", other),
+        other => panic!("Expected Object type, got {other:?}"),
     }
 }
 
@@ -14536,10 +14536,10 @@ fn test_const_type_param_nested_object_readonly() {
                         "Inner property should be readonly"
                     );
                 }
-                other => panic!("Expected inner Object type, got {:?}", other),
+                other => panic!("Expected inner Object type, got {other:?}"),
             }
         }
-        other => panic!("Expected Object type, got {:?}", other),
+        other => panic!("Expected Object type, got {other:?}"),
     }
 }
 
@@ -14637,7 +14637,7 @@ fn test_const_type_param_multiple_candidates_same_literal() {
     assert_eq!(result, a_lit);
     match interner.lookup(result) {
         Some(TypeData::Literal(LiteralValue::String(_))) => {} // Expected
-        other => panic!("Expected Literal(String), got {:?}", other),
+        other => panic!("Expected Literal(String), got {other:?}"),
     }
 }
 

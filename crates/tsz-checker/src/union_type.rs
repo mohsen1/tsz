@@ -1,6 +1,6 @@
 //! Union Type Utilities Module
 //!
-//! This module contains union type utility methods for CheckerState
+//! This module contains union type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Union type compatibility checking
 //! - Union type simplification
 //!
-//! This module extends CheckerState with utilities for union type
+//! This module extends `CheckerState` with utilities for union type
 //! operations, providing cleaner APIs for union type checking.
 
 use crate::query_boundaries::union_type as query;
@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the members of a union type.
     ///
-    /// Returns a vector of TypeIds representing all members of the union.
+    /// Returns a vector of `TypeIds` representing all members of the union.
     /// Returns an empty vec if the type is not a union.
     pub fn get_union_members(&self, type_id: TypeId) -> Vec<TypeId> {
         query::union_members(self.ctx.types, type_id).unwrap_or_default()
@@ -55,7 +55,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a union type contains a specific type.
     ///
-    /// Calls the primary union_contains implementation in type_checking.rs.
+    /// Calls the primary `union_contains` implementation in `type_checking.rs`.
     pub fn union_has_type(&self, union_type: TypeId, target: TypeId) -> bool {
         query::union_members(self.ctx.types, union_type)
             .is_some_and(|members| members.contains(&target))

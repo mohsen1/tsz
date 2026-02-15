@@ -8,7 +8,7 @@
 //! - Arithmetic operand validation (TS2362/TS2363)
 //! - Readonly property assignment checking
 //!
-//! This module extends CheckerState with assignment-related methods as part of
+//! This module extends `CheckerState` with assignment-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::diagnostics::{
@@ -32,7 +32,7 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Check if a token is an assignment operator (=, +=, -=, etc.)
-    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
+    pub(crate) const fn is_assignment_operator(&self, operator: u16) -> bool {
         matches!(
             operator,
             k if k == SyntaxKind::EqualsToken as u16
@@ -645,8 +645,7 @@ impl<'a> CheckerState<'a> {
     fn emit_boolean_operator_error(&mut self, node_idx: NodeIndex, op_str: &str, suggestion: &str) {
         if let Some(loc) = self.get_source_location(node_idx) {
             let message = format!(
-                "The '{}' operator is not allowed for boolean types. Consider using '{}' instead.",
-                op_str, suggestion
+                "The '{op_str}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
             );
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,

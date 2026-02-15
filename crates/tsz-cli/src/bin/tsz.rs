@@ -9,7 +9,7 @@ use tsz::checker::diagnostics::DiagnosticCategory;
 use tsz_cli::args::CliArgs;
 use tsz_cli::{driver, locale, reporter::Reporter, watch};
 
-/// tsc exit status codes (matching TypeScript's ExitStatus enum)
+/// tsc exit status codes (matching TypeScript's `ExitStatus` enum)
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
@@ -169,7 +169,7 @@ fn actual_main() -> Result<()> {
         for info in &result.file_infos {
             println!("{}", info.path.display());
             for reason in &info.reasons {
-                println!("  {}", reason);
+                println!("  {reason}");
             }
         }
     }
@@ -360,14 +360,14 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         .count();
 
     println!();
-    println!("Files:                         {}", files_count);
-    println!("Lines of Library:              {}", lines_of_library);
-    println!("Lines of Definitions:          {}", lines_of_definitions);
-    println!("Lines of TypeScript:           {}", lines_of_typescript);
-    println!("Lines of JavaScript:           {}", lines_of_javascript);
-    println!("Lines of JSON:                 {}", lines_of_json);
-    println!("Lines of Other:                {}", lines_of_other);
-    println!("Errors:                        {}", errors);
+    println!("Files:                         {files_count}");
+    println!("Lines of Library:              {lines_of_library}");
+    println!("Lines of Definitions:          {lines_of_definitions}");
+    println!("Lines of TypeScript:           {lines_of_typescript}");
+    println!("Lines of JavaScript:           {lines_of_javascript}");
+    println!("Lines of JSON:                 {lines_of_json}");
+    println!("Lines of Other:                {lines_of_other}");
+    println!("Errors:                        {errors}");
     println!(
         "Total time:                    {:.2}s",
         elapsed.as_secs_f64()
@@ -385,7 +385,7 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
             result.diagnostics.len()
         );
         if memory_used > 0 {
-            println!("Memory used:                   {}K", memory_used);
+            println!("Memory used:                   {memory_used}K");
         }
     }
 }
@@ -531,7 +531,7 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     if let Some(ref module_resolution) = resolved.module_resolution {
         opts.insert(
             "moduleResolution".into(),
-            serde_json::Value::String(format!("{:?}", module_resolution).to_lowercase()),
+            serde_json::Value::String(format!("{module_resolution:?}").to_lowercase()),
         );
     }
     if let Some(ref out_dir) = resolved.out_dir {
@@ -763,7 +763,7 @@ fn handle_all() -> Result<()> {
     // Use clap to generate the full help text
     let mut cmd = tsz_cli::args::CliArgs::command();
     let help = cmd.render_long_help();
-    println!("{}", help);
+    println!("{help}");
 
     println!(
         "\nYou can learn about all of the compiler options at https://www.typescriptlang.org/tsconfig"
@@ -901,8 +901,7 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
 
     if args.build_verbose {
         println!(
-            "\nBuilt {} project(s), skipped {} up-to-date project(s), {} error(s)",
-            built_count, skipped_count, total_errors
+            "\nBuilt {built_count} project(s), skipped {skipped_count} up-to-date project(s), {total_errors} error(s)"
         );
     }
 

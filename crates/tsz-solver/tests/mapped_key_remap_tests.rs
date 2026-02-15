@@ -36,7 +36,7 @@ fn test_mapped_type_as_never_skips_property() {
         default: None,
         is_const: false,
     };
-    let type_param_k = interner.intern(TypeData::TypeParameter(type_param_k_info.clone()));
+    let type_param_k = interner.intern(TypeData::TypeParameter(type_param_k_info));
 
     // Create the conditional: P extends K ? never : P
     let conditional_type = ConditionalType {

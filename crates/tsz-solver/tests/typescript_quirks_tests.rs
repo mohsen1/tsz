@@ -48,7 +48,7 @@ fn fn_type2(interner: &TypeInterner, param1: TypeId, param2: TypeId, ret: TypeId
     interner.function(sig)
 }
 
-/// Create a method type (function with is_method=true)
+/// Create a method type (function with `is_method=true`)
 fn method_type(interner: &TypeInterner, param: TypeId, ret: TypeId) -> TypeId {
     let sig = FunctionShape {
         type_params: vec![],

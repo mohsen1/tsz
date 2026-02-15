@@ -519,8 +519,7 @@ fn test_highlight_multiple_reads() {
     assert!(write_count >= 1, "Should have at least 1 write");
     assert!(
         read_count >= 3,
-        "Should have at least 3 reads, got {}",
-        read_count
+        "Should have at least 3 reads, got {read_count}"
     );
 }
 
@@ -862,8 +861,7 @@ fn test_debug_if_statement_positions() {
             if let Some(text) = source.get(node.pos as usize..node.end as usize) {
                 assert!(
                     text.contains("if") || text.contains("if ("),
-                    "IF statement node should contain an if token at index {}",
-                    i
+                    "IF statement node should contain an if token at index {i}"
                 );
             }
             if let Some(if_data) = arena.get_if_statement(node) {

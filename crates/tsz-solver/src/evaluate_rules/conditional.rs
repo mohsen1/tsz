@@ -14,23 +14,23 @@ use super::super::evaluate::TypeEvaluator;
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
     /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
-    /// to work with up to 1000 recursive calls instead of being limited to MAX_EVALUATE_DEPTH.
+    /// to work with up to 1000 recursive calls instead of being limited to `MAX_EVALUATE_DEPTH`.
     const MAX_TAIL_RECURSION_DEPTH: usize = 1000;
 
     /// Evaluate a conditional type: T extends U ? X : Y
     ///
     /// Algorithm:
-    /// 1. If check_type is a union and the conditional is distributive, distribute
-    /// 2. Otherwise, check if check_type <: extends_type
-    /// 3. If true -> return true_type
-    /// 4. If false (disjoint) -> return false_type
+    /// 1. If `check_type` is a union and the conditional is distributive, distribute
+    /// 2. Otherwise, check if `check_type` <: `extends_type`
+    /// 3. If true -> return `true_type`
+    /// 4. If false (disjoint) -> return `false_type`
     /// 5. If ambiguous (unresolved type param) -> return deferred conditional
     ///
     /// ## Tail-Recursion Elimination
-    /// If the chosen branch (true/false) evaluates to another ConditionalType,
+    /// If the chosen branch (true/false) evaluates to another `ConditionalType`,
     /// we immediately evaluate it in the current stack frame instead of recursing.
-    /// This allows tail-recursive patterns to work with up to MAX_TAIL_RECURSION_DEPTH
-    /// iterations instead of being limited by MAX_EVALUATE_DEPTH.
+    /// This allows tail-recursive patterns to work with up to `MAX_TAIL_RECURSION_DEPTH`
+    /// iterations instead of being limited by `MAX_EVALUATE_DEPTH`.
     pub fn evaluate_conditional(&mut self, initial_cond: &ConditionalType) -> TypeId {
         // Setup loop state for tail-recursion elimination
         let mut current_cond = initial_cond.clone();

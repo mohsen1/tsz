@@ -1,6 +1,6 @@
 //! Member access-resolution helpers.
 //!
-//! Extracted from state_checking.rs: class/interface/member utilities.
+//! Extracted from `state_checking.rs`: class/interface/member utilities.
 
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
 use crate::state::CheckerState;
@@ -824,7 +824,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get property information needed for index signature checking.
-    /// Returns (property_name, property_type, name_node_index).
+    /// Returns (`property_name`, `property_type`, `name_node_index`).
     /// Get the name text from a member name node (identifier, string literal, or computed).
     fn get_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
         use tsz_scanner::SyntaxKind;
@@ -894,7 +894,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report TS2300 "Duplicate identifier" error for a class member (property or method).
-    /// Helper function to avoid code duplication in check_duplicate_class_members.
+    /// Helper function to avoid code duplication in `check_duplicate_class_members`.
     fn report_duplicate_class_member_ts2300(&mut self, member_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -1071,15 +1071,15 @@ impl<'a> CheckerState<'a> {
                             "set"
                         };
                         let key = if is_static {
-                            format!("static:{}:{}", kind, name)
+                            format!("static:{kind}:{name}")
                         } else {
-                            format!("{}:{}", kind, name)
+                            format!("{kind}:{name}")
                         };
                         seen_accessors.entry(key).or_default().push(member_idx);
 
                         // Also track plain name for cross-checking with properties/methods
                         let plain_key = if is_static {
-                            format!("static:{}", name)
+                            format!("static:{name}")
                         } else {
                             name.clone()
                         };
@@ -1107,7 +1107,7 @@ impl<'a> CheckerState<'a> {
 
             // Create a key that considers static vs instance members separately
             let key = if is_static {
-                format!("static:{}", name)
+                format!("static:{name}")
             } else {
                 name.clone()
             };
@@ -1264,7 +1264,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let key = if is_static {
-                    format!("static:{}", name)
+                    format!("static:{name}")
                 } else {
                     name
                 };

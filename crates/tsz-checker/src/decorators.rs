@@ -58,7 +58,7 @@ pub struct DecoratorChecker<'a> {
 }
 
 impl<'a> DecoratorChecker<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             experimental_decorators: true, // Default to true for backwards compat
@@ -67,12 +67,12 @@ impl<'a> DecoratorChecker<'a> {
     }
 
     /// Enable/disable experimental decorators
-    pub fn set_experimental_decorators(&mut self, enabled: bool) {
+    pub const fn set_experimental_decorators(&mut self, enabled: bool) {
         self.experimental_decorators = enabled;
     }
 
     /// Enable/disable TC39 decorator semantics
-    pub fn set_use_tc39_decorators(&mut self, enabled: bool) {
+    pub const fn set_use_tc39_decorators(&mut self, enabled: bool) {
         self.use_tc39_decorators = enabled;
     }
 
@@ -111,7 +111,7 @@ impl<'a> DecoratorChecker<'a> {
     }
 
     /// Get the decorator target type from a syntax kind
-    fn get_decorator_target(&self, kind: u16) -> Option<DecoratorTarget> {
+    const fn get_decorator_target(&self, kind: u16) -> Option<DecoratorTarget> {
         match kind {
             k if k == syntax_kind_ext::CLASS_DECLARATION
                 || k == syntax_kind_ext::CLASS_EXPRESSION =>
@@ -137,7 +137,7 @@ impl<'a> DecoratorChecker<'a> {
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => "type alias".to_string(),
             k if k == syntax_kind_ext::ENUM_DECLARATION => "enum declaration".to_string(),
             k if k == syntax_kind_ext::MODULE_DECLARATION => "module declaration".to_string(),
-            _ => format!("syntax kind {}", kind),
+            _ => format!("syntax kind {kind}"),
         }
     }
 
@@ -326,7 +326,7 @@ pub struct DecoratorInfo {
 pub enum DecoratorKind {
     /// Simple decorator: @decorator
     Simple,
-    /// Factory decorator: @decorator()
+    /// Factory decorator: @`decorator()`
     Factory,
 }
 

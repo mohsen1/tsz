@@ -240,7 +240,7 @@ impl ParserState {
         {
             use tsz_common::diagnostics::diagnostic_codes;
 
-            let modifier_text = self.scanner.get_token_text().clone();
+            let modifier_text = self.scanner.get_token_text();
 
             let snapshot = self.scanner.save_state();
             let current = self.current_token;

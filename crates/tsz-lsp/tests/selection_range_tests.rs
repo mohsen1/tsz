@@ -55,8 +55,7 @@ fn test_selection_range_nested_expression() {
     // Should have multiple levels for nested member access
     assert!(
         depth >= 2,
-        "Should have nested selection ranges, got {}",
-        depth
+        "Should have nested selection ranges, got {depth}"
     );
 }
 
@@ -192,9 +191,5 @@ fn test_selection_range_class_member() {
     }
 
     // Should have several levels: return -> statement -> block -> method -> class -> file
-    assert!(
-        depth >= 4,
-        "Should have deep nesting in class, got {}",
-        depth
-    );
+    assert!(depth >= 4, "Should have deep nesting in class, got {depth}");
 }

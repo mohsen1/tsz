@@ -694,7 +694,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Find the position of the opening parenthesis in a call expression.
-    /// Scans forward from start_pos looking for '(' before arg_pos.
+    /// Scans forward from `start_pos` looking for '(' before `arg_pos`.
     fn find_open_paren_position(&self, start_pos: u32, arg_pos: u32) -> u32 {
         let Some(text) = self.source_text else {
             return start_pos;

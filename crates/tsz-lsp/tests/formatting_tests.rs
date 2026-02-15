@@ -183,13 +183,11 @@ fn test_format_semicolon_normalization() {
 
     assert!(
         formatted.contains("let x = 1;"),
-        "should add semicolon, got: {}",
-        formatted
+        "should add semicolon, got: {formatted}"
     );
     assert!(
         formatted.contains("let y = 2;"),
-        "should add semicolon, got: {}",
-        formatted
+        "should add semicolon, got: {formatted}"
     );
 }
 
@@ -332,9 +330,7 @@ fn test_compute_line_edits_no_overlapping_ranges() {
                     && b.range.end.character <= a.range.start.character);
             assert!(
                 a_before_b || b_before_a,
-                "Overlapping edits: {:?} and {:?}",
-                a,
-                b
+                "Overlapping edits: {a:?} and {b:?}"
             );
         }
     }
@@ -384,8 +380,7 @@ fn test_format_preserves_empty_lines() {
     let formatted = DocumentFormattingProvider::format_text(source, &options);
     assert!(
         formatted.contains("let x = 1;\n\nlet y = 2;"),
-        "got: {}",
-        formatted
+        "got: {formatted}"
     );
 }
 
@@ -408,7 +403,6 @@ fn test_format_multiline_import() {
     let formatted = DocumentFormattingProvider::format_text(source, &options);
     assert!(
         formatted.contains("import { foo } from \"bar\";"),
-        "got: {}",
-        formatted
+        "got: {formatted}"
     );
 }

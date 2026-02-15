@@ -83,7 +83,7 @@ impl<'a> Printer<'a> {
         self.make_unique_name()
     }
 
-    /// Check if a binding element is a shorthand (property_name text == name text)
+    /// Check if a binding element is a shorthand (`property_name` text == name text)
     fn is_shorthand_binding(&self, property_name: NodeIndex, name: NodeIndex) -> bool {
         let prop_text = self
             .arena

@@ -1,6 +1,6 @@
-//! CommonJS Module Transform
+//! `CommonJS` Module Transform
 //!
-//! Transforms ES modules to CommonJS format:
+//! Transforms ES modules to `CommonJS` format:
 //!
 //! ```typescript
 //! import { foo } from "./module";
@@ -24,7 +24,7 @@ use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-/// Emit the CommonJS module preamble
+/// Emit the `CommonJS` module preamble
 ///
 /// Outputs:
 /// ```javascript
@@ -223,7 +223,7 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
 
 /// Collect export names, categorized into function declarations (hoisted)
 /// and other declarations (non-hoisted).
-/// Returns (function_exports, other_exports)
+/// Returns (`function_exports`, `other_exports`)
 pub fn collect_export_names_categorized(
     arena: &NodeArena,
     statements: &[NodeIndex],
@@ -294,14 +294,14 @@ pub fn emit_exports_init(
         if i > 0 {
             write!(writer, " = ")?;
         }
-        write!(writer, "exports.{}", name)?;
+        write!(writer, "exports.{name}")?;
     }
     writeln!(writer, " = void 0;")?;
 
     Ok(())
 }
 
-/// Transform an import declaration to CommonJS require
+/// Transform an import declaration to `CommonJS` require
 ///
 /// ```typescript
 /// import { foo, bar } from "./module";
@@ -325,7 +325,7 @@ pub fn transform_import_to_require(
     let var_name = format!("{}_1", sanitize_module_name(&module_spec));
 
     // Return (var_name, require_statement)
-    let require_stmt = format!("var {} = require(\"{}\");", var_name, module_spec);
+    let require_stmt = format!("var {var_name} = require(\"{module_spec}\");");
 
     Some((var_name, require_stmt))
 }
@@ -338,7 +338,7 @@ pub fn transform_import_to_require(
 /// ```
 ///
 /// After `var module_1 = require("./module");`:
-/// We don't need separate var declarations - just use module_1.foo directly
+/// We don't need separate var declarations - just use `module_1.foo` directly
 ///
 /// For default imports:
 /// ```typescript
@@ -373,7 +373,7 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
     {
         // Match TypeScript default behavior without esModuleInterop:
         // bind directly to the `.default` property.
-        bindings.push(format!("var {} = {}.default;", name, module_var));
+        bindings.push(format!("var {name} = {module_var}.default;"));
     }
 
     // Named bindings: import { a, b as c } from "..." or import * as ns from "..."
@@ -387,7 +387,7 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
             if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
                 if let Some(name) = get_identifier_text(arena, named_imports.name) {
                     // Use __importStar helper for namespace imports
-                    bindings.push(format!("var {} = __importStar({});", name, module_var));
+                    bindings.push(format!("var {name} = __importStar({module_var});"));
                 }
             } else {
                 // Named imports: import { a, b } from "..."
@@ -403,10 +403,7 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
                         } else {
                             local_name.clone()
                         };
-                        bindings.push(format!(
-                            "var {} = {}.{};",
-                            local_name, module_var, import_name
-                        ));
+                        bindings.push(format!("var {local_name} = {module_var}.{import_name};"));
                     }
                 }
             }
@@ -422,7 +419,7 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
 /// exports.foo = foo;
 /// ```
 pub fn emit_export_assignment(name: &str) -> String {
-    format!("exports.{} = {};", name, name)
+    format!("exports.{name} = {name};")
 }
 
 /// Generate Object.defineProperty for re-exports
@@ -437,8 +434,7 @@ pub fn emit_export_assignment(name: &str) -> String {
 /// ```
 pub fn emit_reexport_property(export_name: &str, module_var: &str, import_name: &str) -> String {
     format!(
-        "Object.defineProperty(exports, \"{}\", {{ enumerable: true, get: function () {{ return {}.{}; }} }});",
-        export_name, module_var, import_name
+        "Object.defineProperty(exports, \"{export_name}\", {{ enumerable: true, get: function () {{ return {module_var}.{import_name}; }} }});"
     )
 }
 
@@ -590,7 +586,7 @@ fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> 
 }
 
 /// Sanitize module specifier for use as variable name
-/// "./foo/bar" -> "foo_bar"
+/// "./foo/bar" -> "`foo_bar`"
 pub fn sanitize_module_name(module_spec: &str) -> String {
     module_spec
         .trim_start_matches("./")

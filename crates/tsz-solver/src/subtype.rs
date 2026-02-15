@@ -4,10 +4,10 @@
 //! subtyping. It uses coinductive semantics to handle recursive types.
 //!
 //! Key features:
-//! - O(1) equality check via TypeId comparison
+//! - O(1) equality check via `TypeId` comparison
 //! - Cycle detection for recursive types (coinductive)
 //! - Set-theoretic operations for unions and intersections
-//! - TypeResolver trait for lazy symbol resolution
+//! - `TypeResolver` trait for lazy symbol resolution
 //! - Tracer pattern for zero-cost diagnostic abstraction
 
 use crate::AssignabilityChecker;
@@ -65,11 +65,11 @@ pub enum SubtypeResult {
 }
 
 impl SubtypeResult {
-    pub fn is_true(self) -> bool {
+    pub const fn is_true(self) -> bool {
         matches!(self, Self::True | Self::CycleDetected)
     }
 
-    pub fn is_false(self) -> bool {
+    pub const fn is_false(self) -> bool {
         matches!(self, Self::False)
     }
 }
@@ -78,7 +78,7 @@ impl SubtypeResult {
 ///
 /// This intentionally excludes:
 /// - null/undefined/void/never (special-cased assignability semantics)
-/// - Tuples (labeled tuples like [a: 1] vs [b: 1] are compatible despite different TypeIds)
+/// - Tuples (labeled tuples like [a: 1] vs [b: 1] are compatible despite different `TypeIds`)
 ///
 /// Only safe for primitives where identity implies structural equality.
 fn is_disjoint_unit_type(types: &dyn TypeDatabase, ty: TypeId) -> bool {
@@ -101,7 +101,7 @@ pub enum AnyPropagationMode {
 
 impl AnyPropagationMode {
     #[inline]
-    fn allows_any_at_depth(self, depth: u32) -> bool {
+    const fn allows_any_at_depth(self, depth: u32) -> bool {
         match self {
             Self::All => true,
             Self::TopLevelOnly => depth == 0,
@@ -110,20 +110,20 @@ impl AnyPropagationMode {
 }
 
 /// Trait for resolving type references to their structural types.
-/// This allows the SubtypeChecker to lazily resolve Ref types
+/// This allows the `SubtypeChecker` to lazily resolve Ref types
 /// without being tightly coupled to the binder/checker.
 pub trait TypeResolver {
     /// Resolve a symbol reference to its structural type.
     /// Returns None if the symbol cannot be resolved.
     ///
-    /// **Phase 3.4**: Deprecated - use `resolve_lazy` with DefId instead.
+    /// **Phase 3.4**: Deprecated - use `resolve_lazy` with `DefId` instead.
     /// This method is being phased out as part of the migration to DefId-based type identity.
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId>;
 
     /// Resolve a symbol reference to a structural type, preferring DefId-based lazy paths.
     ///
     /// This helper keeps compatibility with legacy `Ref`-based flows while ensuring all
-    /// migration-capable resolvers use `resolve_lazy` when a corresponding DefId exists.
+    /// migration-capable resolvers use `resolve_lazy` when a corresponding `DefId` exists.
     fn resolve_symbol_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
         if let Some(def_id) = self.symbol_to_def_id(symbol) {
             self.resolve_lazy(def_id, interner)
@@ -132,10 +132,10 @@ pub trait TypeResolver {
         }
     }
 
-    /// Resolve a DefId reference to its structural type.
+    /// Resolve a `DefId` reference to its structural type.
     ///
-    /// This is the DefId equivalent of `resolve_ref`, used for `TypeData::Lazy(DefId)`.
-    /// DefIds are Solver-owned identifiers that decouple type references from the Binder.
+    /// This is the `DefId` equivalent of `resolve_ref`, used for `TypeData::Lazy(DefId)`.
+    /// `DefIds` are Solver-owned identifiers that decouple type references from the Binder.
     ///
     /// Returns None by default; implementations should override to support Lazy type resolution.
     fn resolve_lazy(&self, _def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
@@ -149,67 +149,67 @@ pub trait TypeResolver {
         None
     }
 
-    /// Get type parameters for a DefId (for generic type aliases/interfaces).
+    /// Get type parameters for a `DefId` (for generic type aliases/interfaces).
     ///
-    /// This is the DefId equivalent of `get_type_params`.
+    /// This is the `DefId` equivalent of `get_type_params`.
     /// Returns None by default; implementations can override to support
     /// Application type expansion with Lazy types.
     fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
         None
     }
 
-    /// Get the SymbolId for a DefId (Phase 3.2: bridge for InheritanceGraph).
+    /// Get the `SymbolId` for a `DefId` (Phase 3.2: bridge for `InheritanceGraph`).
     ///
-    /// This enables DefId-based types to use the existing O(1) InheritanceGraph
-    /// by mapping DefIds back to their corresponding SymbolIds. The mapping is
+    /// This enables DefId-based types to use the existing O(1) `InheritanceGraph`
+    /// by mapping `DefIds` back to their corresponding `SymbolIds`. The mapping is
     /// maintained by the Binder/Checker during type resolution.
     ///
-    /// Returns None if the DefId doesn't have a corresponding SymbolId.
+    /// Returns None if the `DefId` doesn't have a corresponding `SymbolId`.
     fn def_to_symbol_id(&self, _def_id: DefId) -> Option<SymbolId> {
         None
     }
 
-    /// Get the DefId for a SymbolRef (Phase 3.4: Ref -> Lazy migration).
+    /// Get the `DefId` for a `SymbolRef` (Phase 3.4: Ref -> Lazy migration).
     ///
     /// This enables migrating Ref(SymbolRef) types to Lazy(DefId) resolution logic.
-    /// When a SymbolRef has a corresponding DefId, we should use resolve_lazy instead
-    /// of resolve_ref for consistent type identity.
+    /// When a `SymbolRef` has a corresponding `DefId`, we should use `resolve_lazy` instead
+    /// of `resolve_ref` for consistent type identity.
     ///
-    /// Returns None if the SymbolRef doesn't have a corresponding DefId.
+    /// Returns None if the `SymbolRef` doesn't have a corresponding `DefId`.
     fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
         None
     }
 
-    /// Get the DefKind for a DefId (Task #32: Graph Isomorphism).
+    /// Get the `DefKind` for a `DefId` (Task #32: Graph Isomorphism).
     ///
     /// This is used by the Canonicalizer to distinguish between structural types
-    /// (TypeAlias - should be canonicalized with Recursive indices) and nominal
+    /// (`TypeAlias` - should be canonicalized with Recursive indices) and nominal
     /// types (Interface/Class/Enum - must remain as Lazy(DefId) for nominal identity).
     ///
     /// ## Structural vs Nominal Types
     ///
-    /// - **TypeAlias**: Structural - `type A = { x: A }` and `type B = { x: B }`
+    /// - **`TypeAlias`**: Structural - `type A = { x: A }` and `type B = { x: B }`
     ///   should canonicalize to the same type with Recursive(0)
     /// - **Interface/Class**: Nominal - Different interfaces are incompatible even
     ///   if structurally identical, so they must keep their Lazy(DefId) reference
     ///
-    /// Returns None if the DefId doesn't exist or the implementation doesn't
-    /// support DefKind lookup. Implementations should override this to support
+    /// Returns None if the `DefId` doesn't exist or the implementation doesn't
+    /// support `DefKind` lookup. Implementations should override this to support
     /// canonicalization of recursive types.
     fn get_def_kind(&self, _def_id: DefId) -> Option<crate::def::DefKind> {
         None
     }
 
     /// Get the boxed interface type for a primitive intrinsic (Rule #33).
-    /// For example, IntrinsicKind::Number -> TypeId of the Number interface.
+    /// For example, `IntrinsicKind::Number` -> `TypeId` of the Number interface.
     /// This enables primitives to be subtypes of their boxed interfaces.
     fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
         None
     }
 
-    /// Check if a DefId corresponds to a boxed type for the given intrinsic kind.
+    /// Check if a `DefId` corresponds to a boxed type for the given intrinsic kind.
     /// This is needed because the same interface (e.g., Function) can produce
-    /// different TypeIds depending on the resolution path. DefId comparison
+    /// different `TypeIds` depending on the resolution path. `DefId` comparison
     /// is more reliable for identifying boxed types.
     fn is_boxed_def_id(&self, _def_id: DefId, _kind: IntrinsicKind) -> bool {
         false
@@ -223,7 +223,7 @@ pub trait TypeResolver {
     }
 
     /// Get the type parameters for the Array<T> interface.
-    /// Used together with get_array_base_type to instantiate Array<T> with a concrete element type.
+    /// Used together with `get_array_base_type` to instantiate Array<T> with a concrete element type.
     fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         &[]
     }
@@ -237,7 +237,7 @@ pub trait TypeResolver {
         None
     }
 
-    /// Get enum member type by name from an enum DefId.
+    /// Get enum member type by name from an enum `DefId`.
     ///
     /// Used for enum member access: `Enum.Member`.
     /// Returns None by default; implementations should override to support
@@ -250,7 +250,7 @@ pub trait TypeResolver {
         None
     }
 
-    /// Check if a DefId corresponds to a numeric enum (not a string enum).
+    /// Check if a `DefId` corresponds to a numeric enum (not a string enum).
     ///
     /// Used for TypeScript's unsound Rule #7 (Open Numeric Enums) where
     /// number types are assignable to/from numeric enums.
@@ -258,39 +258,39 @@ pub trait TypeResolver {
         false
     }
 
-    /// Check if a TypeId represents a full Enum type (not a specific member).
+    /// Check if a `TypeId` represents a full Enum type (not a specific member).
     ///
     /// Used to distinguish between `enum E` (type) and `enum E.A` (member) for
     /// assignability rules. Specifically, `number` is assignable to numeric enum
     /// types but NOT to enum members.
     ///
-    /// Returns true if the TypeId is:
-    /// - A TypeData::Enum where the Symbol has ENUM flag but not ENUM_MEMBER flag
-    /// - A Union of TypeData::Enum members from the same parent enum
+    /// Returns true if the `TypeId` is:
+    /// - A `TypeData::Enum` where the Symbol has ENUM flag but not `ENUM_MEMBER` flag
+    /// - A Union of `TypeData::Enum` members from the same parent enum
     ///
     /// Returns false for enum members or non-enum types.
     fn is_enum_type(&self, _type_id: TypeId, _interner: &dyn TypeDatabase) -> bool {
         false
     }
 
-    /// Get the parent Enum's DefId for an Enum Member's DefId.
+    /// Get the parent Enum's `DefId` for an Enum Member's `DefId`.
     ///
     /// Used to check nominal relationships between enum members and their parent types.
     /// For example, to determine if `E.A` (member) can be assigned to `E` (parent type).
     ///
-    /// Returns Some(parent_def_id) if the DefId is an enum member.
-    /// Returns None if the DefId is not an enum member (e.g., it's the enum type itself).
+    /// Returns `Some(parent_def_id)` if the `DefId` is an enum member.
+    /// Returns None if the `DefId` is not an enum member (e.g., it's the enum type itself).
     fn get_enum_parent_def_id(&self, _member_def_id: DefId) -> Option<DefId> {
         None
     }
 
-    /// Check if a DefId represents a user-defined enum (not an intrinsic type).
+    /// Check if a `DefId` represents a user-defined enum (not an intrinsic type).
     ///
     /// This is used to distinguish between user-defined enums (like `enum E { A, B }`)
     /// and intrinsic types from lib.d.ts (like `type string = ...`) that are stored
-    /// as TypeData::Enum for definition store purposes.
+    /// as `TypeData::Enum` for definition store purposes.
     ///
-    /// Returns true if the DefId is a user-defined enum.
+    /// Returns true if the `DefId` is a user-defined enum.
     /// Returns false for intrinsic types, type aliases, interfaces, etc.
     fn is_user_enum_def(&self, _def_id: DefId) -> bool {
         false
@@ -316,7 +316,7 @@ pub trait TypeResolver {
     ///
     /// # Parameters
     ///
-    /// * `def_id` - The DefId of the generic type (e.g., Array, Promise, Map)
+    /// * `def_id` - The `DefId` of the generic type (e.g., Array, Promise, Map)
     ///
     /// # Returns
     ///
@@ -354,7 +354,7 @@ impl TypeResolver for NoopResolver {
     }
 }
 
-/// Blanket implementation of TypeResolver for references to resolver types.
+/// Blanket implementation of `TypeResolver` for references to resolver types.
 ///
 /// This allows `&dyn TypeResolver` (which is Sized) to be used wherever
 /// `R: TypeResolver` is expected. This is critical for passing resolvers
@@ -390,7 +390,7 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 }
 
 /// A type environment that maps symbol refs to their resolved types.
-/// This is populated before type checking and passed to the SubtypeChecker.
+/// This is populated before type checking and passed to the `SubtypeChecker`.
 #[derive(Clone, Debug, Default)]
 pub struct TypeEnvironment {
     /// Maps symbol references to their resolved structural types.
@@ -398,42 +398,42 @@ pub struct TypeEnvironment {
     /// Maps symbol references to their type parameters (for generic types).
     type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
     /// Maps primitive intrinsic kinds to their boxed interface types (Rule #33).
-    /// e.g., IntrinsicKind::Number -> TypeId of the Number interface
+    /// e.g., `IntrinsicKind::Number` -> `TypeId` of the Number interface
     boxed_types: FxHashMap<IntrinsicKind, TypeId>,
     /// The Array<T> interface type from lib.d.ts.
     /// Used to resolve array methods via the official interface.
     array_base_type: Option<TypeId>,
     /// Type parameters for the Array<T> interface (usually just [T]).
     array_base_type_params: Vec<TypeParamInfo>,
-    /// Maps DefIds to their resolved structural types (Phase 4.3 migration).
+    /// Maps `DefIds` to their resolved structural types (Phase 4.3 migration).
     /// This enables `TypeData::Lazy(DefId)` resolution.
     def_types: FxHashMap<u32, TypeId>,
-    /// Maps DefIds to their type parameters (for generic types with Lazy refs).
+    /// Maps `DefIds` to their type parameters (for generic types with Lazy refs).
     def_type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
-    /// Maps DefIds back to SymbolIds for InheritanceGraph lookups (Phase 3.2).
-    /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
-    /// by mapping DefIds back to their corresponding SymbolIds.
+    /// Maps `DefIds` back to `SymbolIds` for `InheritanceGraph` lookups (Phase 3.2).
+    /// This bridge enables Lazy(DefId) types to use the O(1) `InheritanceGraph`
+    /// by mapping `DefIds` back to their corresponding `SymbolIds`.
     def_to_symbol: FxHashMap<u32, SymbolId>,
-    /// Maps SymbolIds to DefIds for Ref -> Lazy migration (Phase 3.4).
+    /// Maps `SymbolIds` to `DefIds` for Ref -> Lazy migration (Phase 3.4).
     /// This reverse mapping enables migrating Ref(SymbolRef) types to use
-    /// DefId-based resolution via resolve_lazy instead of resolve_ref.
+    /// DefId-based resolution via `resolve_lazy` instead of `resolve_ref`.
     symbol_to_def: FxHashMap<u32, DefId>,
-    /// Set of DefIds that correspond to numeric enums.
+    /// Set of `DefIds` that correspond to numeric enums.
     /// Used for Rule #7 (Open Numeric Enums) where number types are assignable to/from numeric enums.
     numeric_enums: FxHashSet<u32>,
-    /// Maps DefIds to their DefKind (Task #32: Graph Isomorphism).
-    /// Used by the Canonicalizer to distinguish structural types (TypeAlias)
+    /// Maps `DefIds` to their `DefKind` (Task #32: Graph Isomorphism).
+    /// Used by the Canonicalizer to distinguish structural types (`TypeAlias`)
     /// from nominal types (Interface/Class/Enum).
     def_kinds: FxHashMap<u32, crate::def::DefKind>,
-    /// Maps enum member DefIds to their parent enum DefId.
+    /// Maps enum member `DefIds` to their parent enum `DefId`.
     /// Used for member-to-parent assignability (e.g., E.A -> E).
     enum_parents: FxHashMap<u32, DefId>,
-    /// Maps class DefIds to their instance types.
+    /// Maps class `DefIds` to their instance types.
     /// When a class Lazy(DefId) is resolved in type position, the instance type
     /// (not the constructor type) should be returned.
     class_instance_types: FxHashMap<u32, TypeId>,
-    /// Maps IntrinsicKind to all DefIds that correspond to that boxed type.
-    /// Multiple DefIds can exist because the same type (e.g., Function) may
+    /// Maps `IntrinsicKind` to all `DefIds` that correspond to that boxed type.
+    /// Multiple `DefIds` can exist because the same type (e.g., Function) may
     /// appear in multiple lib files. Used for DefId-based Function type detection.
     boxed_def_ids: FxHashMap<IntrinsicKind, Vec<DefId>>,
 }
@@ -464,7 +464,7 @@ impl TypeEnvironment {
     }
 
     /// Register a boxed type for a primitive (Rule #33).
-    /// e.g., set_boxed_type(IntrinsicKind::Number, type_id_of_Number_interface)
+    /// e.g., `set_boxed_type(IntrinsicKind::Number`, `type_id_of_Number_interface`)
     pub fn set_boxed_type(&mut self, kind: IntrinsicKind, type_id: TypeId) {
         self.boxed_types.insert(kind, type_id);
     }
@@ -474,13 +474,13 @@ impl TypeEnvironment {
         self.boxed_types.get(&kind).copied()
     }
 
-    /// Register a DefId as belonging to a boxed type.
-    /// Multiple DefIds may be registered for the same kind (from different lib files).
+    /// Register a `DefId` as belonging to a boxed type.
+    /// Multiple `DefIds` may be registered for the same kind (from different lib files).
     pub fn register_boxed_def_id(&mut self, kind: IntrinsicKind, def_id: DefId) {
         self.boxed_def_ids.entry(kind).or_default().push(def_id);
     }
 
-    /// Check if a DefId corresponds to a boxed type of the given kind.
+    /// Check if a `DefId` corresponds to a boxed type of the given kind.
     pub fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
         self.boxed_def_ids
             .get(&kind)
@@ -496,7 +496,7 @@ impl TypeEnvironment {
     }
 
     /// Get the Array<T> interface type.
-    pub fn get_array_base_type(&self) -> Option<TypeId> {
+    pub const fn get_array_base_type(&self) -> Option<TypeId> {
         self.array_base_type
     }
 
@@ -547,19 +547,19 @@ impl TypeEnvironment {
     // DefId Resolution (Phase 4.3 migration)
     // =========================================================================
 
-    /// Register a DefId's resolved type.
+    /// Register a `DefId`'s resolved type.
     pub fn insert_def(&mut self, def_id: DefId, type_id: TypeId) {
         self.def_types.insert(def_id.0, type_id);
     }
 
-    /// Register a class DefId's instance type.
-    /// When resolve_lazy is called for this DefId, the instance type will be
-    /// returned instead of the constructor type from def_types.
+    /// Register a class `DefId`'s instance type.
+    /// When `resolve_lazy` is called for this `DefId`, the instance type will be
+    /// returned instead of the constructor type from `def_types`.
     pub fn insert_class_instance_type(&mut self, def_id: DefId, instance_type: TypeId) {
         self.class_instance_types.insert(def_id.0, instance_type);
     }
 
-    /// Register a DefId's resolved type with type parameters.
+    /// Register a `DefId`'s resolved type with type parameters.
     pub fn insert_def_with_params(
         &mut self,
         def_id: DefId,
@@ -572,17 +572,17 @@ impl TypeEnvironment {
         }
     }
 
-    /// Get a DefId's resolved type.
+    /// Get a `DefId`'s resolved type.
     pub fn get_def(&self, def_id: DefId) -> Option<TypeId> {
         self.def_types.get(&def_id.0).copied()
     }
 
-    /// Get a DefId's type parameters.
+    /// Get a `DefId`'s type parameters.
     pub fn get_def_params(&self, def_id: DefId) -> Option<&Vec<TypeParamInfo>> {
         self.def_type_params.get(&def_id.0)
     }
 
-    /// Check if the environment contains a DefId.
+    /// Check if the environment contains a `DefId`.
     pub fn contains_def(&self, def_id: DefId) -> bool {
         self.def_types.contains_key(&def_id.0)
     }
@@ -605,15 +605,15 @@ impl TypeEnvironment {
     // DefKind Storage (Task #32: Graph Isomorphism)
     // =========================================================================
 
-    /// Register a DefId's DefKind.
+    /// Register a `DefId`'s `DefKind`.
     ///
-    /// Used by the Canonicalizer to distinguish structural types (TypeAlias)
+    /// Used by the Canonicalizer to distinguish structural types (`TypeAlias`)
     /// from nominal types (Interface/Class/Enum).
     pub fn insert_def_kind(&mut self, def_id: DefId, kind: crate::def::DefKind) {
         self.def_kinds.insert(def_id.0, kind);
     }
 
-    /// Get a DefId's DefKind.
+    /// Get a `DefId`'s `DefKind`.
     pub fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
         self.def_kinds.get(&def_id.0).copied()
     }
@@ -622,26 +622,26 @@ impl TypeEnvironment {
     // DefId <-> SymbolId Bridge (Phase 3.2, 3.4)
     // =========================================================================
 
-    /// Register a mapping from DefId to SymbolId for InheritanceGraph lookups.
+    /// Register a mapping from `DefId` to `SymbolId` for `InheritanceGraph` lookups.
     ///
-    /// This bridge enables Lazy(DefId) types to use the O(1) InheritanceGraph
-    /// by mapping DefIds back to their corresponding SymbolIds. The mapping
+    /// This bridge enables Lazy(DefId) types to use the O(1) `InheritanceGraph`
+    /// by mapping `DefIds` back to their corresponding `SymbolIds`. The mapping
     /// is maintained by the Binder/Checker during type resolution.
     ///
-    /// Phase 3.4: Also registers the reverse mapping (SymbolId -> DefId) to support
-    /// migrating Ref types to DefId resolution.
+    /// Phase 3.4: Also registers the reverse mapping (`SymbolId` -> `DefId`) to support
+    /// migrating Ref types to `DefId` resolution.
     pub fn register_def_symbol_mapping(&mut self, def_id: DefId, sym_id: SymbolId) {
         self.def_to_symbol.insert(def_id.0, sym_id);
         self.symbol_to_def.insert(sym_id.0, def_id); // Populate reverse map
     }
 
-    /// Register a DefId as a numeric enum.
+    /// Register a `DefId` as a numeric enum.
     /// Used for Rule #7 (Open Numeric Enums) where number types are assignable to/from numeric enums.
     pub fn register_numeric_enum(&mut self, def_id: DefId) {
         self.numeric_enums.insert(def_id.0);
     }
 
-    /// Check if a DefId is a numeric enum.
+    /// Check if a `DefId` is a numeric enum.
     pub fn is_numeric_enum(&self, def_id: DefId) -> bool {
         self.numeric_enums.contains(&def_id.0)
     }
@@ -650,17 +650,17 @@ impl TypeEnvironment {
     // Enum Parent Relationships (Task #17: Enum Type Resolution)
     // =========================================================================
 
-    /// Register an enum member's parent enum DefId.
+    /// Register an enum member's parent enum `DefId`.
     ///
     /// Used for member-to-parent assignability (e.g., E.A -> E).
     pub fn register_enum_parent(&mut self, member_def_id: DefId, parent_def_id: DefId) {
         self.enum_parents.insert(member_def_id.0, parent_def_id);
     }
 
-    /// Get the parent enum DefId for an enum member DefId.
+    /// Get the parent enum `DefId` for an enum member `DefId`.
     ///
-    /// Returns Some(parent_def_id) if the DefId is an enum member.
-    /// Returns None if the DefId is not an enum member (e.g., it's the enum type itself).
+    /// Returns `Some(parent_def_id)` if the `DefId` is an enum member.
+    /// Returns None if the `DefId` is not an enum member (e.g., it's the enum type itself).
     pub fn get_enum_parent(&self, member_def_id: DefId) -> Option<DefId> {
         self.enum_parents.get(&member_def_id.0).copied()
     }
@@ -737,7 +737,7 @@ impl TypeResolver for TypeEnvironment {
 /// Visitor for structural subtype checking.
 ///
 /// This visitor implements the North Star Rule 2 (Visitor Pattern for type operations).
-/// It wraps a mutable reference to SubtypeChecker and the target type, dispatching
+/// It wraps a mutable reference to `SubtypeChecker` and the target type, dispatching
 /// to the appropriate checker methods based on the source type's structure.
 ///
 /// ## Design
@@ -754,7 +754,7 @@ pub struct SubtypeVisitor<'a, 'b, R: TypeResolver> {
     /// Reference to the parent checker (for recursive checks and state).
     pub checker: &'a mut SubtypeChecker<'b, R>,
     /// The source type being visited (the "A" in "A <: B").
-    /// Stored because some delegation methods need the full TypeId, not just unpacked data.
+    /// Stored because some delegation methods need the full `TypeId`, not just unpacked data.
     pub source: TypeId,
     /// The target type we're checking against (the "B" in "A <: B").
     pub target: TypeId,
@@ -1404,12 +1404,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
 pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) interner: &'a dyn TypeDatabase,
     /// Optional query database for Salsa-backed memoization.
-    /// When set, Phase 2/3 will route evaluate_type and is_subtype_of through Salsa.
+    /// When set, Phase 2/3 will route `evaluate_type` and `is_subtype_of` through Salsa.
     pub(crate) query_db: Option<&'a dyn QueryDatabase>,
     pub(crate) resolver: &'a R,
     /// Unified recursion guard for TypeId-pair cycle detection, depth, and iteration limits.
     pub(crate) guard: crate::recursion::RecursionGuard<(TypeId, TypeId)>,
-    /// Active SymbolRef pairs being checked (for DefId-level cycle detection)
+    /// Active `SymbolRef` pairs being checked (for DefId-level cycle detection)
     /// This catches cycles in Ref types before they're resolved, preventing
     /// infinite expansion of recursive type aliases and interfaces.
     pub(crate) seen_refs: FxHashSet<(SymbolRef, SymbolRef)>,
@@ -1422,15 +1422,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Whether to allow any return type when the target return is void.
     pub allow_void_return: bool,
     /// Whether rest parameters of any/unknown should be treated as bivariant.
-    /// See https://github.com/microsoft/TypeScript/issues/20007.
+    /// See <https://github.com/microsoft/TypeScript/issues/20007>.
     pub allow_bivariant_rest: bool,
-    /// When true, skip the evaluate_type() call in check_subtype.
-    /// This prevents infinite recursion when TypeEvaluator calls SubtypeChecker
-    /// for simplification, since TypeEvaluator has already evaluated the types.
+    /// When true, skip the `evaluate_type()` call in `check_subtype`.
+    /// This prevents infinite recursion when `TypeEvaluator` calls `SubtypeChecker`
+    /// for simplification, since `TypeEvaluator` has already evaluated the types.
     pub bypass_evaluation: bool,
     /// Maximum recursion depth for subtype checking.
-    /// Used by TypeEvaluator simplification to prevent stack overflow.
-    /// Default: MAX_SUBTYPE_DEPTH (100)
+    /// Used by `TypeEvaluator` simplification to prevent stack overflow.
+    /// Default: `MAX_SUBTYPE_DEPTH` (100)
     pub max_depth: u32,
     /// Whether required parameter count mismatches are allowed for bivariant methods.
     pub allow_bivariant_param_count: bool,
@@ -1454,10 +1454,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub is_class_symbol: Option<&'a dyn Fn(SymbolRef) -> bool>,
     /// Controls how `any` is treated during subtype checks.
     pub any_propagation: AnyPropagationMode,
-    /// Cache for evaluate_type results within this SubtypeChecker's lifetime.
+    /// Cache for `evaluate_type` results within this `SubtypeChecker`'s lifetime.
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
-    /// Key is (TypeId, no_unchecked_indexed_access) since that flag affects evaluation.
+    /// Key is (`TypeId`, `no_unchecked_indexed_access`) since that flag affects evaluation.
     pub(crate) eval_cache: FxHashMap<(TypeId, bool), TypeId>,
     /// Optional tracer for collecting subtype failure diagnostics.
     /// When `Some`, enables detailed failure reason collection for error messages.
@@ -1466,7 +1466,7 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
 }
 
 impl<'a> SubtypeChecker<'a, NoopResolver> {
-    /// Create a new SubtypeChecker without a resolver (basic mode).
+    /// Create a new `SubtypeChecker` without a resolver (basic mode).
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         static NOOP: NoopResolver = NoopResolver;
         SubtypeChecker {
@@ -1500,7 +1500,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
-    /// Create a new SubtypeChecker with a custom resolver.
+    /// Create a new `SubtypeChecker` with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         SubtypeChecker {
             interner,
@@ -1532,7 +1532,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Set the inheritance graph for O(1) nominal class subtype checking.
-    pub fn with_inheritance_graph(
+    pub const fn with_inheritance_graph(
         mut self,
         graph: &'a crate::inheritance::InheritanceGraph,
     ) -> Self {
@@ -1547,7 +1547,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Configure how `any` is treated during subtype checks.
-    pub fn with_any_propagation_mode(mut self, mode: AnyPropagationMode) -> Self {
+    pub const fn with_any_propagation_mode(mut self, mode: AnyPropagationMode) -> Self {
         self.any_propagation = mode;
         self
     }
@@ -1560,7 +1560,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Set the query database for Salsa-backed memoization.
-    /// When set, Phase 2/3 will route evaluate_type and is_subtype_of through Salsa.
+    /// When set, Phase 2/3 will route `evaluate_type` and `is_subtype_of` through Salsa.
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
         self.query_db = Some(db);
         self
@@ -1568,7 +1568,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Set whether strict null checks are enabled.
     /// When false, null and undefined are assignable to any type.
-    pub fn with_strict_null_checks(mut self, strict_null_checks: bool) -> Self {
+    pub const fn with_strict_null_checks(mut self, strict_null_checks: bool) -> Self {
         self.strict_null_checks = strict_null_checks;
         self
     }
@@ -1576,8 +1576,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Reset per-check state so this checker can be reused for another subtype check.
     ///
     /// This clears cycle detection sets and counters while preserving configuration
-    /// (strict_function_types, allow_void_return, etc.) and borrowed references
-    /// (interner, resolver, inheritance_graph, etc.).
+    /// (`strict_function_types`, `allow_void_return`, etc.) and borrowed references
+    /// (interner, resolver, `inheritance_graph`, etc.).
     ///
     /// Uses `.clear()` instead of re-allocating, so hash set memory is reused.
     #[inline]
@@ -1589,7 +1589,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Whether the recursion depth was exceeded during subtype checking.
-    pub fn depth_exceeded(&self) -> bool {
+    pub const fn depth_exceeded(&self) -> bool {
         self.guard.is_exceeded()
     }
 
@@ -1597,15 +1597,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// This unpacks the flags used by `RelationCacheKey` and applies them to the checker.
     /// The bit layout matches the cache key definition in types.rs:
-    /// - bit 0: strict_null_checks
-    /// - bit 1: strict_function_types
-    /// - bit 2: exact_optional_property_types
-    /// - bit 3: no_unchecked_indexed_access
-    /// - bit 4: disable_method_bivariance
-    /// - bit 5: allow_void_return
-    /// - bit 6: allow_bivariant_rest
-    /// - bit 7: allow_bivariant_param_count
-    pub(crate) fn apply_flags(mut self, flags: u16) -> Self {
+    /// - bit 0: `strict_null_checks`
+    /// - bit 1: `strict_function_types`
+    /// - bit 2: `exact_optional_property_types`
+    /// - bit 3: `no_unchecked_indexed_access`
+    /// - bit 4: `disable_method_bivariance`
+    /// - bit 5: `allow_void_return`
+    /// - bit 6: `allow_bivariant_rest`
+    /// - bit 7: `allow_bivariant_param_count`
+    pub(crate) const fn apply_flags(mut self, flags: u16) -> Self {
         self.strict_null_checks = (flags & (1 << 0)) != 0;
         self.strict_function_types = (flags & (1 << 1)) != 0;
         self.exact_optional_property_types = (flags & (1 << 2)) != 0;
@@ -1755,18 +1755,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     | IntrinsicKind::Symbol
                     | IntrinsicKind::Null
                     | IntrinsicKind::Undefined
-                    | IntrinsicKind::Void,
+                    | IntrinsicKind::Void
+                    | IntrinsicKind::Object,
                     _,
                 ) => {
                     return false;
                 }
                 // Handle Object keyword vs Primitives (Disjoint)
-                (IntrinsicKind::Object, _) | (_, IntrinsicKind::Object) => {
-                    // 'object' (non-primitive) does not overlap with primitives
-                    // Note: It DOES overlap with Object (interface), but that is handled
-                    // by object_shape_id, not intrinsic_kind.
-                    return false;
-                }
+                // Note: It DOES overlap with Object (interface), but that is handled
+                // by object_shape_id, not intrinsic_kind.
                 // Fallback for any new intrinsics added later
                 _ => return true,
             }
@@ -1809,7 +1806,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if one type is a subtype of the other without mutation.
     ///
     /// This is a simplified version that checks obvious subtype relationships
-    /// without needing to call the full check_subtype which requires &mut self.
+    /// without needing to call the full `check_subtype` which requires &mut self.
     fn are_types_in_subtype_relation(&self, a: TypeId, b: TypeId) -> bool {
         // Check identity first
         if a == b {
@@ -1972,7 +1969,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check if two types are "object-like" (should use PropertyCollector for overlap detection).
+    /// Check if two types are "object-like" (should use `PropertyCollector` for overlap detection).
     ///
     /// Object-like types include:
     /// - Plain objects with properties
@@ -1988,10 +1985,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if two object-like types have overlapping properties and index signatures.
     ///
-    /// This is the refined implementation using PropertyCollector to handle:
+    /// This is the refined implementation using `PropertyCollector` to handle:
     /// - Intersections (flattened property collection)
     /// - Index signatures (both string and number)
-    /// - Optional properties (correct undefined handling via optional_property_type)
+    /// - Optional properties (correct undefined handling via `optional_property_type`)
     /// - Discriminant detection (common property with disjoint literal types)
     ///
     /// Returns false if types have zero overlap, true otherwise.
@@ -2004,8 +2001,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Extract properties and index signatures from results
         let (props_a, s_idx_a, _n_idx_a) = match res_a {
-            PropertyCollectionResult::Any => return true, // Any overlaps with everything
-            PropertyCollectionResult::NonObject => return true, // Conservatively overlap
+            PropertyCollectionResult::Any | PropertyCollectionResult::NonObject => return true, // Any overlaps with everything
+            // Conservatively overlap
             PropertyCollectionResult::Properties {
                 properties,
                 string_index,
@@ -2014,8 +2011,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         let (props_b, s_idx_b, _n_idx_b) = match res_b {
-            PropertyCollectionResult::Any => return true,
-            PropertyCollectionResult::NonObject => return true,
+            PropertyCollectionResult::Any | PropertyCollectionResult::NonObject => return true,
             PropertyCollectionResult::Properties {
                 properties,
                 string_index,
@@ -2082,7 +2078,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// This packs the Lawyer-layer flags into a compact cache key to ensure that
     /// results computed under different rules (strict vs non-strict) don't contaminate each other.
-    fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
+    const fn make_cache_key(&self, source: TypeId, target: TypeId) -> RelationCacheKey {
         let mut flags: u16 = 0;
         if self.strict_null_checks {
             flags |= RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
@@ -2124,16 +2120,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if `source` is a subtype of `target`.
     /// This is the main entry point for subtype checking.
     ///
-    /// When a QueryDatabase is available (via `with_query_db`), fast-path checks
+    /// When a `QueryDatabase` is available (via `with_query_db`), fast-path checks
     /// (identity, any, unknown, never) are done locally, then the full structural
     /// check is delegated to the internal `check_subtype` which may use Salsa
-    /// memoization for evaluate_type calls.
+    /// memoization for `evaluate_type` calls.
     pub fn is_subtype_of(&mut self, source: TypeId, target: TypeId) -> bool {
         self.check_subtype(source, target).is_true()
     }
 
     /// Check if `source` is assignable to `target`.
-    /// This is a strict structural check; use CompatChecker for TypeScript assignability rules.
+    /// This is a strict structural check; use `CompatChecker` for TypeScript assignability rules.
     pub fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_subtype_of(source, target)
     }
@@ -2145,7 +2141,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// This function implements coinductive cycle handling for recursive types.
     /// The key insight is that we must check for cycles BEFORE evaluation to handle
     /// "expansive" types like `type Deep<T> = { next: Deep<Box<T>> }` that produce
-    /// fresh TypeIds on each evaluation.
+    /// fresh `TypeIds` on each evaluation.
     ///
     /// The algorithm:
     /// 1. Fast paths (identity, any, unknown, never)
@@ -3036,8 +3032,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Helper to extract DefId from Enum or Lazy types
         let get_enum_def_id = |type_id: TypeId| -> Option<DefId> {
             match self.interner.lookup(type_id) {
-                Some(TypeData::Enum(def_id, _)) => Some(def_id),
-                Some(TypeData::Lazy(def_id)) => Some(def_id),
+                Some(TypeData::Enum(def_id, _)) | Some(TypeData::Lazy(def_id)) => Some(def_id),
                 _ => None,
             }
         };
@@ -3393,8 +3388,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// other through the class hierarchy (not just structural similarity).
     ///
     /// # Arguments
-    /// * `source` - TypeId of the source class instance
-    /// * `target` - TypeId of the target class instance
+    /// * `source` - `TypeId` of the source class instance
+    /// * `target` - `TypeId` of the target class instance
     ///
     /// # Returns
     /// * `true` if source extends target (directly or through inheritance chain)
@@ -4550,8 +4545,8 @@ pub fn are_types_structurally_identical<R: TypeResolver>(
     canon_a == canon_b
 }
 
-/// Convenience function for one-off subtype checks routed through a QueryDatabase.
-/// The QueryDatabase enables Salsa memoization when available.
+/// Convenience function for one-off subtype checks routed through a `QueryDatabase`.
+/// The `QueryDatabase` enables Salsa memoization when available.
 pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: TypeId) -> bool {
     let mut checker = SubtypeChecker::new(db.as_type_database()).with_query_db(db);
     checker.is_subtype_of(source, target)

@@ -1,8 +1,8 @@
 //! Tests for flow analysis integration with the solver.
 //!
 //! These tests verify that:
-//! - FlowFacts properly merge at control flow join points
-//! - FlowTypeEvaluator correctly narrows types
+//! - `FlowFacts` properly merge at control flow join points
+//! - `FlowTypeEvaluator` correctly narrows types
 //! - Definite assignment checking works properly
 //! - TDZ violations are detected
 

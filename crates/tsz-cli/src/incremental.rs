@@ -160,7 +160,7 @@ impl BuildInfo {
 
     /// Load build info from a file
     /// Returns Ok(None) if the file exists but is incompatible (version mismatch)
-    /// Returns Ok(Some(build_info)) if the file is valid and compatible
+    /// Returns `Ok(Some(build_info))` if the file is valid and compatible
     pub fn load(path: &Path) -> Result<Option<Self>> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read build info: {}", path.display()))?;
@@ -329,7 +329,7 @@ impl ChangeTracker {
     }
 
     /// Compute changes with absolute file paths
-    /// Automatically normalizes paths relative to base_dir for comparison with BuildInfo
+    /// Automatically normalizes paths relative to `base_dir` for comparison with `BuildInfo`
     pub fn compute_changes_with_base(
         &mut self,
         build_info: &BuildInfo,
@@ -388,22 +388,22 @@ impl ChangeTracker {
     }
 
     /// Get files that have changed
-    pub fn changed_files(&self) -> &FxHashSet<PathBuf> {
+    pub const fn changed_files(&self) -> &FxHashSet<PathBuf> {
         &self.changed_files
     }
 
     /// Get all files that need to be recompiled
-    pub fn affected_files(&self) -> &FxHashSet<PathBuf> {
+    pub const fn affected_files(&self) -> &FxHashSet<PathBuf> {
         &self.affected_files
     }
 
     /// Get new files
-    pub fn new_files(&self) -> &FxHashSet<PathBuf> {
+    pub const fn new_files(&self) -> &FxHashSet<PathBuf> {
         &self.new_files
     }
 
     /// Get deleted files
-    pub fn deleted_files(&self) -> &FxHashSet<PathBuf> {
+    pub const fn deleted_files(&self) -> &FxHashSet<PathBuf> {
         &self.deleted_files
     }
 
@@ -432,7 +432,7 @@ pub fn compute_file_version(path: &Path) -> Result<String> {
     content.hash(&mut hasher);
     let hash = hasher.finish();
 
-    Ok(format!("{:016x}", hash))
+    Ok(format!("{hash:016x}"))
 }
 
 /// Compute a signature for a file's exports (for dependency tracking)
@@ -464,7 +464,7 @@ impl BuildInfoBuilder {
     }
 
     /// Create a builder from existing build info
-    pub fn from_existing(build_info: BuildInfo, base_dir: PathBuf) -> Self {
+    pub const fn from_existing(build_info: BuildInfo, base_dir: PathBuf) -> Self {
         Self {
             build_info,
             base_dir,
@@ -560,7 +560,7 @@ pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> Pa
         .and_then(|s| s.to_str())
         .unwrap_or("tsconfig");
 
-    let build_info_name = format!("{}.tsbuildinfo", config_name);
+    let build_info_name = format!("{config_name}.tsbuildinfo");
 
     if let Some(out) = out_dir {
         out.join(&build_info_name)

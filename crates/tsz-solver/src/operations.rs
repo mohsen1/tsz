@@ -138,7 +138,7 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// Contextual type for the call expression's expected result
     /// Used for contextual type inference in generic functions
     contextual_type: Option<TypeId>,
-    /// Current recursion depth for constrain_types to prevent infinite loops
+    /// Current recursion depth for `constrain_types` to prevent infinite loops
     constraint_recursion_depth: RefCell<usize>,
     /// Visited (source, target) pairs during constraint collection.
     constraint_pairs: RefCell<FxHashSet<(TypeId, TypeId)>>,
@@ -161,11 +161,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// This is used for contextual type inference when the expected return type
     /// can help constrain generic type parameters.
     /// Example: `let x: string = id(42)` should infer `T = string` from the context.
-    pub fn set_contextual_type(&mut self, ctx_type: Option<TypeId>) {
+    pub const fn set_contextual_type(&mut self, ctx_type: Option<TypeId>) {
         self.contextual_type = ctx_type;
     }
 
-    pub fn set_force_bivariant_callbacks(&mut self, enabled: bool) {
+    pub const fn set_force_bivariant_callbacks(&mut self, enabled: bool) {
         self.force_bivariant_callbacks = enabled;
     }
 
@@ -257,8 +257,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn is_function_like_union_member(&self, member: TypeId) -> bool {
         let member = self.normalize_union_member(member);
         match self.interner.lookup(member) {
-            Some(TypeData::Intrinsic(IntrinsicKind::Function)) => true,
-            Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
+            Some(TypeData::Intrinsic(IntrinsicKind::Function))
+            | Some(TypeData::Function(_) | TypeData::Callable(_)) => true,
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 let apply = self.interner.intern_string("apply");
@@ -294,7 +294,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         match self.resolve_function_call(&func, arg_types) {
             CallResult::Success(ret) => ret,
             // Return ERROR instead of ANY to avoid silencing TS2322 errors
-            CallResult::ArgumentTypeMismatch { .. } => TypeId::ERROR,
             _ => TypeId::ERROR,
         }
     }
@@ -303,7 +302,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         match self.resolve_function_call(func, arg_types) {
             CallResult::Success(ret) => ret,
             // Return ERROR instead of ANY to avoid silencing TS2322 errors
-            CallResult::ArgumentTypeMismatch { .. } => TypeId::ERROR,
             _ => TypeId::ERROR,
         }
     }
@@ -543,9 +541,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             // The `Function` intrinsic type is callable in TypeScript and returns `any`.
             // This matches tsc behavior: `declare const f: Function; f()` is valid.
-            TypeData::Intrinsic(IntrinsicKind::Function) => CallResult::Success(TypeId::ANY),
+            TypeData::Intrinsic(IntrinsicKind::Function | IntrinsicKind::Any) => {
+                CallResult::Success(TypeId::ANY)
+            }
             // `any` is callable and returns `any`
-            TypeData::Intrinsic(IntrinsicKind::Any) => CallResult::Success(TypeId::ANY),
             // `error` propagates as error
             TypeData::Error => CallResult::Success(TypeId::ERROR),
             _ => CallResult::NotCallable { type_id: func_type },
@@ -556,7 +555,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// This handles cases like:
     /// - `(() => void) | (() => string)` - all members callable
-    /// - `string | (() => void)` - mixed callable/non-callable (returns NotCallable)
+    /// - `string | (() => void)` - mixed callable/non-callable (returns `NotCallable`)
     ///
     /// When all union members are callable with compatible signatures, this returns
     /// a union of their return types.
@@ -710,8 +709,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
-    /// Expand a TypeParameter to its constraint (if it has one).
-    /// This is used when a TypeParameter from an outer scope is used as an argument.
+    /// Expand a `TypeParameter` to its constraint (if it has one).
+    /// This is used when a `TypeParameter` from an outer scope is used as an argument.
     fn expand_type_param(&self, ty: TypeId) -> TypeId {
         match self.interner.lookup(ty) {
             Some(TypeData::TypeParameter(tp)) => tp.constraint.unwrap_or(ty),
@@ -2141,11 +2140,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         match key {
-            // Function types are contextually sensitive (lambdas need contextual parameter types)
-            TypeData::Function(_) => true,
-
-            // Callable types are contextually sensitive (objects with call signatures)
-            TypeData::Callable(_) => true,
+            // Function and callable types are contextually sensitive (lambdas or objects
+            // with call signatures).
+            TypeData::Function(_) | TypeData::Callable(_) => true,
 
             // Union/Intersection: contextually sensitive if any member is
             TypeData::Union(members) | TypeData::Intersection(members) => {
@@ -2278,7 +2275,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         *self.constraint_recursion_depth.borrow_mut() -= 1;
     }
 
-    /// Inner implementation of constrain_types
+    /// Inner implementation of `constrain_types`
     fn constrain_types_impl(
         &mut self,
         ctx: &mut InferenceContext,
@@ -2310,7 +2307,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let is_nullish = |ty: TypeId| matches!(ty, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID);
 
         match (source_key, target_key) {
-            (Some(TypeData::ReadonlyType(s_inner)), Some(TypeData::ReadonlyType(t_inner))) => {
+            (Some(TypeData::ReadonlyType(s_inner)), Some(TypeData::ReadonlyType(t_inner)))
+            | (Some(TypeData::NoInfer(s_inner)), Some(TypeData::NoInfer(t_inner))) => {
                 self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
             }
             (Some(TypeData::ReadonlyType(s_inner)), _) => {
@@ -2318,9 +2316,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             (_, Some(TypeData::ReadonlyType(t_inner))) => {
                 self.constrain_types(ctx, var_map, source, t_inner, priority);
-            }
-            (Some(TypeData::NoInfer(s_inner)), Some(TypeData::NoInfer(t_inner))) => {
-                self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
             }
             (Some(TypeData::NoInfer(s_inner)), _) => {
                 self.constrain_types(ctx, var_map, s_inner, target, priority);
@@ -2941,7 +2936,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 );
             }
             // Object/ObjectWithIndex to Array/Tuple: constrain index signatures to sequence element type
-            (Some(TypeData::Object(s_shape_id)), Some(TypeData::Array(t_elem))) => {
+            (Some(TypeData::Object(s_shape_id)), Some(TypeData::Array(t_elem)))
+            | (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Array(t_elem))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 // Constrain source's string/number index signatures against array element type
                 if let Some(string_idx) = &s_shape.string_index {
@@ -2951,47 +2947,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.constrain_types(ctx, var_map, number_idx.value_type, t_elem, priority);
                 }
             }
-            (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Array(t_elem))) => {
-                let s_shape = self.interner.object_shape(s_shape_id);
-                // Constrain source's string/number index signatures against array element type
-                if let Some(string_idx) = &s_shape.string_index {
-                    self.constrain_types(ctx, var_map, string_idx.value_type, t_elem, priority);
-                }
-                if let Some(number_idx) = &s_shape.number_index {
-                    self.constrain_types(ctx, var_map, number_idx.value_type, t_elem, priority);
-                }
-            }
-            (Some(TypeData::Object(s_shape_id)), Some(TypeData::Tuple(t_elems))) => {
-                let s_shape = self.interner.object_shape(s_shape_id);
-                let t_elems = self.interner.tuple_list(t_elems);
-                // Constrain source's string/number index signatures against each tuple element
-                for t_elem in t_elems.iter() {
-                    let elem_type = if t_elem.rest {
-                        self.rest_element_type(t_elem.type_id)
-                    } else {
-                        t_elem.type_id
-                    };
-                    if let Some(string_idx) = &s_shape.string_index {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            string_idx.value_type,
-                            elem_type,
-                            priority,
-                        );
-                    }
-                    if let Some(number_idx) = &s_shape.number_index {
-                        self.constrain_types(
-                            ctx,
-                            var_map,
-                            number_idx.value_type,
-                            elem_type,
-                            priority,
-                        );
-                    }
-                }
-            }
-            (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Tuple(t_elems))) => {
+            (Some(TypeData::Object(s_shape_id)), Some(TypeData::Tuple(t_elems)))
+            | (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Tuple(t_elems))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_elems = self.interner.tuple_list(t_elems);
                 // Constrain source's string/number index signatures against each tuple element
@@ -4071,13 +4028,13 @@ use crate::operations_property::PropertyAccessEvaluator;
 /// This struct captures the key types needed for iterator/generator type checking:
 /// - The iterator object type itself
 /// - The type yielded by next().value (T in Iterator<T>)
-/// - The type returned when done (TReturn in IteratorResult<T, TReturn>)
-/// - The type accepted by next() (TNext in Iterator<T, TReturn, TNext>)
+/// - The type returned when done (`TReturn` in `IteratorResult`<T, `TReturn`>)
+/// - The type accepted by `next()` (`TNext` in Iterator<T, `TReturn`, `TNext`>)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IteratorInfo {
-    /// The iterator object type (has next() method)
+    /// The iterator object type (has `next()` method)
     pub iterator_type: TypeId,
-    /// The type yielded by the iterator (from IteratorResult<T, TReturn>)
+    /// The type yielded by the iterator (from `IteratorResult`<T, `TReturn`>)
     pub yield_type: TypeId,
     /// The return type when iteration completes
     pub return_type: TypeId,
@@ -4100,7 +4057,7 @@ pub struct IteratorInfo {
 /// # Returns
 ///
 /// * `Some(IteratorInfo)` - If the type is iterable
-/// * `None` - If the type is not iterable or doesn't have a valid next() method
+/// * `None` - If the type is not iterable or doesn't have a valid `next()` method
 ///
 /// # Examples
 ///
@@ -4233,7 +4190,7 @@ fn get_tuple_iterator_info(db: &dyn TypeDatabase, tuple_type: TypeId) -> Option<
 /// Extract T from a Promise<T> type.
 ///
 /// Handles two representations:
-/// 1. Application(base=PROMISE_BASE, args=[T]) — synthetic promise
+/// 1. `Application(base=PROMISE_BASE`, args=[T]) — synthetic promise
 /// 2. Object types with a `then` callback — structurally promise-like
 ///
 /// Returns the inner type T, or None if not a promise type.
@@ -4292,10 +4249,10 @@ fn extract_promise_inner_type(
     }
 }
 
-/// Extract yield/return/next types from the next() method's return type.
+/// Extract yield/return/next types from the `next()` method's return type.
 ///
-/// For sync iterators: next() returns IteratorResult<T, TReturn>
-/// For async iterators: next() returns Promise<IteratorResult<T, TReturn>>
+/// For sync iterators: `next()` returns `IteratorResult`<T, `TReturn`>
+/// For async iterators: `next()` returns Promise<`IteratorResult`<T, `TReturn`>>
 fn extract_iterator_result_types(
     db: &dyn crate::db::QueryDatabase,
     iterator_type: TypeId,
@@ -4344,12 +4301,12 @@ fn extract_iterator_result_types(
     })
 }
 
-/// Extract yield and return types from an IteratorResult type.
+/// Extract yield and return types from an `IteratorResult` type.
 ///
-/// IteratorResult<T, TReturn> is typically:
-///   { value: T, done: false } | { value: TReturn, done: true }
+/// `IteratorResult`<T, `TReturn`> is typically:
+///   { value: T, done: false } | { value: `TReturn`, done: true }
 ///
-/// Returns (yield_type, return_type). Yield comes from done:false branches,
+/// Returns (`yield_type`, `return_type`). Yield comes from done:false branches,
 /// return comes from done:true branches.
 fn extract_iterator_result_value_types(
     db: &dyn crate::db::QueryDatabase,

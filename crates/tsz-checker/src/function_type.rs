@@ -1,6 +1,6 @@
 //! Function Type Resolution Module
 //!
-//! This module contains function type resolution methods for CheckerState
+//! This module contains function type resolution methods for `CheckerState`
 //! as part of the Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -10,7 +10,7 @@
 //! - Property access type resolution
 //! - Async function Promise return type validation
 //!
-//! This module extends CheckerState with utilities for function type
+//! This module extends `CheckerState` with utilities for function type
 //! resolution, providing cleaner separation of function typing logic.
 
 use crate::diagnostics::format_message;
@@ -1538,8 +1538,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             access.name_or_argument,
                             &format!(
-                                "Property '{}' comes from an index signature, so it must be accessed with ['{}'].",
-                                property_name, property_name
+                                "Property '{property_name}' comes from an index signature, so it must be accessed with ['{property_name}']."
                             ),
                             diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
                         );
@@ -1610,7 +1609,7 @@ impl<'a> CheckerState<'a> {
                         };
 
                         let base_name = self.get_class_name_from_decl(base_idx);
-                        let static_member_name = format!("{}.{}", base_name, property_name);
+                        let static_member_name = format!("{base_name}.{property_name}");
                         let object_type_str = self.format_type(original_object_type);
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
@@ -1637,7 +1636,7 @@ impl<'a> CheckerState<'a> {
                         };
 
                         let class_name = self.get_class_name_from_decl(class_idx);
-                        let static_member_name = format!("{}.{}", class_name, property_name);
+                        let static_member_name = format!("{class_name}.{property_name}");
                         let object_type_str = self.format_type(original_object_type);
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
@@ -1750,17 +1749,17 @@ impl<'a> CheckerState<'a> {
                         if cause == TypeId::NULL {
                             (
                                 diagnostic_codes::IS_POSSIBLY_NULL,
-                                format!("'{}' is possibly 'null'.", name),
+                                format!("'{name}' is possibly 'null'."),
                             )
                         } else if cause == TypeId::UNDEFINED {
                             (
                                 diagnostic_codes::IS_POSSIBLY_UNDEFINED,
-                                format!("'{}' is possibly 'undefined'.", name),
+                                format!("'{name}' is possibly 'undefined'."),
                             )
                         } else {
                             (
                                 diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
-                                format!("'{}' is possibly 'null' or 'undefined'.", name),
+                                format!("'{name}' is possibly 'null' or 'undefined'."),
                             )
                         }
                     } else {

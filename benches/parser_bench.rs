@@ -1,6 +1,6 @@
 //! Benchmarks for the Rust parser implementation.
 //!
-//! Run with: cargo bench --bench parser_bench
+//! Run with: cargo bench --bench `parser_bench`
 //!
 //! These benchmarks help track:
 //! - Parse time for various file sizes
@@ -169,21 +169,18 @@ fn generate_large_source(classes: usize, methods_per_class: usize) -> String {
     source.push_str("// Generated TypeScript for benchmarking\n\n");
 
     for c in 0..classes {
-        source.push_str(&format!("interface I{} {{\n", c));
+        source.push_str(&format!("interface I{c} {{\n"));
         source.push_str("    id: number;\n");
         source.push_str("    name: string;\n");
         source.push_str("}\n\n");
 
-        source.push_str(&format!("class Class{} implements I{} {{\n", c, c));
-        source.push_str(&format!("    id: number = {};\n", c));
-        source.push_str(&format!("    name: string = \"class{}\";\n\n", c));
+        source.push_str(&format!("class Class{c} implements I{c} {{\n"));
+        source.push_str(&format!("    id: number = {c};\n"));
+        source.push_str(&format!("    name: string = \"class{c}\";\n\n"));
 
         for m in 0..methods_per_class {
-            source.push_str(&format!(
-                "    method{}(x: number, y: string): number {{\n",
-                m
-            ));
-            source.push_str(&format!("        const result = x * {};\n", m));
+            source.push_str(&format!("    method{m}(x: number, y: string): number {{\n"));
+            source.push_str(&format!("        const result = x * {m};\n"));
             source.push_str("        console.log(y);\n");
             source.push_str("        return result;\n");
             source.push_str("    }\n\n");
@@ -240,7 +237,7 @@ fn bench_parse_throughput(c: &mut Criterion) {
     for (classes, methods) in [(5, 5), (10, 10), (20, 10), (50, 5)].iter() {
         let source = generate_large_source(*classes, *methods);
         let bytes = source.len() as u64;
-        let label = format!("{}c_{}m", classes, methods);
+        let label = format!("{classes}c_{methods}m");
 
         group.throughput(Throughput::Bytes(bytes));
         group.bench_with_input(BenchmarkId::new("parse", &label), &source, |b, source| {
@@ -277,7 +274,7 @@ fn bench_incremental_reparse(c: &mut Criterion) {
         let mut sources: Vec<String> = Vec::new();
         for i in 0..5 {
             let modified =
-                MEDIUM_SOURCE.replace("const defaultUsers", &format!("const defaultUsers{}", i));
+                MEDIUM_SOURCE.replace("const defaultUsers", &format!("const defaultUsers{i}"));
             sources.push(modified);
         }
 

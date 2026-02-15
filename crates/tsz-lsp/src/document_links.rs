@@ -24,7 +24,7 @@ pub struct DocumentLink {
 
 impl DocumentLink {
     /// Create a new document link.
-    pub fn new(range: Range, target: Option<String>, tooltip: Option<String>) -> Self {
+    pub const fn new(range: Range, target: Option<String>, tooltip: Option<String>) -> Self {
         Self {
             range,
             target,
@@ -39,7 +39,7 @@ impl<'a> DocumentLinkProvider<'a> {
     /// Provide all document links in the file.
     ///
     /// Walks the AST starting from `root`, finding import/export declarations
-    /// and dynamic import / require() calls, then extracts module specifier
+    /// and dynamic import / `require()` calls, then extracts module specifier
     /// strings and builds document links.
     pub fn provide_document_links(&self, root: NodeIndex) -> Vec<DocumentLink> {
         let mut links = Vec::new();
@@ -156,7 +156,7 @@ impl<'a> DocumentLinkProvider<'a> {
     }
 
     /// Try to create a document link from a module specifier node index.
-    /// The node should be a StringLiteral.
+    /// The node should be a `StringLiteral`.
     fn try_add_link_for_specifier(&self, specifier_idx: NodeIndex, links: &mut Vec<DocumentLink>) {
         if specifier_idx.is_none() {
             return;
@@ -199,7 +199,7 @@ impl<'a> DocumentLinkProvider<'a> {
             .offset_to_position(quote_end, self.source_text);
         let range = Range::new(start_pos, end_pos);
 
-        let tooltip = Some(format!("Open module '{}'", specifier_text));
+        let tooltip = Some(format!("Open module '{specifier_text}'"));
 
         links.push(DocumentLink::new(
             range,
@@ -238,7 +238,7 @@ impl<'a> DocumentLinkProvider<'a> {
     }
 
     /// Check if a node is the `import` keyword (for dynamic import expressions).
-    /// Dynamic imports use SyntaxKind::ImportKeyword as the expression.
+    /// Dynamic imports use `SyntaxKind::ImportKeyword` as the expression.
     fn is_import_keyword(&self, node_idx: NodeIndex) -> bool {
         if node_idx.is_none() {
             return false;

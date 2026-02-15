@@ -5,8 +5,8 @@
 //!
 //! The analysis tracks three states for each variable:
 //! - **Unassigned**: Variable has definitely not been assigned
-//! - **MaybeAssigned**: Variable may or may not have been assigned
-//! - **DefinitelyAssigned**: Variable has definitely been assigned
+//! - **`MaybeAssigned`**: Variable may or may not have been assigned
+//! - **`DefinitelyAssigned`**: Variable has definitely been assigned
 //!
 //! This is used to implement TypeScript's definite assignment checking for
 //! block-scoped variables (let/const) and detect use-before-definite-assignment errors.
@@ -36,13 +36,13 @@ impl AssignmentState {
     /// Merge two assignment states at a control flow join point.
     ///
     /// The merge follows these rules:
-    /// - DefinitelyAssigned ⊓ DefinitelyAssigned = DefinitelyAssigned
-    /// - DefinitelyAssigned ⊓ MaybeAssigned = MaybeAssigned
-    /// - DefinitelyAssigned ⊓ Unassigned = MaybeAssigned
-    /// - MaybeAssigned ⊓ MaybeAssigned = MaybeAssigned
-    /// - MaybeAssigned ⊓ Unassigned = MaybeAssigned
+    /// - `DefinitelyAssigned` ⊓ `DefinitelyAssigned` = `DefinitelyAssigned`
+    /// - `DefinitelyAssigned` ⊓ `MaybeAssigned` = `MaybeAssigned`
+    /// - `DefinitelyAssigned` ⊓ Unassigned = `MaybeAssigned`
+    /// - `MaybeAssigned` ⊓ `MaybeAssigned` = `MaybeAssigned`
+    /// - `MaybeAssigned` ⊓ Unassigned = `MaybeAssigned`
     /// - Unassigned ⊓ Unassigned = Unassigned
-    fn merge(self, other: Self) -> Self {
+    const fn merge(self, other: Self) -> Self {
         match (self, other) {
             (Self::DefinitelyAssigned, Self::DefinitelyAssigned) => Self::DefinitelyAssigned,
             (Self::Unassigned, Self::Unassigned) => Self::Unassigned,
@@ -53,7 +53,7 @@ impl AssignmentState {
 
 /// A mapping of variables to their assignment states at a point in the program.
 ///
-/// Variables are indexed by their declaration node ID (NodeIndex).
+/// Variables are indexed by their declaration node ID (`NodeIndex`).
 #[derive(Clone, Debug)]
 pub struct AssignmentStateMap {
     states: FxHashMap<u32, AssignmentState>,
@@ -102,7 +102,7 @@ impl AssignmentStateMap {
         }
     }
 
-    /// Check if all variables are in a definite state (no MaybeAssigned).
+    /// Check if all variables are in a definite state (no `MaybeAssigned`).
     pub fn is_definite(&self) -> bool {
         !self
             .states
@@ -142,7 +142,7 @@ impl DefiniteAssignmentResult {
 /// This performs a forward dataflow analysis over the control flow graph,
 /// tracking assignment states for variables at each program point.
 pub struct DefiniteAssignmentAnalyzer<'a> {
-    /// Reference to the NodeArena for AST access
+    /// Reference to the `NodeArena` for AST access
     arena: &'a NodeArena,
     /// Reference to the flow node arena
     flow_arena: &'a FlowNodeArena,
@@ -377,7 +377,7 @@ impl<'a> DefiniteAssignmentAnalyzer<'a> {
     }
 
     /// Get a reference to all node states.
-    pub fn node_states(&self) -> &FxHashMap<FlowNodeId, AssignmentStateMap> {
+    pub const fn node_states(&self) -> &FxHashMap<FlowNodeId, AssignmentStateMap> {
         &self.node_states
     }
 }

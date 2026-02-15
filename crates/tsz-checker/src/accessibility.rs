@@ -1,6 +1,6 @@
 //! Accessibility Module
 //!
-//! This module contains accessibility checking methods for CheckerState
+//! This module contains accessibility checking methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a modifier list contains a private modifier.
     ///
-    /// This checks for the presence of a PrivateKeyword in the modifier list.
+    /// This checks for the presence of a `PrivateKeyword` in the modifier list.
     pub fn verify_has_private_modifier(
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a modifier list contains a protected modifier.
     ///
-    /// This checks for the presence of a ProtectedKeyword in the modifier list.
+    /// This checks for the presence of a `ProtectedKeyword` in the modifier list.
     pub fn verify_has_protected_modifier(
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Check if a type is an abstract constructor (typeof AbstractClass).
+    /// Check if a type is an abstract constructor (typeof `AbstractClass`).
     ///
     /// Returns true if the type represents an abstract class constructor.
     pub fn verify_is_abstract_constructor(&self, type_id: TypeId) -> bool {
@@ -165,16 +165,14 @@ impl<'a> CheckerState<'a> {
                 (
                     diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS,
                     format!(
-                        "Property '{}' is private and only accessible within class '{}'.",
-                        property_name, declaring_class_name
+                        "Property '{property_name}' is private and only accessible within class '{declaring_class_name}'."
                     ),
                 )
             } else {
                 (
                     diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES,
                     format!(
-                        "Property '{}' is protected and only accessible within class '{}' and its subclasses.",
-                        property_name, declaring_class_name
+                        "Property '{property_name}' is protected and only accessible within class '{declaring_class_name}' and its subclasses."
                     ),
                 )
             };
@@ -195,10 +193,7 @@ impl<'a> CheckerState<'a> {
     pub fn report_cannot_instantiate_abstract_class(&mut self, class_name: &str, idx: NodeIndex) {
         if let Some((start, end)) = self.get_node_span(idx) {
             let length = end.saturating_sub(start);
-            let message = format!(
-                "Cannot create an instance of an abstract class '{}'.",
-                class_name
-            );
+            let message = format!("Cannot create an instance of an abstract class '{class_name}'.");
             self.ctx.diagnostics.push(Diagnostic {
                 file: self.ctx.file_name.clone(),
                 start,
@@ -221,8 +216,7 @@ impl<'a> CheckerState<'a> {
         if let Some((start, end)) = self.get_node_span(idx) {
             let length = end.saturating_sub(start);
             let message = format!(
-                "Constructor of class '{}' is private and only accessible within the class declaration.",
-                source_name
+                "Constructor of class '{source_name}' is private and only accessible within the class declaration."
             );
             self.ctx.diagnostics.push(Diagnostic {
                 file: self.ctx.file_name.clone(),

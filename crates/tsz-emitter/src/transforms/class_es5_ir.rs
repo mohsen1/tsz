@@ -23,7 +23,7 @@
 //! }());
 //! ```
 //!
-//! ## Derived Classes with super()
+//! ## Derived Classes with `super()`
 //!
 //! ```typescript
 //! class Dog extends Animal {
@@ -56,11 +56,11 @@
 //!
 //! Supported features:
 //! - Simple and derived classes with extends
-//! - Constructors with super() calls
+//! - Constructors with `super()` calls
 //! - Instance and static methods
 //! - Instance and static properties
 //! - Getters and setters (combined into Object.defineProperty)
-//! - Private fields (WeakMap pattern)
+//! - Private fields (`WeakMap` pattern)
 //! - Parameter properties (public/private/protected/readonly)
 //! - Async methods (__awaiter wrapper)
 //! - Computed property names
@@ -94,14 +94,14 @@ pub struct ES5ClassTransformer<'a> {
     has_extends: bool,
     private_fields: Vec<PrivateFieldInfo>,
     private_accessors: Vec<PrivateAccessorInfo>,
-    /// Transform directives from LoweringPass
+    /// Transform directives from `LoweringPass`
     transforms: Option<TransformContext>,
     /// Source text for extracting comments
     source_text: Option<&'a str>,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             class_name: String::new(),
@@ -113,13 +113,13 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    /// Set transform directives from LoweringPass
+    /// Set transform directives from `LoweringPass`
     pub fn set_transforms(&mut self, transforms: TransformContext) {
         self.transforms = Some(transforms);
     }
 
     /// Set source text for comment extraction
-    pub fn set_source_text(&mut self, source_text: &'a str) {
+    pub const fn set_source_text(&mut self, source_text: &'a str) {
         self.source_text = Some(source_text);
     }
 
@@ -157,7 +157,7 @@ impl<'a> ES5ClassTransformer<'a> {
         start < end && source_text[start..end].contains(';')
     }
 
-    /// Extract leading JSDoc comment from a node (if any).
+    /// Extract leading `JSDoc` comment from a node (if any).
     /// Returns the comment text including the /** ... */ delimiters.
     fn extract_leading_comment(&self, node: &tsz_parser::parser::node::Node) -> Option<String> {
         let source_text = self.source_text?;
@@ -245,7 +245,7 @@ impl<'a> ES5ClassTransformer<'a> {
         trailing
     }
 
-    /// Convert an AST statement to IR (avoids ASTRef when possible)
+    /// Convert an AST statement to IR (avoids `ASTRef` when possible)
     fn convert_statement(&self, idx: NodeIndex) -> IRNode {
         let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
         if let Some(ref transforms) = self.transforms {
@@ -255,7 +255,7 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     /// Convert an AST statement to IR with `this` captured as `_this`.
-    /// Used in derived constructors after super() where `this` → `_this`.
+    /// Used in derived constructors after `super()` where `this` → `_this`.
     fn convert_statement_this_captured(&self, idx: NodeIndex) -> IRNode {
         let mut converter = AstToIr::new(self.arena)
             .with_this_captured(true)
@@ -266,7 +266,7 @@ impl<'a> ES5ClassTransformer<'a> {
         converter.convert_statement(idx)
     }
 
-    /// Convert an AST expression to IR (avoids ASTRef when possible)
+    /// Convert an AST expression to IR (avoids `ASTRef` when possible)
     fn convert_expression(&self, idx: NodeIndex) -> IRNode {
         let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
         if let Some(ref transforms) = self.transforms {
@@ -304,7 +304,7 @@ impl<'a> ES5ClassTransformer<'a> {
             stmts.insert(
                 0,
                 IRNode::VarDecl {
-                    name: alias.clone(),
+                    name: alias,
                     initializer: Some(Box::new(IRNode::This { captured: false })),
                 },
             );
@@ -343,7 +343,7 @@ impl<'a> ES5ClassTransformer<'a> {
             return None;
         }
 
-        self.class_name = class_name.clone();
+        self.class_name = class_name;
 
         // Collect private fields and accessors
         self.private_fields = collect_private_fields(self.arena, class_idx, &self.class_name);
@@ -406,10 +406,10 @@ impl<'a> ES5ClassTransformer<'a> {
         for acc in &self.private_accessors {
             if !acc.is_static {
                 if let Some(ref get_var) = acc.get_var_name {
-                    weakmap_inits.push(format!("{} = new WeakMap()", get_var));
+                    weakmap_inits.push(format!("{get_var} = new WeakMap()"));
                 }
                 if let Some(ref set_var) = acc.set_var_name {
-                    weakmap_inits.push(format!("{} = new WeakMap()", set_var));
+                    weakmap_inits.push(format!("{set_var} = new WeakMap()"));
                 }
             }
         }
@@ -588,7 +588,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    /// Emit derived class constructor body with super() transformation
+    /// Emit derived class constructor body with `super()` transformation
     fn emit_derived_constructor_body_ir(
         &self,
         body: &mut Vec<IRNode>,
@@ -715,7 +715,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    /// Check if a statement is a super() call
+    /// Check if a statement is a `super()` call
     fn is_super_call_statement(&self, stmt_idx: NodeIndex) -> bool {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return false;
@@ -803,7 +803,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    /// Emit private field initializations using WeakMap.set()
+    /// Emit private field initializations using `WeakMap.set()`
     fn emit_private_field_initializations_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
         let key = if use_this {
             IRNode::id("_this")
@@ -834,7 +834,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    /// Emit private accessor initializations using WeakMap.set()
+    /// Emit private accessor initializations using `WeakMap.set()`
     fn emit_private_accessor_initializations_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
         let key = if use_this {
             IRNode::id("_this")
@@ -1022,7 +1022,7 @@ impl<'a> ES5ClassTransformer<'a> {
         None
     }
 
-    /// Check if a static method body contains arrow functions with class_alias,
+    /// Check if a static method body contains arrow functions with `class_alias`,
     /// and return the alias if found
     fn get_class_alias_for_static_method(&self, body_idx: NodeIndex) -> Option<String> {
         if let Some(ref transforms) = self.transforms {
@@ -1799,12 +1799,12 @@ fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeLis
 // AST to IR Conversion
 // =============================================================================
 
-/// Convert an AST node to IR, avoiding ASTRef when possible
+/// Convert an AST node to IR, avoiding `ASTRef` when possible
 pub struct AstToIr<'a> {
     arena: &'a NodeArena,
     /// Track if we're inside an arrow function that captures `this`
     this_captured: Cell<bool>,
-    /// Transform directives from LoweringPass
+    /// Transform directives from `LoweringPass`
     transforms: Option<TransformContext>,
     /// Current class alias to use for `this` substitution in static methods
     current_class_alias: Cell<Option<String>>,
@@ -1813,7 +1813,7 @@ pub struct AstToIr<'a> {
 }
 
 impl<'a> AstToIr<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             this_captured: Cell::new(false),
@@ -1824,12 +1824,12 @@ impl<'a> AstToIr<'a> {
     }
 
     /// Set whether we're inside a derived class (for super lowering)
-    pub fn with_super(mut self, has_super: bool) -> Self {
+    pub const fn with_super(mut self, has_super: bool) -> Self {
         self.has_super = has_super;
         self
     }
 
-    /// Set transform directives from LoweringPass
+    /// Set transform directives from `LoweringPass`
     pub fn with_transforms(mut self, transforms: TransformContext) -> Self {
         self.transforms = Some(transforms);
         self
@@ -2290,7 +2290,7 @@ impl<'a> AstToIr<'a> {
         IRNode::ASTRef(idx)
     }
 
-    fn convert_for_in_of_statement(&self, idx: NodeIndex) -> IRNode {
+    const fn convert_for_in_of_statement(&self, idx: NodeIndex) -> IRNode {
         // For-in/for-of need ES5 transformation - use ASTRef for now
         // A complete implementation would convert to a regular for loop
         IRNode::ASTRef(idx)
@@ -2314,7 +2314,7 @@ impl<'a> AstToIr<'a> {
         }
     }
 
-    fn convert_string_literal(&self, idx: NodeIndex) -> IRNode {
+    const fn convert_string_literal(&self, idx: NodeIndex) -> IRNode {
         // Use ASTRef to preserve original quote style from source text
         IRNode::ASTRef(idx)
     }
@@ -2799,7 +2799,7 @@ impl<'a> AstToIr<'a> {
                 self.this_captured.set(true);
             }
             // Set the class_alias so `this` references in the body get converted
-            self.current_class_alias.set(class_alias.clone());
+            self.current_class_alias.set(class_alias);
 
             let params = self.convert_parameters(&arrow.parameters);
             let (body, is_expression_body, body_source_range) =
@@ -2882,13 +2882,13 @@ impl<'a> AstToIr<'a> {
         }
     }
 
-    fn convert_template_literal(&self, idx: NodeIndex) -> IRNode {
+    const fn convert_template_literal(&self, idx: NodeIndex) -> IRNode {
         // Template literals need string concatenation in ES5
         // For now, use ASTRef as a fallback
         IRNode::ASTRef(idx)
     }
 
-    fn convert_await_expression(&self, idx: NodeIndex) -> IRNode {
+    const fn convert_await_expression(&self, idx: NodeIndex) -> IRNode {
         // Await expressions are handled by the async transform
         IRNode::ASTRef(idx)
     }

@@ -1,6 +1,6 @@
 //! Expression type computation dispatcher.
 //!
-//! This module provides the ExpressionDispatcher which handles the dispatch
+//! This module provides the `ExpressionDispatcher` which handles the dispatch
 //! of type computation requests to appropriate specialized methods based on
 //! the syntax node kind.
 
@@ -13,8 +13,8 @@ use tsz_solver::TypeId;
 
 /// Dispatcher for expression type computation.
 ///
-/// ExpressionDispatcher handles the dispatch of type computation for different
-/// node kinds, delegating to specialized methods in CheckerState.
+/// `ExpressionDispatcher` handles the dispatch of type computation for different
+/// node kinds, delegating to specialized methods in `CheckerState`.
 pub struct ExpressionDispatcher<'a, 'b> {
     /// Reference to the checker state.
     pub checker: &'a mut CheckerState<'b>,
@@ -22,7 +22,7 @@ pub struct ExpressionDispatcher<'a, 'b> {
 
 impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     /// Create a new expression dispatcher.
-    pub fn new(checker: &'a mut CheckerState<'b>) -> Self {
+    pub const fn new(checker: &'a mut CheckerState<'b>) -> Self {
         Self { checker }
     }
 

@@ -87,7 +87,7 @@ impl CheckerOptions {
     /// In tsc, enabling `strict` turns on the strict family unless explicitly disabled.
     /// We mirror that behavior by OR-ing the per-flag booleans with `strict`.
     #[must_use]
-    pub fn apply_strict_defaults(mut self) -> Self {
+    pub const fn apply_strict_defaults(mut self) -> Self {
         if self.strict {
             self.no_implicit_any = true;
             self.no_implicit_this = true;

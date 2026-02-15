@@ -1,6 +1,6 @@
 //! Private Fields ES5 Transform
 //!
-//! Transforms ES2022 private class fields (#field) to ES5-compatible WeakMap pattern.
+//! Transforms ES2022 private class fields (#field) to ES5-compatible `WeakMap` pattern.
 //!
 //! ## Transform Pattern
 //! ```typescript
@@ -42,7 +42,7 @@ pub use tsz_parser::syntax::transform_utils::is_private_identifier;
 pub struct PrivateFieldInfo {
     /// The private field name without # (e.g., "value" for "#value")
     pub name: String,
-    /// The WeakMap variable name (e.g., "_C_value" for class C, field #value)
+    /// The `WeakMap` variable name (e.g., "_`C_value`" for class C, field #value)
     pub weakmap_name: String,
     /// Whether this field has an initializer
     pub has_initializer: bool,
@@ -57,9 +57,9 @@ pub struct PrivateFieldInfo {
 pub struct PrivateAccessorInfo {
     /// The private accessor name without # (e.g., "value" for "#value")
     pub name: String,
-    /// The WeakMap variable name for the getter (e.g., "_C_value_get")
+    /// The `WeakMap` variable name for the getter (e.g., "_`C_value_get`")
     pub get_var_name: Option<String>,
-    /// The WeakMap variable name for the setter (e.g., "_C_value_set")
+    /// The `WeakMap` variable name for the setter (e.g., "_`C_value_set`")
     pub set_var_name: Option<String>,
     /// The node index of the getter body (if any)
     pub getter_body: Option<NodeIndex>,
@@ -110,7 +110,7 @@ impl PrivateFieldState {
         let class_name = self.current_class_name.as_deref().unwrap_or("_");
         // Strip the leading # from the name
         let field_name = name.strip_prefix('#').unwrap_or(name);
-        let weakmap_name = format!("_{}_{}", class_name, field_name);
+        let weakmap_name = format!("_{class_name}_{field_name}");
 
         self.private_fields.push(PrivateFieldInfo {
             name: field_name.to_string(),
@@ -121,7 +121,7 @@ impl PrivateFieldState {
         });
     }
 
-    /// Get the WeakMap name for a private field
+    /// Get the `WeakMap` name for a private field
     pub fn get_weakmap_name(&self, field_name: &str) -> Option<String> {
         let name = field_name.strip_prefix('#').unwrap_or(field_name);
         self.private_fields
@@ -131,11 +131,11 @@ impl PrivateFieldState {
     }
 
     /// Check if there are any private fields
-    pub fn has_private_fields(&self) -> bool {
+    pub const fn has_private_fields(&self) -> bool {
         !self.private_fields.is_empty()
     }
 
-    /// Get all WeakMap variable names (for var declaration)
+    /// Get all `WeakMap` variable names (for var declaration)
     pub fn get_weakmap_names(&self) -> Vec<&str> {
         self.private_fields
             .iter()
@@ -200,7 +200,7 @@ pub fn collect_private_fields(
             if is_private_identifier(arena, prop_data.name) {
                 let field_name = get_private_field_name(arena, prop_data.name).unwrap_or_default();
                 let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-                let weakmap_name = format!("_{}_{}", class_name, clean_name);
+                let weakmap_name = format!("_{class_name}_{clean_name}");
                 let is_static = has_static_modifier(arena, &prop_data.modifiers);
 
                 fields.push(PrivateFieldInfo {
@@ -276,8 +276,8 @@ pub fn collect_private_accessors(
                     .entry(clean_name.to_string())
                     .or_insert_with(|| PrivateAccessorInfo {
                         name: clean_name.to_string(),
-                        get_var_name: Some(format!("_{}_{}_get", class_name, clean_name)),
-                        set_var_name: Some(format!("_{}_{}_set", class_name, clean_name)),
+                        get_var_name: Some(format!("_{class_name}_{clean_name}_get")),
+                        set_var_name: Some(format!("_{class_name}_{clean_name}_set")),
                         getter_body: None,
                         setter_body: None,
                         setter_param: None,
@@ -309,8 +309,8 @@ pub fn collect_private_accessors(
         .collect()
 }
 
-/// Generate the WeakMap variable declaration line
-/// Returns: "var _C_field1, _C_field2;"
+/// Generate the `WeakMap` variable declaration line
+/// Returns: "var _`C_field1`, _`C_field2`;"
 pub fn generate_weakmap_var_declaration(fields: &[PrivateFieldInfo]) -> String {
     if fields.is_empty() {
         return String::new();
@@ -319,8 +319,8 @@ pub fn generate_weakmap_var_declaration(fields: &[PrivateFieldInfo]) -> String {
     format!("var {};", names.join(", "))
 }
 
-/// Generate the WeakMap instantiation line (after class)
-/// Returns: "_C_field1 = new WeakMap(), _C_field2 = new WeakMap();"
+/// Generate the `WeakMap` instantiation line (after class)
+/// Returns: "_`C_field1` = new `WeakMap()`, _`C_field2` = new `WeakMap()`;"
 pub fn generate_weakmap_instantiation(fields: &[PrivateFieldInfo]) -> String {
     if fields.is_empty() {
         return String::new();

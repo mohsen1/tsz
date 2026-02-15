@@ -106,7 +106,7 @@ pub struct LibFile {
 impl LibFile {
     /// Create a new `LibFile` from a parsed and bound lib file.
     #[must_use]
-    pub fn new(file_name: String, arena: Arc<NodeArena>, binder: Arc<BinderState>) -> Self {
+    pub const fn new(file_name: String, arena: Arc<NodeArena>, binder: Arc<BinderState>) -> Self {
         Self {
             file_name,
             arena,

@@ -279,7 +279,7 @@ fn resolve_compiler_options_resolves_lib_files() {
             // Strip .generated suffix if present
             let name = name.trim_end_matches(".generated");
             // Check if it matches the lib name (with or without lib. prefix)
-            name == lib_name || name == format!("lib.{}", lib_name)
+            name == lib_name || name == format!("lib.{lib_name}")
         })
     };
 

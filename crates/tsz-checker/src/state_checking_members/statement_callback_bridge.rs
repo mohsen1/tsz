@@ -5,11 +5,11 @@ use crate::statements::StatementCheckCallbacks;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
-/// Implementation of StatementCheckCallbacks for CheckerState.
+/// Implementation of `StatementCheckCallbacks` for `CheckerState`.
 ///
 /// This provides the actual implementation of statement checking operations
-/// that StatementChecker delegates to. Each callback method calls the
-/// corresponding method on CheckerState.
+/// that `StatementChecker` delegates to. Each callback method calls the
+/// corresponding method on `CheckerState`.
 impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     fn arena(&self) -> &tsz_parser::parser::node::NodeArena {
         self.ctx.arena
@@ -908,10 +908,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         };
 
         if let Some(kind_name) = decl_kind {
-            let msg = format!(
-                "'{}' declarations can only be declared inside a block.",
-                kind_name
-            );
+            let msg = format!("'{kind_name}' declarations can only be declared inside a block.");
             self.error_at_node(
                 stmt_idx,
                 &msg,

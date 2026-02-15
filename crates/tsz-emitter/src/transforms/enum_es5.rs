@@ -50,7 +50,7 @@ pub struct EnumES5Transformer<'a> {
 }
 
 impl<'a> EnumES5Transformer<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         EnumES5Transformer {
             arena,
             last_value: None,
@@ -441,21 +441,21 @@ impl<'a> EnumES5Transformer<'a> {
     }
 }
 
-/// Enum ES5 emitter wrapping EnumES5Transformer + IRPrinter
+/// Enum ES5 emitter wrapping `EnumES5Transformer` + `IRPrinter`
 pub struct EnumES5Emitter<'a> {
     indent_level: u32,
     transformer: EnumES5Transformer<'a>,
 }
 
 impl<'a> EnumES5Emitter<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         EnumES5Emitter {
             indent_level: 0,
             transformer: EnumES5Transformer::new(arena),
         }
     }
 
-    pub fn set_indent_level(&mut self, level: u32) {
+    pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
     }
 

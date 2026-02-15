@@ -34,8 +34,19 @@ impl<'de> serde::Deserialize<'de> for TextRange {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl TextRange {
+    #[must_use]
+    pub const fn new(pos: u32, end: u32) -> Self {
+        Self { pos, end }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl TextRange {
+    /// Create a new text range.
+    /// All positions are character indices (not byte indices).
     #[wasm_bindgen(constructor)]
     #[must_use]
     pub fn new(pos: u32, end: u32) -> Self {
@@ -53,13 +64,13 @@ impl NodeIndex {
 
     #[inline]
     #[must_use]
-    pub fn is_none(&self) -> bool {
+    pub const fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
 
     #[inline]
     #[must_use]
-    pub fn is_some(&self) -> bool {
+    pub const fn is_some(&self) -> bool {
         self.0 != u32::MAX
     }
 }
@@ -75,7 +86,7 @@ pub struct NodeList {
 
 impl NodeList {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             nodes: Vec::new(),
             pos: 0,
@@ -99,12 +110,12 @@ impl NodeList {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 }

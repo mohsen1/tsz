@@ -2,7 +2,6 @@
 //!
 //! This module contains the `SyntaxKind` enum, scanner implementation,
 //! and character code constants for TypeScript lexical analysis.
-
 // Scanner implementation - tokenization logic
 pub mod scanner_impl;
 
@@ -413,75 +412,174 @@ const KIND_BY_VALUE: [SyntaxKind; 167] = [
 // =============================================================================
 
 /// Check if a token is a keyword.
-#[wasm_bindgen(js_name = tokenIsKeyword)]
-#[must_use]
-pub fn token_is_keyword(token: SyntaxKind) -> bool {
+const fn token_is_keyword_inner(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::BreakKeyword as u16 && t <= SyntaxKind::DeferKeyword as u16
 }
 
-/// Check if a token is an identifier or keyword.
-#[wasm_bindgen(js_name = tokenIsIdentifierOrKeyword)]
 #[must_use]
-pub fn token_is_identifier_or_keyword(token: SyntaxKind) -> bool {
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_keyword(token: SyntaxKind) -> bool {
+    token_is_keyword_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsKeyword)]
+#[must_use]
+pub fn token_is_keyword(token: SyntaxKind) -> bool {
+    token_is_keyword_inner(token)
+}
+
+/// Check if a token is an identifier or keyword.
+const fn token_is_identifier_or_keyword_inner(token: SyntaxKind) -> bool {
     token as u16 >= SyntaxKind::Identifier as u16
 }
 
-/// Check if a token is a reserved word (strict reserved words).
-#[wasm_bindgen(js_name = tokenIsReservedWord)]
 #[must_use]
-pub fn token_is_reserved_word(token: SyntaxKind) -> bool {
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_identifier_or_keyword(token: SyntaxKind) -> bool {
+    token_is_identifier_or_keyword_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsIdentifierOrKeyword)]
+#[must_use]
+pub fn token_is_identifier_or_keyword(token: SyntaxKind) -> bool {
+    token_is_identifier_or_keyword_inner(token)
+}
+
+/// Check if a token is a reserved word (strict reserved words).
+const fn token_is_reserved_word_inner(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::BreakKeyword as u16 && t <= SyntaxKind::WithKeyword as u16
 }
 
-/// Check if a token is a strict mode reserved word.
-#[wasm_bindgen(js_name = tokenIsStrictModeReservedWord)]
 #[must_use]
-pub fn token_is_strict_mode_reserved_word(token: SyntaxKind) -> bool {
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_reserved_word(token: SyntaxKind) -> bool {
+    token_is_reserved_word_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsReservedWord)]
+#[must_use]
+pub fn token_is_reserved_word(token: SyntaxKind) -> bool {
+    token_is_reserved_word_inner(token)
+}
+
+/// Check if a token is a strict mode reserved word.
+const fn token_is_strict_mode_reserved_word_inner(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::ImplementsKeyword as u16 && t <= SyntaxKind::YieldKeyword as u16
 }
 
-/// Check if a token is a literal (number, string, etc.).
-#[wasm_bindgen(js_name = tokenIsLiteral)]
 #[must_use]
-pub fn token_is_literal(token: SyntaxKind) -> bool {
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_strict_mode_reserved_word(token: SyntaxKind) -> bool {
+    token_is_strict_mode_reserved_word_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsStrictModeReservedWord)]
+#[must_use]
+pub fn token_is_strict_mode_reserved_word(token: SyntaxKind) -> bool {
+    token_is_strict_mode_reserved_word_inner(token)
+}
+
+/// Check if a token is a literal (number, string, etc.).
+const fn token_is_literal_inner(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::NumericLiteral as u16 && t <= SyntaxKind::NoSubstitutionTemplateLiteral as u16
 }
 
-/// Check if a token is a template literal token.
-#[wasm_bindgen(js_name = tokenIsTemplateLiteral)]
 #[must_use]
-pub fn token_is_template_literal(token: SyntaxKind) -> bool {
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_literal(token: SyntaxKind) -> bool {
+    token_is_literal_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsLiteral)]
+#[must_use]
+pub fn token_is_literal(token: SyntaxKind) -> bool {
+    token_is_literal_inner(token)
+}
+
+/// Check if a token is a template literal token.
+const fn token_is_template_literal_inner(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::NoSubstitutionTemplateLiteral as u16 && t <= SyntaxKind::TemplateTail as u16
 }
 
-/// Check if a token is punctuation.
-#[wasm_bindgen(js_name = tokenIsPunctuation)]
 #[must_use]
-pub fn token_is_punctuation(token: SyntaxKind) -> bool {
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_template_literal(token: SyntaxKind) -> bool {
+    token_is_template_literal_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsTemplateLiteral)]
+#[must_use]
+pub fn token_is_template_literal(token: SyntaxKind) -> bool {
+    token_is_template_literal_inner(token)
+}
+
+/// Check if a token is punctuation.
+const fn token_is_punctuation_inner(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::OpenBraceToken as u16 && t <= SyntaxKind::CaretEqualsToken as u16
 }
 
-/// Check if a token is an assignment operator.
-#[wasm_bindgen(js_name = tokenIsAssignmentOperator)]
 #[must_use]
-pub fn token_is_assignment_operator(token: SyntaxKind) -> bool {
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_punctuation(token: SyntaxKind) -> bool {
+    token_is_punctuation_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsPunctuation)]
+#[must_use]
+pub fn token_is_punctuation(token: SyntaxKind) -> bool {
+    token_is_punctuation_inner(token)
+}
+
+/// Check if a token is an assignment operator.
+const fn token_is_assignment_operator_inner(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::EqualsToken as u16 && t <= SyntaxKind::CaretEqualsToken as u16
 }
 
-/// Check if a token is trivia (whitespace, comments).
-#[wasm_bindgen(js_name = tokenIsTrivia)]
 #[must_use]
-pub fn token_is_trivia(token: SyntaxKind) -> bool {
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_assignment_operator(token: SyntaxKind) -> bool {
+    token_is_assignment_operator_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsAssignmentOperator)]
+#[must_use]
+pub fn token_is_assignment_operator(token: SyntaxKind) -> bool {
+    token_is_assignment_operator_inner(token)
+}
+
+/// Check if a token is trivia (whitespace, comments).
+const fn token_is_trivia_inner(token: SyntaxKind) -> bool {
     let t = token as u16;
     t >= SyntaxKind::SingleLineCommentTrivia as u16
         && t <= SyntaxKind::NonTextFileMarkerTrivia as u16
+}
+
+#[must_use]
+#[cfg(not(target_arch = "wasm32"))]
+pub const fn token_is_trivia(token: SyntaxKind) -> bool {
+    token_is_trivia_inner(token)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = tokenIsTrivia)]
+#[must_use]
+pub fn token_is_trivia(token: SyntaxKind) -> bool {
+    token_is_trivia_inner(token)
 }
 
 // =============================================================================
@@ -491,7 +589,7 @@ pub fn token_is_trivia(token: SyntaxKind) -> bool {
 /// Internal non-allocating version - returns static str reference.
 /// Use this for Rust-internal code to avoid allocations.
 #[must_use]
-pub fn keyword_to_text_static(token: SyntaxKind) -> Option<&'static str> {
+pub const fn keyword_to_text_static(token: SyntaxKind) -> Option<&'static str> {
     match token {
         SyntaxKind::BreakKeyword => Some("break"),
         SyntaxKind::CaseKeyword => Some("case"),
@@ -594,7 +692,7 @@ pub fn keyword_to_text(token: SyntaxKind) -> Option<String> {
 /// Internal non-allocating version - returns static str reference.
 /// Use this for Rust-internal code to avoid allocations.
 #[must_use]
-pub fn punctuation_to_text_static(token: SyntaxKind) -> Option<&'static str> {
+pub const fn punctuation_to_text_static(token: SyntaxKind) -> Option<&'static str> {
     match token {
         SyntaxKind::OpenBraceToken => Some("{"),
         SyntaxKind::CloseBraceToken => Some("}"),

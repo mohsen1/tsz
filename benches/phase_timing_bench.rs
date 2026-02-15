@@ -138,7 +138,7 @@ fn bench_phase_timing(c: &mut Criterion) {
     for decl_count in [25, 50, 100, 200, 400] {
         let source = generate_ts_file(decl_count);
         let lines = count_lines(&source);
-        let label = format!("{}decls_{}lines", decl_count, lines);
+        let label = format!("{decl_count}decls_{lines}lines");
 
         // Phase 1: Parse only
         group.bench_with_input(BenchmarkId::new("1_parse", &label), &source, |b, src| {
@@ -208,7 +208,7 @@ fn bench_phase_timing(c: &mut Criterion) {
 }
 
 /// Compare: check with warm cache vs cold cache
-/// This shows how much TypeCache reuse matters
+/// This shows how much `TypeCache` reuse matters
 fn bench_cache_reuse(c: &mut Criterion) {
     let mut group = c.benchmark_group("cache_reuse");
     group.warm_up_time(Duration::from_secs(2));
@@ -224,7 +224,7 @@ fn bench_cache_reuse(c: &mut Criterion) {
     let mut binder = tsz::binder::BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
-    let label = format!("100decls_{}lines", lines);
+    let label = format!("100decls_{lines}lines");
 
     // Cold check (no cache — what Salsa Phase 1 does)
     group.bench_with_input(

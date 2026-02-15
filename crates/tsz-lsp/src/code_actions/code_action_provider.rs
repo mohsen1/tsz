@@ -4,7 +4,7 @@
 //!
 //! Architecture:
 //! - The Checker identifies problems (Diagnostics)
-//! - The CodeActionProvider identifies solutions (TextEdits)
+//! - The `CodeActionProvider` identifies solutions (`TextEdits`)
 //!
 //! Current features:
 //! - Extract Variable (selection-based refactoring)
@@ -70,7 +70,7 @@ pub struct ImportCandidate {
 }
 
 impl ImportCandidate {
-    pub fn named(module_specifier: String, export_name: String, local_name: String) -> Self {
+    pub const fn named(module_specifier: String, export_name: String, local_name: String) -> Self {
         Self {
             module_specifier,
             local_name,
@@ -79,7 +79,7 @@ impl ImportCandidate {
         }
     }
 
-    pub fn default(module_specifier: String, local_name: String) -> Self {
+    pub const fn default(module_specifier: String, local_name: String) -> Self {
         Self {
             module_specifier,
             local_name,
@@ -88,7 +88,7 @@ impl ImportCandidate {
         }
     }
 
-    pub fn namespace(module_specifier: String, local_name: String) -> Self {
+    pub const fn namespace(module_specifier: String, local_name: String) -> Self {
         Self {
             module_specifier,
             local_name,
@@ -138,7 +138,7 @@ pub struct CodeActionProvider<'a> {
 
 impl<'a> CodeActionProvider<'a> {
     /// Create a new code action provider.
-    pub fn new(
+    pub const fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -256,7 +256,7 @@ impl<'a> CodeActionProvider<'a> {
         let mut changes = FxHashMap::default();
         changes.insert(self.file_name.clone(), vec![edit]);
 
-        let title = format!("Remove unused declaration '{}'", name);
+        let title = format!("Remove unused declaration '{name}'");
 
         Some(CodeAction {
             title,
@@ -855,7 +855,7 @@ impl<'a> CodeActionProvider<'a> {
                 range,
                 new_text: String::new(),
             };
-            let title = format!("Remove unused import '{}'", removed_name);
+            let title = format!("Remove unused import '{removed_name}'");
             return Some((edit, title));
         }
 
@@ -864,7 +864,7 @@ impl<'a> CodeActionProvider<'a> {
             parts.push(default_name);
         }
         if let Some(namespace_name) = namespace_name {
-            parts.push(format!("* as {}", namespace_name));
+            parts.push(format!("* as {namespace_name}"));
         }
         if has_named {
             let mut items = Vec::new();
@@ -901,7 +901,7 @@ impl<'a> CodeActionProvider<'a> {
         new_text.push_str(&trailing);
 
         let edit = TextEdit { range, new_text };
-        let title = format!("Remove unused import '{}'", removed_name);
+        let title = format!("Remove unused import '{removed_name}'");
 
         Some((edit, title))
     }
@@ -1105,7 +1105,7 @@ impl<'a> CodeActionProvider<'a> {
         match &candidate.kind {
             ImportCandidateKind::Named { export_name } => {
                 if export_name == &candidate.local_name {
-                    new_text.push_str(&format!("{{ {} }}", export_name));
+                    new_text.push_str(&format!("{{ {export_name} }}"));
                 } else {
                     new_text.push_str(&format!(
                         "{{ {} as {} }}",
@@ -1390,7 +1390,7 @@ impl<'a> CodeActionProvider<'a> {
             let had_trailing_ws = insert_offset != close_offset;
             let trailing_space = if had_trailing_ws { "" } else { " " };
             let prefix = if elements.is_empty() { " " } else { ", " };
-            let new_text = format!("{}{}{}", prefix, spec_text, trailing_space);
+            let new_text = format!("{prefix}{spec_text}{trailing_space}");
             let insert_pos = self.line_map.offset_to_position(insert_offset, self.source);
             return Some(vec![TextEdit {
                 range: Range::new(insert_pos, insert_pos),
@@ -1405,7 +1405,7 @@ impl<'a> CodeActionProvider<'a> {
             self.indent_at_offset(first_node.pos)
         } else {
             let indent_unit = self.indent_unit_from(&close_indent);
-            format!("{}{}", close_indent, indent_unit)
+            format!("{close_indent}{indent_unit}")
         };
 
         if let Some(&last) = elements.last() {
@@ -1686,7 +1686,7 @@ impl<'a> CodeActionProvider<'a> {
             } else {
                 ", "
             };
-            let mut new_text = format!("{}{}: undefined", prefix, property_text);
+            let mut new_text = format!("{prefix}{property_text}: undefined");
             if had_trailing_comma {
                 new_text.push(',');
             }
@@ -1706,7 +1706,7 @@ impl<'a> CodeActionProvider<'a> {
             self.indent_at_offset(first_node.pos)
         } else {
             let indent_unit = self.indent_unit_from(&close_indent);
-            format!("{}{}", close_indent, indent_unit)
+            format!("{close_indent}{indent_unit}")
         };
 
         if let Some(&last) = elements.last() {
@@ -1803,7 +1803,7 @@ impl<'a> CodeActionProvider<'a> {
             }
             let had_trailing_ws = insert_offset != close_offset;
             let trailing_space = if had_trailing_ws { "" } else { " " };
-            let new_text = format!(" {}: any;{}", property_text, trailing_space);
+            let new_text = format!(" {property_text}: any;{trailing_space}");
             let insert_pos = self.line_map.offset_to_position(insert_offset, self.source);
             edits.push(TextEdit {
                 range: Range::new(insert_pos, insert_pos),
@@ -1819,7 +1819,7 @@ impl<'a> CodeActionProvider<'a> {
             self.indent_at_offset(first_node.pos)
         } else {
             let indent_unit = self.indent_unit_from(&close_indent);
-            format!("{}{}", close_indent, indent_unit)
+            format!("{close_indent}{indent_unit}")
         };
 
         let mut line = String::new();
@@ -1928,7 +1928,7 @@ impl<'a> CodeActionProvider<'a> {
         // Calculate indentation by looking at the statement's line
         let indent = self.get_indentation_at_position(&stmt_pos);
 
-        let declaration = format!("{}const {} = {};\n", indent, var_name, initializer_text);
+        let declaration = format!("{indent}const {var_name} = {initializer_text};\n");
 
         let mut edits = Vec::new();
 
@@ -1943,12 +1943,12 @@ impl<'a> CodeActionProvider<'a> {
 
         // Replace the expression with the variable name
         let mut replacement_text = if self.needs_jsx_expression_wrapper(expr_idx) {
-            format!("{{{}}}", var_name)
+            format!("{{{var_name}}}")
         } else {
             var_name.clone()
         };
         if self.should_preserve_parenthesized_replacement(expr_node) {
-            replacement_text = format!("({})", replacement_text);
+            replacement_text = format!("({replacement_text})");
         }
         edits.push(TextEdit {
             range: replacement_range,
@@ -1960,7 +1960,7 @@ impl<'a> CodeActionProvider<'a> {
         changes.insert(self.file_name.clone(), edits);
 
         Some(CodeAction {
-            title: format!("Extract to constant '{}'", var_name),
+            title: format!("Extract to constant '{var_name}'"),
             kind: CodeActionKind::RefactorExtract,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: true,
@@ -1980,7 +1980,7 @@ impl<'a> CodeActionProvider<'a> {
 
         let mut suffix = 2;
         loop {
-            let candidate = format!("{}{}", base, suffix);
+            let candidate = format!("{base}{suffix}");
             if !names.contains(&candidate) {
                 return candidate;
             }
@@ -1993,7 +1993,7 @@ impl<'a> CodeActionProvider<'a> {
             if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                 return selected_text.to_string();
             }
-            return format!("({})", selected_text);
+            return format!("({selected_text})");
         }
         selected_text.to_string()
     }
@@ -2191,7 +2191,7 @@ impl<'a> CodeActionProvider<'a> {
         matches!(earliest_decl, Some(pos) if pos > insertion_pos)
     }
 
-    fn symbol_is_lexical(&self, flags: u32) -> bool {
+    const fn symbol_is_lexical(&self, flags: u32) -> bool {
         (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0 || (flags & symbol_flags::CLASS) != 0
     }
 
@@ -2576,7 +2576,7 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     /// Check if a syntax kind is an expression.
-    fn is_expression(&self, kind: u16) -> bool {
+    const fn is_expression(&self, kind: u16) -> bool {
         // Check both token kinds (from scanner) and expression kinds (from parser)
         kind == SyntaxKind::Identifier as u16
             || kind == SyntaxKind::StringLiteral as u16
@@ -2610,7 +2610,7 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     /// Check if an expression is extractable (not all expressions should be extracted).
-    fn is_extractable_expression(&self, kind: u16) -> bool {
+    const fn is_extractable_expression(&self, kind: u16) -> bool {
         // Don't extract simple literals or identifiers - not useful
         !(kind == SyntaxKind::Identifier as u16
             || kind == SyntaxKind::StringLiteral as u16
@@ -2622,7 +2622,7 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     /// Check if a syntax kind is a statement.
-    fn is_statement(&self, kind: u16) -> bool {
+    const fn is_statement(&self, kind: u16) -> bool {
         matches!(
             kind,
             syntax_kind_ext::VARIABLE_STATEMENT

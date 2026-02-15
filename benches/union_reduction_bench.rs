@@ -1,5 +1,5 @@
 //! Union reduction microbenchmarks.
-//! Tests performance of reduce_union_subtypes for large unions of tuples/arrays.
+//! Tests performance of `reduce_union_subtypes` for large unions of tuples/arrays.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use tsz_solver::{TupleElement, TypeId, TypeInterner};

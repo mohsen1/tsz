@@ -138,18 +138,18 @@ impl TypeId {
     pub const FUNCTION: Self = Self(16);
 
     /// Synthetic Promise base type for Promise<T> when Promise symbol is not resolved.
-    /// Used to allow promise_like_return_type_argument to extract T from await expressions.
+    /// Used to allow `promise_like_return_type_argument` to extract T from await expressions.
     pub const PROMISE_BASE: Self = Self(17);
 
     /// Internal sentinel indicating that expression checking should be delegated
-    /// to CheckerState for complex cases that need full checker context.
+    /// to `CheckerState` for complex cases that need full checker context.
     /// This is NOT a real type and should never escape ExpressionChecker/CheckerState.
     pub const DELEGATE: Self = Self(18);
 
     /// First user-defined type ID (after built-in intrinsics)
     pub const FIRST_USER: u32 = 100;
 
-    pub fn is_intrinsic(self) -> bool {
+    pub const fn is_intrinsic(self) -> bool {
         self.0 < Self::FIRST_USER
     }
 
@@ -191,7 +191,7 @@ impl TypeId {
     }
 
     /// Returns true if this type is any or unknown (types that accept anything).
-    /// Alias for is_top_type for clarity in some contexts.
+    /// Alias for `is_top_type` for clarity in some contexts.
     #[inline]
     pub fn is_any_or_unknown(self) -> bool {
         self.is_top_type()
@@ -204,28 +204,28 @@ impl TypeId {
     /// Mask for the local bit (MSB of u32).
     ///
     /// Local IDs have MSB=1 (0x80000000+), Global IDs have MSB=0 (0x7FFFFFFF-).
-    /// This partitioning allows ScopedTypeInterner to create ephemeral types
-    /// that don't pollute the global TypeId space.
+    /// This partitioning allows `ScopedTypeInterner` to create ephemeral types
+    /// that don't pollute the global `TypeId` space.
     pub const LOCAL_MASK: u32 = 0x80000000;
 
-    /// Check if this TypeId is a local (ephemeral) type.
+    /// Check if this `TypeId` is a local (ephemeral) type.
     ///
-    /// Local types are created by ScopedTypeInterner and are only valid
+    /// Local types are created by `ScopedTypeInterner` and are only valid
     /// for the current operation/request. They are automatically freed
-    /// when the ScopedTypeInterner is dropped.
+    /// when the `ScopedTypeInterner` is dropped.
     ///
     /// Returns `true` if MSB is set (0x80000000+).
-    pub fn is_local(self) -> bool {
+    pub const fn is_local(self) -> bool {
         (self.0 & Self::LOCAL_MASK) != 0
     }
 
-    /// Check if this TypeId is a global (persistent) type.
+    /// Check if this `TypeId` is a global (persistent) type.
     ///
-    /// Global types are managed by TypeInterner and persist for the lifetime
+    /// Global types are managed by `TypeInterner` and persist for the lifetime
     /// of the project/server. These include declarations and intrinsics.
     ///
     /// Returns `true` if MSB is clear (0x7FFFFFFF-).
-    pub fn is_global(self) -> bool {
+    pub const fn is_global(self) -> bool {
         !self.is_local()
     }
 }
@@ -241,16 +241,16 @@ impl TypeId {
 /// - `target`: The target type being compared
 /// - `relation`: Distinguishes between different relation types (0 = subtype, 1 = assignability, etc.)
 /// - `flags`: Bitmask for boolean compiler options (u16 to support current and future flags):
-///   - bit 0: strict_null_checks
-///   - bit 1: strict_function_types
-///   - bit 2: exact_optional_property_types
-///   - bit 3: no_unchecked_indexed_access
-///   - bit 4: disable_method_bivariance (Sound Mode)
-///   - bit 5: allow_void_return
-///   - bit 6: allow_bivariant_rest
-///   - bit 7: allow_bivariant_param_count
-///   - bits 8-15: Reserved for future flags (strict_any_propagation, strict_structural_checking, etc.)
-/// - `any_mode`: Controls how `any` is treated (0 = All, 1 = TopLevelOnly)
+///   - bit 0: `strict_null_checks`
+///   - bit 1: `strict_function_types`
+///   - bit 2: `exact_optional_property_types`
+///   - bit 3: `no_unchecked_indexed_access`
+///   - bit 4: `disable_method_bivariance` (Sound Mode)
+///   - bit 5: `allow_void_return`
+///   - bit 6: `allow_bivariant_rest`
+///   - bit 7: `allow_bivariant_param_count`
+///   - bits 8-15: Reserved for future flags (`strict_any_propagation`, `strict_structural_checking`, etc.)
+/// - `any_mode`: Controls how `any` is treated (0 = All, 1 = `TopLevelOnly`)
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RelationCacheKey {
     pub source: TypeId,
@@ -278,7 +278,7 @@ impl RelationCacheKey {
     pub const FLAG_ALLOW_BIVARIANT_PARAM_COUNT: u16 = 1 << 7;
 
     /// Create a new cache key for subtype checking.
-    pub fn subtype(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
+    pub const fn subtype(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
         Self {
             source,
             target,
@@ -289,7 +289,7 @@ impl RelationCacheKey {
     }
 
     /// Create a new cache key for assignability checking.
-    pub fn assignability(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
+    pub const fn assignability(source: TypeId, target: TypeId, flags: u16, any_mode: u8) -> Self {
         Self {
             source,
             target,
@@ -312,13 +312,13 @@ impl RelationCacheKey {
 ///
 /// ## Priority Order (Highest to Lowest)
 ///
-/// 1. **NakedTypeVariable** - Direct type parameter with no constraints (highest)
-/// 2. **HomomorphicMappedType** - Mapped types that preserve structure
-/// 3. **PartialHomomorphicMappedType** - Partially homomorphic mapped types
-/// 4. **MappedType** - Generic mapped types
-/// 5. **ContravariantConditional** - Conditional types in contravariant position
-/// 6. **ReturnType** - Contextual type from return position (low priority)
-/// 7. **LowPriority** - Fallback inference (lowest)
+/// 1. **`NakedTypeVariable`** - Direct type parameter with no constraints (highest)
+/// 2. **`HomomorphicMappedType`** - Mapped types that preserve structure
+/// 3. **`PartialHomomorphicMappedType`** - Partially homomorphic mapped types
+/// 4. **`MappedType`** - Generic mapped types
+/// 5. **`ContravariantConditional`** - Conditional types in contravariant position
+/// 6. **`ReturnType`** - Contextual type from return position (low priority)
+/// 7. **`LowPriority`** - Fallback inference (lowest)
 /// 8. **Circular** - Detected circular dependency (prevents infinite loops)
 ///
 /// ## Example
@@ -379,7 +379,7 @@ impl InferencePriority {
     }
 
     /// Get the next priority level for multi-pass inference.
-    pub fn next_level(&self) -> Option<Self> {
+    pub const fn next_level(&self) -> Option<Self> {
         match self {
             Self::NakedTypeVariable => Some(Self::HomomorphicMappedType),
             Self::HomomorphicMappedType => Some(Self::PartialHomomorphicMappedType),
@@ -401,7 +401,7 @@ impl InferencePriority {
     pub const LOWEST: Self = Self::LowPriority;
 }
 
-/// Interned list of TypeId values (e.g., unions/intersections).
+/// Interned list of `TypeId` values (e.g., unions/intersections).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypeListId(pub u32);
 
@@ -476,7 +476,7 @@ pub enum WellKnownSymbolKey {
 impl WellKnownSymbolKey {
     /// Returns the conventional string property name for this well-known symbol.
     /// This follows the convention of using `"[Symbol.iterator]"` etc. as property names.
-    pub fn as_property_name(&self) -> &'static str {
+    pub const fn as_property_name(&self) -> &'static str {
         match self {
             Self::Iterator => "[Symbol.iterator]",
             Self::AsyncIterator => "[Symbol.asyncIterator]",
@@ -522,7 +522,7 @@ impl WellKnownSymbolKey {
 
 /// The structural "shape" of a type.
 /// This is the key used for interning - structurally identical types
-/// will have the same TypeData and therefore the same TypeId.
+/// will have the same `TypeData` and therefore the same `TypeId`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeData {
     /// Intrinsic types (any, unknown, never, void, null, undefined, boolean, number, string, bigint, symbol, object)
@@ -587,9 +587,9 @@ pub enum TypeData {
     BoundParameter(u32),
 
     /// Reference to a named type (interface, class, type alias)
-    /// Uses SymbolId to break infinite recursion
+    /// Uses `SymbolId` to break infinite recursion
     /// DEPRECATED: Use `Lazy(DefId)` for new code. This is kept for backward compatibility
-    /// during the migration from SymbolRef to DefId.
+    /// during the migration from `SymbolRef` to `DefId`.
     /// PHASE 4.2: REMOVED - Migration complete, all types now use Lazy(DefId)
     // Ref(SymbolRef),
 
@@ -644,8 +644,8 @@ pub enum TypeData {
     /// Enums are nominal types - two different enums with the same member types
     /// are NOT compatible (e.g., `enum E1 { A, B }` is not assignable to `enum E2 { A, B }`).
     ///
-    /// - DefId: The unique identity of the enum (for E1 vs E2 nominal checking)
-    /// - TypeId: The structural union of member types (e.g., 0 | 1 for numeric enums),
+    /// - `DefId`: The unique identity of the enum (for E1 vs E2 nominal checking)
+    /// - `TypeId`: The structural union of member types (e.g., 0 | 1 for numeric enums),
     ///   used for assignability to primitives (e.g., E1 assignable to number)
     Enum(DefId, TypeId),
 
@@ -655,7 +655,7 @@ pub enum TypeData {
     /// Conditional type (T extends U ? X : Y)
     Conditional(ConditionalTypeId),
 
-    /// Mapped type ({ [K in Keys]: ValueType })
+    /// Mapped type ({ [K in Keys]: `ValueType` })
     Mapped(MappedTypeId),
 
     /// Index access type (T[K])
@@ -667,7 +667,7 @@ pub enum TypeData {
     /// Type query (typeof expression in type position)
     TypeQuery(SymbolRef),
 
-    /// KeyOf type operator (keyof T)
+    /// `KeyOf` type operator (keyof T)
     KeyOf(TypeId),
 
     /// Readonly type modifier (readonly T[])
@@ -690,10 +690,10 @@ pub enum TypeData {
     },
 
     /// Module namespace type (import * as ns from "module")
-    /// Uses SymbolRef for lazy evaluation to avoid circular dependency issues
+    /// Uses `SymbolRef` for lazy evaluation to avoid circular dependency issues
     ModuleNamespace(SymbolRef),
 
-    /// NoInfer<T> utility type (TypeScript 5.4+)
+    /// `NoInfer`<T> utility type (TypeScript 5.4+)
     /// Prevents inference from flowing through this type position.
     /// During inference, this blocks inference. During evaluation/subtyping,
     /// it evaluates to the inner type (transparent).
@@ -738,7 +738,7 @@ pub enum StringIntrinsicKind {
 }
 
 impl IntrinsicKind {
-    pub fn to_type_id(self) -> TypeId {
+    pub const fn to_type_id(self) -> TypeId {
         match self {
             Self::Any => TypeId::ANY,
             Self::Unknown => TypeId::UNKNOWN,
@@ -766,7 +766,7 @@ pub enum LiteralValue {
     Boolean(bool),
 }
 
-/// Wrapper for f64 that implements Eq and Hash for use in TypeData
+/// Wrapper for f64 that implements Eq and Hash for use in `TypeData`
 #[derive(Clone, Copy, Debug)]
 pub struct OrderedFloat(pub f64);
 
@@ -816,7 +816,7 @@ pub struct PropertyInfo {
 impl PropertyInfo {
     /// Create a property with default settings (non-optional, non-readonly, public).
     /// Sets `write_type` equal to `type_id`.
-    pub fn new(name: Atom, type_id: TypeId) -> Self {
+    pub const fn new(name: Atom, type_id: TypeId) -> Self {
         Self {
             name,
             type_id,
@@ -830,7 +830,7 @@ impl PropertyInfo {
     }
 
     /// Create a method property with default settings.
-    pub fn method(name: Atom, type_id: TypeId) -> Self {
+    pub const fn method(name: Atom, type_id: TypeId) -> Self {
         Self {
             is_method: true,
             ..Self::new(name, type_id)
@@ -838,7 +838,7 @@ impl PropertyInfo {
     }
 
     /// Create an optional property with default settings.
-    pub fn opt(name: Atom, type_id: TypeId) -> Self {
+    pub const fn opt(name: Atom, type_id: TypeId) -> Self {
         Self {
             optional: true,
             ..Self::new(name, type_id)
@@ -846,7 +846,7 @@ impl PropertyInfo {
     }
 
     /// Create a readonly property with default settings.
-    pub fn readonly(name: Atom, type_id: TypeId) -> Self {
+    pub const fn readonly(name: Atom, type_id: TypeId) -> Self {
         Self {
             readonly: true,
             ..Self::new(name, type_id)
@@ -892,9 +892,9 @@ bitflags::bitflags! {
 
 /// Object type with properties and optional index signatures
 ///
-/// NOTE: The `symbol` field affects BOTH Hash and PartialEq for nominal discrimination.
-/// This ensures that different classes get different TypeIds in the interner.
-/// Structural subtyping is computed explicitly in the Solver, not via PartialEq.
+/// NOTE: The `symbol` field affects BOTH Hash and `PartialEq` for nominal discrimination.
+/// This ensures that different classes get different `TypeIds` in the interner.
+/// Structural subtyping is computed explicitly in the Solver, not via `PartialEq`.
 #[derive(Clone, Debug)]
 pub struct ObjectShape {
     /// Object-level flags (e.g. fresh literal tracking).
@@ -987,7 +987,7 @@ pub struct FunctionShape {
 impl FunctionShape {
     /// Create a simple function shape with params and return type.
     /// No type params, no this, no predicate, not a constructor or method.
-    pub fn new(params: Vec<ParamInfo>, return_type: TypeId) -> Self {
+    pub const fn new(params: Vec<ParamInfo>, return_type: TypeId) -> Self {
         Self {
             type_params: Vec::new(),
             params,
@@ -1016,7 +1016,7 @@ pub struct CallSignature {
 
 impl CallSignature {
     /// Create a simple call signature with params and return type.
-    pub fn new(params: Vec<ParamInfo>, return_type: TypeId) -> Self {
+    pub const fn new(params: Vec<ParamInfo>, return_type: TypeId) -> Self {
         Self {
             type_params: Vec::new(),
             params,
@@ -1036,9 +1036,9 @@ impl CallSignature {
 ///   (x: number): string;
 /// }
 /// ```
-/// NOTE: The `symbol` field affects BOTH Hash and PartialEq for nominal discrimination.
-/// This ensures that different classes get different TypeIds in the interner.
-/// Structural subtyping is computed explicitly in the Solver, not via PartialEq.
+/// NOTE: The `symbol` field affects BOTH Hash and `PartialEq` for nominal discrimination.
+/// This ensures that different classes get different `TypeIds` in the interner.
+/// Structural subtyping is computed explicitly in the Solver, not via `PartialEq`.
 #[derive(Clone, Debug, Default)]
 pub struct CallableShape {
     /// Call signatures (order matters for overload resolution)
@@ -1094,7 +1094,7 @@ pub struct ParamInfo {
 
 impl ParamInfo {
     /// Create a required parameter.
-    pub fn required(name: Atom, type_id: TypeId) -> Self {
+    pub const fn required(name: Atom, type_id: TypeId) -> Self {
         Self {
             name: Some(name),
             type_id,
@@ -1104,7 +1104,7 @@ impl ParamInfo {
     }
 
     /// Create an optional parameter.
-    pub fn optional(name: Atom, type_id: TypeId) -> Self {
+    pub const fn optional(name: Atom, type_id: TypeId) -> Self {
         Self {
             optional: true,
             ..Self::required(name, type_id)
@@ -1112,7 +1112,7 @@ impl ParamInfo {
     }
 
     /// Create a rest parameter.
-    pub fn rest(name: Atom, type_id: TypeId) -> Self {
+    pub const fn rest(name: Atom, type_id: TypeId) -> Self {
         Self {
             rest: true,
             ..Self::required(name, type_id)
@@ -1120,7 +1120,7 @@ impl ParamInfo {
     }
 
     /// Create an unnamed required parameter.
-    pub fn unnamed(type_id: TypeId) -> Self {
+    pub const fn unnamed(type_id: TypeId) -> Self {
         Self {
             name: None,
             type_id,
@@ -1182,17 +1182,17 @@ pub enum TemplateSpan {
 
 impl TemplateSpan {
     /// Check if this span is a text span
-    pub fn is_text(&self) -> bool {
+    pub const fn is_text(&self) -> bool {
         matches!(self, Self::Text(_))
     }
 
     /// Check if this span is a type interpolation
-    pub fn is_type(&self) -> bool {
+    pub const fn is_type(&self) -> bool {
         matches!(self, Self::Type(_))
     }
 
     /// Get the text content if this is a text span
-    pub fn as_text(&self) -> Option<Atom> {
+    pub const fn as_text(&self) -> Option<Atom> {
         match self {
             Self::Text(atom) => Some(*atom),
             _ => None,
@@ -1200,7 +1200,7 @@ impl TemplateSpan {
     }
 
     /// Get the type ID if this is a type span
-    pub fn as_type(&self) -> Option<TypeId> {
+    pub const fn as_type(&self) -> Option<TypeId> {
         match self {
             Self::Type(type_id) => Some(*type_id),
             _ => None,
@@ -1208,7 +1208,7 @@ impl TemplateSpan {
     }
 
     /// Create a type span
-    pub fn type_from_id(type_id: TypeId) -> Self {
+    pub const fn type_from_id(type_id: TypeId) -> Self {
         Self::Type(type_id)
     }
 }
@@ -1240,7 +1240,7 @@ pub fn process_template_escape_sequences(input: &str) -> String {
                     // \xXX - exactly 2 hex digits
                     let hex1 = chars.next().unwrap_or('0');
                     let hex2 = chars.next().unwrap_or('0');
-                    let code = u8::from_str_radix(&format!("{}{}", hex1, hex2), 16).unwrap_or(0);
+                    let code = u8::from_str_radix(&format!("{hex1}{hex2}"), 16).unwrap_or(0);
                     result.push(code as char);
                 }
                 'u' => {
@@ -1386,17 +1386,17 @@ bitflags::bitflags! {
 
 impl Variance {
     /// Check if this is an independent type parameter (not used in variance position).
-    pub fn is_independent(&self) -> bool {
+    pub const fn is_independent(&self) -> bool {
         self.is_empty()
     }
 
     /// Check if this is covariant only.
-    pub fn is_covariant(&self) -> bool {
+    pub const fn is_covariant(&self) -> bool {
         self.contains(Self::COVARIANT) && !self.contains(Self::CONTRAVARIANT)
     }
 
     /// Check if this is contravariant only.
-    pub fn is_contravariant(&self) -> bool {
+    pub const fn is_contravariant(&self) -> bool {
         self.contains(Self::CONTRAVARIANT) && !self.contains(Self::COVARIANT)
     }
 

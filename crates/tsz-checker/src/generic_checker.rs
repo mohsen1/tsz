@@ -6,7 +6,7 @@
 //! - Call expression type argument validation
 //! - New expression type argument validation
 //!
-//! This module extends CheckerState with generic-related methods as part of
+//! This module extends `CheckerState` with generic-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::query_boundaries::generic_checker as query;
@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a symbol's declaration has type parameters, even if they couldn't be
-    /// resolved via get_type_params_for_symbol (e.g., cross-arena lib types).
+    /// resolved via `get_type_params_for_symbol` (e.g., cross-arena lib types).
     fn symbol_declaration_has_type_parameters(&self, sym_id: tsz_binder::SymbolId) -> bool {
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);

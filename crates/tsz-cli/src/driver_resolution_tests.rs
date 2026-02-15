@@ -59,8 +59,7 @@ fn test_collect_module_specifiers_finds_dynamic_imports() {
     let specifiers = collect_module_specifiers_from_text(path, text);
     assert!(
         specifiers.contains(&"./foo".to_string()),
-        "Should find dynamic import specifier './foo', got: {:?}",
-        specifiers
+        "Should find dynamic import specifier './foo', got: {specifiers:?}"
     );
 }
 
@@ -80,8 +79,7 @@ fn test_collect_module_specifiers_dynamic_import_has_correct_kind() {
     assert_eq!(
         dynamic_imports.len(),
         1,
-        "Should find exactly one DynamicImport, got: {:?}",
-        specifiers
+        "Should find exactly one DynamicImport, got: {specifiers:?}"
     );
     assert_eq!(dynamic_imports[0].0, "./foo");
 }
@@ -107,8 +105,7 @@ export { bar } from "./re-export";
         .collect();
     assert!(
         static_imports.contains(&"./static-import"),
-        "Should find static import, got: {:?}",
-        static_imports
+        "Should find static import, got: {static_imports:?}"
     );
 
     let dynamic_imports: Vec<_> = specifiers
@@ -118,8 +115,7 @@ export { bar } from "./re-export";
         .collect();
     assert!(
         dynamic_imports.contains(&"./dynamic-import"),
-        "Should find dynamic import, got: {:?}",
-        dynamic_imports
+        "Should find dynamic import, got: {dynamic_imports:?}"
     );
 
     let re_exports: Vec<_> = specifiers
@@ -129,8 +125,7 @@ export { bar } from "./re-export";
         .collect();
     assert!(
         re_exports.contains(&"./re-export"),
-        "Should find re-export, got: {:?}",
-        re_exports
+        "Should find re-export, got: {re_exports:?}"
     );
 }
 
@@ -208,8 +203,7 @@ fn test_resolve_type_package_entry_node10_restricted_extensions() {
     let result = resolve_type_package_entry(&pkg_dir, &options);
     assert!(
         result.is_none(),
-        "Node10 should not resolve .d.mts files, got: {:?}",
-        result
+        "Node10 should not resolve .d.mts files, got: {result:?}"
     );
 
     // Now add an index.d.ts - should be found

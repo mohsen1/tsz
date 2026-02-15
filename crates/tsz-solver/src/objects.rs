@@ -19,7 +19,7 @@ use crate::db::TypeDatabase;
 /// Merge two visibility levels, returning the more restrictive one.
 ///
 /// Ordering: Private > Protected > Public
-fn merge_visibility(a: Visibility, b: Visibility) -> Visibility {
+const fn merge_visibility(a: Visibility, b: Visibility) -> Visibility {
     match (a, b) {
         (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
         (Visibility::Protected, _) | (_, Visibility::Protected) => Visibility::Protected,

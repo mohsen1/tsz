@@ -1,7 +1,7 @@
 //! Type checker module for TypeScript AST.
 //!
 //! This module is organized into several submodules:
-//! - `context` - CheckerContext for shared state
+//! - `context` - `CheckerContext` for shared state
 //! - `expr` - Expression type checking
 //! - `statements` - Statement type checking
 //! - `declarations` - Declaration type checking

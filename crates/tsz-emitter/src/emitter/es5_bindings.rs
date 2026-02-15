@@ -1127,7 +1127,7 @@ impl<'a> Printer<'a> {
             }
             if let Some(name_node) = self.arena.get(unwrapped_name) {
                 if name_node.kind == SyntaxKind::Identifier as u16 {
-                    let elem_source = format!("{}[{}]", read_temp, index);
+                    let elem_source = format!("{read_temp}[{index}]");
                     if elem.initializer.is_none() {
                         self.write(", ");
                         self.emit_expression(elem.name);
@@ -1152,7 +1152,7 @@ impl<'a> Printer<'a> {
                     let Some(unwrapped_node) = self.arena.get(unwrapped_name) else {
                         continue;
                     };
-                    let elem_source = format!("{}[{}]", read_temp, index);
+                    let elem_source = format!("{read_temp}[{index}]");
                     if unwrapped_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
                         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
                             debug!(
@@ -1240,7 +1240,7 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            let elem_source = format!("{}[{}]", source_expr, index);
+            let elem_source = format!("{source_expr}[{index}]");
             let Some(elem_node) = self.arena.get(elem.name) else {
                 continue;
             };
@@ -1545,7 +1545,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// If key_idx is a computed property, emit a temp variable assignment and return the temp name
+    /// If `key_idx` is a computed property, emit a temp variable assignment and return the temp name
     /// Returns None if not computed
     fn emit_computed_key_temp_if_needed(&mut self, key_idx: NodeIndex) -> Option<String> {
         let key_node = self.arena.get(key_idx)?;
@@ -1646,7 +1646,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Like emit_es5_binding_element but with first flag for separator control
+    /// Like `emit_es5_binding_element` but with first flag for separator control
     fn emit_es5_binding_element_direct(
         &mut self,
         elem_idx: NodeIndex,
@@ -1744,7 +1744,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Similar to emit_computed_key_temp_if_needed but handles the first flag for direct destructuring
+    /// Similar to `emit_computed_key_temp_if_needed` but handles the first flag for direct destructuring
     fn emit_computed_key_temp_for_direct(
         &mut self,
         key_idx: NodeIndex,
@@ -1769,7 +1769,7 @@ impl<'a> Printer<'a> {
         None
     }
 
-    /// Like emit_es5_array_binding_element but with first flag for separator control
+    /// Like `emit_es5_array_binding_element` but with first flag for separator control
     fn emit_es5_array_binding_element_direct(
         &mut self,
         elem_idx: NodeIndex,
@@ -1915,7 +1915,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Like emit_es5_destructuring_pattern but handles the `first` flag for the first
+    /// Like `emit_es5_destructuring_pattern` but handles the `first` flag for the first
     /// non-omitted element, allowing it to be emitted without a `, ` prefix.
     /// Used when the initializer is a simple identifier and no temp variable is needed.
     fn emit_es5_destructuring_pattern_direct(
@@ -2178,7 +2178,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Similar to emit_computed_key_temp_if_needed but handles started flag for param destructuring
+    /// Similar to `emit_computed_key_temp_if_needed` but handles started flag for param destructuring
     fn emit_computed_key_temp_for_param(
         &mut self,
         key_idx: NodeIndex,
@@ -2831,7 +2831,7 @@ impl<'a> Printer<'a> {
                     // Try incrementing suffixes: name_1, name_2, name_3, ...
                     let mut found = None;
                     for suffix in 1..=100 {
-                        let candidate = format!("{}_{}", name, suffix);
+                        let candidate = format!("{name}_{suffix}");
                         if !self.file_identifiers.contains(&candidate)
                             && !self.generated_temp_names.contains(&candidate)
                         {
@@ -2988,7 +2988,7 @@ impl<'a> Printer<'a> {
                             // Into: var _d = __read(_c.value, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, ...
                             self.emit_es5_destructuring_with_read(
                                 decl.name,
-                                &format!("{}.value", result_name),
+                                &format!("{result_name}.value"),
                                 &mut first,
                             );
                         } else {
@@ -3011,7 +3011,7 @@ impl<'a> Printer<'a> {
             let mut first = true;
             self.emit_es5_destructuring_from_value(
                 initializer,
-                &format!("{}.value", result_name),
+                &format!("{result_name}.value"),
                 &mut first,
             );
             self.write_semicolon();
@@ -3028,9 +3028,9 @@ impl<'a> Printer<'a> {
     /// This ensures that references to outer variables with the same name get properly renamed.
     ///
     /// For example: `for (let v of [v])` where inner v shadows outer v
-    /// We register inner v as v_1, so when we emit [v], it becomes [v_1]
+    /// We register inner v as `v_1`, so when we emit [v], it becomes [`v_1`]
     ///
-    /// Note: Only registers variables from VARIABLE_DECLARATION_LIST nodes (e.g., `for (let v of ...)`).
+    /// Note: Only registers variables from `VARIABLE_DECLARATION_LIST` nodes (e.g., `for (let v of ...)`).
     /// Bare identifiers (e.g., `for (v of ...)`) are assignment targets, not declarations, so they don't
     /// create new variables and shouldn't be pre-registered.
     fn pre_register_for_of_loop_variable(&mut self, initializer: NodeIndex) {
@@ -3153,7 +3153,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        let element_expr = format!("{}[{}]", array_name, index_name);
+        let element_expr = format!("{array_name}[{index_name}]");
 
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
             self.write("var ");
@@ -3347,12 +3347,12 @@ impl<'a> Printer<'a> {
     /// Count the total number of elements (including holes) in an array destructuring pattern.
     /// TypeScript creates a temp for non-identifier sources when there are 2+ elements
     /// (including holes). With exactly 1 element (no holes), it inlines the source.
-    fn count_array_destructuring_elements(&self, elements: &[NodeIndex]) -> usize {
+    const fn count_array_destructuring_elements(&self, elements: &[NodeIndex]) -> usize {
         elements.len()
     }
 
     /// Lower an assignment destructuring pattern to ES5.
-    /// Called from emit_binary_expression when left side is array/object literal.
+    /// Called from `emit_binary_expression` when left side is array/object literal.
     pub(super) fn emit_assignment_destructuring_es5(
         &mut self,
         left_node: &Node,

@@ -24,7 +24,7 @@
 //!
 //! ## Migration Path
 //!
-//! 1. Add `with_judge()` helper to CheckerState for scoped Judge usage
+//! 1. Add `with_judge()` helper to `CheckerState` for scoped Judge usage
 //! 2. Refactor `is_subtype_of` to use `Judge.is_subtype()`
 //! 3. Keep `CompatChecker` for assignability (Lawyer layer)
 //! 4. Eventually integrate Salsa for memoization
@@ -40,9 +40,9 @@ use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 impl<'a> CheckerState<'a> {
     /// Execute a closure with a configured Judge instance.
     ///
-    /// The Judge provides pure type algebra operations (is_subtype, evaluate, etc.)
+    /// The Judge provides pure type algebra operations (`is_subtype`, evaluate, etc.)
     /// without TypeScript-specific quirks. For assignability checking with TS rules,
-    /// use `is_assignable_to` which goes through the Lawyer (CompatChecker) layer.
+    /// use `is_assignable_to` which goes through the Lawyer (`CompatChecker`) layer.
     ///
     /// ## Example
     ///

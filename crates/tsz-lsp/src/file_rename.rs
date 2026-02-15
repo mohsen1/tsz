@@ -12,7 +12,7 @@ use tsz_scanner::SyntaxKind;
 pub struct ImportLocation {
     /// The node containing the module specifier string
     pub specifier_node: NodeIndex,
-    /// The range of the specifier text (for TextEdit)
+    /// The range of the specifier text (for `TextEdit`)
     pub range: Range,
     /// The current specifier value (e.g., "./utils" or "../types")
     pub current_specifier: String,
@@ -25,7 +25,7 @@ impl<'a> FileRenameProvider<'a> {
     /// the renamed file.
     ///
     /// # Arguments
-    /// * `root` - The root node of the AST (typically SourceFile)
+    /// * `root` - The root node of the AST (typically `SourceFile`)
     /// * `target_path` - The path of the file being renamed (for filtering)
     ///
     /// # Returns

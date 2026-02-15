@@ -1,6 +1,6 @@
 //! Constructor Type Checking Utilities Module
 //!
-//! This module contains constructor type checking utility methods for CheckerState
+//! This module contains constructor type checking utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -11,7 +11,7 @@
 //! - Instance type extraction from constructors
 //! - Abstract constructor assignability
 //!
-//! This module extends CheckerState with utilities for constructor-related
+//! This module extends `CheckerState` with utilities for constructor-related
 //! type checking operations.
 
 use crate::query_boundaries::constructor_checker::{
@@ -493,8 +493,9 @@ impl<'a> CheckerState<'a> {
                     ctor_type
                 }
             }
-            ConstructorReturnMergeKind::Function(_) => ctor_type,
-            ConstructorReturnMergeKind::Other => ctor_type,
+            ConstructorReturnMergeKind::Function(_) | ConstructorReturnMergeKind::Other => {
+                ctor_type
+            }
         }
     }
 
@@ -856,15 +857,13 @@ impl<'a> CheckerState<'a> {
         if is_private {
             // TS2673: Constructor of class 'X' is private
             let message = format!(
-                "Constructor of class '{}' is private and only accessible within the class declaration.",
-                class_name
+                "Constructor of class '{class_name}' is private and only accessible within the class declaration."
             );
             self.error_at_node(idx, &message, diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATION);
         } else {
             // TS2674: Constructor of class 'X' is protected
             let message = format!(
-                "Constructor of class '{}' is protected and only accessible within the class declaration.",
-                class_name
+                "Constructor of class '{class_name}' is protected and only accessible within the class declaration."
             );
             self.error_at_node(idx, &message, diagnostic_codes::CONSTRUCTOR_OF_CLASS_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_THE_CLASS_DECLARATI);
         }

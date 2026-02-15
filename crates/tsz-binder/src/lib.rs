@@ -124,7 +124,7 @@ impl SymbolId {
     pub const NONE: Self = Self(u32::MAX);
 
     #[must_use]
-    pub fn is_none(&self) -> bool {
+    pub const fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
 }
@@ -168,7 +168,7 @@ pub struct Symbol {
 impl Symbol {
     /// Create a new symbol with the given flags and name.
     #[must_use]
-    pub fn new(id: SymbolId, flags: u32, name: String) -> Self {
+    pub const fn new(id: SymbolId, flags: u32, name: String) -> Self {
         Self {
             flags,
             escaped_name: name,
@@ -188,13 +188,13 @@ impl Symbol {
 
     /// Check if symbol has all specified flags.
     #[must_use]
-    pub fn has_flags(&self, flags: u32) -> bool {
+    pub const fn has_flags(&self, flags: u32) -> bool {
         (self.flags & flags) == flags
     }
 
     /// Check if symbol has any of specified flags.
     #[must_use]
-    pub fn has_any_flags(&self, flags: u32) -> bool {
+    pub const fn has_any_flags(&self, flags: u32) -> bool {
         (self.flags & flags) != 0
     }
 }
@@ -283,7 +283,7 @@ impl SymbolArena {
     const MAX_SYMBOL_PREALLOC: usize = 1_000_000;
 
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             symbols: Vec::new(),
             base_offset: 0,
@@ -293,7 +293,7 @@ impl SymbolArena {
     /// Create a new symbol arena with a base offset for symbol IDs.
     /// Used for checker-local symbols to avoid collisions with binder symbols.
     #[must_use]
-    pub fn new_with_base(base: u32) -> Self {
+    pub const fn new_with_base(base: u32) -> Self {
         Self {
             symbols: Vec::new(),
             base_offset: base,
@@ -370,13 +370,13 @@ impl SymbolArena {
 
     /// Get the number of symbols.
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.symbols.len()
     }
 
     /// Check if empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.symbols.is_empty()
     }
 
@@ -483,7 +483,7 @@ impl FlowNodeId {
     pub const NONE: Self = Self(u32::MAX);
 
     #[must_use]
-    pub fn is_none(&self) -> bool {
+    pub const fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
 }
@@ -503,7 +503,7 @@ pub struct FlowNode {
 
 impl FlowNode {
     #[must_use]
-    pub fn new(id: FlowNodeId, flags: u32) -> Self {
+    pub const fn new(id: FlowNodeId, flags: u32) -> Self {
         Self {
             flags,
             id,
@@ -513,12 +513,12 @@ impl FlowNode {
     }
 
     #[must_use]
-    pub fn has_flags(&self, flags: u32) -> bool {
+    pub const fn has_flags(&self, flags: u32) -> bool {
         (self.flags & flags) == flags
     }
 
     #[must_use]
-    pub fn has_any_flags(&self, flags: u32) -> bool {
+    pub const fn has_any_flags(&self, flags: u32) -> bool {
         (self.flags & flags) != 0
     }
 }
@@ -531,7 +531,7 @@ pub struct FlowNodeArena {
 
 impl FlowNodeArena {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { nodes: Vec::new() }
     }
 
@@ -569,12 +569,12 @@ impl FlowNodeArena {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 
@@ -615,7 +615,7 @@ impl ScopeId {
     pub const NONE: Self = Self(u32::MAX);
 
     #[must_use]
-    pub fn is_none(&self) -> bool {
+    pub const fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
 }
@@ -663,7 +663,7 @@ impl Scope {
 
     /// Check if this scope is a function scope (where var hoisting happens)
     #[must_use]
-    pub fn is_function_scope(&self) -> bool {
+    pub const fn is_function_scope(&self) -> bool {
         matches!(
             self.kind,
             ContainerKind::SourceFile | ContainerKind::Function | ContainerKind::Module
@@ -703,7 +703,7 @@ impl ScopeContext {
 
     /// Check if this scope is a function scope (where var hoisting happens)
     #[must_use]
-    pub fn is_function_scope(&self) -> bool {
+    pub const fn is_function_scope(&self) -> bool {
         matches!(
             self.container_kind,
             ContainerKind::SourceFile | ContainerKind::Function | ContainerKind::Module

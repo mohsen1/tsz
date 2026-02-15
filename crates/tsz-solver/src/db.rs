@@ -98,7 +98,7 @@ pub trait TypeDatabase {
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
 
     /// Get the base class type for a symbol (class/interface).
-    /// Returns the TypeId of the extends clause, or None if the symbol doesn't extend anything.
+    /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
     /// This is used by the BCT algorithm to find common base classes.
     fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId>;
 
@@ -346,10 +346,10 @@ impl TypeDatabase for TypeInterner {
     }
 }
 
-/// Implement TypeResolver for TypeInterner with default noop implementations.
+/// Implement `TypeResolver` for `TypeInterner` with default noop implementations.
 ///
-/// TypeInterner doesn't have access to the Binder or type environment,
-/// so it cannot resolve symbol references or DefIds. This implementation
+/// `TypeInterner` doesn't have access to the Binder or type environment,
+/// so it cannot resolve symbol references or `DefIds`. This implementation
 /// returns None for all resolution operations, which is the correct behavior
 /// for contexts that don't have access to type binding information.
 impl TypeResolver for TypeInterner {
@@ -393,9 +393,9 @@ impl TypeResolver for TypeInterner {
 /// Query layer for higher-level solver operations.
 ///
 /// This is the incremental boundary where caching and (future) salsa hooks live.
-/// Inherits from TypeResolver to enable Lazy/Ref type resolution through evaluate_type().
+/// Inherits from `TypeResolver` to enable Lazy/Ref type resolution through `evaluate_type()`.
 pub trait QueryDatabase: TypeDatabase + TypeResolver {
-    /// Expose the underlying TypeDatabase view for legacy entry points.
+    /// Expose the underlying `TypeDatabase` view for legacy entry points.
     fn as_type_database(&self) -> &dyn TypeDatabase;
 
     /// Expose the checked construction surface for type constructors.
@@ -588,15 +588,15 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Remove null and undefined from a type
     fn remove_nullish(&self, type_id: TypeId) -> TypeId;
 
-    /// Get the canonical TypeId for a type, achieving O(1) structural identity checks.
+    /// Get the canonical `TypeId` for a type, achieving O(1) structural identity checks.
     ///
     /// This memoizes the Canonicalizer output so that structurally identical types
     /// (e.g., `type A = Box<Box<string>>` and `type B = Box<Box<string>>`) return
-    /// the same canonical TypeId.
+    /// the same canonical `TypeId`.
     ///
     /// The implementation must:
     /// - Use a fresh Canonicalizer with empty stacks (for absolute De Bruijn indices)
-    /// - Only expand TypeAlias (DefKind::TypeAlias), preserving nominal types
+    /// - Only expand `TypeAlias` (`DefKind::TypeAlias`), preserving nominal types
     /// - Cache the result for O(1) subsequent lookups
     ///
     /// Task #49: Global Canonical Mapping
@@ -605,14 +605,14 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Subtype check with compiler flags.
     ///
     /// The `flags` parameter is a packed u16 bitmask matching `RelationCacheKey.flags`:
-    /// - bit 0: strict_null_checks
-    /// - bit 1: strict_function_types
-    /// - bit 2: exact_optional_property_types
-    /// - bit 3: no_unchecked_indexed_access
-    /// - bit 4: disable_method_bivariance
-    /// - bit 5: allow_void_return
-    /// - bit 6: allow_bivariant_rest
-    /// - bit 7: allow_bivariant_param_count
+    /// - bit 0: `strict_null_checks`
+    /// - bit 1: `strict_function_types`
+    /// - bit 2: `exact_optional_property_types`
+    /// - bit 3: `no_unchecked_indexed_access`
+    /// - bit 4: `disable_method_bivariance`
+    /// - bit 5: `allow_void_return`
+    /// - bit 6: `allow_bivariant_rest`
+    /// - bit 7: `allow_bivariant_param_count`
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
         // Individual callers can use is_subtype_of_with_flags for explicit flag control
@@ -681,8 +681,8 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
     /// Task #41: Get the variance mask for a generic type definition.
     ///
-    /// Returns the variance of each type parameter for the given DefId.
-    /// Returns None if the DefId is not a generic type or variance cannot be determined.
+    /// Returns the variance of each type parameter for the given `DefId`.
+    /// Returns None if the `DefId` is not a generic type or variance cannot be determined.
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>>;
 }
 
@@ -897,10 +897,10 @@ pub struct QueryCache<'a> {
     assignability_cache: RwLock<FxHashMap<RelationCacheKey, bool>>,
     property_cache: RwLock<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
     /// Task #41: Variance cache for generic type parameters.
-    /// Stores computed variance masks for DefIds to enable O(1) generic assignability.
+    /// Stores computed variance masks for `DefIds` to enable O(1) generic assignability.
     variance_cache: RwLock<FxHashMap<DefId, Arc<[Variance]>>>,
     /// Task #49: Canonical cache for O(1) structural identity checks.
-    /// Maps TypeId -> canonical TypeId for structurally identical types.
+    /// Maps `TypeId` -> canonical `TypeId` for structurally identical types.
     canonical_cache: RwLock<FxHashMap<TypeId, TypeId>>,
     subtype_cache_hits: AtomicU64,
     subtype_cache_misses: AtomicU64,
@@ -1393,10 +1393,10 @@ impl TypeDatabase for QueryCache<'_> {
     }
 }
 
-/// Implement TypeResolver for QueryCache with default noop implementations.
+/// Implement `TypeResolver` for `QueryCache` with default noop implementations.
 ///
-/// QueryCache doesn't have access to the Binder or type environment,
-/// so it cannot resolve symbol references or DefIds. This implementation
+/// `QueryCache` doesn't have access to the Binder or type environment,
+/// so it cannot resolve symbol references or `DefIds`. This implementation
 /// returns None for all resolution operations.
 impl TypeResolver for QueryCache<'_> {
     fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
@@ -1622,12 +1622,12 @@ impl QueryDatabase for QueryCache<'_> {
         result
     }
 
-    /// Convenience wrapper for is_subtype_of with default flags.
+    /// Convenience wrapper for `is_subtype_of` with default flags.
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         self.is_subtype_of_with_flags(source, target, 0) // Default non-strict mode for backward compatibility
     }
 
-    /// Convenience wrapper for is_assignable_to with default flags.
+    /// Convenience wrapper for `is_assignable_to` with default flags.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         self.is_assignable_to_with_flags(source, target, 0) // Default non-strict mode for backward compatibility
     }

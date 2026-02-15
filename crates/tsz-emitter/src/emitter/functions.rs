@@ -221,7 +221,6 @@ impl<'a> Printer<'a> {
                     for ch in suffix.chars() {
                         match ch {
                             // Whitespace - skip
-                            ' ' | '\t' | '\n' | '\r' => continue,
                             // Found closing paren - had parens
                             ')' => {
                                 tracing::trace!("Found ')' in source, returning true");

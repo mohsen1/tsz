@@ -1,6 +1,6 @@
 //! Intersection Type Utilities Module
 //!
-//! This module contains intersection type utility methods for CheckerState
+//! This module contains intersection type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Intersection type compatibility checking
 //! - Intersection type simplification
 //!
-//! This module extends CheckerState with utilities for intersection type
+//! This module extends `CheckerState` with utilities for intersection type
 //! operations, providing cleaner APIs for intersection type checking.
 
 use crate::query_boundaries::intersection_type as query;
@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the members of an intersection type.
     ///
-    /// Returns a vector of TypeIds representing all members of the intersection.
+    /// Returns a vector of `TypeIds` representing all members of the intersection.
     /// Returns an empty vec if the type is not an intersection.
     pub fn get_intersection_members(&self, type_id: TypeId) -> Vec<TypeId> {
         query::intersection_members(self.ctx.types, type_id).unwrap_or_default()

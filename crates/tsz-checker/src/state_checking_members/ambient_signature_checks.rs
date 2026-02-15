@@ -888,15 +888,15 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Promise/async type checking methods moved to promise_checker.rs
-    /// The lower_type_with_bindings helper remains here as it requires
+    /// Promise/async type checking methods moved to `promise_checker.rs`
+    /// The `lower_type_with_bindings` helper remains here as it requires
     /// access to private resolver methods.
     ///
     /// Lower a type node with type parameter bindings.
     ///
     /// This is used to substitute type parameters with concrete types
     /// when extracting type arguments from generic Promise types.
-    /// Made pub(crate) so it can be called from promise_checker.rs.
+    /// Made pub(crate) so it can be called from `promise_checker.rs`.
     pub(crate) fn lower_type_with_bindings(
         &self,
         type_node: NodeIndex,

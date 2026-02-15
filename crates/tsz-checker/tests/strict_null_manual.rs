@@ -45,8 +45,7 @@ x.prop;
         .count();
     assert!(
         ts18047_count >= 1,
-        "Expected at least 1 TS18047 error, got {}",
-        ts18047_count
+        "Expected at least 1 TS18047 error, got {ts18047_count}"
     );
 }
 
@@ -86,8 +85,7 @@ x.prop;
         .count();
     assert!(
         ts18048_count >= 1,
-        "Expected at least 1 TS18048 error for undefined, got {}",
-        ts18048_count
+        "Expected at least 1 TS18048 error for undefined, got {ts18048_count}"
     );
 }
 
@@ -127,8 +125,7 @@ x.prop;
         .count();
     assert!(
         ts18047_count >= 1,
-        "Expected at least 1 TS18047 error, got {}",
-        ts18047_count
+        "Expected at least 1 TS18047 error, got {ts18047_count}"
     );
 }
 
@@ -165,7 +162,6 @@ x.prop;
         .count();
     assert_eq!(
         error_count, 0,
-        "Expected no errors with any type, got {}",
-        error_count
+        "Expected no errors with any type, got {error_count}"
     );
 }

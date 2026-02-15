@@ -733,8 +733,7 @@ fn test_instantiate_template_literal_with_multiple_unions() {
             let expected_lit = interner.literal_string(expected);
             assert!(
                 members.contains(&expected_lit),
-                "Expected '{}' to be in union",
-                expected
+                "Expected '{expected}' to be in union"
             );
         }
     } else {
@@ -1340,7 +1339,7 @@ fn test_instantiate_string_intrinsic_preserves_type_param() {
 ///
 /// When a Callable type has multiple call signatures and one signature shadows
 /// a type parameter (e.g., class `B<T>` has method `bar<T>`), the visiting cache
-/// in TypeInstantiator must not leak across signatures. Otherwise, a TypeParameter
+/// in `TypeInstantiator` must not leak across signatures. Otherwise, a `TypeParameter`
 /// cached as "unsubstituted" (because it was shadowed in bar's scope) would
 /// incorrectly remain unsubstituted when processing foo's scope.
 ///
@@ -1365,7 +1364,7 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
         is_const: false,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
     // foo(t: T, u: U) — uses class-level T and U, no own type params
     let foo_sig = CallSignature {
@@ -1392,7 +1391,7 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
 
     // bar<T>(t: T, u: U) — shadows class T with its own T
     let bar_sig = CallSignature {
-        type_params: vec![t_param.clone()],
+        type_params: vec![t_param],
         params: vec![
             ParamInfo {
                 name: Some(interner.intern_string("t")),
@@ -1460,7 +1459,7 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
 /// instantiating the property first caches `TypeId(T) → string` in the visiting cache.
 /// When the method Function type is then instantiated, `T` should be shadowed (method's
 /// own `<T>`), but `instantiate_inner` returns the cached `string` before `instantiate_key`
-/// checks `is_shadowed`. The fix removes shadowed TypeParameter entries from the cache
+/// checks `is_shadowed`. The fix removes shadowed `TypeParameter` entries from the cache
 /// when entering the function's scope.
 #[test]
 fn test_object_property_does_not_contaminate_method_type_param() {
@@ -1481,11 +1480,11 @@ fn test_object_property_does_not_contaminate_method_type_param() {
         is_const: false,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeData::TypeParameter(u_param.clone()));
+    let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
     // Method foo3<T>(t: T, u: U): T — shadows class T
     let method_type = interner.function(FunctionShape {
-        type_params: vec![t_param.clone()],
+        type_params: vec![t_param],
         params: vec![
             ParamInfo {
                 name: Some(interner.intern_string("t")),

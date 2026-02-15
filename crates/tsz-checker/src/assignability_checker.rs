@@ -9,7 +9,7 @@
 //! - Excess property checking for object literals
 //! - Weak type union violations
 //!
-//! This module extends CheckerState with assignability-related methods as part of
+//! This module extends `CheckerState` with assignability-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::query_boundaries::assignability::{
@@ -182,7 +182,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Centralized suppression for TS2322-style assignability diagnostics.
-    pub(crate) fn should_suppress_assignability_diagnostic(
+    pub(crate) const fn should_suppress_assignability_diagnostic(
         &self,
         source: TypeId,
         target: TypeId,
@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
     /// This is critical for intersection/union type assignability. When we have
     /// `type AB = A & B`, the intersection contains Ref(A) and Ref(B). Before we
     /// can check assignability against the intersection, we need to ensure A and B
-    /// are resolved and in type_env so the subtype checker can resolve them.
+    /// are resolved and in `type_env` so the subtype checker can resolve them.
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
         let mut visited_types = FxHashSet::default();
         let mut visited_def_ids = FxHashSet::default();
@@ -443,7 +443,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if `source` type is assignable to `target` type, resolving Ref types.
     ///
-    /// Uses the provided TypeEnvironment to resolve type references.
+    /// Uses the provided `TypeEnvironment` to resolve type references.
     pub fn is_assignable_to_with_env(
         &self,
         source: TypeId,
@@ -472,7 +472,7 @@ impl<'a> CheckerState<'a> {
     /// (unlike function properties which are contravariant with strictFunctionTypes).
     ///
     /// Follows the same pattern as `is_assignable_to` but calls `is_assignable_to_bivariant_callback`
-    /// which disables strict_function_types for the check.
+    /// which disables `strict_function_types` for the check.
     pub fn is_assignable_to_bivariant(&mut self, source: TypeId, target: TypeId) -> bool {
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
@@ -1055,14 +1055,14 @@ impl<'a> CheckerState<'a> {
     // Type Identity and Compatibility
     // =========================================================================
 
-    /// Check if two types are identical (same TypeId).
+    /// Check if two types are identical (same `TypeId`).
     pub fn are_types_identical(&self, type1: TypeId, type2: TypeId) -> bool {
         type1 == type2
     }
 
     /// Check if variable declaration types are compatible (used for multiple declarations).
     ///
-    /// Delegates to the Solver's CompatChecker to determine if two types are
+    /// Delegates to the Solver's `CompatChecker` to determine if two types are
     /// compatible for redeclaration (TS2403). This moves enum comparison logic
     /// from Checker to Solver per Phase 5 Anti-Pattern 8.1 removal.
     pub(crate) fn are_var_decl_types_compatible(

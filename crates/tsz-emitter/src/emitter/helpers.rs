@@ -6,7 +6,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
+    pub(super) const fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
     }
 
@@ -71,12 +71,12 @@ impl<'a> Printer<'a> {
     }
 
     /// Increase indentation.
-    pub(super) fn increase_indent(&mut self) {
+    pub(super) const fn increase_indent(&mut self) {
         self.writer.increase_indent();
     }
 
     /// Decrease indentation.
-    pub(super) fn decrease_indent(&mut self) {
+    pub(super) const fn decrease_indent(&mut self) {
         self.writer.decrease_indent();
     }
 
@@ -158,7 +158,7 @@ impl<'a> Printer<'a> {
     /// or any previously generated temp name. Uses a single global counter like TypeScript.
     ///
     /// Generates names: _a, _b, _c, ..., _z, _0, _1, ...
-    /// Skips counts 8 (_i) and 13 (_n) which TypeScript reserves for dedicated TempFlags.
+    /// Skips counts 8 (_i) and 13 (_n) which TypeScript reserves for dedicated `TempFlags`.
     /// Also skips names that appear in `file_identifiers` or `generated_temp_names`.
     fn generate_fresh_temp_name(&mut self) -> String {
         loop {
@@ -266,7 +266,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Like make_unique_name but also records the temp for hoisting as a `var` declaration.
+    /// Like `make_unique_name` but also records the temp for hoisting as a `var` declaration.
     /// Used for assignment destructuring temps which need `var _a, _b, ...;` at scope top.
     pub(super) fn make_unique_name_hoisted(&mut self) -> String {
         let name = self.make_unique_name();
@@ -274,7 +274,7 @@ impl<'a> Printer<'a> {
         name
     }
 
-    /// Like make_unique_name but also records the temp for hoisting before references.
+    /// Like `make_unique_name` but also records the temp for hoisting before references.
     /// Used for assignment target values in logical-assignment lowering.
     pub(super) fn make_unique_name_hoisted_value(&mut self) -> String {
         let name = if let Some(name) = self.preallocated_logical_assignment_value_temps.pop_front()

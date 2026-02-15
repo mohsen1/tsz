@@ -1,6 +1,6 @@
 //! Tuple Type Utilities Module
 //!
-//! This module contains tuple type utility methods for CheckerState
+//! This module contains tuple type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Tuple type compatibility checking
 //! - Optional and rest element handling
 //!
-//! This module extends CheckerState with utilities for tuple type
+//! This module extends `CheckerState` with utilities for tuple type
 //! operations, providing cleaner APIs for tuple type checking.
 
 use crate::query_boundaries::tuple_type as query;
@@ -61,7 +61,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get all element types from a tuple type.
     ///
-    /// Returns a vector of TypeIds representing all elements in order.
+    /// Returns a vector of `TypeIds` representing all elements in order.
     /// Returns an empty vec if the type is not a tuple.
     pub fn get_tuple_element_types(&self, tuple_type: TypeId) -> Vec<TypeId> {
         query::tuple_elements(self.ctx.types, tuple_type)
@@ -207,7 +207,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the common element type if tuple is homogeneous.
     ///
-    /// Returns Some(element_type) if all elements have the same type,
+    /// Returns `Some(element_type)` if all elements have the same type,
     /// or None otherwise.
     pub fn get_homogeneous_tuple_element_type(&self, tuple_type: TypeId) -> Option<TypeId> {
         if self.is_homogeneous_tuple(tuple_type) {

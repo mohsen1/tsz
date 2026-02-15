@@ -1,6 +1,6 @@
 //! Property Access Resolution
 //!
-//! This module contains the PropertyAccessEvaluator and related types for
+//! This module contains the `PropertyAccessEvaluator` and related types for
 //! resolving property access on types (obj.prop, obj["key"], etc.).
 //!
 //! Extracted from operations.rs to keep file sizes manageable.
@@ -34,7 +34,7 @@ pub enum PropertyAccessResult {
         type_id: TypeId,
         /// The write type (setter parameter type) when different from read type.
         /// Used for assignment checking with divergent accessors (TS 4.3+).
-        /// `None` means write_type == type_id (no divergence).
+        /// `None` means `write_type` == `type_id` (no divergence).
         write_type: Option<TypeId>,
         /// True if this property was resolved via an index signature
         /// (not an explicit property declaration). Used for error 4111.
@@ -64,38 +64,38 @@ pub enum PropertyAccessResult {
 impl PropertyAccessResult {
     /// Returns true if this is a successful property access.
     #[inline]
-    pub fn is_success(&self) -> bool {
+    pub const fn is_success(&self) -> bool {
         matches!(self, Self::Success { .. })
     }
 
     /// Returns true if the property was not found.
     #[inline]
-    pub fn is_not_found(&self) -> bool {
+    pub const fn is_not_found(&self) -> bool {
         matches!(self, Self::PropertyNotFound { .. })
     }
 
     /// Returns true if the type is possibly null or undefined.
     #[inline]
-    pub fn is_possibly_null_or_undefined(&self) -> bool {
+    pub const fn is_possibly_null_or_undefined(&self) -> bool {
         matches!(self, Self::PossiblyNullOrUndefined { .. })
     }
 
     /// Returns true if the type is unknown.
     #[inline]
-    pub fn is_unknown(&self) -> bool {
+    pub const fn is_unknown(&self) -> bool {
         matches!(self, Self::IsUnknown)
     }
 
-    /// Extracts the type_id from a Success result, or None otherwise.
-    pub fn success_type(&self) -> Option<TypeId> {
+    /// Extracts the `type_id` from a Success result, or None otherwise.
+    pub const fn success_type(&self) -> Option<TypeId> {
         match self {
             Self::Success { type_id, .. } => Some(*type_id),
             _ => None,
         }
     }
 
-    /// Extracts both type_id and from_index_signature from a Success result.
-    pub fn success_info(&self) -> Option<(TypeId, bool)> {
+    /// Extracts both `type_id` and `from_index_signature` from a Success result.
+    pub const fn success_info(&self) -> Option<(TypeId, bool)> {
         match self {
             Self::Success {
                 type_id,
@@ -106,7 +106,7 @@ impl PropertyAccessResult {
         }
     }
 
-    /// Maps the type_id in a Success result, leaving other variants unchanged.
+    /// Maps the `type_id` in a Success result, leaving other variants unchanged.
     pub fn map_success_type<F>(self, f: F) -> Self
     where
         F: FnOnce(TypeId) -> TypeId,
@@ -130,8 +130,8 @@ impl PropertyAccessResult {
         self.success_type().unwrap_or(default)
     }
 
-    /// Extracts the property_type from a PossiblyNullOrUndefined result.
-    pub fn nullable_property_type(&self) -> Option<TypeId> {
+    /// Extracts the `property_type` from a `PossiblyNullOrUndefined` result.
+    pub const fn nullable_property_type(&self) -> Option<TypeId> {
         match self {
             Self::PossiblyNullOrUndefined { property_type, .. } => *property_type,
             _ => None,
@@ -141,7 +141,7 @@ impl PropertyAccessResult {
 
 /// Evaluates property access.
 ///
-/// Uses QueryDatabase which provides both TypeDatabase and TypeResolver functionality,
+/// Uses `QueryDatabase` which provides both `TypeDatabase` and `TypeResolver` functionality,
 /// enabling proper resolution of Lazy types and type aliases.
 pub struct PropertyAccessEvaluator<'a> {
     db: &'a dyn QueryDatabase,
@@ -192,11 +192,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
     }
 
-    pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
+    pub const fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         self.no_unchecked_indexed_access = enabled;
     }
 
-    /// Helper to access the underlying TypeDatabase
+    /// Helper to access the underlying `TypeDatabase`
     fn interner(&self) -> &dyn TypeDatabase {
         self.db.as_type_database()
     }
@@ -969,8 +969,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Step 4: Apply optional modifier
         let final_type = match mapped.optional_modifier {
             Some(MappedModifier::Add) => self.interner().union2(property_type, TypeId::UNDEFINED),
-            Some(MappedModifier::Remove) => property_type,
-            None => property_type,
+            Some(MappedModifier::Remove) | None => property_type,
         };
 
         Some(PropertyAccessResult::Success {
@@ -1057,8 +1056,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         use crate::types::TypeData;
 
         match self.interner().lookup(type_id) {
-            Some(TypeData::Array(_)) => true,
-            Some(TypeData::Tuple(_)) => true,
+            Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
             Some(TypeData::TypeParameter(info)) => {
                 // Check if the type parameter has an array-like constraint
                 if let Some(constraint) = info.constraint {
@@ -1127,25 +1125,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     .any(|&m| self.is_key_in_mapped_constraint(m, prop_name))
             }
 
-            // string type covers all string properties
-            TypeData::Intrinsic(crate::types::IntrinsicKind::String) => true,
-
-            // KeyOf that couldn't be fully evaluated - be permissive
-            // This handles cases like `keyof T` where T is a type parameter
-            TypeData::KeyOf(_) => true,
-
-            // Type parameters - we can't know the keys statically, be permissive
-            TypeData::TypeParameter(_) => true,
-
-            // Conditional types - try to evaluate them
-            // If evaluation didn't reduce it, be permissive as we can't know statically
-            TypeData::Conditional(_) => true,
-
-            // Application types that didn't fully evaluate - be permissive
-            TypeData::Application(_) => true,
-
-            // Infer types in conditional context - be permissive
-            TypeData::Infer(_) => true,
+            TypeData::Intrinsic(crate::types::IntrinsicKind::String)
+            | TypeData::KeyOf(_)
+            | TypeData::TypeParameter(_)
+            | TypeData::Conditional(_)
+            | TypeData::Application(_)
+            | TypeData::Infer(_) => true,
 
             // Other types - be conservative and reject
             _ => false,

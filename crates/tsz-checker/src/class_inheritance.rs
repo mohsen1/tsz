@@ -1,6 +1,6 @@
 //! Class Inheritance Cycle Detection
 //!
-//! This module provides cycle detection for class inheritance using the InheritanceGraph.
+//! This module provides cycle detection for class inheritance using the `InheritanceGraph`.
 //! It detects circular inheritance BEFORE type resolution to prevent stack overflow.
 
 use crate::diagnostics::{
@@ -15,7 +15,7 @@ pub struct ClassInheritanceChecker<'a, 'ctx> {
 }
 
 impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
-    pub fn new(ctx: &'a mut crate::CheckerContext<'ctx>) -> Self {
+    pub const fn new(ctx: &'a mut crate::CheckerContext<'ctx>) -> Self {
         Self { ctx }
     }
 
@@ -88,7 +88,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         false
     }
 
-    /// Detect cycles using DFS traversal on the InheritanceGraph
+    /// Detect cycles using DFS traversal on the `InheritanceGraph`
     ///
     /// This checks if adding current->parents would create a cycle by traversing
     /// the graph starting from each parent and seeing if we can reach current.

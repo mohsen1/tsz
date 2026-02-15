@@ -6,7 +6,7 @@ use crate::visitor::application_id;
 fn atom_names(interner: &TypeInterner, atoms: &[tsz_common::interner::Atom]) -> Vec<String> {
     let mut names: Vec<String> = atoms
         .iter()
-        .map(|atom| interner.resolve_atom(*atom).to_string())
+        .map(|atom| interner.resolve_atom(*atom))
         .collect();
     names.sort();
     names

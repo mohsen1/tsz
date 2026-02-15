@@ -1,6 +1,6 @@
-//! CommonJS Module Transform (IR-based)
+//! `CommonJS` Module Transform (IR-based)
 //!
-//! Transforms ES modules to CommonJS format, producing IR nodes instead of strings.
+//! Transforms ES modules to `CommonJS` format, producing IR nodes instead of strings.
 //!
 //! ```typescript
 //! import { foo } from "./module";
@@ -26,21 +26,21 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-/// Context for CommonJS transformation
+/// Context for `CommonJS` transformation
 pub struct CommonJsTransformContext<'a> {
     arena: &'a NodeArena,
     module_counter: u32,
 }
 
 impl<'a> CommonJsTransformContext<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             module_counter: 0,
         }
     }
 
-    /// Transform a source file's statements to CommonJS IR
+    /// Transform a source file's statements to `CommonJS` IR
     pub fn transform_source_file(&mut self, statements: &[NodeIndex]) -> Vec<IRNode> {
         let mut result = Vec::new();
 
@@ -110,14 +110,14 @@ impl<'a> CommonJsTransformContext<'a> {
 
         // Side-effect import: `import "./x";` -> `require("./x");`
         if import.import_clause.is_none() {
-            return Some(IRNode::Raw(format!("require(\"{}\");", module_spec)));
+            return Some(IRNode::Raw(format!("require(\"{module_spec}\");")));
         }
 
         let module_var = sanitize_module_name(&module_spec);
 
         // Generate module variable name
         self.module_counter += 1;
-        let var_name = format!("{}_1", module_var);
+        let var_name = format!("{module_var}_1");
 
         let mut statements = Vec::new();
 
@@ -155,7 +155,7 @@ impl<'a> CommonJsTransformContext<'a> {
                 if let Some(name) = get_identifier_text(self.arena, named_imports.name) {
                     statements.push(IRNode::NamespaceImport {
                         var_name: name,
-                        module_var: var_name.clone(),
+                        module_var: var_name,
                     });
                 }
             } else {
@@ -225,7 +225,7 @@ impl<'a> CommonJsTransformContext<'a> {
         let module_var = sanitize_module_name(&module_spec);
 
         self.module_counter += 1;
-        let var_name = format!("{}_1", module_var);
+        let var_name = format!("{module_var}_1");
 
         let mut statements = Vec::new();
 

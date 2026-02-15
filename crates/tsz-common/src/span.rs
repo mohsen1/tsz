@@ -320,7 +320,7 @@ pub struct ByteSpan<'a> {
 impl<'a> ByteSpan<'a> {
     /// Create a new `ByteSpan`.
     #[must_use]
-    pub fn new(text: &'a str, span: Span) -> Self {
+    pub const fn new(text: &'a str, span: Span) -> Self {
         ByteSpan { text, span }
     }
 
@@ -332,13 +332,13 @@ impl<'a> ByteSpan<'a> {
 
     /// Get the length in bytes.
     #[must_use]
-    pub fn len(&self) -> u32 {
+    pub const fn len(&self) -> u32 {
         self.span.len()
     }
 
     /// Check if empty.
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.span.is_empty()
     }
 }

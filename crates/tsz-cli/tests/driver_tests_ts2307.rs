@@ -290,8 +290,8 @@ mod ts2307_path_mapping_tests {
         std::fs::create_dir_all(&utils_dir).unwrap();
 
         for name in &["helper", "utils", "constants"] {
-            let file = utils_dir.join(format!("{}.ts", name));
-            std::fs::write(&file, format!("export function {}() {{}}", name)).unwrap();
+            let file = utils_dir.join(format!("{name}.ts"));
+            std::fs::write(&file, format!("export function {name}() {{}}")).unwrap();
         }
 
         // Create a path mapping with wildcard: "@utils/*" -> "./utils/*"
@@ -312,8 +312,7 @@ mod ts2307_path_mapping_tests {
 
             assert!(
                 result.is_some(),
-                "Path mapping with wildcard should resolve: {}",
-                module_name
+                "Path mapping with wildcard should resolve: {module_name}"
             );
         }
     }

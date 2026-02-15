@@ -191,7 +191,7 @@ fn generate_deep_control_flow(depth: usize) -> String {
     }
     code.push_str("x = 42;\n");
     for i in 0..depth {
-        code.push_str(&format!("}} else {{ x = {}; }}\n", i));
+        code.push_str(&format!("}} else {{ x = {i}; }}\n"));
     }
     code.push_str("console.log(x);\n");
     code
@@ -324,9 +324,9 @@ fn bench_scaling(c: &mut Criterion) {
         let mut code = String::from("let x: number;\n");
         for i in 0..n {
             if i == 0 {
-                code.push_str(&format!("if (Math.random() > 0.5) {{ x = {}; }}\n", i));
+                code.push_str(&format!("if (Math.random() > 0.5) {{ x = {i}; }}\n"));
             } else {
-                code.push_str(&format!("else if (Math.random() > 0.5) {{ x = {}; }}\n", i));
+                code.push_str(&format!("else if (Math.random() > 0.5) {{ x = {i}; }}\n"));
             }
         }
         code.push_str("else { x = -1; }\nconsole.log(x);\n");

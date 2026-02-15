@@ -5,7 +5,7 @@
 //!
 //! - **Printing**: AST nodes → JavaScript text (this module)
 //! - **Transformation**: TypeScript features → ES5/ES6 (emitter internals)
-//! - **Output**: Text generation and source maps (source_writer)
+//! - **Output**: Text generation and source maps (`source_writer`)
 //!
 //! # Safety
 //!
@@ -45,7 +45,7 @@ use tsz_parser::parser::node::NodeArena;
 /// For advanced options, use `emitter::Printer` directly with `PrinterOptions`.
 #[derive(Clone, Debug, Default)]
 pub struct PrintOptions {
-    /// Target ECMAScript version (ESNext by default)
+    /// Target ECMAScript version (`ESNext` by default)
     pub target: ScriptTarget,
     /// Module format (None by default)
     pub module: ModuleKind,
@@ -74,7 +74,7 @@ impl PrintOptions {
         }
     }
 
-    /// Create options for CommonJS module output
+    /// Create options for `CommonJS` module output
     pub fn commonjs() -> Self {
         Self {
             module: ModuleKind::CommonJS,
@@ -82,7 +82,7 @@ impl PrintOptions {
         }
     }
 
-    /// Create options for ES5 CommonJS output
+    /// Create options for ES5 `CommonJS` output
     pub fn es5_commonjs() -> Self {
         Self {
             target: ScriptTarget::ES5,
@@ -91,7 +91,7 @@ impl PrintOptions {
         }
     }
 
-    /// Convert to internal PrinterOptions
+    /// Convert to internal `PrinterOptions`
     fn to_printer_options(&self) -> PrinterOptions {
         PrinterOptions {
             target: self.target,
@@ -118,16 +118,16 @@ pub struct PrintResult {
 }
 
 impl PrintResult {
-    /// Create a new PrintResult with just code
-    pub fn new(code: String) -> Self {
+    /// Create a new `PrintResult` with just code
+    pub const fn new(code: String) -> Self {
         Self {
             code,
             source_map: None,
         }
     }
 
-    /// Create a new PrintResult with code and source map
-    pub fn with_source_map(code: String, source_map: String) -> Self {
+    /// Create a new `PrintResult` with code and source map
+    pub const fn with_source_map(code: String, source_map: String) -> Self {
         Self {
             code,
             source_map: Some(source_map),
@@ -290,7 +290,7 @@ impl<'a> Printer<'a> {
 /// Lower and print an AST in one step.
 ///
 /// This runs the lowering pass to compute transforms, then prints the result.
-/// Use this when you want ES5 or CommonJS output with proper transforms.
+/// Use this when you want ES5 or `CommonJS` output with proper transforms.
 pub fn lower_and_print(arena: &NodeArena, root: NodeIndex, options: PrintOptions) -> PrintResult {
     // Create emit context for lowering
     let emit_ctx = EmitContext::with_options(options.to_printer_options());
@@ -398,7 +398,7 @@ pub mod safe_slice {
     }
 
     /// Find the next character boundary at or after a position.
-    pub fn next_boundary(s: &str, pos: usize) -> usize {
+    pub const fn next_boundary(s: &str, pos: usize) -> usize {
         if pos >= s.len() {
             return s.len();
         }
@@ -411,7 +411,7 @@ pub mod safe_slice {
     }
 
     /// Find the previous character boundary at or before a position.
-    pub fn prev_boundary(s: &str, pos: usize) -> usize {
+    pub const fn prev_boundary(s: &str, pos: usize) -> usize {
         if pos == 0 || pos > s.len() {
             return 0;
         }

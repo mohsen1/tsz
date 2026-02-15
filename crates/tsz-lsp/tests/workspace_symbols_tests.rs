@@ -163,7 +163,7 @@ fn test_max_results_limit() {
 
     // Add more than MAX_RESULTS (100) symbols
     for i in 0..150 {
-        let name = format!("symbol_{}", i);
+        let name = format!("symbol_{i}");
         index.add_definition(&name, make_location("test.ts", i, 0, 10));
     }
 
@@ -173,8 +173,7 @@ fn test_max_results_limit() {
     assert_eq!(
         results.len(),
         MAX_RESULTS,
-        "Should limit to {} results",
-        MAX_RESULTS
+        "Should limit to {MAX_RESULTS} results"
     );
 }
 

@@ -150,7 +150,7 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
 fn build_property_lookup_fixture(interner: &TypeInterner) -> (ObjectShapeId, Atom, Atom) {
     let mut props = Vec::with_capacity(64);
     for i in 0..64 {
-        let name = interner.intern_string(&format!("prop{}", i));
+        let name = interner.intern_string(&format!("prop{i}"));
         props.push(PropertyInfo {
             name,
             type_id: TypeId::NUMBER,
@@ -166,7 +166,7 @@ fn build_property_lookup_fixture(interner: &TypeInterner) -> (ObjectShapeId, Ato
     let obj = interner.object(props);
     let shape_id = match interner.lookup(obj) {
         Some(TypeData::Object(shape_id)) => shape_id,
-        other => panic!("expected object shape, got {:?}", other),
+        other => panic!("expected object shape, got {other:?}"),
     };
 
     let hit = interner.intern_string("prop32");

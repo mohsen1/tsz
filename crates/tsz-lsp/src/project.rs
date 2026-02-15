@@ -135,22 +135,22 @@ impl ProjectFile {
     }
 
     /// Root node of the parsed source file.
-    pub fn root(&self) -> NodeIndex {
+    pub const fn root(&self) -> NodeIndex {
         self.root
     }
 
     /// Arena containing parsed Nodes.
-    pub fn arena(&self) -> &NodeArena {
+    pub const fn arena(&self) -> &NodeArena {
         self.parser.get_arena()
     }
 
     /// Binder state for symbol lookup.
-    pub fn binder(&self) -> &BinderState {
+    pub const fn binder(&self) -> &BinderState {
         &self.binder
     }
 
     /// Line map for offset <-> position conversions.
-    pub fn line_map(&self) -> &LineMap {
+    pub const fn line_map(&self) -> &LineMap {
         &self.line_map
     }
 
@@ -160,12 +160,12 @@ impl ProjectFile {
     }
 
     /// Get the strict mode setting for type checking.
-    pub fn strict(&self) -> bool {
+    pub const fn strict(&self) -> bool {
         self.strict
     }
 
     /// Set the strict mode for type checking.
-    pub fn set_strict(&mut self, strict: bool) {
+    pub const fn set_strict(&mut self, strict: bool) {
         self.strict = strict;
     }
 
@@ -1039,7 +1039,7 @@ impl Project {
     }
 
     /// Get the strict mode setting for type checking.
-    pub fn strict(&self) -> bool {
+    pub const fn strict(&self) -> bool {
         self.strict
     }
 
@@ -1058,7 +1058,7 @@ impl Project {
     }
 
     /// Snapshot of per-request timing data.
-    pub fn performance(&self) -> &ProjectPerformance {
+    pub const fn performance(&self) -> &ProjectPerformance {
         &self.performance
     }
 
@@ -1136,9 +1136,9 @@ impl Project {
 
     /// Extract import paths from a file's AST.
     ///
-    /// Walks the top-level statements to find ImportDeclaration,
-    /// ExportDeclaration, and dynamic imports (import(), require()) nodes
-    /// and extracts their module specifier strings for the DependencyGraph.
+    /// Walks the top-level statements to find `ImportDeclaration`,
+    /// `ExportDeclaration`, and dynamic imports (`import()`, `require()`) nodes
+    /// and extracts their module specifier strings for the `DependencyGraph`.
     fn extract_imports(&self, file_name: &str) -> Vec<String> {
         let mut imports = Vec::new();
 
@@ -1206,7 +1206,7 @@ impl Project {
     }
 
     /// Try to extract a dynamic import specifier from a call expression.
-    /// Returns the node index of the specifier string if this is import() or require().
+    /// Returns the node index of the specifier string if this is `import()` or `require()`.
     fn try_extract_dynamic_import(
         &self,
         call_idx: NodeIndex,
@@ -1264,7 +1264,7 @@ impl Project {
 
     /// Update the dependency graph for a file.
     ///
-    /// Extracts imports from the file's AST and updates the DependencyGraph.
+    /// Extracts imports from the file's AST and updates the `DependencyGraph`.
     /// This should be called whenever a file is added or modified.
     fn update_dependencies(&mut self, file_name: &str) {
         let imports = self.extract_imports(file_name);
@@ -1273,14 +1273,14 @@ impl Project {
 
     /// Handle file rename requests from the LSP client.
     ///
-    /// When files are renamed or moved, this calculates the TextEdits needed
+    /// When files are renamed or moved, this calculates the `TextEdits` needed
     /// to update import statements in all dependent files.
     ///
     /// # Arguments
     /// * `renames` - List of file renames (old path -> new path)
     ///
     /// # Returns
-    /// A WorkspaceEdit containing all the TextEdits needed to update imports
+    /// A `WorkspaceEdit` containing all the `TextEdits` needed to update imports
     ///
     /// # Example
     /// ```ignore
@@ -1525,7 +1525,7 @@ impl Project {
 
     /// Get candidate files that might contain references to a symbol.
     ///
-    /// This uses the SymbolIndex for O(1) lookup, turning cross-file searches
+    /// This uses the `SymbolIndex` for O(1) lookup, turning cross-file searches
     /// from O(N) where N = all files to O(M) where M = files containing the symbol.
     ///
     /// # Arguments
@@ -1730,7 +1730,7 @@ impl Project {
     /// This method should be called after `update_file()` to provide diagnostics
     /// for all files that were affected by the change (transitively).
     ///
-    /// Returns a map of file_name -> diagnostics for all files with dirty flags.
+    /// Returns a map of `file_name` -> diagnostics for all files with dirty flags.
     pub fn get_stale_diagnostics(&mut self) -> FxHashMap<String, Vec<LspDiagnostic>> {
         let mut result = FxHashMap::default();
 
@@ -1767,7 +1767,7 @@ impl Project {
 
     /// Resolve a code lens by computing its command (project-aware).
     ///
-    /// This uses project-wide find_references for accurate reference counts.
+    /// This uses project-wide `find_references` for accurate reference counts.
     pub fn resolve_code_lens(&mut self, file_name: &str, lens: &CodeLens) -> Option<CodeLens> {
         let _file = self.files.get(file_name)?;
         let data = lens.data.as_ref()?;
@@ -1792,7 +1792,7 @@ impl Project {
                 let title = if ref_count == 1 {
                     "1 reference".to_string()
                 } else {
-                    format!("{} references", ref_count)
+                    format!("{ref_count} references")
                 };
 
                 let command = crate::code_lens::CodeLensCommand {
@@ -1831,7 +1831,7 @@ impl Project {
                 let title = if count == 1 {
                     "1 implementation".to_string()
                 } else {
-                    format!("{} implementations", count)
+                    format!("{count} implementations")
                 };
 
                 let command = crate::code_lens::CodeLensCommand {
@@ -1934,7 +1934,7 @@ impl Project {
 
     /// Get supertypes for a symbol (file-local only for now).
     ///
-    /// TODO: Extend to search across all files using SymbolIndex.
+    /// TODO: Extend to search across all files using `SymbolIndex`.
     pub fn supertypes(
         &self,
         file_name: &str,
@@ -1959,7 +1959,7 @@ impl Project {
 
     /// Get subtypes for a symbol (file-local only for now).
     ///
-    /// TODO: Extend to search across all files using SymbolIndex heritage clauses.
+    /// TODO: Extend to search across all files using `SymbolIndex` heritage clauses.
     pub fn subtypes(
         &self,
         file_name: &str,

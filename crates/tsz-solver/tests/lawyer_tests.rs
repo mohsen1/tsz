@@ -1,4 +1,4 @@
-//! Tests for the Lawyer layer (Any propagation rules and CompatChecker).
+//! Tests for the Lawyer layer (Any propagation rules and `CompatChecker`).
 
 use super::*;
 use crate::AnyPropagationMode;

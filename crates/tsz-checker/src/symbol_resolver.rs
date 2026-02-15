@@ -1,6 +1,6 @@
 //! Symbol Resolver Module
 //!
-//! This module contains symbol resolution methods for CheckerState
+//! This module contains symbol resolution methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -18,7 +18,7 @@
 //! - Heritage symbol resolution
 //! - Access class resolution
 //!
-//! This module extends CheckerState with additional methods for symbol-related
+//! This module extends `CheckerState` with additional methods for symbol-related
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
@@ -219,8 +219,8 @@ impl<'a> CheckerState<'a> {
     // Identifier Resolution
     // =========================================================================
 
-    /// Collect lib binders from lib_contexts for cross-arena symbol lookup.
-    /// This enables symbol resolution across lib.d.ts files when lib_binders
+    /// Collect lib binders from `lib_contexts` for cross-arena symbol lookup.
+    /// This enables symbol resolution across lib.d.ts files when `lib_binders`
     /// is not populated in the binder (e.g., in the driver.rs path).
     pub(crate) fn get_lib_binders(&self) -> Vec<Arc<tsz_binder::BinderState>> {
         self.ctx
@@ -234,7 +234,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This filters out instance members that cannot be accessed as standalone values.
     /// However, static members and constructors should still be accessible.
-    pub(crate) fn is_class_member_symbol(flags: u32) -> bool {
+    pub(crate) const fn is_class_member_symbol(flags: u32) -> bool {
         // Check if it's any kind of class member
         let is_member = (flags
             & (symbol_flags::PROPERTY
@@ -269,7 +269,7 @@ impl<'a> CheckerState<'a> {
     /// - Module exports
     /// - Type parameter scope (for generic functions, classes, type aliases)
     /// - File locals (global scope from lib.d.ts)
-    /// - Lib binders' file_locals
+    /// - Lib binders' `file_locals`
     ///
     /// Returns None if the identifier cannot be resolved to any symbol.
     pub(crate) fn resolve_identifier_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
@@ -690,9 +690,9 @@ impl<'a> CheckerState<'a> {
     /// This function walks the scope chain and collects all symbols with the
     /// matching private name from class scopes.
     ///
-    /// Returns a tuple of (symbols_found, saw_class_scope) where:
-    /// - symbols_found: Vec of SymbolIds for all matching private members
-    /// - saw_class_scope: true if any class scope was encountered
+    /// Returns a tuple of (`symbols_found`, `saw_class_scope`) where:
+    /// - `symbols_found`: Vec of `SymbolIds` for all matching private members
+    /// - `saw_class_scope`: true if any class scope was encountered
     pub(crate) fn resolve_private_identifier_symbols(
         &self,
         idx: NodeIndex,
@@ -1397,9 +1397,9 @@ impl<'a> CheckerState<'a> {
         self.ctx.type_parameter_scope.get(name).copied()
     }
 
-    /// Get all type parameter bindings for passing to TypeLowering.
+    /// Get all type parameter bindings for passing to `TypeLowering`.
     ///
-    /// Returns a vector of (name, TypeId) pairs for all type parameters in scope.
+    /// Returns a vector of (name, `TypeId`) pairs for all type parameters in scope.
     pub(crate) fn get_type_param_bindings(&self) -> Vec<(tsz_common::interner::Atom, TypeId)> {
         self.ctx
             .type_parameter_scope
@@ -1445,7 +1445,7 @@ impl<'a> CheckerState<'a> {
     /// Resolve a type symbol for type lowering.
     ///
     /// Returns the symbol ID if the resolved symbol has the TYPE flag set.
-    /// Returns None for built-in types that have special handling in TypeLowering.
+    /// Returns None for built-in types that have special handling in `TypeLowering`.
     pub(crate) fn resolve_type_symbol_for_lowering(&self, idx: NodeIndex) -> Option<u32> {
         // Skip built-in types that have special handling in TypeLowering
         // These types use built-in TypeData representations instead of Refs
@@ -1551,7 +1551,7 @@ impl<'a> CheckerState<'a> {
     /// in another (VALUE). When the initial resolution finds only the TYPE symbol,
     /// this method searches all lib binders for the VALUE declaration.
     ///
-    /// Returns the SymbolId of the VALUE symbol if found.
+    /// Returns the `SymbolId` of the VALUE symbol if found.
     pub(crate) fn find_value_symbol_in_libs(&self, name: &str) -> Option<SymbolId> {
         let lib_binders = self.get_lib_binders();
         trace!(
@@ -1628,7 +1628,7 @@ impl<'a> CheckerState<'a> {
 
     /// Find a VALUE declaration node for a name across current + lib binders.
     ///
-    /// Returning the declaration node avoids relying on cross-binder SymbolId
+    /// Returning the declaration node avoids relying on cross-binder `SymbolId`
     /// identity, which can collide and lead to incorrect value/type selection.
     pub(crate) fn find_value_declaration_in_libs(
         &self,
@@ -1668,12 +1668,12 @@ impl<'a> CheckerState<'a> {
     // Global Symbol Resolution
     // =========================================================================
 
-    /// Resolve a global value symbol by name from file_locals and lib binders.
+    /// Resolve a global value symbol by name from `file_locals` and lib binders.
     ///
     /// This is used for looking up global values like `console`, `Math`, `globalThis`, etc.
     /// It checks:
-    /// 1. Local file_locals (for user-defined globals and merged lib symbols)
-    /// 2. Lib binders' file_locals (only when lib_symbols_merged is false)
+    /// 1. Local `file_locals` (for user-defined globals and merged lib symbols)
+    /// 2. Lib binders' `file_locals` (only when `lib_symbols_merged` is false)
     pub(crate) fn resolve_global_value_symbol(&self, name: &str) -> Option<SymbolId> {
         // First check local file_locals
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
@@ -1827,9 +1827,9 @@ impl<'a> CheckerState<'a> {
     /// Returns true if:
     /// - The symbol is an ALIAS (import)
     /// - The imported module cannot be resolved through any of:
-    ///   - module_exports
-    ///   - shorthand_ambient_modules
-    ///   - declared_modules
+    ///   - `module_exports`
+    ///   - `shorthand_ambient_modules`
+    ///   - `declared_modules`
     ///   - CLI-resolved modules
     pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
         let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
@@ -1981,9 +1981,9 @@ impl<'a> CheckerState<'a> {
     // Require/Import Resolution
     // =========================================================================
 
-    /// Extract the module specifier from a require() call expression or
+    /// Extract the module specifier from a `require()` call expression or
     /// a string literal (for import equals declarations where the parser
-    /// stores only the string literal, not the full require() call).
+    /// stores only the string literal, not the full `require()` call).
     ///
     /// Returns the module path string (e.g., `'./util'` from `require('./util')`).
     pub(crate) fn get_require_module_specifier(&self, idx: NodeIndex) -> Option<String> {
@@ -2015,10 +2015,10 @@ impl<'a> CheckerState<'a> {
         Some(literal.text.clone())
     }
 
-    /// Resolve a require() call to its symbol.
+    /// Resolve a `require()` call to its symbol.
     ///
-    /// For require() calls, we don't resolve to a single symbol.
-    /// Instead, compute_type_of_symbol handles this by creating a module namespace type.
+    /// For `require()` calls, we don't resolve to a single symbol.
+    /// Instead, `compute_type_of_symbol` handles this by creating a module namespace type.
     pub(crate) fn resolve_require_call_symbol(
         &self,
         idx: NodeIndex,

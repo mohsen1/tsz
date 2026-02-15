@@ -87,7 +87,7 @@ struct DocumentState {
 }
 
 impl DocumentState {
-    fn new(content: String, _version: i32) -> Self {
+    const fn new(content: String, _version: i32) -> Self {
         Self {
             content,
             parser: None,
@@ -378,7 +378,7 @@ impl LspServer {
             }
             Some(method) if id.is_some() => {
                 // Unknown request - return method not found error
-                Some(self.make_error_response(id, -32601, format!("Method not found: {}", method)))
+                Some(self.make_error_response(id, -32601, format!("Method not found: {method}")))
             }
             _ => None, // Unknown notification or malformed message
         }

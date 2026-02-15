@@ -1,6 +1,6 @@
 //! Type Literal Checking Module
 //!
-//! This module contains type literal type checking methods for CheckerState
+//! This module contains type literal type checking methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Result Type:
     /// - **Callable**: If has call/construct signatures
-    /// - **ObjectWithIndex**: If has index signatures
+    /// - **`ObjectWithIndex`**: If has index signatures
     /// - **Object**: Plain object type otherwise
     pub(crate) fn get_type_from_type_literal(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::syntax_kind_ext::{

@@ -428,7 +428,6 @@ fn test_definition_info_enum_context_span_excludes_semicolon() {
     let ctx_text = &source[ctx_start_offset as usize..ctx_end_offset as usize];
     assert!(
         ctx_text.ends_with('}'),
-        "Enum contextSpan should end with '}}', got: {:?}",
-        ctx_text
+        "Enum contextSpan should end with '}}', got: {ctx_text:?}"
     );
 }

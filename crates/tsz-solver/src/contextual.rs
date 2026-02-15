@@ -138,10 +138,10 @@ impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
     }
 }
 
-/// Visitor to extract the type T from ThisType<T> utility type markers.
+/// Visitor to extract the type T from `ThisType`<T> utility type markers.
 ///
 /// This handles the Vue 2 / Options API pattern where contextual types contain
-/// ThisType<T> markers to override the type of 'this' in object literal methods.
+/// `ThisType`<T> markers to override the type of 'this' in object literal methods.
 ///
 /// Example:
 /// ```typescript
@@ -162,7 +162,7 @@ impl<'a> ThisTypeMarkerExtractor<'a> {
         self.visit_type(self.db, type_id)
     }
 
-    /// Check if a type application is for the ThisType utility.
+    /// Check if a type application is for the `ThisType` utility.
     fn is_this_type_application(&self, app_id: u32) -> bool {
         let app = self.db.type_application(TypeApplicationId(app_id));
 
@@ -544,7 +544,7 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
 }
 
 /// Visitor to extract parameter type from callable types for a call site.
-/// Filters signatures by arity (arg_count) to handle overloaded functions.
+/// Filters signatures by arity (`arg_count`) to handle overloaded functions.
 struct ParameterForCallExtractor<'a> {
     db: &'a dyn TypeDatabase,
     index: usize,
@@ -718,12 +718,12 @@ impl<'a> ContextualTypeContext<'a> {
     }
 
     /// Get the expected type.
-    pub fn expected(&self) -> Option<TypeId> {
+    pub const fn expected(&self) -> Option<TypeId> {
         self.expected
     }
 
     /// Check if we have a contextual type.
-    pub fn has_context(&self) -> bool {
+    pub const fn has_context(&self) -> bool {
         self.expected.is_some()
     }
 
@@ -873,7 +873,7 @@ impl<'a> ContextualTypeContext<'a> {
         extractor.extract(expected)
     }
 
-    /// Get the type T from a ThisType<T> marker in the contextual type.
+    /// Get the type T from a `ThisType`<T> marker in the contextual type.
     ///
     /// This is used for the Vue 2 / Options API pattern where object literal
     /// methods have their `this` type overridden by contextual markers.
@@ -1100,7 +1100,7 @@ impl<'a> ContextualTypeContext<'a> {
         extractor.extract(expected)
     }
 
-    /// Get the contextual return type for a generator function (TReturn from Generator<Y, TReturn, N>).
+    /// Get the contextual return type for a generator function (`TReturn` from Generator<Y, `TReturn`, N>).
     ///
     /// This is used to contextually type return statements in generators.
     pub fn get_generator_return_type(&self) -> Option<TypeId> {
@@ -1125,9 +1125,9 @@ impl<'a> ContextualTypeContext<'a> {
         extractor.extract(expected)
     }
 
-    /// Get the contextual next type for a generator function (TNext from Generator<Y, R, TNext>).
+    /// Get the contextual next type for a generator function (`TNext` from Generator<Y, R, `TNext`>).
     ///
-    /// This is used to determine the type of values passed to .next() and
+    /// This is used to determine the type of values passed to .`next()` and
     /// the type of the yield expression result.
     pub fn get_generator_next_type(&self) -> Option<TypeId> {
         let expected = self.expected?;
@@ -1163,10 +1163,10 @@ impl<'a> ContextualTypeContext<'a> {
 /// Apply contextual type to infer a more specific type.
 ///
 /// This implements bidirectional type inference:
-/// 1. If expr_type is any/unknown/error, use contextual type
-/// 2. If expr_type is a literal and contextual type is a union containing that literal's base type, preserve literal
-/// 3. If expr_type is assignable to contextual type and is more specific, use expr_type
-/// 4. Otherwise, prefer expr_type (don't widen to contextual type)
+/// 1. If `expr_type` is any/unknown/error, use contextual type
+/// 2. If `expr_type` is a literal and contextual type is a union containing that literal's base type, preserve literal
+/// 3. If `expr_type` is assignable to contextual type and is more specific, use `expr_type`
+/// 4. Otherwise, prefer `expr_type` (don't widen to contextual type)
 pub fn apply_contextual_type(
     interner: &dyn TypeDatabase,
     expr_type: TypeId,

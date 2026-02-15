@@ -12,14 +12,14 @@ enum ReferenceTarget {
 }
 
 impl ReferenceTarget {
-    fn identifier_name(self) -> &'static str {
+    const fn identifier_name(self) -> &'static str {
         match self {
             Self::Arguments => "arguments",
             Self::This => "this",
         }
     }
 
-    fn include_keyword_check(self) -> bool {
+    const fn include_keyword_check(self) -> bool {
         matches!(self, Self::This)
     }
 }

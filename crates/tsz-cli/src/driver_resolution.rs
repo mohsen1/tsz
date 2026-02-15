@@ -368,7 +368,7 @@ pub(crate) fn collect_module_specifiers(
     specifiers
 }
 
-/// Collect dynamic import() expressions from the AST
+/// Collect dynamic `import()` expressions from the AST
 fn collect_dynamic_imports(
     arena: &NodeArena,
     _source_file: NodeIndex,
@@ -414,7 +414,7 @@ fn collect_dynamic_imports(
     }
 }
 
-/// Extract module specifier from a require() call expression
+/// Extract module specifier from a `require()` call expression
 /// e.g., `require('./module')` -> `./module` (without quotes)
 fn extract_require_specifier(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     use tsz::parser::syntax_kind_ext;
@@ -1053,7 +1053,7 @@ fn types_versions_compiler_version(options: &ResolvedCompilerOptions) -> SemVer 
         .unwrap_or_else(default_types_versions_compiler_version)
 }
 
-fn default_types_versions_compiler_version() -> SemVer {
+const fn default_types_versions_compiler_version() -> SemVer {
     // Use the fallback version directly since the project's package.json version
     // is not a TypeScript version. The fallback represents the TypeScript version
     // that this compiler is compatible with for typesVersions resolution.
@@ -1163,7 +1163,7 @@ fn resolve_node_module_specifier(
                 // Skip the '@' (1 char) and replace '/' with '__'
                 format!("@types/{}", scope_pkg.replace('/', "__"))
             } else {
-                format!("@types/{}", package_name)
+                format!("@types/{package_name}")
             };
 
             let types_root = current.join("node_modules").join(&types_package_name);
@@ -1241,7 +1241,7 @@ fn resolve_package_specifier(
             && let Some(exports) = package_json.exports.as_ref()
         {
             let subpath_key = match subpath {
-                Some(value) => format!("./{}", value),
+                Some(value) => format!("./{value}"),
                 None => ".".to_string(),
             };
             if let Some(target) = resolve_exports_subpath(exports, &subpath_key, conditions)
@@ -2143,7 +2143,7 @@ fn append_source_mapping_url(contents: &mut String, map_name: &str, new_line: &s
     contents.push_str(map_name);
 }
 
-fn new_line_str(kind: NewLineKind) -> &'static str {
+const fn new_line_str(kind: NewLineKind) -> &'static str {
     match kind {
         NewLineKind::LineFeed => "\n",
         NewLineKind::CarriageReturnLineFeed => "\r\n",

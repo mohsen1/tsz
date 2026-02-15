@@ -1,11 +1,11 @@
 //! CLI tool to audit TypeScript unsoundness catalog implementation
 //!
 //! Usage:
-//!   cargo run --bin audit_unsoundness
-//!   cargo run --bin audit_unsoundness -- --summary
-//!   cargo run --bin audit_unsoundness -- --matrix
-//!   cargo run --bin audit_unsoundness -- --missing
-//!   cargo run --bin audit_unsoundness -- --phase 1
+//!   cargo run --bin `audit_unsoundness`
+//!   cargo run --bin `audit_unsoundness` -- --summary
+//!   cargo run --bin `audit_unsoundness` -- --matrix
+//!   cargo run --bin `audit_unsoundness` -- --missing
+//!   cargo run --bin `audit_unsoundness` -- --phase 1
 
 use std::env;
 use std::process;
@@ -81,7 +81,7 @@ fn main() {
                 _ => panic!("internal error: parsed phase must be between 1 and 4"),
             };
 
-            println!("# Phase {} Rules: {}\n", phase_num, phase);
+            println!("# Phase {phase_num} Rules: {phase}\n");
             let rules = audit.rules_by_phase(phase);
             println!("Total: {} rules\n", rules.len());
             println!(
@@ -129,7 +129,7 @@ fn main() {
                 _ => panic!("internal error: unsupported status value"),
             };
 
-            println!("# {} Rules\n", status_name);
+            println!("# {status_name} Rules\n");
             let rules = audit.rules_by_status(status);
             println!("Total: {} rules\n", rules.len());
 

@@ -33,7 +33,7 @@ fn test_call_simple_function() {
     let result = evaluator.resolve_call(func, &[TypeId::NUMBER]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -70,7 +70,7 @@ fn test_call_argument_count_mismatch() {
             assert_eq!(expected_min, 1);
             assert_eq!(actual, 0);
         }
-        _ => panic!("Expected ArgumentCountMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentCountMismatch, got {result:?}"),
     }
 }
 
@@ -108,7 +108,7 @@ fn test_call_argument_type_mismatch() {
             assert_eq!(expected, TypeId::NUMBER);
             assert_eq!(actual, TypeId::STRING);
         }
-        _ => panic!("Expected ArgumentTypeMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
     }
 }
 
@@ -252,7 +252,7 @@ fn test_call_rest_parameter_allows_zero_args() {
     let result = evaluator.resolve_call(func, &[]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -297,7 +297,7 @@ fn test_call_rest_parameter_min_args_with_required() {
             assert_eq!(expected_min, 1);
             assert_eq!(actual, 0);
         }
-        _ => panic!("Expected ArgumentCountMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentCountMismatch, got {result:?}"),
     }
 }
 
@@ -346,7 +346,7 @@ fn test_binary_overlap_union_literals() {
     let result = evaluator.evaluate(left, right, "===");
     match result {
         BinaryOpResult::Success(result_type) => assert_eq!(result_type, TypeId::BOOLEAN),
-        _ => panic!("Expected boolean result, got {:?}", result),
+        _ => panic!("Expected boolean result, got {result:?}"),
     }
 }
 
@@ -423,7 +423,7 @@ fn test_binary_overlap_generic_constraint_overlap() {
     let result = evaluator.evaluate(type_param, TypeId::STRING, "===");
     match result {
         BinaryOpResult::Success(result_type) => assert_eq!(result_type, TypeId::BOOLEAN),
-        _ => panic!("Expected boolean result, got {:?}", result),
+        _ => panic!("Expected boolean result, got {result:?}"),
     }
 }
 
@@ -442,7 +442,7 @@ fn test_binary_overlap_unconstrained_type_param() {
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");
     match result {
         BinaryOpResult::Success(result_type) => assert_eq!(result_type, TypeId::BOOLEAN),
-        _ => panic!("Expected boolean result, got {:?}", result),
+        _ => panic!("Expected boolean result, got {result:?}"),
     }
 }
 
@@ -479,7 +479,7 @@ fn test_binary_overlap_union_constraint_overlap() {
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");
     match result {
         BinaryOpResult::Success(result_type) => assert_eq!(result_type, TypeId::BOOLEAN),
-        _ => panic!("Expected boolean result, got {:?}", result),
+        _ => panic!("Expected boolean result, got {result:?}"),
     }
 }
 
@@ -509,7 +509,7 @@ fn test_call_rest_parameter_type_match() {
     let result = evaluator.resolve_call(func, &[TypeId::NUMBER, TypeId::NUMBER]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -547,7 +547,7 @@ fn test_call_rest_parameter_type_mismatch() {
             assert_eq!(expected, TypeId::NUMBER);
             assert_eq!(actual, TypeId::STRING);
         }
-        _ => panic!("Expected ArgumentTypeMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
     }
 }
 
@@ -597,7 +597,7 @@ fn test_call_tuple_rest_argument_count_mismatch() {
             assert_eq!(expected_min, 2);
             assert_eq!(actual, 1);
         }
-        _ => panic!("Expected ArgumentCountMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentCountMismatch, got {result:?}"),
     }
 }
 
@@ -648,7 +648,7 @@ fn test_call_tuple_rest_argument_type_mismatch() {
             assert_eq!(expected, TypeId::STRING);
             assert_eq!(actual, TypeId::BOOLEAN);
         }
-        _ => panic!("Expected ArgumentTypeMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
     }
 }
 
@@ -691,7 +691,7 @@ fn test_call_tuple_rest_argument_success() {
     let result = evaluator.resolve_call(func, &[TypeId::NUMBER, TypeId::STRING]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -735,13 +735,13 @@ fn test_call_tuple_rest_with_fixed_tail() {
     let result = evaluator.resolve_call(func, &[TypeId::NUMBER]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::VOID),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     let result = evaluator.resolve_call(func, &[TypeId::STRING, TypeId::STRING, TypeId::NUMBER]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::VOID),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     let result = evaluator.resolve_call(func, &[TypeId::STRING, TypeId::NUMBER, TypeId::STRING]);
@@ -755,7 +755,7 @@ fn test_call_tuple_rest_with_fixed_tail() {
             assert_eq!(expected, TypeId::STRING);
             assert_eq!(actual, TypeId::NUMBER);
         }
-        _ => panic!("Expected ArgumentTypeMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
     }
 }
 
@@ -774,14 +774,14 @@ fn test_property_access_object() {
     let result = evaluator.resolve_property_access(obj, "x");
     match result {
         PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     // Access non-existent property
     let result = evaluator.resolve_property_access(obj, "z");
     match result {
         PropertyAccessResult::PropertyNotFound { .. } => {}
-        _ => panic!("Expected PropertyNotFound, got {:?}", result),
+        _ => panic!("Expected PropertyNotFound, got {result:?}"),
     }
 }
 
@@ -813,13 +813,13 @@ fn test_property_access_function_members() {
             assert!(shape.params[0].rest);
             assert_eq!(shape.params[0].type_id, rest_array);
         }
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     let result = evaluator.resolve_property_access(func, "length");
     match result {
         PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     let result = evaluator.resolve_property_access(func, "toString");
@@ -831,7 +831,7 @@ fn test_property_access_function_members() {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::STRING);
         }
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -865,7 +865,7 @@ fn test_property_access_callable_members() {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::ANY);
         }
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -890,11 +890,11 @@ fn test_property_access_optional_property() {
             assert_eq!(type_id, expected);
             assert!(!from_index_signature);
         }
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
-/// Creates a TypeEnvironment with a mock Array<T> interface for testing.
+/// Creates a `TypeEnvironment` with a mock Array<T> interface for testing.
 /// The interface includes: length, map, at, entries, and reduce.
 fn make_array_test_env(
     interner: &TypeInterner,
@@ -1156,7 +1156,7 @@ fn test_property_access_readonly_array() {
     let result = evaluator.resolve_property_access(readonly_array, "length");
     match result {
         PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1184,7 +1184,7 @@ fn test_property_access_tuple_length() {
     let result = evaluator.resolve_property_access(tuple, "length");
     match result {
         PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1216,12 +1216,12 @@ fn test_property_access_array_map_signature() {
                         assert_eq!(callback.params[1].type_id, TypeId::NUMBER); // index
                         assert_eq!(callback.params[2].type_id, array); // array: number[]
                     }
-                    other => panic!("Expected callback function, got {:?}", other),
+                    other => panic!("Expected callback function, got {other:?}"),
                 }
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1240,9 +1240,9 @@ fn test_property_access_array_at_returns_optional_element() {
                 let expected = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
                 assert_eq!(func.return_type, expected);
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1269,9 +1269,9 @@ fn test_property_access_array_entries_returns_tuple_array() {
                 assert_eq!(tuple[0].type_id, TypeId::NUMBER);
                 assert_eq!(tuple[1].type_id, TypeId::BOOLEAN);
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1295,9 +1295,9 @@ fn test_property_access_array_reduce_callable() {
                     interner.intern(TypeData::TypeParameter(generic_sig.type_params[0].clone()));
                 assert_eq!(generic_sig.return_type, u_type);
             }
-            other => panic!("Expected callable, got {:?}", other),
+            other => panic!("Expected callable, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1315,7 +1315,7 @@ fn test_property_access_void() {
             assert!(property_type.is_none());
             assert_eq!(cause, TypeId::UNDEFINED);
         }
-        _ => panic!("Expected PossiblyNullOrUndefined, got {:?}", result),
+        _ => panic!("Expected PossiblyNullOrUndefined, got {result:?}"),
     }
 }
 
@@ -1346,7 +1346,7 @@ fn test_property_access_index_signature_no_unchecked() {
             assert_eq!(type_id, TypeId::NUMBER);
             assert!(from_index_signature);
         }
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     evaluator.set_no_unchecked_indexed_access(true);
@@ -1362,7 +1362,7 @@ fn test_property_access_index_signature_no_unchecked() {
             assert_eq!(type_id, expected);
             assert!(from_index_signature);
         }
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1397,7 +1397,7 @@ fn test_property_access_object_with_index_optional_property() {
             assert_eq!(type_id, expected);
             assert!(!from_index_signature);
         }
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1409,7 +1409,7 @@ fn test_property_access_string() {
     let result = evaluator.resolve_property_access(TypeId::STRING, "length");
     match result {
         PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1425,9 +1425,9 @@ fn test_property_access_number_method() {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::STRING);
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1443,9 +1443,9 @@ fn test_property_access_boolean_method() {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::BOOLEAN);
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1461,9 +1461,9 @@ fn test_property_access_bigint_method() {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::STRING);
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1479,9 +1479,9 @@ fn test_property_access_object_methods_on_primitives() {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::BOOLEAN);
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     let result = evaluator.resolve_property_access(TypeId::NUMBER, "isPrototypeOf");
@@ -1491,9 +1491,9 @@ fn test_property_access_object_methods_on_primitives() {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::BOOLEAN);
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     let result = evaluator.resolve_property_access(TypeId::BOOLEAN, "propertyIsEnumerable");
@@ -1503,9 +1503,9 @@ fn test_property_access_object_methods_on_primitives() {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::BOOLEAN);
             }
-            other => panic!("Expected function, got {:?}", other),
+            other => panic!("Expected function, got {other:?}"),
         },
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1517,7 +1517,7 @@ fn test_property_access_primitive_constructor_value() {
     let result = evaluator.resolve_property_access(TypeId::SYMBOL, "constructor");
     match result {
         PropertyAccessResult::Success { type_id, .. } => assert_eq!(type_id, TypeId::ANY),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1535,7 +1535,7 @@ fn test_property_access_template_literal() {
     let result = evaluator.resolve_property_access(template, "length");
     match result {
         PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1548,7 +1548,7 @@ fn test_property_access_literal_string_length() {
     let result = evaluator.resolve_property_access(literal, "length");
     match result {
         PropertyAccessResult::Success { type_id: t, .. } => assert_eq!(t, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1561,14 +1561,14 @@ fn test_binary_op_addition() {
     let result = evaluator.evaluate(TypeId::NUMBER, TypeId::NUMBER, "+");
     match result {
         BinaryOpResult::Success(t) => assert_eq!(t, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 
     // string + number = string
     let result = evaluator.evaluate(TypeId::STRING, TypeId::NUMBER, "+");
     match result {
         BinaryOpResult::Success(t) => assert_eq!(t, TypeId::STRING),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1589,10 +1589,10 @@ fn test_binary_op_logical() {
                     assert!(members.contains(&TypeId::NUMBER));
                     assert!(members.contains(&TypeId::STRING));
                 }
-                _ => panic!("Expected union, got {:?}", key),
+                _ => panic!("Expected union, got {key:?}"),
             }
         }
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1631,7 +1631,7 @@ fn test_call_generic_function_identity() {
     let result = evaluator.resolve_call(func, &[TypeId::NUMBER]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1670,7 +1670,7 @@ fn test_call_generic_function_with_string() {
     let result = evaluator.resolve_call(func, &[TypeId::STRING]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1715,7 +1715,7 @@ fn test_call_generic_argument_type_mismatch_with_default() {
             assert_eq!(expected, TypeId::NUMBER);
             assert_eq!(actual, TypeId::STRING);
         }
-        _ => panic!("Expected ArgumentTypeMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
     }
 }
 
@@ -1758,7 +1758,7 @@ fn test_call_generic_argument_count_mismatch() {
             assert_eq!(expected_min, 1);
             assert_eq!(actual, 0);
         }
-        _ => panic!("Expected ArgumentCountMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentCountMismatch, got {result:?}"),
     }
 }
 
@@ -1816,7 +1816,7 @@ fn test_call_generic_rest_tuple_constraint_count_mismatch() {
             assert_eq!(expected_max, Some(2));
             assert_eq!(actual, 0);
         }
-        _ => panic!("Expected ArgumentCountMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentCountMismatch, got {result:?}"),
     }
 }
 
@@ -1874,7 +1874,7 @@ fn test_call_generic_default_rest_tuple_count_mismatch() {
             assert_eq!(expected_max, Some(2));
             assert_eq!(actual, 0);
         }
-        _ => panic!("Expected ArgumentCountMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentCountMismatch, got {result:?}"),
     }
 }
 
@@ -1916,7 +1916,7 @@ fn test_call_generic_default_rest_tuple_optional_allows_empty() {
     let result = evaluator.resolve_call(func, &[]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, tuple_default),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -1969,7 +1969,7 @@ fn test_call_generic_argument_type_mismatch_non_generic_param() {
             assert_eq!(expected, TypeId::NUMBER);
             assert_eq!(actual, TypeId::STRING);
         }
-        _ => panic!("Expected ArgumentTypeMismatch, got {:?}", result),
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
     }
 }
 
@@ -2010,7 +2010,7 @@ fn test_call_generic_callable_signature() {
     let result = evaluator.resolve_call(callable, &[TypeId::NUMBER]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -2051,7 +2051,7 @@ fn test_call_generic_array_function() {
     let result = evaluator.resolve_call(func, &[number_array]);
     match result {
         CallResult::Success(ret) => assert_eq!(ret, TypeId::NUMBER),
-        _ => panic!("Expected success, got {:?}", result),
+        _ => panic!("Expected success, got {result:?}"),
     }
 }
 
@@ -6176,7 +6176,7 @@ fn test_variadic_empty_args_uses_constraint() {
     assert_eq!(result, TypeId::UNKNOWN);
 }
 
-/// Test that array_element_type returns ERROR instead of ANY for non-array/tuple types
+/// Test that `array_element_type` returns ERROR instead of ANY for non-array/tuple types
 /// This is important for TS2322 type checking - returning ANY would incorrectly silence
 /// type errors, while ERROR properly propagates the failure.
 #[test]
@@ -6266,7 +6266,7 @@ fn test_solve_generic_instantiation_success() {
     assert_eq!(result, GenericInstantiationResult::Success);
 }
 
-/// Test that type arguments violating constraints return ConstraintViolation
+/// Test that type arguments violating constraints return `ConstraintViolation`
 #[test]
 fn test_solve_generic_instantiation_constraint_violation() {
     let interner = TypeInterner::new();
@@ -6296,7 +6296,7 @@ fn test_solve_generic_instantiation_constraint_violation() {
             assert_eq!(constraint, TypeId::STRING);
             assert_eq!(type_arg, TypeId::NUMBER);
         }
-        _ => panic!("Expected ConstraintViolation, got {:?}", result),
+        _ => panic!("Expected ConstraintViolation, got {result:?}"),
     }
 }
 
@@ -6508,7 +6508,7 @@ fn test_solve_generic_instantiation_object_constraint() {
 // These tests verify type operations work correctly with tuple-to-array patterns
 // ============================================================================
 
-/// Test that array_element_type correctly extracts element type from homogeneous tuple
+/// Test that `array_element_type` correctly extracts element type from homogeneous tuple
 #[test]
 fn test_array_element_type_homogeneous_tuple() {
     let interner = TypeInterner::new();
@@ -6538,7 +6538,7 @@ fn test_array_element_type_homogeneous_tuple() {
     );
 }
 
-/// Test that array_element_type correctly extracts union type from heterogeneous tuple
+/// Test that `array_element_type` correctly extracts union type from heterogeneous tuple
 #[test]
 fn test_array_element_type_heterogeneous_tuple() {
     let interner = TypeInterner::new();
@@ -6570,7 +6570,7 @@ fn test_array_element_type_heterogeneous_tuple() {
     );
 }
 
-/// Test array_element_type with tuple containing rest element
+/// Test `array_element_type` with tuple containing rest element
 #[test]
 fn test_array_element_type_tuple_with_rest() {
     let interner = TypeInterner::new();
@@ -6604,7 +6604,7 @@ fn test_array_element_type_tuple_with_rest() {
     );
 }
 
-/// Test array_element_type with empty tuple
+/// Test `array_element_type` with empty tuple
 #[test]
 fn test_array_element_type_empty_tuple() {
     let interner = TypeInterner::new();
@@ -6617,7 +6617,7 @@ fn test_array_element_type_empty_tuple() {
     assert_eq!(result, TypeId::NEVER, "[] should have element type never");
 }
 
-/// Test array_element_type with single-element tuple
+/// Test `array_element_type` with single-element tuple
 #[test]
 fn test_array_element_type_single_element_tuple() {
     let interner = TypeInterner::new();
@@ -6639,7 +6639,7 @@ fn test_array_element_type_single_element_tuple() {
     );
 }
 
-/// Test array_element_type with tuple containing optional elements
+/// Test `array_element_type` with tuple containing optional elements
 #[test]
 fn test_array_element_type_optional_tuple() {
     let interner = TypeInterner::new();
@@ -6672,7 +6672,7 @@ fn test_array_element_type_optional_tuple() {
     );
 }
 
-/// Test array_element_type with three-element heterogeneous tuple
+/// Test `array_element_type` with three-element heterogeneous tuple
 #[test]
 fn test_array_element_type_three_element_tuple() {
     let interner = TypeInterner::new();
@@ -6711,7 +6711,7 @@ fn test_array_element_type_three_element_tuple() {
     );
 }
 
-/// Test array_element_type with tuple containing literals
+/// Test `array_element_type` with tuple containing literals
 #[test]
 fn test_array_element_type_literal_tuple() {
     let interner = TypeInterner::new();
@@ -7279,9 +7279,9 @@ fn test_is_arithmetic_operand_mixed_union_invalid() {
 }
 
 /// Regression test: verify that array property access works when using the
-/// environment-aware resolver (with_resolver) that has the Array<T> base type
-/// registered. Previously, get_type_of_property_access_inner used
-/// `types.property_access_type()` which created a NoopResolver without the
+/// environment-aware resolver (`with_resolver`) that has the Array<T> base type
+/// registered. Previously, `get_type_of_property_access_inner` used
+/// `types.property_access_type()` which created a `NoopResolver` without the
 /// Array base type, causing TS2339 false positives like "Property 'push'
 /// does not exist on type 'any[]'".
 #[test]
@@ -7347,19 +7347,16 @@ fn test_property_access_array_push_with_env_resolver() {
                         "push should return number"
                     );
                 }
-                other => panic!("Expected function for push, got {:?}", other),
+                other => panic!("Expected function for push, got {other:?}"),
             }
         }
-        _ => panic!(
-            "Expected Success for array.push with env resolver, got {:?}",
-            result
-        ),
+        _ => panic!("Expected Success for array.push with env resolver, got {result:?}"),
     }
 }
 
 /// Regression test: QueryCache-backed property access must expose Array<T>
 /// registrations from the interner. Without this, `string[].push` fails with
-/// a false TS2339 in checker paths that use QueryCache as the resolver.
+/// a false TS2339 in checker paths that use `QueryCache` as the resolver.
 #[test]
 fn test_property_access_array_push_with_query_cache_resolver() {
     use crate::db::QueryCache;
@@ -7408,12 +7405,9 @@ fn test_property_access_array_push_with_query_cache_resolver() {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::NUMBER);
             }
-            other => panic!("Expected function for push, got {:?}", other),
+            other => panic!("Expected function for push, got {other:?}"),
         },
-        other => panic!(
-            "Expected Success for array.push with QueryCache resolver, got {:?}",
-            other
-        ),
+        other => panic!("Expected Success for array.push with QueryCache resolver, got {other:?}"),
     }
 }
 
@@ -7471,17 +7465,16 @@ fn test_property_access_array_push_with_intersection_array_base() {
                 let func = interner.function_shape(func_id);
                 assert_eq!(func.return_type, TypeId::NUMBER);
             }
-            other => panic!("Expected function for push, got {:?}", other),
+            other => panic!("Expected function for push, got {other:?}"),
         },
-        other => panic!(
-            "Expected Success for array.push with intersection array base, got {:?}",
-            other
-        ),
+        other => {
+            panic!("Expected Success for array.push with intersection array base, got {other:?}")
+        }
     }
 }
 
 /// Test that array mapped type method resolution works correctly.
-/// When { [P in keyof T]: T[P] } where T extends any[] is accessed with .pop(),
+/// When { [P in keyof T]: T[P] } where T extends any[] is accessed with .`pop()`,
 /// it should resolve to the array method, not map through the template.
 #[test]
 fn test_array_mapped_type_method_resolution() {
@@ -7565,12 +7558,11 @@ fn test_array_mapped_type_method_resolution() {
             let key = interner.lookup(type_id);
             assert!(
                 matches!(key, Some(TypeData::Function(_))),
-                "pop should resolve to a function, got {:?}",
-                key
+                "pop should resolve to a function, got {key:?}"
             );
         }
         other => {
-            panic!("Expected Success for .pop(), got {:?}", other);
+            panic!("Expected Success for .pop(), got {other:?}");
         }
     }
 }
@@ -7677,13 +7669,12 @@ fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders(
 
     let intermediate = match evaluator.resolve_call(dot, &[id]) {
         CallResult::Success(ty) => ty,
-        other => panic!("Expected first call dot(id) to succeed, got {:?}", other),
+        other => panic!("Expected first call dot(id) to succeed, got {other:?}"),
     };
 
     let second = evaluator.resolve_call(intermediate, &[id]);
     assert!(
         matches!(second, CallResult::Success(_)),
-        "Expected second call dot(id)(id) to succeed, got {:?}",
-        second
+        "Expected second call dot(id)(id) to succeed, got {second:?}"
     );
 }

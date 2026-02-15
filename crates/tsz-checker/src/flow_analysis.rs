@@ -115,9 +115,9 @@ impl<'a> CheckerState<'a> {
         self.flow_result_to_assigned(result)
     }
 
-    /// Analyze a constructor body starting after the super() call.
+    /// Analyze a constructor body starting after the `super()` call.
     ///
-    /// In derived classes, properties can only be assigned after super() is called.
+    /// In derived classes, properties can only be assigned after `super()` is called.
     fn analyze_constructor_body_after_super(
         &self,
         body_idx: NodeIndex,
@@ -158,7 +158,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Find the index of the first statement after the super() call.
+    /// Find the index of the first statement after the `super()` call.
     pub(crate) fn find_super_statement_start(&self, statements: &[NodeIndex]) -> Option<usize> {
         for (idx, &stmt_idx) in statements.iter().enumerate() {
             if self.is_super_call_statement(stmt_idx) {
@@ -168,7 +168,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Convert a FlowResult to a set of definitely assigned properties.
+    /// Convert a `FlowResult` to a set of definitely assigned properties.
     fn flow_result_to_assigned(&self, result: FlowResult) -> FxHashSet<PropertyKey> {
         let mut assigned = None;
         if let Some(normal) = result.normal {
@@ -883,7 +883,7 @@ impl<'a> CheckerState<'a> {
     // Property Key Extraction
     // =========================================================================
 
-    /// Extract a PropertyKey from a property name node.
+    /// Extract a `PropertyKey` from a property name node.
     pub(crate) fn property_key_from_name(&self, name_idx: NodeIndex) -> Option<PropertyKey> {
         let name_node = self.ctx.arena.get(name_idx)?;
 
@@ -920,7 +920,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Extract a PropertyKey from a property access expression on `this`.
+    /// Extract a `PropertyKey` from a property access expression on `this`.
     pub(crate) fn property_key_from_access(&self, access_idx: NodeIndex) -> Option<PropertyKey> {
         let node = self.ctx.arena.get(access_idx)?;
         let access = self.ctx.arena.get_access_expr(node)?;
@@ -949,7 +949,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Extract a ComputedKey from an expression.
+    /// Extract a `ComputedKey` from an expression.
     fn computed_key_from_expression(&self, expr_idx: NodeIndex) -> Option<ComputedKey> {
         let expr_node = self.ctx.arena.get(expr_idx)?;
 
@@ -1721,7 +1721,7 @@ impl<'a> CheckerState<'a> {
     /// This is used to apply Rule #42: CFA Invalidation in Closures.
     ///
     /// Returns true if inside a function expression, arrow function, or method expression.
-    fn is_inside_closure(&self) -> bool {
+    const fn is_inside_closure(&self) -> bool {
         self.ctx.inside_closure_depth > 0
     }
 
@@ -1733,8 +1733,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Implementation checks:
     /// 1. Get the symbol's value declaration
-    /// 2. Check if it's a VariableDeclaration
-    /// 3. Look at the parent VariableDeclarationList's NodeFlags
+    /// 2. Check if it's a `VariableDeclaration`
+    /// 3. Look at the parent `VariableDeclarationList`'s `NodeFlags`
     /// 4. If CONST flag is set → const (immutable)
     /// 5. Otherwise → let/var (mutable)
     ///
@@ -1977,7 +1977,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.file_name.clone(),
             pos,
             length,
-            format!("Variable '{}' is used before being assigned", name),
+            format!("Variable '{name}' is used before being assigned"),
             2454, // TS2454
         ));
     }

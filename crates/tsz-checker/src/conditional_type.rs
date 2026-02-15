@@ -1,6 +1,6 @@
 //! Conditional Type Utilities Module
 //!
-//! This module contains conditional type utility methods for CheckerState
+//! This module contains conditional type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Distributive conditional type handling
 //! - Conditional type evaluation helpers
 //!
-//! This module extends CheckerState with utilities for conditional type
+//! This module extends `CheckerState` with utilities for conditional type
 //! operations, providing cleaner APIs for conditional type checking.
 
 use crate::query_boundaries::conditional_type as query;
@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get both branch types from a conditional type.
     ///
-    /// Returns (true_type, false_type) if this is a conditional, or None otherwise.
+    /// Returns (`true_type`, `false_type`) if this is a conditional, or None otherwise.
     pub fn get_conditional_branches(&self, type_id: TypeId) -> Option<(TypeId, TypeId)> {
         query::conditional_type(self.ctx.types, type_id)
             .map(|cond| (cond.true_type, cond.false_type))
@@ -79,7 +79,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the check and extends types from a conditional type.
     ///
-    /// Returns (check_type, extends_type) if this is a conditional, or None otherwise.
+    /// Returns (`check_type`, `extends_type`) if this is a conditional, or None otherwise.
     pub fn get_conditional_check(&self, type_id: TypeId) -> Option<(TypeId, TypeId)> {
         query::conditional_type(self.ctx.types, type_id)
             .map(|cond| (cond.check_type, cond.extends_type))
@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
     /// Get the result type of evaluating a conditional type.
     ///
     /// This is a helper that attempts to resolve the conditional
-    /// by checking if check_type extends extends_type.
+    /// by checking if `check_type` extends `extends_type`.
     /// Returns the appropriate branch type if resolvable, or None otherwise.
     pub fn evaluate_conditional(&mut self, type_id: TypeId) -> Option<TypeId> {
         if let (Some(check_type), Some(extends_type), Some(true_type), Some(false_type)) = (

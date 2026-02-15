@@ -1,6 +1,6 @@
 //! Callable Type Utilities Module
 //!
-//! This module contains callable type utility methods for CheckerState
+//! This module contains callable type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -10,7 +10,7 @@
 //! - Callable overload detection
 //! - This/binding type handling
 //!
-//! This module extends CheckerState with utilities for callable type
+//! This module extends `CheckerState` with utilities for callable type
 //! operations, providing cleaner APIs for function type checking.
 
 use crate::query_boundaries::callable_type as query;

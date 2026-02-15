@@ -6,7 +6,7 @@
 //! - Computed property names
 //! - Const modifier checking
 //!
-//! This module extends CheckerState with property-related methods as part of
+//! This module extends `CheckerState` with property-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::CheckerState;
@@ -144,8 +144,7 @@ impl<'a> CheckerState<'a> {
                     let current_name = self.get_class_name_from_decl(current_idx);
                     let receiver_name = self.get_class_name_from_decl(receiver_idx);
                     let message = format!(
-                        "Property '{}' is protected and only accessible through an instance of class '{}'. This is an instance of class '{}'.",
-                        property_name, current_name, receiver_name
+                        "Property '{property_name}' is protected and only accessible through an instance of class '{current_name}'. This is an instance of class '{receiver_name}'."
                     );
                     self.error_at_node(
                         error_node,
@@ -217,7 +216,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the const modifier node from a list of modifiers, if present.
     ///
-    /// Returns the NodeIndex of the const modifier for error reporting.
+    /// Returns the `NodeIndex` of the const modifier for error reporting.
     /// Used to validate that readonly properties cannot have initializers.
     pub(crate) fn get_const_modifier(
         &self,

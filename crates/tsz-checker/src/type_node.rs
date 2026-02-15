@@ -25,7 +25,7 @@ pub struct TypeNodeChecker<'a, 'ctx> {
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Create a new type node checker with a mutable context reference.
-    pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
+    pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
         Self {
             ctx,
             depth: DepthCounter::with_profile(RecursionProfile::TypeNodeCheck),
@@ -255,7 +255,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // Type Reference Resolution
     // =========================================================================
 
-    /// Get type from a type reference node (e.g., "number", "string", "MyType").
+    /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_binder::symbol_flags;
         use tsz_lowering::TypeLowering;
@@ -516,7 +516,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Get type from a type operator node (readonly T[], readonly [T, U], unique symbol).
     ///
     /// Handles type modifiers like:
-    /// - `readonly T[]` - Creates ReadonlyType wrapper
+    /// - `readonly T[]` - Creates `ReadonlyType` wrapper
     /// - `unique symbol` - Special marker for unique symbols
     fn get_type_from_type_operator(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_scanner::SyntaxKind;
@@ -724,7 +724,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 continue;
             }
             if let Some(node) = self.ctx.arena.get(error_idx) {
-                let message = format!("Cannot find name '{}'.", name);
+                let message = format!("Cannot find name '{name}'.");
                 self.ctx.error(node.pos, node.end - node.pos, message, 2304);
             }
         }
@@ -848,7 +848,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         lowering.lower_type(idx)
     }
 
-    /// Get type from a type literal node ({ a: number; b(): string; }).
+    /// Get type from a type literal node ({ a: number; `b()`: string; }).
     fn get_type_from_type_literal(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
@@ -1121,7 +1121,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get type from a type query node (typeof X).
     ///
-    /// Creates a TypeQuery type that captures the type of a value.
+    /// Creates a `TypeQuery` type that captures the type of a value.
     fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_lowering::TypeLowering;
 
@@ -1406,7 +1406,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     }
 
     /// Get the context reference (for read-only access).
-    pub fn context(&self) -> &CheckerContext<'ctx> {
+    pub const fn context(&self) -> &CheckerContext<'ctx> {
         self.ctx
     }
 }

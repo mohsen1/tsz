@@ -45,8 +45,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Literal(LiteralValue::String(atom)) => {
                 let s = self.interner().resolve_atom_ref(atom);
                 let transformed = match kind {
-                    StringIntrinsicKind::Uppercase => s.to_uppercase().to_string(),
-                    StringIntrinsicKind::Lowercase => s.to_lowercase().to_string(),
+                    StringIntrinsicKind::Uppercase => s.to_uppercase(),
+                    StringIntrinsicKind::Lowercase => s.to_lowercase(),
                     StringIntrinsicKind::Capitalize => {
                         if s.is_empty() {
                             s.to_string()
@@ -122,8 +122,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Apply a string intrinsic to a template literal type
     ///
-    /// This handles cases like `Uppercase<\`hello-${string}\`>` which should produce
-    /// a template literal with uppercase text spans: `\`HELLO-${string}\``
+    /// This handles cases like `Uppercase<hello-${string}>`, which should produce
+    /// a template literal with uppercase text spans: `HELLO-${string}`
     ///
     /// For template literals with type interpolations:
     /// - Text spans are transformed (uppercased, lowercased, etc.)

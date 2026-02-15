@@ -98,7 +98,7 @@ struct VarianceVisitor<'a> {
     target_param: Atom,
     /// The accumulated variance result so far.
     result: Variance,
-    /// Unified recursion guard for (TypeId, Polarity) cycle detection.
+    /// Unified recursion guard for (`TypeId`, Polarity) cycle detection.
     guard: crate::recursion::RecursionGuard<(TypeId, bool)>,
     /// Stack of polarities to track current position in the type graph.
     /// true = Positive (Covariant), false = Negative (Contravariant)
@@ -106,7 +106,7 @@ struct VarianceVisitor<'a> {
 }
 
 impl<'a> VarianceVisitor<'a> {
-    /// Create a new VarianceVisitor.
+    /// Create a new `VarianceVisitor`.
     fn new(db: &'a dyn QueryDatabase, target_param: Atom) -> Self {
         Self {
             db,
@@ -119,7 +119,7 @@ impl<'a> VarianceVisitor<'a> {
         }
     }
 
-    /// Entry point: computes the variance of target_param within type_id.
+    /// Entry point: computes the variance of `target_param` within `type_id`.
     fn compute(mut self, type_id: TypeId) -> Variance {
         self.visit_with_polarity(type_id, true);
         self.result
@@ -467,7 +467,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         }
     }
 
-    /// Conditional types: check_type is COVARIANT, extends_type is CONTRAVARIANT.
+    /// Conditional types: `check_type` is COVARIANT, `extends_type` is CONTRAVARIANT.
     fn visit_conditional(&mut self, cond_id: u32) {
         let cond = self.db.conditional_type(ConditionalTypeId(cond_id));
         let current_polarity = self.get_current_polarity();

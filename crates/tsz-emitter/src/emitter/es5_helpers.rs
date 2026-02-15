@@ -693,7 +693,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit assignment target for ES5 computed property transform with optional computed temp
-    /// For computed: _a[_temp] (if computed_temp is Some)
+    /// For computed: _a[_temp] (if `computed_temp` is Some)
     /// For regular: _a.name
     pub(super) fn emit_assignment_target_es5_with_computed(
         &mut self,

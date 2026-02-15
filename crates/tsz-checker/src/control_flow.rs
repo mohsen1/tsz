@@ -46,8 +46,8 @@ pub struct FlowGraph<'a> {
 }
 
 impl<'a> FlowGraph<'a> {
-    /// Create a new FlowGraph from a FlowNodeArena.
-    pub fn new(arena: &'a FlowNodeArena) -> Self {
+    /// Create a new `FlowGraph` from a `FlowNodeArena`.
+    pub const fn new(arena: &'a FlowNodeArena) -> Self {
         Self { arena }
     }
 
@@ -57,12 +57,12 @@ impl<'a> FlowGraph<'a> {
     }
 
     /// Get the number of flow nodes in the graph.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.arena.len()
     }
 
     /// Check if the flow graph is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.arena.is_empty()
     }
 
@@ -100,10 +100,10 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) flow_graph: Option<FlowGraph<'a>>,
     /// Optional cache for flow analysis results to avoid redundant graph traversals
     pub(crate) flow_cache: Option<&'a RefCell<FlowCache>>,
-    /// Optional TypeEnvironment for resolving Lazy types during narrowing
+    /// Optional `TypeEnvironment` for resolving Lazy types during narrowing
     pub(crate) type_environment: Option<Rc<RefCell<tsz_solver::TypeEnvironment>>>,
     /// Cache for switch-reference relevance checks.
-    /// Key: (switch_expr_node, reference_node) -> whether switch can narrow reference.
+    /// Key: (`switch_expr_node`, `reference_node`) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
@@ -131,7 +131,7 @@ pub(crate) struct PredicateSignature {
 }
 
 impl<'a> FlowAnalyzer<'a> {
-    /// Create a new FlowAnalyzer.
+    /// Create a new `FlowAnalyzer`.
     pub fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -172,7 +172,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Set the flow analysis cache to avoid redundant graph traversals.
-    pub fn with_flow_cache(
+    pub const fn with_flow_cache(
         mut self,
         cache: &'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>,
     ) -> Self {
@@ -180,7 +180,7 @@ impl<'a> FlowAnalyzer<'a> {
         self
     }
 
-    /// Set the TypeEnvironment for resolving Lazy types during narrowing.
+    /// Set the `TypeEnvironment` for resolving Lazy types during narrowing.
     pub fn with_type_environment(
         mut self,
         type_env: Rc<RefCell<tsz_solver::TypeEnvironment>>,
@@ -208,7 +208,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Get a reference to the flow graph.
-    pub fn flow_graph(&self) -> Option<&FlowGraph<'a>> {
+    pub const fn flow_graph(&self) -> Option<&FlowGraph<'a>> {
         self.flow_graph.as_ref()
     }
 
@@ -256,8 +256,8 @@ impl<'a> FlowAnalyzer<'a> {
     /// until the type stabilizes (reaches a fixed point).
     ///
     /// # Arguments
-    /// * `loop_flow_id` - The FlowNodeId of the LOOP_LABEL (for cache key)
-    /// * `loop_flow` - The LOOP_LABEL flow node
+    /// * `loop_flow_id` - The `FlowNodeId` of the `LOOP_LABEL` (for cache key)
+    /// * `loop_flow` - The `LOOP_LABEL` flow node
     /// * `reference` - The variable reference we're analyzing
     /// * `entry_type` - The type entering the loop (from antecedent[0])
     /// * `initial_type` - The declared type of the variable (for widening)
@@ -348,7 +348,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// Iterative flow graph traversal using a worklist algorithm.
     ///
     /// This replaces the recursive implementation to prevent stack overflow
-    /// on deeply nested control flow structures. Uses a VecDeque worklist with
+    /// on deeply nested control flow structures. Uses a `VecDeque` worklist with
     /// cycle detection to process flow nodes iteratively.
     pub(crate) fn check_flow(
         &self,
@@ -1599,7 +1599,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Check if an operator token is a compound assignment operator.
     /// Returns true for +=, -=, *=, /=, etc., but not for simple =.
-    fn is_compound_assignment_operator(&self, operator_token: u16) -> bool {
+    const fn is_compound_assignment_operator(&self, operator_token: u16) -> bool {
         matches!(
             operator_token,
             k if k == SyntaxKind::PlusEqualsToken as u16
@@ -1622,7 +1622,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Map a compound assignment operator to its corresponding binary operator.
     /// Returns None if the operator is not a recognized compound assignment.
-    fn map_compound_operator_to_binary(&self, operator_token: u16) -> Option<&'static str> {
+    const fn map_compound_operator_to_binary(&self, operator_token: u16) -> Option<&'static str> {
         match operator_token {
             k if k == SyntaxKind::PlusEqualsToken as u16 => Some("+"),
             k if k == SyntaxKind::MinusEqualsToken as u16 => Some("-"),
@@ -3080,7 +3080,7 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
-    pub(crate) fn is_assignment_operator(&self, operator: u16) -> bool {
+    pub(crate) const fn is_assignment_operator(&self, operator: u16) -> bool {
         matches!(
             operator,
             k if k == SyntaxKind::EqualsToken as u16

@@ -1,6 +1,6 @@
 //! Object Type Utilities Module
 //!
-//! This module contains object type utility methods for CheckerState
+//! This module contains object type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Index signature handling
 //! - Object type compatibility
 //!
-//! This module extends CheckerState with utilities for object type
+//! This module extends `CheckerState` with utilities for object type
 //! operations, providing cleaner APIs for object type checking.
 
 use crate::query_boundaries::object_type::{is_object_type, object_shape_for_type};

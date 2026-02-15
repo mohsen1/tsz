@@ -1,7 +1,7 @@
 //! Type Reference Resolution Module
 //!
 //! Extracted from state.rs: Methods for resolving type references, cross-file
-//! exports, and constructor type operations on CheckerState.
+//! exports, and constructor type operations on `CheckerState`.
 
 use crate::module_resolution::module_specifier_candidates;
 use crate::query_boundaries::state_type_resolution as query;
@@ -18,7 +18,7 @@ use tsz_solver::def::DefId;
 use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
-    /// Get type from a type reference node (e.g., "number", "string", "MyType").
+    /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     pub(crate) fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         // Fuel check: prevent infinite loops in circular type references
         if !self.ctx.consume_fuel() {
@@ -1076,8 +1076,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// This is critical for Application type evaluation: when instantiating a generic
     /// type, we need the body type AND the type parameters to be built from the SAME
-    /// call to `push_type_parameters`, so the TypeIds in the body match those in the
-    /// substitution. Otherwise, substitution fails because the TypeIds don't match.
+    /// call to `push_type_parameters`, so the `TypeIds` in the body match those in the
+    /// substitution. Otherwise, substitution fails because the `TypeIds` don't match.
     pub(crate) fn type_reference_symbol_type_with_params(
         &mut self,
         sym_id: SymbolId,
@@ -1385,7 +1385,7 @@ impl<'a> CheckerState<'a> {
     // NOTE: merge_namespace_exports_into_constructor, merge_namespace_exports_into_function,
     // resolve_reexported_member moved to namespace_checker.rs
 
-    /// Resolve a named type reference to its TypeId.
+    /// Resolve a named type reference to its `TypeId`.
     ///
     /// This is a core function for resolving type names like `User`, `Array`, `Promise`,
     /// etc. to their actual type representations. It handles multiple resolution strategies.
@@ -1473,10 +1473,10 @@ impl<'a> CheckerState<'a> {
     /// Resolve an export from another file using cross-file resolution.
     ///
     /// This method uses `all_binders` and `resolved_module_paths` to look up an export
-    /// from a different file in multi-file mode. Returns the SymbolId of the export
+    /// from a different file in multi-file mode. Returns the `SymbolId` of the export
     /// if found, or None if cross-file resolution is not available or the export is not found.
     ///
-    /// This is the core of Phase 1.1: ModuleResolver ↔ Checker Integration.
+    /// This is the core of Phase 1.1: `ModuleResolver` ↔ Checker Integration.
     pub(crate) fn resolve_cross_file_export(
         &self,
         module_specifier: &str,
@@ -1615,7 +1615,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Follow re-export chains across binder boundaries to find an exported symbol.
-    /// Returns the SymbolId if the export is found via named or wildcard re-exports.
+    /// Returns the `SymbolId` if the export is found via named or wildcard re-exports.
     /// Follow re-export chains across binder boundaries to find an exported symbol.
     /// Returns `(SymbolId, file_idx)` where `file_idx` is the actual file that owns
     /// the symbol, so callers can record the correct cross-file origin.
@@ -1681,7 +1681,7 @@ impl<'a> CheckerState<'a> {
 
     /// Resolve a namespace import (import * as ns) from another file using cross-file resolution.
     ///
-    /// Returns a SymbolTable containing all exports from the target module.
+    /// Returns a `SymbolTable` containing all exports from the target module.
     pub(crate) fn resolve_cross_file_namespace_exports(
         &self,
         module_specifier: &str,
@@ -1797,7 +1797,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Collect all symbols reachable through re-export chains into the given SymbolTable.
+    /// Collect all symbols reachable through re-export chains into the given `SymbolTable`.
     fn collect_reexported_symbols(
         &self,
         file_idx: usize,
@@ -1923,9 +1923,7 @@ impl<'a> CheckerState<'a> {
         if self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             return; // Already emitted - skip duplicate
         }
-        self.ctx
-            .modules_with_ts2307_emitted
-            .insert(module_key.clone());
+        self.ctx.modules_with_ts2307_emitted.insert(module_key);
 
         // Try to find the import declaration node to get the module specifier span
         let (start, length) = if !decl_node.is_none() {
@@ -2477,7 +2475,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a module exists for cross-file resolution.
     ///
-    /// Returns true if the module can be found via resolved_modules or through
+    /// Returns true if the module can be found via `resolved_modules` or through
     /// the context's cross-file resolution mechanism.
     pub(crate) fn module_exists_cross_file(&self, module_name: &str) -> bool {
         if self.ctx.resolve_import_target(module_name).is_some() {
@@ -2544,7 +2542,7 @@ impl<'a> CheckerState<'a> {
             .map(|sig| {
                 {
                     let app_info = query::get_application_info(self.ctx.types, sig.return_type)
-                        .map(|(base, args)| format!("base={:?} args={:?}", base, args))
+                        .map(|(base, args)| format!("base={base:?} args={args:?}"))
                         .unwrap_or_default();
                     tracing::trace!(
                         ?sig.return_type,
@@ -2569,7 +2567,7 @@ impl<'a> CheckerState<'a> {
                 let result = self.instantiate_constructor_signature(sig, &args);
                 {
                     let app_info = query::get_application_info(self.ctx.types, result.return_type)
-                        .map(|(base, args)| format!("base={:?} args={:?}", base, args))
+                        .map(|(base, args)| format!("base={base:?} args={args:?}"))
                         .unwrap_or_default();
                     tracing::trace!(
                         ?result.return_type,

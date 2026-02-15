@@ -548,7 +548,7 @@ impl<'a> Printer<'a> {
 
                 let mut output = printer.emit(&ir).to_string();
                 if !enum_name.is_empty() && self.declared_namespace_names.contains(&enum_name) {
-                    let var_prefix = format!("var {};\n", enum_name);
+                    let var_prefix = format!("var {enum_name};\n");
                     if output.starts_with(&var_prefix) {
                         output = output[var_prefix.len()..].to_string();
                     }

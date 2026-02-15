@@ -4027,7 +4027,7 @@ fn test_all_compiler_options_combinations() {
         let expected = !exact; // When exact=true, should NOT be assignable
         let result = checker.is_assignable(explicit_union, optional_number);
 
-        assert_eq!(result, expected, "Failed for: {} (exact={})", desc, exact);
+        assert_eq!(result, expected, "Failed for: {desc} (exact={exact})");
     }
 }
 

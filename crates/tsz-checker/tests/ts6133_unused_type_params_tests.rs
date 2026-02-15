@@ -86,8 +86,7 @@ fn test_interface_unused_type_param() {
     let names = ts6133_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
-        "Expected TS6133 for unused T, got names: {:?}",
-        names
+        "Expected TS6133 for unused T, got names: {names:?}"
     );
 }
 
@@ -97,8 +96,7 @@ fn test_interface_used_type_param() {
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
-        "T should not be reported as unused, got names: {:?}",
-        names
+        "T should not be reported as unused, got names: {names:?}"
     );
 }
 
@@ -108,8 +106,7 @@ fn test_function_unused_type_param() {
     let names = ts6133_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
-        "Expected TS6133 for unused T, got names: {:?}",
-        names
+        "Expected TS6133 for unused T, got names: {names:?}"
     );
 }
 
@@ -119,8 +116,7 @@ fn test_function_used_type_param() {
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
-        "T should not be reported as unused, got names: {:?}",
-        names
+        "T should not be reported as unused, got names: {names:?}"
     );
 }
 
@@ -144,8 +140,7 @@ fn test_type_alias_unused_type_param() {
     let names = ts6133_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
-        "Expected TS6133 for unused T, got names: {:?}",
-        names
+        "Expected TS6133 for unused T, got names: {names:?}"
     );
 }
 
@@ -155,8 +150,7 @@ fn test_type_alias_used_type_param() {
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
-        "T should not be reported as unused, got names: {:?}",
-        names
+        "T should not be reported as unused, got names: {names:?}"
     );
 }
 
@@ -166,8 +160,7 @@ fn test_class_unused_type_param() {
     let names = ts6133_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
-        "Expected TS6133 for unused T, got names: {:?}",
-        names
+        "Expected TS6133 for unused T, got names: {names:?}"
     );
 }
 
@@ -177,8 +170,7 @@ fn test_class_used_type_param() {
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
-        "T should not be reported as unused, got names: {:?}",
-        names
+        "T should not be reported as unused, got names: {names:?}"
     );
 }
 
@@ -188,8 +180,7 @@ fn test_underscore_prefixed_type_param_not_reported() {
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"_T".to_string()),
-        "_T should be skipped (underscore convention), got names: {:?}",
-        names
+        "_T should be skipped (underscore convention), got names: {names:?}"
     );
 }
 
@@ -199,13 +190,11 @@ fn test_multiple_type_params_partial_usage() {
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
-        "T is used, should not be reported, got names: {:?}",
-        names
+        "T is used, should not be reported, got names: {names:?}"
     );
     assert!(
         names.contains(&"U".to_string()),
-        "U is unused, should be reported, got names: {:?}",
-        names
+        "U is unused, should be reported, got names: {names:?}"
     );
 }
 
@@ -319,8 +308,7 @@ function f(this: A): number {
         .collect();
     assert!(
         this_errors.is_empty(),
-        "this parameter should not be flagged as unused, got: {:?}",
-        this_errors
+        "this parameter should not be flagged as unused, got: {this_errors:?}"
     );
 }
 
@@ -358,8 +346,7 @@ fn test_using_declaration_not_reported_unused() {
         .collect();
     assert!(
         using_errors.is_empty(),
-        "using declaration should not be flagged as unused, got: {:?}",
-        using_errors
+        "using declaration should not be flagged as unused, got: {using_errors:?}"
     );
 }
 
@@ -406,7 +393,6 @@ class Employee {
         .collect();
     assert!(
         setter_errors.is_empty(),
-        "setter-only private member should not be flagged as unused, got: {:?}",
-        setter_errors
+        "setter-only private member should not be flagged as unused, got: {setter_errors:?}"
     );
 }

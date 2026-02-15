@@ -1,13 +1,13 @@
 //! Type Query Functions
 //!
 //! This module provides high-level query functions for inspecting type characteristics.
-//! These functions abstract away the internal TypeData representation and provide
+//! These functions abstract away the internal `TypeData` representation and provide
 //! a stable API for the checker to query type properties.
 //!
 //! # Design Principles
 //!
-//! - **Abstraction**: Checker code should use these functions instead of matching on TypeData
-//! - **TypeDatabase-based**: All queries work through the TypeDatabase trait
+//! - **Abstraction**: Checker code should use these functions instead of matching on `TypeData`
+//! - **TypeDatabase-based**: All queries work through the `TypeDatabase` trait
 //! - **Comprehensive**: Covers all common type checking scenarios
 //! - **Efficient**: Simple lookups with minimal overhead
 //!
@@ -78,7 +78,7 @@ pub use crate::type_queries_extended::{
 
 /// Check if a type is a callable type (function or callable with signatures).
 ///
-/// Returns true for TypeData::Callable and TypeData::Function types.
+/// Returns true for `TypeData::Callable` and `TypeData::Function` types.
 pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
@@ -88,7 +88,7 @@ pub fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is invokable (has call signatures, not just construct signatures).
 ///
-/// This is more specific than is_callable_type - it ensures the type can be called
+/// This is more specific than `is_callable_type` - it ensures the type can be called
 /// as a function (not just constructed with `new`).
 ///
 /// # Arguments
@@ -132,28 +132,28 @@ pub fn is_invokable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a tuple type.
 ///
-/// Returns true for TypeData::Tuple.
+/// Returns true for `TypeData::Tuple`.
 pub fn is_tuple_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Tuple(_)))
 }
 
 /// Check if a type is a union type (A | B).
 ///
-/// Returns true for TypeData::Union.
+/// Returns true for `TypeData::Union`.
 pub fn is_union_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Union(_)))
 }
 
 /// Check if a type is an intersection type (A & B).
 ///
-/// Returns true for TypeData::Intersection.
+/// Returns true for `TypeData::Intersection`.
 pub fn is_intersection_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Intersection(_)))
 }
 
 /// Check if a type is an object type (with or without index signatures).
 ///
-/// Returns true for TypeData::Object and TypeData::ObjectWithIndex.
+/// Returns true for `TypeData::Object` and `TypeData::ObjectWithIndex`.
 pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
@@ -163,28 +163,28 @@ pub fn is_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is an array type (T[]).
 ///
-/// Returns true for TypeData::Array.
+/// Returns true for `TypeData::Array`.
 pub fn is_array_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Array(_)))
 }
 
 /// Check if a type is a literal type (specific value).
 ///
-/// Returns true for TypeData::Literal.
+/// Returns true for `TypeData::Literal`.
 pub fn is_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Literal(_)))
 }
 
 /// Check if a type is a generic type application (Base<Args>).
 ///
-/// Returns true for TypeData::Application.
+/// Returns true for `TypeData::Application`.
 pub fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Application(_)))
 }
 
 /// Check if a type is a named type reference.
 ///
-/// Returns true for TypeData::Lazy(DefId) (interfaces, classes, type aliases).
+/// Returns true for `TypeData::Lazy(DefId)` (interfaces, classes, type aliases).
 pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
@@ -194,28 +194,28 @@ pub fn is_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is a conditional type (T extends U ? X : Y).
 ///
-/// Returns true for TypeData::Conditional.
+/// Returns true for `TypeData::Conditional`.
 pub fn is_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Conditional(_)))
 }
 
 /// Check if a type is a mapped type ({ [K in Keys]: V }).
 ///
-/// Returns true for TypeData::Mapped.
+/// Returns true for `TypeData::Mapped`.
 pub fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Mapped(_)))
 }
 
 /// Check if a type is a template literal type (`hello${T}world`).
 ///
-/// Returns true for TypeData::TemplateLiteral.
+/// Returns true for `TypeData::TemplateLiteral`.
 pub fn is_template_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::TemplateLiteral(_)))
 }
 
 /// Check if a type is a type parameter or infer type.
 ///
-/// Returns true for TypeData::TypeParameter and TypeData::Infer.
+/// Returns true for `TypeData::TypeParameter` and `TypeData::Infer`.
 pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
@@ -225,49 +225,49 @@ pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is an index access type (T[K]).
 ///
-/// Returns true for TypeData::IndexAccess.
+/// Returns true for `TypeData::IndexAccess`.
 pub fn is_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::IndexAccess(_, _)))
 }
 
 /// Check if a type is a keyof type.
 ///
-/// Returns true for TypeData::KeyOf.
+/// Returns true for `TypeData::KeyOf`.
 pub fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::KeyOf(_)))
 }
 
 /// Check if a type is a type query (typeof expr).
 ///
-/// Returns true for TypeData::TypeQuery.
+/// Returns true for `TypeData::TypeQuery`.
 pub fn is_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::TypeQuery(_)))
 }
 
 /// Check if a type is a readonly type modifier.
 ///
-/// Returns true for TypeData::ReadonlyType.
+/// Returns true for `TypeData::ReadonlyType`.
 pub fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::ReadonlyType(_)))
 }
 
 /// Check if a type is a unique symbol type.
 ///
-/// Returns true for TypeData::UniqueSymbol.
+/// Returns true for `TypeData::UniqueSymbol`.
 pub fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::UniqueSymbol(_)))
 }
 
 /// Check if a type is the this type.
 ///
-/// Returns true for TypeData::ThisType.
+/// Returns true for `TypeData::ThisType`.
 pub fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::ThisType))
 }
 
 /// Check if a type is an error type.
 ///
-/// Returns true for TypeData::Error or TypeId::ERROR.
+/// Returns true for `TypeData::Error` or `TypeId::ERROR`.
 pub fn is_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::ERROR || matches!(db.lookup(type_id), Some(TypeData::Error))
 }
@@ -287,7 +287,7 @@ pub fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 
 /// Check if a type is an intrinsic type (any, unknown, never, void, etc.).
 ///
-/// Returns true for TypeData::Intrinsic.
+/// Returns true for `TypeData::Intrinsic`.
 pub fn is_intrinsic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Intrinsic(_)))
 }
@@ -344,7 +344,7 @@ use crate::types::IntrinsicKind;
 
 /// Check if a type is the `any` type.
 ///
-/// Returns true for TypeId::ANY or TypeData::Intrinsic(IntrinsicKind::Any).
+/// Returns true for `TypeId::ANY` or `TypeData::Intrinsic(IntrinsicKind::Any)`.
 pub fn is_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::ANY
         || matches!(
@@ -355,7 +355,7 @@ pub fn is_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `unknown` type.
 ///
-/// Returns true for TypeId::UNKNOWN or TypeData::Intrinsic(IntrinsicKind::Unknown).
+/// Returns true for `TypeId::UNKNOWN` or `TypeData::Intrinsic(IntrinsicKind::Unknown)`.
 pub fn is_unknown_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::UNKNOWN
         || matches!(
@@ -366,7 +366,7 @@ pub fn is_unknown_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `never` type.
 ///
-/// Returns true for TypeId::NEVER or TypeData::Intrinsic(IntrinsicKind::Never).
+/// Returns true for `TypeId::NEVER` or `TypeData::Intrinsic(IntrinsicKind::Never)`.
 pub fn is_never_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::NEVER
         || matches!(
@@ -377,7 +377,7 @@ pub fn is_never_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `void` type.
 ///
-/// Returns true for TypeId::VOID or TypeData::Intrinsic(IntrinsicKind::Void).
+/// Returns true for `TypeId::VOID` or `TypeData::Intrinsic(IntrinsicKind::Void)`.
 pub fn is_void_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::VOID
         || matches!(
@@ -388,7 +388,7 @@ pub fn is_void_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `undefined` type.
 ///
-/// Returns true for TypeId::UNDEFINED or TypeData::Intrinsic(IntrinsicKind::Undefined).
+/// Returns true for `TypeId::UNDEFINED` or `TypeData::Intrinsic(IntrinsicKind::Undefined)`.
 pub fn is_undefined_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::UNDEFINED
         || matches!(
@@ -399,7 +399,7 @@ pub fn is_undefined_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `null` type.
 ///
-/// Returns true for TypeId::NULL or TypeData::Intrinsic(IntrinsicKind::Null).
+/// Returns true for `TypeId::NULL` or `TypeData::Intrinsic(IntrinsicKind::Null)`.
 pub fn is_null_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::NULL
         || matches!(
@@ -410,7 +410,7 @@ pub fn is_null_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `string` type.
 ///
-/// Returns true for TypeId::STRING or TypeData::Intrinsic(IntrinsicKind::String).
+/// Returns true for `TypeId::STRING` or `TypeData::Intrinsic(IntrinsicKind::String)`.
 pub fn is_string_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::STRING
         || matches!(
@@ -421,7 +421,7 @@ pub fn is_string_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `number` type.
 ///
-/// Returns true for TypeId::NUMBER or TypeData::Intrinsic(IntrinsicKind::Number).
+/// Returns true for `TypeId::NUMBER` or `TypeData::Intrinsic(IntrinsicKind::Number)`.
 pub fn is_number_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::NUMBER
         || matches!(
@@ -432,7 +432,7 @@ pub fn is_number_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `bigint` type.
 ///
-/// Returns true for TypeId::BIGINT or TypeData::Intrinsic(IntrinsicKind::Bigint).
+/// Returns true for `TypeId::BIGINT` or `TypeData::Intrinsic(IntrinsicKind::Bigint)`.
 pub fn is_bigint_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::BIGINT
         || matches!(
@@ -443,9 +443,9 @@ pub fn is_bigint_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `boolean` type.
 ///
-/// Returns true for TypeId::BOOLEAN or TypeData::Intrinsic(IntrinsicKind::Boolean).
+/// Returns true for `TypeId::BOOLEAN` or `TypeData::Intrinsic(IntrinsicKind::Boolean)`.
 /// Note: This does NOT include boolean literals (true/false). For literal checks,
-/// use is_literal_type combined with value inspection.
+/// use `is_literal_type` combined with value inspection.
 pub fn is_boolean_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::BOOLEAN
         || matches!(
@@ -456,7 +456,7 @@ pub fn is_boolean_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is the `symbol` type.
 ///
-/// Returns true for TypeId::SYMBOL or TypeData::Intrinsic(IntrinsicKind::Symbol).
+/// Returns true for `TypeId::SYMBOL` or `TypeData::Intrinsic(IntrinsicKind::Symbol)`.
 pub fn is_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::SYMBOL
         || matches!(
@@ -471,7 +471,7 @@ pub fn is_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is an object-like type suitable for typeof "object".
 ///
-/// Returns true for: Object, ObjectWithIndex, Array, Tuple, Mapped
+/// Returns true for: Object, `ObjectWithIndex`, Array, Tuple, Mapped
 pub fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_object_like_type_impl(db, type_id)
 }
@@ -495,7 +495,6 @@ fn is_object_like_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
             .constraint
             .is_some_and(|constraint| is_object_like_type_impl(db, constraint)),
-        Some(TypeData::Enum(_, _)) => false,
         _ => false,
     }
 }
@@ -516,7 +515,6 @@ fn is_function_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
                 .iter()
                 .any(|&member| is_function_type_impl(db, member))
         }
-        Some(TypeData::Enum(_, _)) => false,
         _ => false,
     }
 }
@@ -542,25 +540,25 @@ pub fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 // Type Content Queries
 // =============================================================================
 
-/// Check if a type contains any type parameters (TypeDatabase version).
+/// Check if a type contains any type parameters (`TypeDatabase` version).
 ///
-/// This is a TypeDatabase-based alternative to visitor::contains_type_parameters.
+/// This is a TypeDatabase-based alternative to `visitor::contains_type_parameters`.
 pub fn contains_type_parameters_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching_impl(db, type_id, |key| {
         matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_))
     })
 }
 
-/// Check if a type contains any `infer` types (TypeDatabase version).
+/// Check if a type contains any `infer` types (`TypeDatabase` version).
 ///
-/// This is a TypeDatabase-based alternative to visitor::contains_infer_types.
+/// This is a TypeDatabase-based alternative to `visitor::contains_infer_types`.
 pub fn contains_infer_types_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     contains_type_matching_impl(db, type_id, |key| matches!(key, TypeData::Infer(_)))
 }
 
-/// Check if a type contains the error type (TypeDatabase version).
+/// Check if a type contains the error type (`TypeDatabase` version).
 ///
-/// This is a TypeDatabase-based alternative to visitor::contains_error_type.
+/// This is a TypeDatabase-based alternative to `visitor::contains_error_type`.
 pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::ERROR {
         return true;
@@ -622,7 +620,13 @@ where
             TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::Error
-            | TypeData::ThisType => false,
+            | TypeData::ThisType
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_) => false,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.db.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))
@@ -662,12 +666,6 @@ where
                 info.constraint.is_some_and(|c| self.check(c))
                     || info.default.is_some_and(|d| self.check(d))
             }
-            TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::BoundParameter(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => false,
             TypeData::Application(app_id) => {
                 let app = self.db.type_application(*app_id);
                 self.check(app.base) || app.args.iter().any(|&a| self.check(a))
@@ -775,7 +773,7 @@ pub fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 /// Get the elements of a tuple type.
 ///
 /// Returns None if the type is not a tuple.
-/// Returns a vector of (TypeId, optional, rest, name) tuples.
+/// Returns a vector of (`TypeId`, optional, rest, name) tuples.
 pub fn get_tuple_elements(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -875,7 +873,7 @@ pub fn get_object_shape(
 
 /// Unwrap readonly type wrappers.
 ///
-/// Returns the inner type if this is a ReadonlyType, otherwise returns the original type.
+/// Returns the inner type if this is a `ReadonlyType`, otherwise returns the original type.
 /// Does not recurse - call repeatedly to fully unwrap.
 pub fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     match db.lookup(type_id) {
@@ -886,7 +884,7 @@ pub fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 
 /// Unwrap all readonly type wrappers recursively.
 ///
-/// Keeps unwrapping until the type is no longer a ReadonlyType.
+/// Keeps unwrapping until the type is no longer a `ReadonlyType`.
 pub fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     let mut current = type_id;
     let mut depth = 0;
@@ -902,9 +900,9 @@ pub fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     current
 }
 
-/// Check if a type is an object type (Object or ObjectWithIndex) and return true.
+/// Check if a type is an object type (Object or `ObjectWithIndex`) and return true.
 ///
-/// This is a convenience alias for is_object_type for symmetry with extraction functions.
+/// This is a convenience alias for `is_object_type` for symmetry with extraction functions.
 pub fn is_object_type_with_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
@@ -920,7 +918,7 @@ pub fn get_type_parameter_info(
     type_id: TypeId,
 ) -> Option<crate::types::TypeParamInfo> {
     match db.lookup(type_id) {
-        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info.clone()),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info),
         _ => None,
     }
 }
@@ -1055,7 +1053,7 @@ pub fn get_type_application(
 
 /// Get the index access components (object type and index type).
 ///
-/// Returns None if the type is not an IndexAccess.
+/// Returns None if the type is not an `IndexAccess`.
 pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<(TypeId, TypeId)> {
     match db.lookup(type_id) {
         Some(TypeData::IndexAccess(obj, idx)) => Some((obj, idx)),
@@ -1065,7 +1063,7 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
 
 /// Get the keyof inner type.
 ///
-/// Returns None if the type is not a KeyOf.
+/// Returns None if the type is not a `KeyOf`.
 pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(inner)) => Some(inner),
@@ -1073,7 +1071,7 @@ pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> 
     }
 }
 
-/// Get the DefId from a Lazy type.
+/// Get the `DefId` from a Lazy type.
 ///
 /// Returns None if the type is not a Lazy type.
 pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
@@ -1083,7 +1081,7 @@ pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
     }
 }
 
-/// Get the DefId from an Enum type.
+/// Get the `DefId` from an Enum type.
 ///
 /// Returns None if the type is not an Enum type.
 pub fn get_enum_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
@@ -1105,19 +1103,19 @@ pub fn get_enum_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
 pub enum ConstructorTypeKind {
     /// This is a Callable type - always a constructor type
     Callable,
-    /// This is a Function type - check is_constructor flag on the shape
+    /// This is a Function type - check `is_constructor` flag on the shape
     Function(crate::types::FunctionShapeId),
     /// Recurse into these member types (Union, Intersection)
     Members(Vec<TypeId>),
-    /// Recurse into the inner type (ReadonlyType)
+    /// Recurse into the inner type (`ReadonlyType`)
     Inner(TypeId),
-    /// Recurse into the constraint (TypeParameter, Infer)
+    /// Recurse into the constraint (`TypeParameter`, Infer)
     Constraint(Option<TypeId>),
-    /// This type needs full type evaluation (Conditional, Mapped, IndexAccess, KeyOf)
+    /// This type needs full type evaluation (Conditional, Mapped, `IndexAccess`, `KeyOf`)
     NeedsTypeEvaluation,
     /// This is a generic application that needs instantiation
     NeedsApplicationEvaluation,
-    /// This is a TypeQuery - resolve the symbol reference to get its type
+    /// This is a `TypeQuery` - resolve the symbol reference to get its type
     TypeQuery(crate::types::SymbolRef),
     /// This type cannot be a constructor (primitives, literals, etc.)
     NotConstructor,
@@ -1125,11 +1123,11 @@ pub enum ConstructorTypeKind {
 
 /// Classify a type for constructor type collection.
 ///
-/// This function examines a TypeData and returns information about how to handle it
+/// This function examines a `TypeData` and returns information about how to handle it
 /// when collecting constructor types. The caller is responsible for:
 /// - Checking the `is_constructor` flag for Function types
 /// - Evaluating types when `NeedsTypeEvaluation` or `NeedsApplicationEvaluation` is returned
-/// - Resolving symbol references for TypeQuery
+/// - Resolving symbol references for `TypeQuery`
 /// - Recursing into members/inner types
 ///
 /// # Example
@@ -1187,8 +1185,8 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         TypeData::Application(_) => ConstructorTypeKind::NeedsApplicationEvaluation,
         TypeData::TypeQuery(sym_ref) => ConstructorTypeKind::TypeQuery(sym_ref),
         // All other types cannot be constructors
-        TypeData::Enum(_, _) => ConstructorTypeKind::NotConstructor,
-        TypeData::BoundParameter(_)
+        TypeData::Enum(_, _)
+        | TypeData::BoundParameter(_)
         | TypeData::Intrinsic(_)
         | TypeData::Literal(_)
         | TypeData::Object(_)
@@ -1213,14 +1211,14 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
 /// Result of extracting static properties from a type.
 ///
 /// This enum allows the caller to handle recursion and type evaluation
-/// while keeping the TypeData matching logic in the solver layer.
+/// while keeping the `TypeData` matching logic in the solver layer.
 #[derive(Debug, Clone)]
 pub enum StaticPropertySource {
-    /// Direct properties from Callable, Object, or ObjectWithIndex types.
+    /// Direct properties from Callable, Object, or `ObjectWithIndex` types.
     Properties(Vec<crate::PropertyInfo>),
     /// Member types that should be recursively processed (Union/Intersection).
     RecurseMembers(Vec<TypeId>),
-    /// Single type to recurse into (TypeParameter constraint, ReadonlyType inner).
+    /// Single type to recurse into (`TypeParameter` constraint, `ReadonlyType` inner).
     RecurseSingle(TypeId),
     /// Type that needs evaluation before property extraction (Conditional, Mapped, etc.).
     NeedsEvaluation,
@@ -1232,7 +1230,7 @@ pub enum StaticPropertySource {
 
 /// Extract static property information from a type.
 ///
-/// This function handles the TypeData matching for property collection,
+/// This function handles the `TypeData` matching for property collection,
 /// returning a `StaticPropertySource` that tells the caller how to proceed.
 /// The caller is responsible for:
 /// - Handling recursion for `RecurseMembers` and `RecurseSingle` cases
@@ -1297,8 +1295,8 @@ pub fn get_static_property_source(db: &dyn TypeDatabase, type_id: TypeId) -> Sta
 
 /// Check if a Callable type has construct signatures.
 ///
-/// Returns true only for Callable types that have non-empty construct_signatures.
-/// This is a direct check and does not resolve through Ref or TypeQuery types.
+/// Returns true only for Callable types that have non-empty `construct_signatures`.
+/// This is a direct check and does not resolve through Ref or `TypeQuery` types.
 pub fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match db.lookup(type_id) {
         Some(TypeData::Callable(shape_id)) => {
@@ -1309,9 +1307,9 @@ pub fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     }
 }
 
-/// Get the symbol reference from a TypeQuery type.
+/// Get the symbol reference from a `TypeQuery` type.
 ///
-/// Returns None if the type is not a TypeQuery.
+/// Returns None if the type is not a `TypeQuery`.
 pub fn get_symbol_ref_from_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1326,7 +1324,7 @@ pub fn get_symbol_ref_from_type(
 ///
 /// This enum represents the different ways a type can be constructable,
 /// allowing the caller to handle each case appropriately without matching
-/// directly on TypeData.
+/// directly on `TypeData`.
 #[derive(Debug, Clone)]
 pub enum ConstructableTypeKind {
     /// Callable type with construct signatures - return transformed callable
@@ -1337,7 +1335,7 @@ pub enum ConstructableTypeKind {
     Function,
     /// Reference to a symbol - need to check symbol flags
     SymbolRef(crate::types::SymbolRef),
-    /// TypeQuery (typeof expr) - need to check symbol flags
+    /// `TypeQuery` (typeof expr) - need to check symbol flags
     TypeQueryRef(crate::types::SymbolRef),
     /// Type parameter with a constraint to check recursively
     TypeParameterWithConstraint(TypeId),
@@ -1361,8 +1359,8 @@ pub enum ConstructableTypeKind {
 ///
 /// The caller is responsible for:
 /// - Checking symbol flags for SymbolRef/TypeQueryRef cases
-/// - Checking prototype property for CallableMaybePrototype
-/// - Recursing into constraint for TypeParameterWithConstraint
+/// - Checking prototype property for `CallableMaybePrototype`
+/// - Recursing into constraint for `TypeParameterWithConstraint`
 /// - Checking all members for Intersection
 pub fn classify_for_constructability(
     db: &dyn TypeDatabase,
@@ -1448,7 +1446,7 @@ pub enum ConstraintTypeKind {
     Application { app_id: u32 },
     /// Mapped type - evaluate constraint
     Mapped { mapped_id: u32 },
-    /// KeyOf - special handling
+    /// `KeyOf` - special handling
     KeyOf(TypeId),
     /// Literal or resolved constraint
     Resolved(TypeId),
@@ -1514,9 +1512,9 @@ pub fn classify_for_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Constr
 /// Classification for types when extracting call/construct signatures.
 #[derive(Debug, Clone)]
 pub enum SignatureTypeKind {
-    /// Callable type with shape_id - has call_signatures and construct_signatures
+    /// Callable type with `shape_id` - has `call_signatures` and `construct_signatures`
     Callable(crate::types::CallableShapeId),
-    /// Function type with shape_id - has single signature
+    /// Function type with `shape_id` - has single signature
     Function(crate::types::FunctionShapeId),
     /// Union type - get signatures from each member
     Union(Vec<TypeId>),
@@ -1526,7 +1524,7 @@ pub enum SignatureTypeKind {
     ReadonlyType(TypeId),
     /// Type parameter with optional constraint - may need to check constraint
     TypeParameter { constraint: Option<TypeId> },
-    /// Types that need evaluation before signature extraction (Conditional, Mapped, IndexAccess, KeyOf)
+    /// Types that need evaluation before signature extraction (Conditional, Mapped, `IndexAccess`, `KeyOf`)
     NeedsEvaluation(TypeId),
     /// Types without signatures (Intrinsic, Literal, Object without callable, etc.)
     NoSignatures,
@@ -1643,7 +1641,7 @@ pub fn classify_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Iterabl
 ///
 /// This enum is used by `is_iterable_type` and related functions to determine
 /// if a type is iterable (has Symbol.iterator protocol) without directly
-/// matching on TypeData in the checker layer.
+/// matching on `TypeData` in the checker layer.
 #[derive(Debug, Clone)]
 pub enum FullIterableTypeKind {
     /// Array type - always iterable
@@ -1816,7 +1814,7 @@ pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> F
 /// Classification for types when looking up properties.
 ///
 /// This enum provides a structured way to handle property lookups on different
-/// type kinds, abstracting away the internal TypeData representation.
+/// type kinds, abstracting away the internal `TypeData` representation.
 ///
 /// # Design Principles
 ///
@@ -1825,7 +1823,7 @@ pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> F
 /// - **Complete Coverage**: Handles all common property access patterns
 #[derive(Debug, Clone)]
 pub enum PropertyLookupKind {
-    /// Object type with shape_id - has properties
+    /// Object type with `shape_id` - has properties
     Object(crate::types::ObjectShapeId),
     /// Object with index signature - has properties and index signatures
     ObjectWithIndex(crate::types::ObjectShapeId),
@@ -1852,7 +1850,7 @@ pub enum PropertyLookupKind {
 /// The caller is responsible for:
 /// - Recursing into Union/Intersection members
 /// - Handling Array/Tuple element access appropriately
-/// - Accessing the object shape using the returned shape_id
+/// - Accessing the object shape using the returned `shape_id`
 ///
 /// # Example
 ///
@@ -1950,7 +1948,7 @@ pub enum EvaluationNeeded {
     },
     /// Index access T[K] - evaluate with environment
     IndexAccess { object: TypeId, index: TypeId },
-    /// KeyOf type - evaluate
+    /// `KeyOf` type - evaluate
     KeyOf(TypeId),
     /// Mapped type - evaluate
     Mapped {
@@ -1997,10 +1995,7 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
             let members = db.type_list(list_id);
             EvaluationNeeded::Intersection(members.to_vec())
         }
-        TypeData::TypeParameter(info) => EvaluationNeeded::TypeParameter {
-            constraint: info.constraint,
-        },
-        TypeData::Infer(info) => EvaluationNeeded::TypeParameter {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => EvaluationNeeded::TypeParameter {
             constraint: info.constraint,
         },
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
@@ -2055,7 +2050,7 @@ pub enum PropertyAccessClassification {
     Callable(TypeId),
     /// Type parameter with constraint
     TypeParameter { constraint: Option<TypeId> },
-    /// Needs evaluation (Conditional, Mapped, KeyOf)
+    /// Needs evaluation (Conditional, Mapped, `KeyOf`)
     NeedsEvaluation(TypeId),
     /// Primitive or resolved type
     Resolved(TypeId),
@@ -2091,12 +2086,11 @@ pub fn classify_for_property_access(
         TypeData::Function(_) | TypeData::Callable(_) => {
             PropertyAccessClassification::Callable(type_id)
         }
-        TypeData::TypeParameter(info) => PropertyAccessClassification::TypeParameter {
-            constraint: info.constraint,
-        },
-        TypeData::Infer(info) => PropertyAccessClassification::TypeParameter {
-            constraint: info.constraint,
-        },
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+            PropertyAccessClassification::TypeParameter {
+                constraint: info.constraint,
+            }
+        }
         TypeData::Conditional(_) | TypeData::Mapped(_) | TypeData::KeyOf(_) => {
             PropertyAccessClassification::NeedsEvaluation(type_id)
         }
@@ -2127,7 +2121,7 @@ pub fn classify_for_property_access(
 ///
 /// This enum is used by `ensure_application_symbols_resolved_inner` to
 /// determine how to traverse into nested types without directly matching
-/// on TypeData in the checker layer.
+/// on `TypeData` in the checker layer.
 #[derive(Debug, Clone)]
 pub enum TypeTraversalKind {
     /// Application type - resolve base symbol and recurse into base and args
@@ -2138,7 +2132,7 @@ pub enum TypeTraversalKind {
     },
     /// Symbol reference - resolve the symbol
     SymbolRef(crate::types::SymbolRef),
-    /// Lazy type reference (DefId) - needs resolution before traversal
+    /// Lazy type reference (`DefId`) - needs resolution before traversal
     Lazy(crate::def::DefId),
     /// Type query (typeof X) - value-space reference that needs resolution
     TypeQuery(crate::types::SymbolRef),
@@ -2167,7 +2161,7 @@ pub enum TypeTraversalKind {
     Readonly(TypeId),
     /// Index access - recurse into object and index types
     IndexAccess { object: TypeId, index: TypeId },
-    /// KeyOf - recurse into inner type
+    /// `KeyOf` - recurse into inner type
     KeyOf(TypeId),
     /// Template literal - extract types from spans
     TemplateLiteral(Vec<TypeId>),
@@ -2195,11 +2189,7 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
                 args: app.args.clone(),
             }
         }
-        TypeData::TypeParameter(info) => TypeTraversalKind::TypeParameter {
-            constraint: info.constraint,
-            default: info.default,
-        },
-        TypeData::Infer(info) => TypeTraversalKind::TypeParameter {
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => TypeTraversalKind::TypeParameter {
             constraint: info.constraint,
             default: info.default,
         },
@@ -2256,7 +2246,7 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
     }
 }
 
-/// Check if a type is a lazy type and return the DefId.
+/// Check if a type is a lazy type and return the `DefId`.
 ///
 /// This is a helper for checking if the base of an Application is a Lazy type.
 pub fn get_lazy_if_def(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
@@ -2347,7 +2337,7 @@ pub fn collect_property_name_atoms_for_diagnostics(
 /// Classification for types when merging interfaces.
 ///
 /// This enum provides a structured way to handle interface type merging,
-/// abstracting away the internal TypeData representation. Used for merging
+/// abstracting away the internal `TypeData` representation. Used for merging
 /// derived and base interface types.
 #[derive(Debug, Clone)]
 pub enum InterfaceMergeKind {
@@ -2436,7 +2426,7 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
 
 /// Classification for augmentation operations on types.
 ///
-/// Similar to InterfaceMergeKind but specifically for module augmentation
+/// Similar to `InterfaceMergeKind` but specifically for module augmentation
 /// where we merge additional properties into an existing type.
 #[derive(Debug, Clone)]
 pub enum AugmentationTargetKind {
@@ -2476,9 +2466,9 @@ pub fn classify_for_augmentation(db: &dyn TypeDatabase, type_id: TypeId) -> Augm
 /// Used by control flow analysis to extract predicate signatures from callable types.
 #[derive(Debug, Clone)]
 pub enum PredicateSignatureKind {
-    /// Function type - has type_predicate and params in function shape
+    /// Function type - has `type_predicate` and params in function shape
     Function(crate::types::FunctionShapeId),
-    /// Callable type - check call_signatures for predicate
+    /// Callable type - check `call_signatures` for predicate
     Callable(crate::types::CallableShapeId),
     /// Union - search members for predicate
     Union(Vec<TypeId>),
@@ -2749,12 +2739,12 @@ pub fn classify_for_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Lit
 /// # Arguments
 ///
 /// * `db` - The type database/interner
-/// * `type_id` - The TypeId of a function or callable type
+/// * `type_id` - The `TypeId` of a function or callable type
 ///
 /// # Returns
 ///
 /// * `Some(TypeId)` - The return type if this is a callable type
-/// * `None` - If this is not a callable type or type_id is unknown
+/// * `None` - If this is not a callable type or `type_id` is unknown
 pub fn get_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => Some(db.function_shape(shape_id).return_type),
@@ -2846,7 +2836,7 @@ pub fn is_promise_like(db: &dyn crate::db::QueryDatabase, type_id: TypeId) -> bo
 ///
 /// # Returns
 ///
-/// * `true` - If valid for for...in (Object, Array, TypeParameter, Any)
+/// * `true` - If valid for for...in (Object, Array, `TypeParameter`, Any)
 /// * `false` - Otherwise
 ///
 /// # Examples
@@ -2878,13 +2868,11 @@ pub fn is_valid_for_in_target(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     use crate::types::IntrinsicKind;
     match db.lookup(type_id) {
         // Object types are valid (for...in iterates properties)
-        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
-        // Array types are valid (for...in iterates indices)
-        Some(TypeData::Array(_)) => true,
-        // Type parameters are valid (we don't know the constraint)
-        Some(TypeData::TypeParameter(_)) => true,
-        // Tuples are valid (they're objects)
-        Some(TypeData::Tuple(_)) => true,
+        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+        | Some(TypeData::Array(_))
+        | Some(TypeData::TypeParameter(_))
+        | Some(TypeData::Tuple(_))
+        | Some(TypeData::Literal(_)) => true,
         // Unions are valid if all members are valid
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
@@ -2895,8 +2883,6 @@ pub fn is_valid_for_in_target(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             let members = db.type_list(list_id);
             members.iter().any(|&m| is_valid_for_in_target(db, m))
         }
-        // Literals are valid (they box to objects)
-        Some(TypeData::Literal(_)) => true,
         // Intrinsic primitives
         Some(TypeData::Intrinsic(kind)) => matches!(
             kind,

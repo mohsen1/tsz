@@ -1745,7 +1745,7 @@ impl ParserState {
     }
 
     /// Check if current token is a valid parameter modifier
-    fn is_valid_parameter_modifier(&self) -> bool {
+    const fn is_valid_parameter_modifier(&self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::PublicKeyword
@@ -2536,7 +2536,7 @@ impl ParserState {
         // Combine decorators with abstract modifier
         let modifiers = if let Some(dec_list) = decorators {
             // Add abstract modifier to decorator list
-            let mut nodes: Vec<NodeIndex> = dec_list.nodes.clone();
+            let mut nodes: Vec<NodeIndex> = dec_list.nodes;
             nodes.push(abstract_modifier);
             Some(self.make_node_list(nodes))
         } else {
@@ -3003,8 +3003,7 @@ impl ParserState {
                     };
                     self.parse_error_at_current_token(
                         &format!(
-                            "'{}' modifier must precede '{}' modifier.",
-                            current_mod, conflicting_mod
+                            "'{current_mod}' modifier must precede '{conflicting_mod}' modifier."
                         ),
                         diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
                     );

@@ -57,12 +57,12 @@ pub struct ClassES5Emitter<'a> {
     /// Mappings for source maps (currently empty in IR-based approach)
     mappings: Vec<Mapping>,
     transformer: ES5ClassTransformer<'a>,
-    /// Transform directives for ASTRef nodes
+    /// Transform directives for `ASTRef` nodes
     transforms: Option<TransformContext>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         ClassES5Emitter {
             arena,
             source_text: None,
@@ -74,7 +74,7 @@ impl<'a> ClassES5Emitter<'a> {
         }
     }
 
-    /// Set transform directives for ASTRef nodes
+    /// Set transform directives for `ASTRef` nodes
     pub fn set_transforms(&mut self, transforms: TransformContext) {
         self.transforms = Some(transforms.clone());
         // Also pass transforms to ES5ClassTransformer for directive-aware conversion
@@ -82,12 +82,12 @@ impl<'a> ClassES5Emitter<'a> {
     }
 
     /// Set the initial indentation level (to match the parent context)
-    pub fn set_indent_level(&mut self, level: u32) {
+    pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
     }
 
-    /// Set the source text (for ASTRef emission)
-    pub fn set_source_text(&mut self, source_text: &'a str) {
+    /// Set the source text (for `ASTRef` emission)
+    pub const fn set_source_text(&mut self, source_text: &'a str) {
         self.source_text = Some(source_text);
         self.transformer.set_source_text(source_text);
     }
@@ -96,7 +96,7 @@ impl<'a> ClassES5Emitter<'a> {
     ///
     /// Note: Source maps are not currently supported in the IR-based approach.
     /// This method is kept for API compatibility.
-    pub fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
+    pub const fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
         self.source_text = Some(source_text);
         self.source_index = source_index;
         self.transformer.set_source_text(source_text);

@@ -1,7 +1,7 @@
 //! Declaration Type Checking
 //!
 //! Handles classes, interfaces, functions, and variable declarations.
-//! This module separates declaration checking logic from the monolithic CheckerState.
+//! This module separates declaration checking logic from the monolithic `CheckerState`.
 
 use super::context::CheckerContext;
 use std::path::{Component, Path, PathBuf};
@@ -18,7 +18,7 @@ pub struct DeclarationChecker<'a, 'ctx> {
 
 impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Create a new declaration checker with a mutable context reference.
-    pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
+    pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
         Self { ctx }
     }
 
@@ -54,7 +54,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check a declaration node.
     ///
     /// This dispatches to specialized handlers based on declaration kind.
-    /// Currently a skeleton - logic will be migrated incrementally from CheckerState.
+    /// Currently a skeleton - logic will be migrated incrementally from `CheckerState`.
     pub fn check(&mut self, decl_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return;
@@ -438,7 +438,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// - Don't have initializers
     /// - Don't have definite assignment assertions (!)
     /// - Are not assigned in all constructor code paths
-    fn check_property_initialization(
+    const fn check_property_initialization(
         &mut self,
         _class_idx: NodeIndex,
         _class_decl: &tsz_parser::parser::node::ClassData,
@@ -450,7 +450,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check an interface declaration.
-    pub fn check_interface_declaration(&mut self, _iface_idx: NodeIndex) {
+    pub const fn check_interface_declaration(&mut self, _iface_idx: NodeIndex) {
         // Interface declaration checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:
@@ -459,7 +459,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check a type alias declaration.
-    pub fn check_type_alias_declaration(&mut self, _alias_idx: NodeIndex) {
+    pub const fn check_type_alias_declaration(&mut self, _alias_idx: NodeIndex) {
         // Type alias checking is handled by CheckerState for now
         // Will be migrated incrementally
         // Key checks:
@@ -1211,8 +1211,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check if a module exists (for TS2664 check).
-    /// Returns true if the module is in resolved_modules, module_exports,
-    /// declared_modules, or shorthand_ambient_modules.
+    /// Returns true if the module is in `resolved_modules`, `module_exports`,
+    /// `declared_modules`, or `shorthand_ambient_modules`.
     fn module_exists(&self, module_name: &str) -> bool {
         if self.ctx.resolve_import_target(module_name).is_some() {
             return true;
@@ -1716,7 +1716,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     }
 
     /// Check function implementations for overload sequences.
-    pub fn check_function_implementations(&mut self, _nodes: &[NodeIndex]) {
+    pub const fn check_function_implementations(&mut self, _nodes: &[NodeIndex]) {
         // Implementation of overload checking
         // Will be migrated from CheckerState
     }

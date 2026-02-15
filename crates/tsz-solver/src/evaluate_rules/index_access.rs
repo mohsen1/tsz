@@ -25,7 +25,7 @@ fn is_member(name: &str, list: &[&str]) -> bool {
 }
 
 /// Standalone helper to get array member kind.
-/// Extracted from TypeEvaluator to be usable by visitors.
+/// Extracted from `TypeEvaluator` to be usable by visitors.
 pub(crate) fn get_array_member_kind(name: &str) -> Option<ApparentMemberKind> {
     if name == "length" {
         return Some(ApparentMemberKind::Value(TypeId::NUMBER));
@@ -628,7 +628,7 @@ impl<'a> TypeVisitor for TupleKeyVisitor<'a> {
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Helper to recursively evaluate an index access while respecting depth limits.
-    /// Creates an IndexAccess type and evaluates it through the main evaluate() method.
+    /// Creates an `IndexAccess` type and evaluates it through the main `evaluate()` method.
     pub(crate) fn recurse_index_access(
         &mut self,
         object_type: TypeId,

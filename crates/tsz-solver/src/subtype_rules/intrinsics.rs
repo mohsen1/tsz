@@ -239,8 +239,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Rule #29: Function intrinsic accepts any callable type as a subtype.
     pub(crate) fn is_callable_type(&mut self, source: TypeId) -> bool {
         match source {
-            TypeId::ANY | TypeId::NEVER | TypeId::ERROR => return true,
-            TypeId::FUNCTION => return true,
+            TypeId::ANY | TypeId::NEVER | TypeId::ERROR | TypeId::FUNCTION => return true,
             _ => {}
         }
 
@@ -320,11 +319,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Build the apparent object shape for a primitive type.
     ///
-    /// This creates an ObjectShape representing the wrapper type's members:
+    /// This creates an `ObjectShape` representing the wrapper type's members:
     /// - String: length, charAt, concat, etc.
     /// - Number: toFixed, toPrecision, etc.
     /// - Boolean: valueOf
-    /// - BigInt: toString, valueOf, etc.
+    /// - `BigInt`: toString, valueOf, etc.
     /// - Symbol: description, toString, valueOf
     pub(crate) fn apparent_primitive_shape(&mut self, kind: IntrinsicKind) -> ObjectShape {
         let members = apparent_primitive_members(self.interner, kind);
@@ -390,7 +389,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Get the apparent primitive kind for a type (helper for template literal checking).
     ///
-    /// Returns the IntrinsicKind if the type represents a primitive value.
+    /// Returns the `IntrinsicKind` if the type represents a primitive value.
     pub(crate) fn apparent_primitive_kind_for_type(
         &self,
         type_id: TypeId,

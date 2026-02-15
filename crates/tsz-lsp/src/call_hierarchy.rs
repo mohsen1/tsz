@@ -316,7 +316,7 @@ impl<'a> CallHierarchyProvider<'a> {
     }
 
     /// Check whether a node kind is a function-like declaration.
-    fn is_function_like(&self, kind: u16) -> bool {
+    const fn is_function_like(&self, kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || kind == syntax_kind_ext::ARROW_FUNCTION
@@ -377,7 +377,7 @@ impl<'a> CallHierarchyProvider<'a> {
         }
     }
 
-    /// Check if a node is inside a CallExpression (i.e., used as the callee or argument).
+    /// Check if a node is inside a `CallExpression` (i.e., used as the callee or argument).
     fn is_inside_call_expression(&self, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
         // Walk up a few levels to see if we hit a CallExpression
@@ -404,7 +404,7 @@ impl<'a> CallHierarchyProvider<'a> {
         false
     }
 
-    /// Get the name NodeIndex of a function-like node.
+    /// Get the name `NodeIndex` of a function-like node.
     fn get_function_name_idx(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.arena.get(func_idx)?;
         match node.kind {
@@ -443,7 +443,7 @@ impl<'a> CallHierarchyProvider<'a> {
         }
     }
 
-    /// Get the body NodeIndex of a function-like node.
+    /// Get the body `NodeIndex` of a function-like node.
     fn get_function_body(&self, func_idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.arena.get(func_idx)?;
         match node.kind {
@@ -486,7 +486,7 @@ impl<'a> CallHierarchyProvider<'a> {
         }
     }
 
-    /// Recursively collect all CallExpression nodes within a subtree.
+    /// Recursively collect all `CallExpression` nodes within a subtree.
     ///
     /// Uses a simple offset-range scan: any node in the arena whose kind is
     /// `CALL_EXPRESSION` and whose [pos, end) is within the body range is
@@ -574,7 +574,7 @@ impl<'a> CallHierarchyProvider<'a> {
                     let name = self
                         .get_identifier_text(accessor.name)
                         .unwrap_or_else(|| "<accessor>".to_string());
-                    format!("get {}", name)
+                    format!("get {name}")
                 } else {
                     "get <accessor>".to_string()
                 }
@@ -584,7 +584,7 @@ impl<'a> CallHierarchyProvider<'a> {
                     let name = self
                         .get_identifier_text(accessor.name)
                         .unwrap_or_else(|| "<accessor>".to_string());
-                    format!("set {}", name)
+                    format!("set {name}")
                 } else {
                     "set <accessor>".to_string()
                 }
@@ -593,7 +593,7 @@ impl<'a> CallHierarchyProvider<'a> {
         }
     }
 
-    /// Get the SymbolKind for a function-like node.
+    /// Get the `SymbolKind` for a function-like node.
     fn get_function_symbol_kind(&self, func_idx: NodeIndex) -> SymbolKind {
         let node = match self.arena.get(func_idx) {
             Some(n) => n,

@@ -5907,7 +5907,7 @@ fn test_mapped_type_key_remap_optional_add_subtyping() {
 
     let prop_a = PropertyInfo::new(interner.intern_string("a"), TypeId::STRING);
     let prop_b = PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER);
-    let obj = interner.object(vec![prop_a.clone(), prop_b.clone()]);
+    let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
     let key_a = interner.literal_string("a");
     let key_b = interner.literal_string("b");
@@ -5953,7 +5953,7 @@ fn test_mapped_type_key_remap_optional_remove_subtyping() {
 
     let prop_a = PropertyInfo::new(interner.intern_string("a"), TypeId::STRING);
     let prop_b = PropertyInfo::opt(interner.intern_string("b"), TypeId::NUMBER);
-    let obj = interner.object(vec![prop_a.clone(), prop_b.clone()]);
+    let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
     let key_a = interner.literal_string("a");
     let key_b = interner.literal_string("b");
@@ -5999,7 +5999,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
 
     let prop_a = PropertyInfo::new(interner.intern_string("a"), TypeId::STRING);
     let prop_b = PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER);
-    let obj = interner.object(vec![prop_a.clone(), prop_b.clone()]);
+    let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
     let key_a = interner.literal_string("a");
     let key_b = interner.literal_string("b");
@@ -6067,7 +6067,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         visibility: Visibility::Public,
         parent_id: None,
     };
-    let obj = interner.object(vec![prop_a.clone(), prop_b.clone()]);
+    let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
     let key_a = interner.literal_string("a");
     let key_b = interner.literal_string("b");
@@ -6118,7 +6118,7 @@ fn test_mapped_type_key_remap_readonly_add_subtyping() {
 
     let prop_a = PropertyInfo::new(interner.intern_string("a"), TypeId::STRING);
     let prop_b = PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER);
-    let obj = interner.object(vec![prop_a.clone(), prop_b.clone()]);
+    let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
     let key_a = interner.literal_string("a");
     let key_b = interner.literal_string("b");
@@ -6165,7 +6165,7 @@ fn test_mapped_type_key_remap_readonly_remove_subtyping() {
 
     let prop_a = PropertyInfo::new(interner.intern_string("a"), TypeId::STRING);
     let prop_b = PropertyInfo::readonly(interner.intern_string("b"), TypeId::NUMBER);
-    let obj = interner.object(vec![prop_a.clone(), prop_b.clone()]);
+    let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
     let key_a = interner.literal_string("a");
     let key_b = interner.literal_string("b");
@@ -6262,7 +6262,7 @@ fn test_generic_function_constraint_directionality() {
         default: None,
         is_const: false,
     };
-    let t_id = interner.intern(TypeData::TypeParameter(t.clone()));
+    let t_id = interner.intern(TypeData::TypeParameter(t));
 
     let t1 = TypeParamInfo {
         name: interner.intern_string("T1"),
@@ -6270,7 +6270,7 @@ fn test_generic_function_constraint_directionality() {
         default: None,
         is_const: false,
     };
-    let t1_id = interner.intern(TypeData::TypeParameter(t1.clone()));
+    let t1_id = interner.intern(TypeData::TypeParameter(t1));
 
     let u = TypeParamInfo {
         name: interner.intern_string("U"),
@@ -23108,7 +23108,7 @@ fn test_explain_failure_intrinsic_mismatch() {
             assert_eq!(source_type, TypeId::STRING);
             assert_eq!(target_type, TypeId::NUMBER);
         }
-        other => panic!("Expected IntrinsicTypeMismatch, got {:?}", other),
+        other => panic!("Expected IntrinsicTypeMismatch, got {other:?}"),
     }
 }
 
@@ -23131,7 +23131,7 @@ fn test_explain_failure_literal_mismatch() {
             assert_eq!(source_type, hello);
             assert_eq!(target_type, world);
         }
-        other => panic!("Expected LiteralTypeMismatch, got {:?}", other),
+        other => panic!("Expected LiteralTypeMismatch, got {other:?}"),
     }
 }
 
@@ -23153,7 +23153,7 @@ fn test_explain_failure_literal_to_incompatible_intrinsic() {
             assert_eq!(source_type, hello);
             assert_eq!(target_type, TypeId::NUMBER);
         }
-        other => panic!("Expected LiteralTypeMismatch, got {:?}", other),
+        other => panic!("Expected LiteralTypeMismatch, got {other:?}"),
     }
 }
 
@@ -23176,7 +23176,7 @@ fn test_explain_failure_error_type() {
             assert_eq!(source_type, TypeId::ERROR);
             assert_eq!(target_type, TypeId::NUMBER);
         }
-        other => panic!("Expected ErrorType, got {:?}", other),
+        other => panic!("Expected ErrorType, got {other:?}"),
     }
 }
 
@@ -23195,7 +23195,7 @@ fn test_literal_number_to_string_fails() {
     assert!(reason.is_some());
     match reason.unwrap() {
         SubtypeFailureReason::LiteralTypeMismatch { .. } => {}
-        other => panic!("Expected LiteralTypeMismatch, got {:?}", other),
+        other => panic!("Expected LiteralTypeMismatch, got {other:?}"),
     }
 }
 
@@ -23214,7 +23214,7 @@ fn test_intrinsic_to_literal_fails() {
     assert!(reason.is_some());
     match reason.unwrap() {
         SubtypeFailureReason::TypeMismatch { .. } => {}
-        other => panic!("Expected TypeMismatch, got {:?}", other),
+        other => panic!("Expected TypeMismatch, got {other:?}"),
     }
 }
 

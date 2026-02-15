@@ -99,8 +99,7 @@ fn test_type_hint_boolean_literal() {
     let label = &type_hints[0].label;
     assert!(
         label == ": boolean" || label == ": true",
-        "Expected ': boolean' or ': true', got '{}'",
-        label
+        "Expected ': boolean' or ': true', got '{label}'"
     );
 }
 
@@ -142,8 +141,7 @@ fn test_type_hint_array() {
     let label = &type_hints[0].label;
     assert!(
         label.contains("number"),
-        "Array type hint should contain 'number', got '{}'",
-        label
+        "Array type hint should contain 'number', got '{label}'"
     );
 }
 
@@ -161,8 +159,7 @@ fn test_type_hint_object() {
     // Object type should mention the properties
     assert!(
         label.contains("a") && label.contains("b"),
-        "Object type hint should contain property names, got '{}'",
-        label
+        "Object type hint should contain property names, got '{label}'"
     );
 }
 
@@ -243,8 +240,7 @@ fn test_type_hint_const_number() {
     let label = &type_hints[0].label;
     assert!(
         label.contains("number") || label.contains("100"),
-        "Const number hint should be 'number' or '100', got '{}'",
-        label
+        "Const number hint should be 'number' or '100', got '{label}'"
     );
 }
 

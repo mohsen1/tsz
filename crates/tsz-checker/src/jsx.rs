@@ -261,7 +261,7 @@ impl<'a> JsxChecker<'a> {
                 let ns = self.arena.get_jsx_namespaced_name(node)?;
                 let ns_name = self.get_tag_name(ns.namespace)?;
                 let name = self.get_tag_name(ns.name)?;
-                Some(format!("{}:{}", ns_name, name))
+                Some(format!("{ns_name}:{name}"))
             }
             _ => None,
         }
@@ -280,7 +280,7 @@ impl<'a> JsxChecker<'a> {
             let access = self.arena.get_access_expr(node)?;
             let left = self.get_qualified_name(access.expression)?;
             let right = self.get_tag_name(access.name_or_argument)?;
-            return Some(format!("{}.{}", left, right));
+            return Some(format!("{left}.{right}"));
         }
 
         None

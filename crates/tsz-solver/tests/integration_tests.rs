@@ -87,9 +87,9 @@ mod generic_strictness_tests {
     /// Test that multiple generic constraints are correctly combined
     ///
     /// NOTE: This test was deleted because it had incorrect expectations.
-    /// The test expected is_assignable(source, T) to return TRUE when source satisfies T's constraint.
+    /// The test expected `is_assignable(source`, T) to return TRUE when source satisfies T's constraint.
     /// This is wrong - type parameters are opaque and don't accept concrete types even if they
-    /// satisfy the constraint. See deleted test_generic_with_constraint_uses_constraint_not_any
+    /// satisfy the constraint. See deleted `test_generic_with_constraint_uses_constraint_not_any`
     /// for detailed explanation.
 
     #[test]
@@ -1543,7 +1543,7 @@ mod typescript_quirks_tests {
     /// the caller promises to ignore the return value. This is an intentional
     /// unsoundness for practical callback compatibility.
     ///
-    /// See: https://github.com/microsoft/TypeScript/issues/25274
+    /// See: <https://github.com/microsoft/TypeScript/issues/25274>
     #[test]
     fn test_void_return_exception_string() {
         let interner = TypeInterner::new();
@@ -1872,11 +1872,11 @@ mod typescript_quirks_tests {
     }
 }
 
-/// Test suite for full pipeline integration: CompatChecker -> Lawyer -> SubtypeChecker
+/// Test suite for full pipeline integration: `CompatChecker` -> Lawyer -> `SubtypeChecker`
 ///
 /// These tests verify that the full type checking pipeline works correctly,
-/// ensuring that the Lawyer layer properly mediates between the CompatChecker
-/// and the SubtypeChecker for tuple-to-array and other coercion scenarios.
+/// ensuring that the Lawyer layer properly mediates between the `CompatChecker`
+/// and the `SubtypeChecker` for tuple-to-array and other coercion scenarios.
 #[cfg(test)]
 mod full_pipeline_integration_tests {
     use super::*;

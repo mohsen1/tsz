@@ -74,7 +74,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Helper to get property modifiers for a given key in a source object.
     ///
     /// Uses `collect_properties` to handle Lazy (Interfaces), Ref, Intersections,
-    /// and TypeParameter types automatically (North Star Rule 3).
+    /// and `TypeParameter` types automatically (North Star Rule 3).
     fn get_property_modifiers_for_key(
         &mut self,
         source_object: Option<TypeId>,
@@ -682,7 +682,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate a homomorphic mapped type over an Array type with explicit readonly flag.
     ///
-    /// Used for ReadonlyArray<T> to preserve readonly semantics.
+    /// Used for `ReadonlyArray`<T> to preserve readonly semantics.
     fn evaluate_mapped_array_with_readonly(
         &mut self,
         mapped: &MappedType,
@@ -798,8 +798,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
             let _readonly = match mapped.readonly_modifier {
                 Some(MappedModifier::Add) => true,
-                Some(MappedModifier::Remove) => false,
-                None => false, // Tuple elements don't have readonly in current TypeScript
+                Some(MappedModifier::Remove) | None => false,
+                // Tuple elements don't have readonly in current TypeScript
             };
 
             mapped_elements.push(TupleElement {

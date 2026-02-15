@@ -1,6 +1,6 @@
 //! JSX Type Checking Module
 //!
-//! This module contains JSX type checking methods for CheckerState
+//! This module contains JSX type checking methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -116,7 +116,7 @@ impl<'a> CheckerState<'a> {
     /// Get the JSX.IntrinsicElements interface type.
     ///
     /// Rule #36: Resolves `JSX.IntrinsicElements` which maps tag names to their prop types.
-    /// Returns None if the JSX namespace or IntrinsicElements interface is not available.
+    /// Returns None if the JSX namespace or `IntrinsicElements` interface is not available.
     pub(crate) fn get_intrinsic_elements_type(&mut self) -> Option<TypeId> {
         // Get the JSX namespace symbol
         let jsx_sym_id = self.get_jsx_namespace_type()?;

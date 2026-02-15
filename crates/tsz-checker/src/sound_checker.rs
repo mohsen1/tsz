@@ -14,8 +14,8 @@ use tsz_solver::{SoundDiagnostic, SoundDiagnosticCode, TypeDatabase, TypeId};
 #[derive(Debug, Default)]
 pub struct StickyFreshnessTracker {
     /// Variables that hold sticky-fresh values.
-    /// Key: SymbolId of the variable
-    /// Value: The source TypeId (for error messages)
+    /// Key: `SymbolId` of the variable
+    /// Value: The source `TypeId` (for error messages)
     fresh_bindings: FxHashMap<SymbolId, TypeId>,
 
     /// Properties accessed from fresh objects that are also considered fresh.
@@ -149,7 +149,7 @@ impl<'a> SoundFlowAnalyzer<'a> {
                 return Some(
                     SoundDiagnostic::new(SoundDiagnosticCode::ExcessPropertyStickyFreshness)
                         .with_arg(prop_name)
-                        .with_arg(format!("{:?}", target)),
+                        .with_arg(format!("{target:?}")),
                 );
             }
         }
@@ -158,12 +158,12 @@ impl<'a> SoundFlowAnalyzer<'a> {
     }
 
     /// Get mutable access to the freshness tracker.
-    pub fn freshness_mut(&mut self) -> &mut StickyFreshnessTracker {
+    pub const fn freshness_mut(&mut self) -> &mut StickyFreshnessTracker {
         &mut self.freshness
     }
 
     /// Get read-only access to the freshness tracker.
-    pub fn freshness(&self) -> &StickyFreshnessTracker {
+    pub const fn freshness(&self) -> &StickyFreshnessTracker {
         &self.freshness
     }
 }

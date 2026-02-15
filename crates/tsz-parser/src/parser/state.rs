@@ -207,7 +207,7 @@ impl ParserState {
     }
 
     /// Exit recursion scope
-    pub(crate) fn exit_recursion(&mut self) {
+    pub(crate) const fn exit_recursion(&mut self) {
         self.recursion_depth = self.recursion_depth.saturating_sub(1);
     }
 
@@ -233,7 +233,7 @@ impl ParserState {
 
     /// Get current token
     #[inline]
-    pub(crate) fn token(&self) -> SyntaxKind {
+    pub(crate) const fn token(&self) -> SyntaxKind {
         self.current_token
     }
 
@@ -291,14 +291,14 @@ impl ParserState {
     /// Check if current token is an identifier or any keyword
     /// Keywords can be used as identifiers in many contexts (e.g., class names, property names)
     #[inline]
-    pub(crate) fn is_identifier_or_keyword(&self) -> bool {
+    pub(crate) const fn is_identifier_or_keyword(&self) -> bool {
         self.current_token as u16 >= SyntaxKind::Identifier as u16
     }
 
     /// Check if current token can be a property name
     /// Includes identifiers, keywords (as property names), string/numeric literals, computed properties
     #[inline]
-    pub(crate) fn is_property_name(&self) -> bool {
+    pub(crate) const fn is_property_name(&self) -> bool {
         match self.current_token {
             SyntaxKind::Identifier
             | SyntaxKind::StringLiteral
@@ -315,7 +315,7 @@ impl ParserState {
     /// Used to emit TS1110 (Type expected) instead of TS1005 (identifier expected)
     /// when a type is expected but we encounter a token that can't start a type
     #[inline]
-    pub(crate) fn can_token_start_type(&self) -> bool {
+    pub(crate) const fn can_token_start_type(&self) -> bool {
         match self.current_token {
             // Tokens that definitely cannot start a type
             SyntaxKind::CloseParenToken       // )
@@ -339,19 +339,19 @@ impl ParserState {
 
     /// Check if we're inside an async function/method/arrow
     #[inline]
-    pub(crate) fn in_async_context(&self) -> bool {
+    pub(crate) const fn in_async_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_ASYNC) != 0
     }
 
     /// Check if we're inside a generator function/method
     #[inline]
-    pub(crate) fn in_generator_context(&self) -> bool {
+    pub(crate) const fn in_generator_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_GENERATOR) != 0
     }
 
     /// Check if we're parsing a class member name.
     #[inline]
-    pub(crate) fn in_class_member_name(&self) -> bool {
+    pub(crate) const fn in_class_member_name(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_CLASS_MEMBER_NAME) != 0
     }
 
@@ -363,19 +363,19 @@ impl ParserState {
 
     /// Check if we're inside a static block
     #[inline]
-    pub(crate) fn in_static_block_context(&self) -> bool {
+    pub(crate) const fn in_static_block_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_STATIC_BLOCK) != 0
     }
 
     /// Check if we're parsing a parameter default (where 'await' is not allowed)
     #[inline]
-    pub(crate) fn in_parameter_default_context(&self) -> bool {
+    pub(crate) const fn in_parameter_default_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_PARAMETER_DEFAULT) != 0
     }
 
     /// Check if 'in' is disallowed as a binary operator (e.g., in for-statement initializers)
     #[inline]
-    pub(crate) fn in_disallow_in_context(&self) -> bool {
+    pub(crate) const fn in_disallow_in_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_DISALLOW_IN) != 0
     }
 
@@ -577,7 +577,7 @@ impl ParserState {
     }
 
     /// Convert `SyntaxKind` to human-readable token string
-    pub(crate) fn token_to_string(kind: SyntaxKind) -> &'static str {
+    pub(crate) const fn token_to_string(kind: SyntaxKind) -> &'static str {
         match kind {
             SyntaxKind::OpenBraceToken => "{",
             SyntaxKind::CloseBraceToken => "}",
@@ -843,7 +843,7 @@ impl ParserState {
     }
 
     #[inline]
-    fn is_hex_digit(byte: u8) -> bool {
+    const fn is_hex_digit(byte: u8) -> bool {
         byte.is_ascii_hexdigit()
     }
 
@@ -1106,7 +1106,7 @@ impl ParserState {
     /// Check if current token is a reserved word that cannot be used as an identifier
     /// Reserved words are keywords from `BreakKeyword` through `WithKeyword`
     #[inline]
-    pub(crate) fn is_reserved_word(&self) -> bool {
+    pub(crate) const fn is_reserved_word(&self) -> bool {
         // Match TypeScript's isReservedWord logic:
         // token >= SyntaxKind.FirstReservedWord && token <= SyntaxKind.LastReservedWord
         self.current_token as u16 >= SyntaxKind::FIRST_RESERVED_WORD as u16
@@ -1114,7 +1114,7 @@ impl ParserState {
     }
 
     /// Get the text representation of the current keyword token
-    fn current_keyword_text(&self) -> &'static str {
+    const fn current_keyword_text(&self) -> &'static str {
         match self.current_token {
             SyntaxKind::BreakKeyword => "break",
             SyntaxKind::CaseKeyword => "case",
@@ -1540,7 +1540,7 @@ impl ParserState {
     /// For TS1109 (expression expected), we should only suppress if we've reached a closing
     /// delimiter or EOF. We should NOT suppress on statement start keywords because if we're
     /// expecting an expression and see `var`, `let`, `function`, etc., that's likely an error.
-    pub(crate) fn is_at_expression_end(&self) -> bool {
+    pub(crate) const fn is_at_expression_end(&self) -> bool {
         match self.token() {
             // Only tokens that naturally end expressions and indicate we've moved on
             SyntaxKind::SemicolonToken
@@ -1557,7 +1557,7 @@ impl ParserState {
     }
 
     /// Check if current token can start a statement (synchronization point)
-    pub(crate) fn is_statement_start(&self) -> bool {
+    pub(crate) const fn is_statement_start(&self) -> bool {
         matches!(
             self.token(),
             SyntaxKind::VarKeyword
@@ -1618,7 +1618,7 @@ impl ParserState {
     /// Check if current token is a synchronization point for error recovery
     /// This includes statement starts plus additional keywords that indicate
     /// boundaries in control structures (else, case, default, catch, finally, etc.)
-    pub(crate) fn is_resync_sync_point(&self) -> bool {
+    pub(crate) const fn is_resync_sync_point(&self) -> bool {
         self.is_statement_start()
             || matches!(
                 self.token(),
@@ -1746,7 +1746,7 @@ impl ParserState {
     // =========================================================================
 
     /// Check if current token can start an expression
-    pub(crate) fn is_expression_start(&self) -> bool {
+    pub(crate) const fn is_expression_start(&self) -> bool {
         matches!(
             self.token(),
             SyntaxKind::NumericLiteral
@@ -1834,7 +1834,7 @@ impl ParserState {
     }
 
     /// Check if current token is a binary operator
-    pub(crate) fn is_binary_operator(&self) -> bool {
+    pub(crate) const fn is_binary_operator(&self) -> bool {
         let precedence = self.get_operator_precedence(self.token());
         precedence > 0
     }
@@ -1860,7 +1860,7 @@ impl ParserState {
     }
 
     /// Check if current token is at an expression boundary (a natural stopping point)
-    pub(crate) fn is_expression_boundary(&self) -> bool {
+    pub(crate) const fn is_expression_boundary(&self) -> bool {
         matches!(
             self.token(),
             SyntaxKind::SemicolonToken
@@ -1960,7 +1960,7 @@ impl ParserState {
 
     /// Check if the current token starts with `<` (includes `<<` and `<<=`).
     /// Mirrors `is_greater_than_or_compound` for the opening side.
-    pub(crate) fn is_less_than_or_compound(&self) -> bool {
+    pub(crate) const fn is_less_than_or_compound(&self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::LessThanToken
@@ -2001,7 +2001,7 @@ impl ParserState {
     }
 
     /// Create a `NodeList` from a Vec of `NodeIndex`
-    pub(crate) fn make_node_list(&self, nodes: Vec<NodeIndex>) -> NodeList {
+    pub(crate) const fn make_node_list(&self, nodes: Vec<NodeIndex>) -> NodeList {
         let _ = self;
         NodeList {
             nodes,
@@ -2012,7 +2012,7 @@ impl ParserState {
     }
 
     /// Get operator precedence
-    pub(crate) fn get_operator_precedence(&self, token: SyntaxKind) -> u8 {
+    pub(crate) const fn get_operator_precedence(&self, token: SyntaxKind) -> u8 {
         match token {
             SyntaxKind::CommaToken => 1,
             SyntaxKind::EqualsToken

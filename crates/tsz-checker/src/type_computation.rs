@@ -1,6 +1,6 @@
 //! Type Computation Module
 //!
-//! This module contains type computation methods for CheckerState
+//! This module contains type computation methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -8,7 +8,7 @@
 //! - Type relationship queries
 //! - Type format utilities
 //!
-//! This module extends CheckerState with additional methods for type-related
+//! This module extends `CheckerState` with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::diagnostics::{Diagnostic, DiagnosticCategory};
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
     /// with P=Props), the result may be a mapped type with `Lazy` references that need a
     /// full resolver to evaluate. The solver's default `contextual_property_type` uses
     /// `NoopResolver` and can't resolve these. This method uses the Judge (which has access
-    /// to the TypeEnvironment resolver) to evaluate such types into concrete object types.
+    /// to the `TypeEnvironment` resolver) to evaluate such types into concrete object types.
     pub(crate) fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
         use tsz_solver::type_queries::{
             EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
@@ -122,7 +122,7 @@ impl<'a> CheckerState<'a> {
     /// When a contextual type is available, each branch is checked against it
     /// to catch type errors (TS2322).
     ///
-    /// Uses solver::compute_conditional_expression_type for type computation
+    /// Uses `solver::compute_conditional_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
     pub(crate) fn get_type_of_conditional_expression(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -651,7 +651,7 @@ impl<'a> CheckerState<'a> {
     /// Type-checks all expressions within template spans to emit errors like TS2304.
     /// Template expressions always produce string type.
     ///
-    /// Uses solver::compute_template_expression_type for type computation
+    /// Uses `solver::compute_template_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
     pub(crate) fn get_type_of_template_expression(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -1455,8 +1455,7 @@ impl<'a> CheckerState<'a> {
                         let right_str = self.format_type(right_type);
                         if let Some(node) = self.ctx.arena.get(node_idx) {
                             let message = format!(
-                                "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                                op_str, left_str, right_str
+                                "Operator '{op_str}' cannot be applied to types '{left_str}' and '{right_str}'."
                             );
                             self.ctx.error(
                                 node.pos,
@@ -1924,7 +1923,7 @@ impl<'a> CheckerState<'a> {
                         };
 
                         let base_name = self.get_class_name_from_decl(base_idx);
-                        let static_member_name = format!("{}.{}", base_name, property_name);
+                        let static_member_name = format!("{base_name}.{property_name}");
                         let object_type_str = self.format_type(object_type);
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
@@ -1962,7 +1961,7 @@ impl<'a> CheckerState<'a> {
                         };
 
                         let class_name = self.get_class_name_from_decl(class_idx);
-                        let static_member_name = format!("{}.{}", class_name, property_name);
+                        let static_member_name = format!("{class_name}.{property_name}");
                         let object_type_str = self.format_type(object_type);
                         let message = format_message(
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
@@ -2083,7 +2082,7 @@ impl<'a> CheckerState<'a> {
     /// Get the element access type for array/tuple/object with index signatures.
     ///
     /// Computes the type when accessing an element using an index.
-    /// Uses ElementAccessEvaluator from solver for structured error handling.
+    /// Uses `ElementAccessEvaluator` from solver for structured error handling.
     pub(crate) fn get_element_access_type(
         &mut self,
         object_type: TypeId,
@@ -2836,7 +2835,7 @@ impl<'a> CheckerState<'a> {
     /// Phase 6 Task 3: Propagate contextual type to await operand.
     ///
     /// When awaiting with a contextual type T (e.g., `const x: T = await expr`),
-    /// the operand should receive T | PromiseLike<T> as its contextual type.
+    /// the operand should receive T | `PromiseLike`<T> as its contextual type.
     /// This allows both immediate values and Promises to be inferred correctly.
     ///
     /// Example:
@@ -2941,12 +2940,12 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|text| text.starts_with("await("))
     }
 
-    /// Get PromiseLike<T> for a given type T.
+    /// Get `PromiseLike`<T> for a given type T.
     ///
     /// Helper function for await contextual typing.
-    /// Returns the type application PromiseLike<T>.
+    /// Returns the type application `PromiseLike`<T>.
     ///
-    /// If PromiseLike is not available in lib files, returns the base type T.
+    /// If `PromiseLike` is not available in lib files, returns the base type T.
     /// This is a conservative fallback that still allows correct typing.
     fn get_promise_like_type(&mut self, type_arg: TypeId) -> TypeId {
         // Try to resolve PromiseLike from lib files

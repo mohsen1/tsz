@@ -1,6 +1,6 @@
 //! Enum Type Checking Utilities Module
 //!
-//! This module contains enum type checking utility methods for CheckerState
+//! This module contains enum type checking utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Enum assignability rules
 //! - Const enum vs regular enum handling
 //!
-//! This module extends CheckerState with utilities for enum-related
+//! This module extends `CheckerState` with utilities for enum-related
 //! type checking operations.
 
 use crate::state::CheckerState;
@@ -181,7 +181,7 @@ impl<'a> CheckerState<'a> {
     // Boxed Primitive Type Detection
     // =========================================================================
 
-    /// Check if a type is a boxed primitive type (Number, String, Boolean, BigInt, Symbol).
+    /// Check if a type is a boxed primitive type (Number, String, Boolean, `BigInt`, Symbol).
     ///
     /// TypeScript has two representations for primitives:
     /// - `number`, `string`, `boolean` - primitive types (valid for arithmetic)

@@ -59,7 +59,7 @@ impl Node {
     /// Create a new thin node with no associated data
     #[inline]
     #[must_use]
-    pub fn new(kind: u16, pos: u32, end: u32) -> Self {
+    pub const fn new(kind: u16, pos: u32, end: u32) -> Self {
         Self {
             kind,
             flags: 0,
@@ -72,7 +72,7 @@ impl Node {
     /// Create a new thin node with data index
     #[inline]
     #[must_use]
-    pub fn with_data(kind: u16, pos: u32, end: u32, data_index: u32) -> Self {
+    pub const fn with_data(kind: u16, pos: u32, end: u32, data_index: u32) -> Self {
         Self {
             kind,
             flags: 0,
@@ -85,7 +85,13 @@ impl Node {
     /// Create a new thin node with data index and flags
     #[inline]
     #[must_use]
-    pub fn with_data_and_flags(kind: u16, pos: u32, end: u32, data_index: u32, flags: u16) -> Self {
+    pub const fn with_data_and_flags(
+        kind: u16,
+        pos: u32,
+        end: u32,
+        data_index: u32,
+        flags: u16,
+    ) -> Self {
         Self {
             kind,
             flags,
@@ -98,7 +104,7 @@ impl Node {
     /// Check if this node has associated data
     #[inline]
     #[must_use]
-    pub fn has_data(&self) -> bool {
+    pub const fn has_data(&self) -> bool {
         self.data_index != Self::NO_DATA
     }
 }

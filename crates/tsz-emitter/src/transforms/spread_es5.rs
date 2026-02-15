@@ -85,7 +85,7 @@ impl<'a> ES5SpreadTransformer<'a> {
         }
     }
 
-    pub fn with_options(arena: &'a NodeArena, options: SpreadTransformOptions) -> Self {
+    pub const fn with_options(arena: &'a NodeArena, options: SpreadTransformOptions) -> Self {
         Self {
             arena,
             options,
@@ -94,7 +94,7 @@ impl<'a> ES5SpreadTransformer<'a> {
     }
 
     /// Reset temporary variable counter
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.temp_var_counter = 0;
     }
 

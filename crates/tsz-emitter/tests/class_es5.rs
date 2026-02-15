@@ -27,18 +27,15 @@ fn test_simple_class() {
     let output = emit_class("class Point { }");
     assert!(
         output.contains("var Point = /** @class */ (function ()"),
-        "Should have class IIFE: {}",
-        output
+        "Should have class IIFE: {output}"
     );
     assert!(
         output.contains("function Point()"),
-        "Should have constructor: {}",
-        output
+        "Should have constructor: {output}"
     );
     assert!(
         output.contains("return Point;"),
-        "Should return class name: {}",
-        output
+        "Should return class name: {output}"
     );
 }
 
@@ -54,8 +51,7 @@ fn test_class_with_constructor() {
     );
     assert!(
         output.contains("function Point(x, y)"),
-        "Should have constructor with params: {}",
-        output
+        "Should have constructor with params: {output}"
     );
 }
 
@@ -70,18 +66,15 @@ fn test_class_with_extends() {
     );
     assert!(
         output.contains("(function (_super)"),
-        "Should have _super parameter: {}",
-        output
+        "Should have _super parameter: {output}"
     );
     assert!(
         output.contains("__extends(Dog, _super)"),
-        "Should have extends helper: {}",
-        output
+        "Should have extends helper: {output}"
     );
     assert!(
         output.contains("_super.call(this"),
-        "Should have super.call pattern: {}",
-        output
+        "Should have super.call pattern: {output}"
     );
 }
 
@@ -96,8 +89,7 @@ fn test_class_with_method() {
     );
     assert!(
         output.contains("Greeter.prototype.greet = function ()"),
-        "Should have prototype method: {}",
-        output
+        "Should have prototype method: {output}"
     );
 }
 
@@ -112,8 +104,7 @@ fn test_class_with_static_method() {
     );
     assert!(
         output.contains("Counter.count = function ()"),
-        "Should have static method: {}",
-        output
+        "Should have static method: {output}"
     );
 }
 
@@ -126,13 +117,11 @@ fn test_class_with_private_field() {
     );
     assert!(
         output.contains("var _Container_value"),
-        "Should have WeakMap declaration: {}",
-        output
+        "Should have WeakMap declaration: {output}"
     );
     assert!(
         output.contains("_Container_value.set("),
-        "Should have WeakMap.set call: {}",
-        output
+        "Should have WeakMap.set call: {output}"
     );
 }
 
@@ -147,11 +136,10 @@ fn test_class_with_getter_setter() {
     );
     assert!(
         output.contains("Object.defineProperty"),
-        "Should have Object.defineProperty: {}",
-        output
+        "Should have Object.defineProperty: {output}"
     );
-    assert!(output.contains("get:"), "Should have getter: {}", output);
-    assert!(output.contains("set:"), "Should have setter: {}", output);
+    assert!(output.contains("get:"), "Should have getter: {output}");
+    assert!(output.contains("set:"), "Should have setter: {output}");
 }
 
 #[test]
@@ -175,8 +163,7 @@ fn test_constructor_trailing_comment_preserved() {
     );
     assert!(
         output.contains("} // OK"),
-        "Constructor trailing comment should be preserved: {}",
-        output
+        "Constructor trailing comment should be preserved: {output}"
     );
 }
 
@@ -189,7 +176,6 @@ fn test_var_function_recovery_supports_dollar_identifier() {
     );
     assert!(
         output.contains("var $constructor;"),
-        "Recovery emit should keep `$` in identifier: {}",
-        output
+        "Recovery emit should keep `$` in identifier: {output}"
     );
 }

@@ -8,7 +8,7 @@
 //! - Call signature instantiation
 //! - This-type substitution in call returns
 //!
-//! This module extends CheckerState with call-related methods as part of
+//! This module extends `CheckerState` with call-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::query_boundaries::call_checker::{

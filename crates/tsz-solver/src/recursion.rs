@@ -4,8 +4,8 @@
 //! # Design
 //!
 //! `RecursionGuard` replaces the scattered `in_progress` / `visiting` / `depth` /
-//! `total_checks` fields that were manually reimplemented across SubtypeChecker,
-//! TypeEvaluator, PropertyAccessEvaluator, and others.
+//! `total_checks` fields that were manually reimplemented across `SubtypeChecker`,
+//! `TypeEvaluator`, `PropertyAccessEvaluator`, and others.
 //!
 //! It combines three safety mechanisms:
 //! 1. **Cycle detection** via a visiting set (`FxHashSet<K>`)
@@ -64,7 +64,7 @@ pub enum RecursionProfile {
 
     /// Type evaluation: conditional types, mapped types, indexed access.
     ///
-    /// Used by `TypeEvaluator` (both TypeId guard and DefId guard).
+    /// Used by `TypeEvaluator` (both `TypeId` guard and `DefId` guard).
     ///
     /// depth = 50, iterations = 100,000
     TypeEvaluation,
@@ -154,17 +154,15 @@ impl RecursionProfile {
     pub const fn max_depth(self) -> u32 {
         match self {
             Self::SubtypeCheck => 100,
-            Self::TypeEvaluation => 50,
-            Self::TypeApplication => 50,
-            Self::PropertyAccess => 50,
-            Self::Variance => 50,
-            Self::ShapeExtraction => 50,
-            Self::ShallowTraversal => 20,
-            Self::ConstAssertion => 50,
-            Self::ExpressionCheck => 500,
-            Self::TypeNodeCheck => 500,
-            Self::CallResolution => 20,
-            Self::CheckerRecursion => 50,
+            Self::TypeEvaluation
+            | Self::TypeApplication
+            | Self::PropertyAccess
+            | Self::Variance
+            | Self::ShapeExtraction
+            | Self::ConstAssertion
+            | Self::CheckerRecursion => 50,
+            Self::ShallowTraversal | Self::CallResolution => 20,
+            Self::ExpressionCheck | Self::TypeNodeCheck => 500,
             Self::Custom { max_depth, .. } => max_depth,
         }
     }
@@ -172,18 +170,18 @@ impl RecursionProfile {
     /// Maximum iteration count for this profile.
     pub const fn max_iterations(self) -> u32 {
         match self {
-            Self::SubtypeCheck => 100_000,
-            Self::TypeEvaluation => 100_000,
-            Self::TypeApplication => 100_000,
-            Self::PropertyAccess => 100_000,
-            Self::Variance => 100_000,
-            Self::ShapeExtraction => 100_000,
-            Self::ShallowTraversal => 100_000,
-            Self::ConstAssertion => 100_000,
-            Self::ExpressionCheck => 100_000,
-            Self::TypeNodeCheck => 100_000,
-            Self::CallResolution => 100_000,
-            Self::CheckerRecursion => 100_000,
+            Self::SubtypeCheck
+            | Self::TypeEvaluation
+            | Self::TypeApplication
+            | Self::PropertyAccess
+            | Self::Variance
+            | Self::ShapeExtraction
+            | Self::ConstAssertion
+            | Self::ExpressionCheck
+            | Self::TypeNodeCheck
+            | Self::CallResolution
+            | Self::ShallowTraversal
+            | Self::CheckerRecursion => 100_000,
             Self::Custom { max_iterations, .. } => max_iterations,
         }
     }
@@ -209,25 +207,25 @@ pub enum RecursionResult {
 impl RecursionResult {
     /// Returns `true` if entry was successful.
     #[inline]
-    pub fn is_entered(self) -> bool {
+    pub const fn is_entered(self) -> bool {
         matches!(self, Self::Entered)
     }
 
     /// Returns `true` if a cycle was detected.
     #[inline]
-    pub fn is_cycle(self) -> bool {
+    pub const fn is_cycle(self) -> bool {
         matches!(self, Self::Cycle)
     }
 
     /// Returns `true` if any limit was exceeded (depth or iterations).
     #[inline]
-    pub fn is_exceeded(self) -> bool {
+    pub const fn is_exceeded(self) -> bool {
         matches!(self, Self::DepthExceeded | Self::IterationExceeded)
     }
 
     /// Returns `true` if entry was denied for any reason (cycle or exceeded).
     #[inline]
-    pub fn is_denied(self) -> bool {
+    pub const fn is_denied(self) -> bool {
         !self.is_entered()
     }
 }
@@ -295,7 +293,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
     }
 
     /// Builder: set a custom max visiting-set size.
-    pub fn with_max_visiting(mut self, max_visiting: u32) -> Self {
+    pub const fn with_max_visiting(mut self, max_visiting: u32) -> Self {
         self.max_visiting = max_visiting;
         self
     }
@@ -400,13 +398,13 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
 
     /// Current recursion depth (number of active entries on the stack).
     #[inline]
-    pub fn depth(&self) -> u32 {
+    pub const fn depth(&self) -> u32 {
         self.depth
     }
 
     /// Total enter attempts so far (successful or not).
     #[inline]
-    pub fn iterations(&self) -> u32 {
+    pub const fn iterations(&self) -> u32 {
         self.iterations
     }
 
@@ -418,19 +416,19 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
 
     /// Returns `true` if the guard has any active entries.
     #[inline]
-    pub fn is_active(&self) -> bool {
+    pub const fn is_active(&self) -> bool {
         self.depth > 0
     }
 
     /// The configured maximum depth.
     #[inline]
-    pub fn max_depth(&self) -> u32 {
+    pub const fn max_depth(&self) -> u32 {
         self.max_depth
     }
 
     /// The configured maximum iterations.
     #[inline]
-    pub fn max_iterations(&self) -> u32 {
+    pub const fn max_iterations(&self) -> u32 {
         self.max_iterations
     }
 
@@ -445,7 +443,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
     /// remains set. This is intentional — callers use it to bail out early on
     /// subsequent calls (e.g. TS2589 "excessively deep" diagnostics).
     #[inline]
-    pub fn is_exceeded(&self) -> bool {
+    pub const fn is_exceeded(&self) -> bool {
         self.exceeded
     }
 
@@ -454,7 +452,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
     /// Useful when an external condition (e.g. distribution size limit) means
     /// further recursion should be blocked.
     #[inline]
-    pub fn mark_exceeded(&mut self) {
+    pub const fn mark_exceeded(&mut self) {
         self.exceeded = true;
     }
 
@@ -534,7 +532,7 @@ impl DepthCounter {
     /// Create a counter with an explicit max depth.
     ///
     /// Prefer [`with_profile`](Self::with_profile) for standard use cases.
-    pub fn new(max_depth: u32) -> Self {
+    pub const fn new(max_depth: u32) -> Self {
         Self {
             depth: 0,
             max_depth,
@@ -547,7 +545,7 @@ impl DepthCounter {
     ///
     /// Only the profile's `max_depth` is used (iterations are not relevant
     /// for a depth-only counter).
-    pub fn with_profile(profile: RecursionProfile) -> Self {
+    pub const fn with_profile(profile: RecursionProfile) -> Self {
         Self::new(profile.max_depth())
     }
 
@@ -557,7 +555,7 @@ impl DepthCounter {
     /// the overall depth limit across context boundaries. The inherited
     /// depth is treated as the "base" — debug leak detection only fires
     /// if depth exceeds this base at drop time.
-    pub fn with_initial_depth(max_depth: u32, initial_depth: u32) -> Self {
+    pub const fn with_initial_depth(max_depth: u32, initial_depth: u32) -> Self {
         Self {
             depth: initial_depth,
             max_depth,
@@ -575,7 +573,7 @@ impl DepthCounter {
     /// flag is set and the depth is **not** incremented — do **not** call
     /// `leave()` in this case.
     #[inline]
-    pub fn enter(&mut self) -> bool {
+    pub const fn enter(&mut self) -> bool {
         if self.depth >= self.max_depth {
             self.exceeded = true;
             return false;
@@ -603,13 +601,13 @@ impl DepthCounter {
 
     /// Current depth.
     #[inline]
-    pub fn depth(&self) -> u32 {
+    pub const fn depth(&self) -> u32 {
         self.depth
     }
 
     /// The configured maximum depth.
     #[inline]
-    pub fn max_depth(&self) -> u32 {
+    pub const fn max_depth(&self) -> u32 {
         self.max_depth
     }
 
@@ -617,18 +615,18 @@ impl DepthCounter {
     ///
     /// Sticky — stays `true` until [`reset`](Self::reset).
     #[inline]
-    pub fn is_exceeded(&self) -> bool {
+    pub const fn is_exceeded(&self) -> bool {
         self.exceeded
     }
 
     /// Manually mark as exceeded.
     #[inline]
-    pub fn mark_exceeded(&mut self) {
+    pub const fn mark_exceeded(&mut self) {
         self.exceeded = true;
     }
 
     /// Reset to initial state, preserving the max depth and base depth.
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.depth = self.base_depth;
         self.exceeded = false;
     }

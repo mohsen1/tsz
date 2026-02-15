@@ -1,11 +1,11 @@
-//! SourceWriter - Abstraction for writing emitter output with source map tracking
+//! `SourceWriter` - Abstraction for writing emitter output with source map tracking
 //!
 //! This module separates the concerns of:
 //! - Writing text to an output buffer
 //! - Tracking line/column positions for source maps
 //! - Managing indentation
 //!
-//! The emitter (Printer) delegates all text output to SourceWriter,
+//! The emitter (Printer) delegates all text output to `SourceWriter`,
 //! allowing for accurate source map generation and cleaner separation of concerns.
 
 use crate::emitter::NewLineKind;
@@ -56,12 +56,12 @@ pub struct SourceWriter {
 }
 
 impl SourceWriter {
-    /// Create a new SourceWriter with default settings
+    /// Create a new `SourceWriter` with default settings
     pub fn new() -> Self {
         Self::with_capacity(1024)
     }
 
-    /// Create a SourceWriter with pre-allocated capacity
+    /// Create a `SourceWriter` with pre-allocated capacity
     /// This reduces allocations when the expected output size is known
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -77,7 +77,7 @@ impl SourceWriter {
         }
     }
 
-    /// Create a SourceWriter with source map generation enabled
+    /// Create a `SourceWriter` with source map generation enabled
     pub fn with_source_map(output_file: String) -> Self {
         let mut writer = Self::new();
         writer.source_map = Some(SourceMapGenerator::new(output_file));
@@ -92,7 +92,7 @@ impl SourceWriter {
     }
 
     /// Check if source map generation is enabled.
-    pub fn has_source_map(&self) -> bool {
+    pub const fn has_source_map(&self) -> bool {
         self.source_map.is_some()
     }
 
@@ -225,29 +225,29 @@ impl SourceWriter {
     // =========================================================================
 
     /// Increase indentation level
-    pub fn increase_indent(&mut self) {
+    pub const fn increase_indent(&mut self) {
         self.indent_level += 1;
     }
 
     /// Decrease indentation level
-    pub fn decrease_indent(&mut self) {
+    pub const fn decrease_indent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;
         }
     }
 
     /// Get current indentation level
-    pub fn indent_level(&self) -> u32 {
+    pub const fn indent_level(&self) -> u32 {
         self.indent_level
     }
 
     /// Set indentation level directly (for transforms that manage their own indentation)
-    pub fn set_indent_level(&mut self, level: u32) {
+    pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
     }
 
     /// Get the current indentation width in columns.
-    pub fn indent_width(&self) -> u32 {
+    pub const fn indent_width(&self) -> u32 {
         self.indent_level
             .saturating_mul(self.indent_str.len() as u32)
     }
@@ -257,22 +257,22 @@ impl SourceWriter {
     // =========================================================================
 
     /// Get current output line (0-indexed)
-    pub fn current_line(&self) -> u32 {
+    pub const fn current_line(&self) -> u32 {
         self.line
     }
 
     /// Get current output column (0-indexed)
-    pub fn current_column(&self) -> u32 {
+    pub const fn current_column(&self) -> u32 {
         self.column
     }
 
     /// Get current source index for source map entries.
-    pub fn current_source_index(&self) -> u32 {
+    pub const fn current_source_index(&self) -> u32 {
         self.current_source_index
     }
 
     /// Check if we're at the start of a line
-    pub fn is_at_line_start(&self) -> bool {
+    pub const fn is_at_line_start(&self) -> bool {
         self.at_line_start
     }
 
@@ -291,12 +291,12 @@ impl SourceWriter {
     }
 
     /// Get the output length in bytes
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.output.len()
     }
 
     /// Get the output buffer capacity in bytes.
-    pub fn capacity(&self) -> usize {
+    pub const fn capacity(&self) -> usize {
         self.output.capacity()
     }
 
@@ -312,7 +312,7 @@ impl SourceWriter {
     }
 
     /// Check if output is empty
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.output.is_empty()
     }
 
@@ -533,7 +533,7 @@ pub fn compute_line_col(text: &str, pos: u32) -> (u32, u32) {
     (line, col)
 }
 
-/// Create a SourcePosition from a byte offset and source text
+/// Create a `SourcePosition` from a byte offset and source text
 pub fn source_position_from_offset(text: &str, pos: u32) -> SourcePosition {
     let (line, column) = compute_line_col(text, pos);
     SourcePosition { pos, line, column }

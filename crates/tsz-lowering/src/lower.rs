@@ -1,7 +1,7 @@
-//! Type lowering: AST nodes → TypeId
+//! Type lowering: AST nodes → `TypeId`
 //!
 //! This module implements the "bridge" that converts raw AST nodes (Node)
-//! into the structural type system (TypeId).
+//! into the structural type system (`TypeId`).
 //!
 //! Lowering is lazy - types are only computed when queried.
 
@@ -31,21 +31,21 @@ type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 
 /// Type lowering context.
-/// Converts AST type nodes into interned TypeIds.
+/// Converts AST type nodes into interned `TypeIds`.
 pub struct TypeLowering<'a> {
     arena: &'a NodeArena,
     interner: &'a dyn TypeDatabase,
-    /// Optional type resolver - resolves identifier nodes to SymbolIds.
+    /// Optional type resolver - resolves identifier nodes to `SymbolIds`.
     /// If provided, this enables correct abstract class detection.
     type_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
-    /// Optional DefId resolver - resolves identifier nodes to DefIds.
-    /// Phase 1 migration path from SymbolRef to DefId for type identity.
+    /// Optional `DefId` resolver - resolves identifier nodes to `DefIds`.
+    /// Phase 1 migration path from `SymbolRef` to `DefId` for type identity.
     def_id_resolver: Option<&'a NodeIndexResolver<'a, DefId>>,
     /// Optional value resolver for typeof queries.
     value_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
-    /// Optional name-based DefId resolver — fallback for cross-arena resolution.
+    /// Optional name-based `DefId` resolver — fallback for cross-arena resolution.
     ///
-    /// NodeIndex values are arena-specific: the same index means different things
+    /// `NodeIndex` values are arena-specific: the same index means different things
     /// in different arenas. When `with_arena()` switches the working arena, the
     /// NodeIndex-based `def_id_resolver` can look up the wrong identifier because
     /// its closure captured arenas from the ORIGINAL context. This name-based
@@ -226,8 +226,8 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    /// Create a TypeLowering with a symbol resolver.
-    /// The resolver converts identifier names to actual SymbolIds from the binder.
+    /// Create a `TypeLowering` with a symbol resolver.
+    /// The resolver converts identifier names to actual `SymbolIds` from the binder.
     pub fn with_resolver(
         arena: &'a NodeArena,
         interner: &'a dyn QueryDatabase,
@@ -246,7 +246,7 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    /// Create a TypeLowering with separate type/value resolvers.
+    /// Create a `TypeLowering` with separate type/value resolvers.
     pub fn with_resolvers(
         arena: &'a NodeArena,
         interner: &'a dyn QueryDatabase,
@@ -266,11 +266,11 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    /// Create a TypeLowering with a DefId resolver (Phase 1 migration).
+    /// Create a `TypeLowering` with a `DefId` resolver (Phase 1 migration).
     ///
-    /// This is the migration path from SymbolRef to DefId for type identity.
-    /// The DefId resolver resolves identifier nodes to Solver-owned DefIds
-    /// instead of Binder-owned SymbolIds.
+    /// This is the migration path from `SymbolRef` to `DefId` for type identity.
+    /// The `DefId` resolver resolves identifier nodes to Solver-owned `DefIds`
+    /// instead of Binder-owned `SymbolIds`.
     pub fn with_def_id_resolver(
         arena: &'a NodeArena,
         interner: &'a dyn QueryDatabase,
@@ -290,10 +290,10 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    /// Create a TypeLowering with both type and DefId resolvers (Phase 2 migration).
+    /// Create a `TypeLowering` with both type and `DefId` resolvers (Phase 2 migration).
     ///
-    /// This allows TypeLowering to prefer DefId when available, but fall back
-    /// to SymbolId for types that don't have a DefId yet.
+    /// This allows `TypeLowering` to prefer `DefId` when available, but fall back
+    /// to `SymbolId` for types that don't have a `DefId` yet.
     pub fn with_hybrid_resolver(
         arena: &'a NodeArena,
         interner: &'a dyn QueryDatabase,
@@ -314,7 +314,7 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    /// Create a new TypeLowering sharing the same context/state but using a different arena.
+    /// Create a new `TypeLowering` sharing the same context/state but using a different arena.
     /// This is used for lowering merged interface declarations that span multiple lib files.
     pub fn with_arena<'b>(&'b self, arena: &'b NodeArena) -> TypeLowering<'b>
     where
@@ -337,12 +337,12 @@ impl<'a> TypeLowering<'a> {
     /// Lower interface declarations that may span multiple arenas (lib files).
     ///
     /// For merged interfaces like `Array` which is declared in es5.d.ts, es2015.d.ts, etc.,
-    /// each declaration may be in a different NodeArena. This method handles looking up
+    /// each declaration may be in a different `NodeArena`. This method handles looking up
     /// each declaration in its correct arena.
     ///
     /// # Arguments
-    /// * `declarations` - List of (NodeIndex, &NodeArena) pairs. Each declaration must be
-    ///   paired with the NodeArena it belongs to.
+    /// * `declarations` - List of (`NodeIndex`, &`NodeArena`) pairs. Each declaration must be
+    ///   paired with the `NodeArena` it belongs to.
     pub fn lower_merged_interface_declarations(
         &self,
         declarations: &[(NodeIndex, &NodeArena)],
@@ -416,7 +416,7 @@ impl<'a> TypeLowering<'a> {
     }
 
     /// Initialize with existing type parameter bindings.
-    /// These are added to a new scope that persists for the lifetime of the TypeLowering.
+    /// These are added to a new scope that persists for the lifetime of the `TypeLowering`.
     pub fn with_type_param_bindings(self, bindings: Vec<(Atom, TypeId)>) -> Self {
         if !bindings.is_empty() {
             *self.type_param_scopes.borrow_mut() = vec![bindings];
@@ -424,7 +424,7 @@ impl<'a> TypeLowering<'a> {
         self
     }
 
-    /// Set the name-based DefId resolver for cross-arena resolution.
+    /// Set the name-based `DefId` resolver for cross-arena resolution.
     pub fn with_name_def_id_resolver(
         mut self,
         resolver: &'a dyn Fn(&str) -> Option<DefId>,
@@ -433,7 +433,7 @@ impl<'a> TypeLowering<'a> {
         self
     }
 
-    /// Resolve an identifier name to a DefId using the name-based resolver.
+    /// Resolve an identifier name to a `DefId` using the name-based resolver.
     fn resolve_def_id_by_name(&self, name: &str) -> Option<DefId> {
         self.name_def_id_resolver
             .and_then(|resolver| resolver(name))
@@ -444,10 +444,10 @@ impl<'a> TypeLowering<'a> {
         self.type_resolver.and_then(|resolver| resolver(node_idx))
     }
 
-    /// Resolve a node to a DefId if a DefId resolver is provided.
+    /// Resolve a node to a `DefId` if a `DefId` resolver is provided.
     ///
-    /// Phase 1: This is the migration path from SymbolRef to DefId.
-    /// DefIds are Solver-owned identifiers that don't require Binder context.
+    /// Phase 1: This is the migration path from `SymbolRef` to `DefId`.
+    /// `DefIds` are Solver-owned identifiers that don't require Binder context.
     fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
         self.def_id_resolver.and_then(|resolver| resolver(node_idx))
     }
@@ -489,7 +489,7 @@ impl<'a> TypeLowering<'a> {
     }
 
     /// Import type parameter bindings from an external scope (e.g., checker's type parameter scope).
-    /// This allows TypeLowering to access type parameters that were defined outside of it.
+    /// This allows `TypeLowering` to access type parameters that were defined outside of it.
     pub fn import_type_params<'b, I>(&self, bindings: I)
     where
         I: Iterator<Item = (&'b String, &'b TypeId)>,
@@ -501,7 +501,7 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    /// Lower a type node to a TypeId.
+    /// Lower a type node to a `TypeId`.
     /// This is the main entry point for type synthesis.
     pub fn lower_type(&self, node_idx: NodeIndex) -> TypeId {
         // Check operation limit to prevent infinite loops
@@ -1132,9 +1132,9 @@ impl<'a> TypeLowering<'a> {
             .0
     }
 
-    /// Lower interface declarations and stamp the resulting type with a SymbolId.
+    /// Lower interface declarations and stamp the resulting type with a `SymbolId`.
     /// This is used by the type checker to preserve symbol information for import generation.
-    /// The SymbolId allows UsageAnalyzer to trace which imported interfaces are used in exported APIs.
+    /// The `SymbolId` allows `UsageAnalyzer` to trace which imported interfaces are used in exported APIs.
     pub fn lower_interface_declarations_with_symbol(
         &self,
         declarations: &[NodeIndex],
@@ -1147,7 +1147,7 @@ impl<'a> TypeLowering<'a> {
     /// Lower interface declarations and also return the collected type parameters.
     /// This is needed when registering generic lib types (e.g. Array<T>) so that
     /// the actual type parameters from the interface definition are used rather
-    /// than synthesizing fresh ones that may have different TypeIds.
+    /// than synthesizing fresh ones that may have different `TypeIds`.
     pub fn lower_interface_declarations_with_params(
         &self,
         declarations: &[NodeIndex],
@@ -1155,7 +1155,7 @@ impl<'a> TypeLowering<'a> {
         self.lower_interface_declarations_with_params_impl(declarations, None)
     }
 
-    /// Internal implementation that optionally stamps the interface type with a SymbolId.
+    /// Internal implementation that optionally stamps the interface type with a `SymbolId`.
     fn lower_interface_declarations_with_params_impl(
         &self,
         declarations: &[NodeIndex],
@@ -1230,10 +1230,10 @@ impl<'a> TypeLowering<'a> {
         (self.lower_type(alias.type_node), Vec::new())
     }
 
-    /// Lower a function-like declaration (Method, Constructor, Function) to a TypeId.
+    /// Lower a function-like declaration (Method, Constructor, Function) to a `TypeId`.
     ///
     /// This is used for overload compatibility checking where we need the structural type
-    /// of a specific declaration node, which might not be cached in the node_types map.
+    /// of a specific declaration node, which might not be cached in the `node_types` map.
     ///
     /// # Arguments
     /// * `node_idx` - The declaration node index
@@ -1241,7 +1241,7 @@ impl<'a> TypeLowering<'a> {
     ///   (Useful for implementation signatures where return type is inferred from body)
     ///
     /// # Returns
-    /// The TypeId of the function shape, or TypeId::ERROR if lowering fails.
+    /// The `TypeId` of the function shape, or `TypeId::ERROR` if lowering fails.
     pub fn lower_signature_from_declaration(
         &self,
         node_idx: NodeIndex,
@@ -1451,27 +1451,27 @@ impl<'a> TypeLowering<'a> {
     ) -> TypeId {
         let mut properties = Vec::with_capacity(parts.properties.len());
         for (name, entry) in parts.properties {
-            match entry {
-                PropertyMerge::Property(prop) => properties.push(prop),
-                PropertyMerge::Method(methods) => {
-                    let type_id = self.interner.callable(CallableShape {
-                        call_signatures: methods.signatures,
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        ..Default::default()
-                    });
-                    properties.push(PropertyInfo {
-                        name,
-                        type_id,
-                        write_type: type_id,
-                        optional: methods.optional,
-                        readonly: methods.readonly,
-                        is_method: true,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                    });
-                }
-                PropertyMerge::Conflict(prop) => properties.push(prop),
+            if let PropertyMerge::Method(methods) = entry {
+                let type_id = self.interner.callable(CallableShape {
+                    call_signatures: methods.signatures,
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    ..Default::default()
+                });
+                properties.push(PropertyInfo {
+                    name,
+                    type_id,
+                    write_type: type_id,
+                    optional: methods.optional,
+                    readonly: methods.readonly,
+                    is_method: true,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                });
+            } else if let PropertyMerge::Property(prop) = entry {
+                properties.push(prop);
+            } else if let PropertyMerge::Conflict(prop) = entry {
+                properties.push(prop);
             }
         }
 
@@ -1825,7 +1825,9 @@ impl<'a> TypeLowering<'a> {
                     .iter()
                     .any(|arg| self.contains_meta_type_inner(*arg, visited))
             }
-            TypeData::ReadonlyType(inner) => self.contains_meta_type_inner(inner, visited),
+            TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+                self.contains_meta_type_inner(inner, visited)
+            }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 spans.iter().any(|span| match span {
@@ -1847,7 +1849,6 @@ impl<'a> TypeLowering<'a> {
             | TypeData::UniqueSymbol(_)
             | TypeData::ModuleNamespace(_)
             | TypeData::Error => false,
-            TypeData::NoInfer(inner) => self.contains_meta_type_inner(inner, visited),
         }
     }
 
@@ -2188,7 +2189,7 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    /// Lower a mapped type ({ [K in Keys]: ValueType })
+    /// Lower a mapped type ({ [K in Keys]: `ValueType` })
     fn lower_mapped_type(&self, node_idx: NodeIndex) -> TypeId {
         let node = match self.arena.get(node_idx) {
             Some(n) => n,
@@ -2587,7 +2588,7 @@ impl<'a> TypeLowering<'a> {
         }
     }
 
-    /// Lower a type reference (NamedType or NamedType<Args>)
+    /// Lower a type reference (`NamedType` or `NamedType`<Args>)
     fn lower_type_reference(&self, node_idx: NodeIndex) -> TypeId {
         let node = match self.arena.get(node_idx) {
             Some(n) => n,

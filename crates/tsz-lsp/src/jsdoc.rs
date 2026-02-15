@@ -1,4 +1,4 @@
-//! JSDoc helpers for LSP features.
+//! `JSDoc` helpers for LSP features.
 //!
 //! Provides shared extraction and parsing for hover and signature help.
 
@@ -26,10 +26,10 @@ impl ParsedJsdoc {
     }
 }
 
-/// Extract inline JSDoc comments for parameters of a function/method/constructor declaration.
-/// Returns a map from parameter name to JSDoc content.
+/// Extract inline `JSDoc` comments for parameters of a function/method/constructor declaration.
+/// Returns a map from parameter name to `JSDoc` content.
 ///
-/// This handles TypeScript's inline parameter JSDoc like:
+/// This handles TypeScript's inline parameter `JSDoc` like:
 /// ```ts
 /// function foo(/** comment about a */ a: string, /** comment about b */ b: number)
 /// ```
@@ -112,8 +112,8 @@ pub fn inline_param_jsdocs(
     result
 }
 
-/// Extract the nearest JSDoc comment preceding a node.
-/// Uses cached comment ranges from SourceFileData for O(log N) performance.
+/// Extract the nearest `JSDoc` comment preceding a node.
+/// Uses cached comment ranges from `SourceFileData` for O(log N) performance.
 pub fn jsdoc_for_node(
     arena: &NodeArena,
     root: NodeIndex,

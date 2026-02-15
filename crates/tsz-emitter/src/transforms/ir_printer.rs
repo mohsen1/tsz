@@ -44,11 +44,11 @@ pub struct IRPrinter<'a> {
     output: String,
     indent_level: u32,
     indent_str: &'static str,
-    /// Optional arena for handling ASTRef nodes
+    /// Optional arena for handling `ASTRef` nodes
     arena: Option<&'a NodeArena>,
-    /// Source text for emitting ASTRef nodes
+    /// Source text for emitting `ASTRef` nodes
     source_text: Option<&'a str>,
-    /// Optional transform directives for ASTRef nodes
+    /// Optional transform directives for `ASTRef` nodes
     transforms: Option<TransformContext>,
     /// Avoid duplicate trailing comments when a sequence explicitly carries one.
     suppress_function_trailing_extraction: bool,
@@ -124,8 +124,8 @@ impl<'a> IRPrinter<'a> {
             IRNode::FunctionExpr {
                 body_source_range: Some((body_start, body_end)),
                 ..
-            } => (*body_start, *body_end),
-            IRNode::FunctionDecl {
+            }
+            | IRNode::FunctionDecl {
                 body_source_range: Some((body_start, body_end)),
                 ..
             } => (*body_start, *body_end),
@@ -184,7 +184,7 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
-    /// Create an IR printer with an arena for ASTRef handling
+    /// Create an IR printer with an arena for `ASTRef` handling
     pub fn with_arena(arena: &'a NodeArena) -> Self {
         Self {
             output: String::with_capacity(4096),
@@ -198,7 +198,7 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
-    /// Create an IR printer with both arena and source text for ASTRef emission
+    /// Create an IR printer with both arena and source text for `ASTRef` emission
     pub fn with_arena_and_source(arena: &'a NodeArena, source_text: &'a str) -> Self {
         Self {
             output: String::with_capacity(4096),
@@ -212,18 +212,18 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
-    /// Set transform directives for ASTRef emission
+    /// Set transform directives for `ASTRef` emission
     pub fn set_transforms(&mut self, transforms: TransformContext) {
         self.transforms = Some(transforms);
     }
 
-    /// Set the source text for ASTRef emission
-    pub fn set_source_text(&mut self, text: &'a str) {
+    /// Set the source text for `ASTRef` emission
+    pub const fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
     }
 
     /// Set the indentation level
-    pub fn set_indent_level(&mut self, level: u32) {
+    pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
     }
 
@@ -1801,11 +1801,7 @@ impl<'a> IRPrinter<'a> {
                 self.write(": ");
                 self.emit_node(&prop.value);
             }
-            IRPropertyKind::Get => {
-                self.write(" ");
-                self.emit_node(&prop.value);
-            }
-            IRPropertyKind::Set => {
+            IRPropertyKind::Get | IRPropertyKind::Set => {
                 self.write(" ");
                 self.emit_node(&prop.value);
             }
@@ -1888,11 +1884,11 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
-    fn increase_indent(&mut self) {
+    const fn increase_indent(&mut self) {
         self.indent_level += 1;
     }
 
-    fn decrease_indent(&mut self) {
+    const fn decrease_indent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;
         }
@@ -1931,9 +1927,9 @@ impl<'a> IRPrinter<'a> {
     /// Transforms: () => expr  →  function () { return expr; }
     ///
     /// This is the NEW implementation that:
-    /// 1. Uses flags from TransformDirective (doesn't re-calculate)
-    /// 2. Uses recursive emit_node calls for the body (handles nested directives)
-    /// 3. Supports class_alias for static class members
+    /// 1. Uses flags from `TransformDirective` (doesn't re-calculate)
+    /// 2. Uses recursive `emit_node` calls for the body (handles nested directives)
+    /// 3. Supports `class_alias` for static class members
     fn emit_arrow_function_es5_with_flags(
         &mut self,
         arena: &NodeArena,

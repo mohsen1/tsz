@@ -9,7 +9,7 @@
 //! Private members in TypeScript classes use a "brand" property for nominal typing.
 //! This ensures private members can only be accessed from instances of the same class.
 //!
-//! This module extends CheckerState with private field methods as part of
+//! This module extends `CheckerState` with private field methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::CheckerState;
@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
     /// Private members in classes use a "brand" property for nominal typing.
     /// This brand is a property named like `__private_brand_#className`.
     ///
-    /// Returns Some(brand_name) if the type has a private brand.
+    /// Returns `Some(brand_name)` if the type has a private brand.
     pub(crate) fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
         use tsz_solver::type_queries_extended::{PrivateBrandKind, classify_for_private_brand};
 
@@ -84,7 +84,7 @@ impl<'a> CheckerState<'a> {
     /// Given a type with a private brand, returns the actual private field name
     /// (e.g., "#foo") if found.
     ///
-    /// Returns Some(private_field_name) if found, None otherwise.
+    /// Returns `Some(private_field_name)` if found, None otherwise.
     pub(crate) fn get_private_field_name_from_brand(&self, type_id: TypeId) -> Option<String> {
         use tsz_solver::type_queries_extended::{PrivateBrandKind, classify_for_private_brand};
 
@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
     /// private brand as the class declaring the member. This function generates an
     /// appropriate error message for mismatches.
     ///
-    /// Returns Some(error_message) if there's a private brand mismatch.
+    /// Returns `Some(error_message)` if there's a private brand mismatch.
     pub(crate) fn private_brand_mismatch_error(
         &self,
         source: TypeId,

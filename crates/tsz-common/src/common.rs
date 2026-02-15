@@ -59,37 +59,37 @@ pub enum ScriptTarget {
 impl ScriptTarget {
     /// Check if this target supports ES2015+ features (classes, arrows, etc.)
     #[must_use]
-    pub fn supports_es2015(self) -> bool {
+    pub const fn supports_es2015(self) -> bool {
         (self as u8) >= (Self::ES2015 as u8)
     }
 
     /// Check if this target supports ES2017+ features (async, etc.)
     #[must_use]
-    pub fn supports_es2017(self) -> bool {
+    pub const fn supports_es2017(self) -> bool {
         (self as u8) >= (Self::ES2017 as u8)
     }
 
     /// Check if this target supports ES2020+ features (optional chaining, etc.)
     #[must_use]
-    pub fn supports_es2020(self) -> bool {
+    pub const fn supports_es2020(self) -> bool {
         (self as u8) >= (Self::ES2020 as u8)
     }
 
     /// Check if this target supports ES2018+ features (async generators, dotAll regex, etc.)
     #[must_use]
-    pub fn supports_es2018(self) -> bool {
+    pub const fn supports_es2018(self) -> bool {
         (self as u8) >= (Self::ES2018 as u8)
     }
 
     /// Check if this target supports ES2022+ features (class fields, regex 'd' flag, etc.)
     #[must_use]
-    pub fn supports_es2022(self) -> bool {
+    pub const fn supports_es2022(self) -> bool {
         (self as u8) >= (Self::ES2022 as u8)
     }
 
     /// Check if this is an ES5 or earlier target (requires downleveling)
     #[must_use]
-    pub fn is_es5(self) -> bool {
+    pub const fn is_es5(self) -> bool {
         (self as u8) <= (Self::ES5 as u8)
     }
 }
@@ -141,7 +141,7 @@ pub enum ModuleKind {
 impl ModuleKind {
     /// Check if this is a CommonJS-like module system
     #[must_use]
-    pub fn is_commonjs(self) -> bool {
+    pub const fn is_commonjs(self) -> bool {
         matches!(
             self,
             Self::CommonJS | Self::UMD | Self::Node16 | Self::NodeNext
@@ -154,7 +154,7 @@ impl ModuleKind {
     /// Node16/NodeNext are hybrid systems that support both `CommonJS` and `ESM`,
     /// so they return false here (the checker must use file extension to decide).
     #[must_use]
-    pub fn is_es_module(self) -> bool {
+    pub const fn is_es_module(self) -> bool {
         matches!(
             self,
             Self::ES2015 | Self::ES2020 | Self::ES2022 | Self::ESNext | Self::Preserve
@@ -176,7 +176,7 @@ pub enum NewLineKind {
 impl NewLineKind {
     /// Get the actual newline characters
     #[must_use]
-    pub fn as_bytes(&self) -> &'static [u8] {
+    pub const fn as_bytes(&self) -> &'static [u8] {
         match self {
             Self::LineFeed => b"\n",
             Self::CarriageReturnLineFeed => b"\r\n",
@@ -185,7 +185,7 @@ impl NewLineKind {
 
     /// Get the newline as a string
     #[must_use]
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::LineFeed => "\n",
             Self::CarriageReturnLineFeed => "\r\n",

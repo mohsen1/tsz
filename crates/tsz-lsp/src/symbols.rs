@@ -20,7 +20,7 @@ pub use super::document_symbols::{DocumentSymbol, DocumentSymbolProvider, Symbol
 
 /// Main API for extracting document symbols from AST.
 ///
-/// This provides a simplified interface to the DocumentSymbolProvider.
+/// This provides a simplified interface to the `DocumentSymbolProvider`.
 pub struct DocumentSymbols<'a> {
     arena: &'a tsz_parser::parser::node::NodeArena,
     line_map: tsz_common::position::LineMap,

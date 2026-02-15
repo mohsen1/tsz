@@ -65,6 +65,11 @@ dbg_macro = "deny"
 print_stderr = "deny"
 empty_structs_with_brackets = "warn"
 get_unwrap = "deny"
+match_same_arms = "warn"
+missing_const_for_fn = "warn"
+doc_markdown = "warn"
+uninlined_format_args = "warn"
+redundant_clone = "warn"
 # Performance
 perf = { level = "deny", priority = -1 }
 # Complexity

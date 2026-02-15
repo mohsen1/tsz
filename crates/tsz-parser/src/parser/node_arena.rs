@@ -41,7 +41,7 @@ impl NodeArena {
 
     /// Get a reference to the interner
     #[must_use]
-    pub fn interner(&self) -> &Interner {
+    pub const fn interner(&self) -> &Interner {
         &self.interner
     }
 

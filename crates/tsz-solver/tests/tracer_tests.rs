@@ -2,7 +2,7 @@ use super::*;
 use crate::TypeInterner;
 use crate::diagnostics::{DiagnosticTracer, FastTracer};
 
-/// Test that FastTracer returns correct boolean results
+/// Test that `FastTracer` returns correct boolean results
 #[test]
 fn test_fast_tracer_boolean() {
     let interner = TypeInterner::new();
@@ -24,7 +24,7 @@ fn test_fast_tracer_boolean() {
     assert!(!checker.check_subtype_with_tracer(string_type, number_type, &mut fast));
 }
 
-/// Test that DiagnosticTracer collects failure reasons
+/// Test that `DiagnosticTracer` collects failure reasons
 #[test]
 fn test_diagnostic_tracer_collects_reasons() {
     let interner = TypeInterner::new();
@@ -108,7 +108,7 @@ fn test_function_tracer() {
     assert!(checker.check_subtype_with_tracer(func1_id, func2_id, &mut fast));
 }
 
-/// Benchmark: Compare FastTracer vs direct boolean check
+/// Benchmark: Compare `FastTracer` vs direct boolean check
 #[test]
 fn benchmark_fast_tracer() {
     let interner = TypeInterner::new();
@@ -139,12 +139,11 @@ fn benchmark_fast_tracer() {
     // In release mode, this should be millions
     assert!(
         checks_per_second > 10_000.0,
-        "FastTracer too slow: {:.2} checks/sec",
-        checks_per_second
+        "FastTracer too slow: {checks_per_second:.2} checks/sec"
     );
 }
 
-/// Test that DiagnosticTracer has the same logic as FastTracer
+/// Test that `DiagnosticTracer` has the same logic as `FastTracer`
 #[test]
 fn test_tracer_logic_consistency() {
     let interner = TypeInterner::new();
@@ -172,18 +171,15 @@ fn test_tracer_logic_consistency() {
         // Both should give the same boolean result
         assert_eq!(
             fast_result, expected,
-            "FastTracer failed for ({:?} <: {:?})",
-            source, target
+            "FastTracer failed for ({source:?} <: {target:?})"
         );
         assert_eq!(
             diag_result, expected,
-            "DiagnosticTracer failed for ({:?} <: {:?})",
-            source, target
+            "DiagnosticTracer failed for ({source:?} <: {target:?})"
         );
         assert_eq!(
             fast_result, diag_result,
-            "Tracer results differ for ({:?} <: {:?})",
-            source, target
+            "Tracer results differ for ({source:?} <: {target:?})"
         );
     }
 }

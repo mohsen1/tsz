@@ -44,8 +44,7 @@ const arr = [...t];  // Should be (string | number)[]
         .count();
     assert_eq!(
         errors, 0,
-        "Expected no errors for array spread with tuple, got {}",
-        errors
+        "Expected no errors for array spread with tuple, got {errors}"
     );
 }
 
@@ -65,8 +64,7 @@ const arr = [...nums];  // Should be number[]
         .count();
     assert_eq!(
         errors, 0,
-        "Expected no errors for array spread with array, got {}",
-        errors
+        "Expected no errors for array spread with array, got {errors}"
     );
 }
 
@@ -83,8 +81,7 @@ const arr = [...num];  // Should emit TS2488
     let ts2488_count = diagnostics.iter().filter(|d| d.code == 2488).count();
     assert!(
         ts2488_count >= 1,
-        "Expected at least 1 TS2488 error for non-iterable spread, got {}",
-        ts2488_count
+        "Expected at least 1 TS2488 error for non-iterable spread, got {ts2488_count}"
     );
 }
 
@@ -114,8 +111,7 @@ const merged = { ...obj1, ...obj2 };  // Should be { a: number, b: number, c: nu
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for object spread, got {}",
-        ts2322_count
+        "Expected no TS2322 error for object spread, got {ts2322_count}"
     );
 }
 
@@ -134,8 +130,7 @@ sum(1, 2, 3);
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for rest parameter, got {}",
-        ts2322_count
+        "Expected no TS2322 error for rest parameter, got {ts2322_count}"
     );
 }
 
@@ -154,8 +149,7 @@ sum(1, "two", 3);  // Should emit TS2345
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
-        "Expected at least 1 TS2345 error for wrong type in rest parameter, got {}",
-        ts2345_count
+        "Expected at least 1 TS2345 error for wrong type in rest parameter, got {ts2345_count}"
     );
 }
 
@@ -173,8 +167,7 @@ const [first, second, ...rest] = arr;
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for array destructuring with rest, got {}",
-        ts2322_count
+        "Expected no TS2322 error for array destructuring with rest, got {ts2322_count}"
     );
 }
 
@@ -193,8 +186,7 @@ const [s, n, ...rest] = t;
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for tuple destructuring with rest, got {}",
-        ts2322_count
+        "Expected no TS2322 error for tuple destructuring with rest, got {ts2322_count}"
     );
 }
 
@@ -285,8 +277,7 @@ add(...args);  // Should work
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for spread in function call, got {}",
-        ts2322_count
+        "Expected no TS2322 error for spread in function call, got {ts2322_count}"
     );
 }
 
@@ -308,8 +299,7 @@ add(...args);  // Should emit TS2345
     let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert!(
         ts2556_count >= 1,
-        "Expected at least 1 TS2556 error for spread of non-tuple array, got {}",
-        ts2556_count
+        "Expected at least 1 TS2556 error for spread of non-tuple array, got {ts2556_count}"
     );
 }
 
@@ -330,8 +320,7 @@ greet(...args);  // Should work
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for spread tuple in function call, got {}",
-        ts2322_count
+        "Expected no TS2322 error for spread tuple in function call, got {ts2322_count}"
     );
 }
 
@@ -352,8 +341,7 @@ greet(...args);  // Should emit TS2345
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
-        "Expected at least 1 TS2345 error for spread tuple with wrong types, got {}",
-        ts2345_count
+        "Expected at least 1 TS2345 error for spread tuple with wrong types, got {ts2345_count}"
     );
 }
 
@@ -374,8 +362,7 @@ const person: Person = { ...partial, age: 30 };
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for object spread with contextual type, got {}",
-        ts2322_count
+        "Expected no TS2322 error for object spread with contextual type, got {ts2322_count}"
     );
 }
 
@@ -393,8 +380,7 @@ const combined = [...arr1, ...arr2];  // Should be number[]
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for nested array spread, got {}",
-        ts2322_count
+        "Expected no TS2322 error for nested array spread, got {ts2322_count}"
     );
 }
 
@@ -414,8 +400,7 @@ logAll("hello", 42);  // Should emit TS2345
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
-        "Expected at least 1 TS2345 error for wrong type in rest parameter with annotation, got {}",
-        ts2345_count
+        "Expected at least 1 TS2345 error for wrong type in rest parameter with annotation, got {ts2345_count}"
     );
 }
 
@@ -511,7 +496,6 @@ const chars = [...str];  // Should be string[]
     let ts2488_count = diagnostics.iter().filter(|d| d.code == 2488).count();
     assert_eq!(
         ts2488_count, 0,
-        "Expected no TS2488 error for string spread, got {}",
-        ts2488_count
+        "Expected no TS2488 error for string spread, got {ts2488_count}"
     );
 }

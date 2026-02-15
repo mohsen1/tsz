@@ -169,7 +169,6 @@ impl<'a> Printer<'a> {
                         token_end = (j + 1) as u32;
                         break;
                     }
-                    b'\n' | b'\r' => break,
                     _ => break,
                 }
             }
@@ -225,7 +224,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Skip (suppress) all comments that belong to an erased declaration (interface, type alias).
-    /// Advances comment_emit_idx past any comments whose end position falls within the node's range.
+    /// Advances `comment_emit_idx` past any comments whose end position falls within the node's range.
     pub(super) fn skip_comments_for_erased_node(&mut self, node: &Node) {
         // Find the actual end of the node's code content, excluding trailing trivia.
         // This prevents us from skipping comments that appear after the closing brace/token

@@ -64,7 +64,7 @@ pub struct DeclarationEmitter<'a> {
     type_cache: Option<TypeCacheView>,
     /// Type interner for printing types
     type_interner: Option<&'a TypeInterner>,
-    /// Binder state for symbol resolution (used by UsageAnalyzer)
+    /// Binder state for symbol resolution (used by `UsageAnalyzer`)
     binder: Option<&'a BinderState>,
     /// Map of symbols to their usage kind (Type, Value, or Both) for import elision
     used_symbols:
@@ -78,17 +78,17 @@ pub struct DeclarationEmitter<'a> {
     /// Map of arena address -> file path (for resolving foreign symbol locations)
     arena_to_path: FxHashMap<usize, String>,
     /// Map of module → symbol names to auto-generate imports for
-    /// Pre-calculated in driver where MergedProgram is available
+    /// Pre-calculated in driver where `MergedProgram` is available
     required_imports: FxHashMap<String, Vec<String>>,
     /// Tracks names that are taken in the top-level scope of the file
     /// (includes local declarations and imported names)
     reserved_names: FxHashSet<String>,
-    /// Maps (ModulePath, ExportName) -> AliasName for string-based imports
+    /// Maps (`ModulePath`, `ExportName`) -> `AliasName` for string-based imports
     import_string_aliases: FxHashMap<(String, String), String>,
-    /// Map of imported SymbolId -> ModuleSpecifier for elision
+    /// Map of imported `SymbolId` -> `ModuleSpecifier` for elision
     /// Tracks which module each imported symbol claims to come from
     import_symbol_map: FxHashMap<SymbolId, String>,
-    /// Map of imported name -> SymbolId for resolving type references
+    /// Map of imported name -> `SymbolId` for resolving type references
     /// Helps bridge the gap between type references and import symbols
     import_name_map: FxHashMap<String, SymbolId>,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
@@ -180,7 +180,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub fn set_source_map_text(&mut self, text: &'a str) {
+    pub const fn set_source_map_text(&mut self, text: &'a str) {
         self.source_map_text = Some(text);
     }
 
@@ -215,22 +215,22 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Set the binder state for symbol resolution.
     ///
-    /// This enables UsageAnalyzer to resolve symbols during import/export elision.
-    pub fn set_binder(&mut self, binder: Option<&'a BinderState>) {
+    /// This enables `UsageAnalyzer` to resolve symbols during import/export elision.
+    pub const fn set_binder(&mut self, binder: Option<&'a BinderState>) {
         self.binder = binder;
     }
 
     /// Set the map of required imports for auto-generation.
     ///
     /// Maps module specifier to list of symbol names to import from that module.
-    /// Pre-calculated in driver where MergedProgram is available.
+    /// Pre-calculated in driver where `MergedProgram` is available.
     pub fn set_required_imports(&mut self, imports: FxHashMap<String, Vec<String>>) {
         self.required_imports = imports;
     }
 
     /// Set the current file's arena and path for distinguishing local vs foreign symbols.
     ///
-    /// This enables UsageAnalyzer to track which symbols need imports.
+    /// This enables `UsageAnalyzer` to track which symbols need imports.
     pub fn set_current_arena(&mut self, arena: Arc<NodeArena>, file_path: String) {
         self.current_arena = Some(arena);
         self.current_file_path = Some(file_path);
@@ -243,7 +243,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena_to_path = arena_to_path;
     }
 
-    /// Build a map of imported SymbolId -> ModuleSpecifier for elision.
+    /// Build a map of imported `SymbolId` -> `ModuleSpecifier` for elision.
     ///
     /// Walks all import statements and tracks which module each imported
     /// symbol claims to come from. This enables elision of unused imports.
@@ -331,9 +331,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// Collect all imported symbols from an ImportClause.
+    /// Collect all imported symbols from an `ImportClause`.
     ///
-    /// Returns a Vec of (name, SymbolId) pairs that were found in the import clause.
+    /// Returns a Vec of (name, `SymbolId`) pairs that were found in the import clause.
     fn collect_imported_symbols_from_clause(
         &self,
         arena: &NodeArena,
@@ -1640,7 +1640,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// Recursively collects all Identifier NodeIndices from a BindingPattern.
+    /// Recursively collects all Identifier `NodeIndices` from a `BindingPattern`.
     ///
     /// This handles nested destructuring like `const { a: { b } } = obj;`
     /// by traversing into nested patterns and collecting all leaf identifiers.
@@ -2505,7 +2505,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Emit named imports, filtering out unused specifiers.
     ///
-    /// This version only emits import specifiers that are in the used_symbols set.
+    /// This version only emits import specifiers that are in the `used_symbols` set.
     fn emit_named_imports_filtered(&mut self, imports_idx: NodeIndex, allow_type_prefix: bool) {
         let Some(imports_node) = self.arena.get(imports_idx) else {
             return;
@@ -3438,7 +3438,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Return true when declarations are filtered to public API members.
-    fn public_api_filter_enabled(&self) -> bool {
+    const fn public_api_filter_enabled(&self) -> bool {
         self.emit_public_api_only && self.public_api_scope_depth == 0
     }
 
@@ -3452,7 +3452,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Return true if a module declaration should be emitted when API filtering is enabled.
-    fn should_emit_public_api_module(&self, is_exported: bool) -> bool {
+    const fn should_emit_public_api_module(&self, is_exported: bool) -> bool {
         if !self.public_api_filter_enabled() {
             return true;
         }
@@ -3618,8 +3618,8 @@ impl<'a> DeclarationEmitter<'a> {
     /// Check if an import specifier should be emitted based on usage analysis.
     ///
     /// Returns true if:
-    /// - No usage tracking is enabled (used_symbols is None)
-    /// - The specifier's symbol is in the used_symbols set
+    /// - No usage tracking is enabled (`used_symbols` is None)
+    /// - The specifier's symbol is in the `used_symbols` set
     fn should_emit_import_specifier(&self, specifier_idx: NodeIndex) -> bool {
         // If no usage tracking, emit everything
         let Some(used) = &self.used_symbols else {
@@ -3657,11 +3657,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// Count how many import specifiers in an ImportClause should be emitted.
+    /// Count how many import specifiers in an `ImportClause` should be emitted.
     ///
-    /// Returns (default_count, named_count) where:
-    /// - default_count: 1 if default import is used, 0 otherwise
-    /// - named_count: number of used named import specifiers
+    /// Returns (`default_count`, `named_count`) where:
+    /// - `default_count`: 1 if default import is used, 0 otherwise
+    /// - `named_count`: number of used named import specifiers
     fn count_used_imports(
         &self,
         import: &tsz_parser::parser::node::ImportDeclData,
@@ -3736,7 +3736,7 @@ impl<'a> DeclarationEmitter<'a> {
         // This requires grouping by module which needs arena_to_path mapping
     }
 
-    /// Collect local top-level names into reserved_names.
+    /// Collect local top-level names into `reserved_names`.
     fn collect_local_declarations(&mut self, root_idx: NodeIndex) {
         let Some(root_node) = self.arena.get(root_idx) else {
             return;
@@ -3859,11 +3859,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// Generate unique name (e.g., "TypeA_1").
+    /// Generate unique name (e.g., "`TypeA_1`").
     fn generate_unique_name(&self, base: &str) -> String {
         let mut i = 1;
         loop {
-            let candidate = format!("{}_{}", base, i);
+            let candidate = format!("{base}_{i}");
             if !self.reserved_names.contains(&candidate) {
                 return candidate;
             }
@@ -3896,7 +3896,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.pending_source_pos = Some(source_position_from_offset(text, node.pos));
     }
 
-    fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
+    const fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
     }
 
@@ -3934,11 +3934,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn increase_indent(&mut self) {
+    const fn increase_indent(&mut self) {
         self.indent_level += 1;
     }
 
-    fn decrease_indent(&mut self) {
+    const fn decrease_indent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;
         }
@@ -4027,7 +4027,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// Print a TypeId as TypeScript syntax using TypePrinter.
+    /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
     fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
         if let Some(interner) = self.type_interner {
             let mut printer = TypePrinter::new(interner);
@@ -4388,18 +4388,15 @@ mod inline_tests {
 
         assert!(
             output.contains("export declare function add"),
-            "Expected export declare: {}",
-            output
+            "Expected export declare: {output}"
         );
         assert!(
             output.contains("a: number"),
-            "Expected parameter type: {}",
-            output
+            "Expected parameter type: {output}"
         );
         assert!(
             output.contains("): number;"),
-            "Expected return type: {}",
-            output
+            "Expected return type: {output}"
         );
     }
 
@@ -4422,14 +4419,12 @@ mod inline_tests {
 
         assert!(
             output.contains("class Calculator"),
-            "Expected class declaration: {}",
-            output
+            "Expected class declaration: {output}"
         );
-        assert!(output.contains("value"), "Expected property: {}", output);
+        assert!(output.contains("value"), "Expected property: {output}");
         assert!(
             output.contains("add") && output.contains("number"),
-            "Expected method signature with add and number: {}",
-            output
+            "Expected method signature with add and number: {output}"
         );
     }
 
@@ -4444,14 +4439,9 @@ mod inline_tests {
 
         assert!(
             output.contains("interface Point"),
-            "Expected interface: {}",
-            output
+            "Expected interface: {output}"
         );
-        assert!(
-            output.contains("number"),
-            "Expected number type: {}",
-            output
-        );
+        assert!(output.contains("number"), "Expected number type: {output}");
     }
 
     #[test]
@@ -4465,8 +4455,7 @@ mod inline_tests {
 
         assert!(
             output.contains("export type ID = string | number"),
-            "Expected type alias: {}",
-            output
+            "Expected type alias: {output}"
         );
     }
 }

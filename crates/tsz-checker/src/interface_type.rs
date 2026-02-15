@@ -1,6 +1,6 @@
 //! Interface Type Resolution Module
 //!
-//! This module contains interface type resolution methods for CheckerState
+//! This module contains interface type resolution methods for `CheckerState`
 //! as part of the Phase 2 architecture refactoring (god object decomposition).
 //!
 //! # Extracted Functions (~565 lines from state.rs)
@@ -41,10 +41,10 @@ impl<'a> CheckerState<'a> {
     /// 3. Merging base interface types
     ///
     /// # Arguments
-    /// * `idx` - The NodeIndex of the interface declaration
+    /// * `idx` - The `NodeIndex` of the interface declaration
     ///
     /// # Returns
-    /// The TypeId representing the interface type
+    /// The `TypeId` representing the interface type
     ///
     /// # Example
     /// ```typescript
@@ -331,7 +331,7 @@ impl<'a> CheckerState<'a> {
     /// * `derived_type` - The initial derived type
     ///
     /// # Returns
-    /// The merged TypeId including all base interface members
+    /// The merged `TypeId` including all base interface members
     pub(crate) fn merge_interface_heritage_types(
         &mut self,
         declarations: &[NodeIndex],
@@ -536,7 +536,7 @@ impl<'a> CheckerState<'a> {
     /// * `base` - The base interface type
     ///
     /// # Returns
-    /// The merged TypeId
+    /// The merged `TypeId`
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
         use tracing::trace;
         use tsz_solver::type_queries::{InterfaceMergeKind, classify_for_interface_merge};
@@ -839,7 +839,7 @@ impl<'a> CheckerState<'a> {
     /// * `interface_name` - The name of the interface to find augmentations for
     ///
     /// # Returns
-    /// A vector of NodeIndex pointing to augmentation declarations
+    /// A vector of `NodeIndex` pointing to augmentation declarations
     ///
     /// # Example
     /// ```typescript
@@ -872,14 +872,14 @@ impl<'a> CheckerState<'a> {
     /// Get all module augmentation members for a given module specifier and interface name.
     ///
     /// This function retrieves the properties from augmentation declarations and returns them
-    /// as PropertyInfo objects ready for merging with the original interface.
+    /// as `PropertyInfo` objects ready for merging with the original interface.
     ///
     /// # Arguments
     /// * `module_spec` - The module specifier (e.g., "express", "lodash")
     /// * `interface_name` - The name of the interface to find augmentation members for
     ///
     /// # Returns
-    /// A vector of PropertyInfo representing the augmented members
+    /// A vector of `PropertyInfo` representing the augmented members
     pub(crate) fn get_module_augmentation_members(
         &mut self,
         module_spec: &str,
@@ -1167,7 +1167,7 @@ impl<'a> CheckerState<'a> {
     /// * `base_type` - The original interface type
     ///
     /// # Returns
-    /// The merged TypeId including augmented members
+    /// The merged `TypeId` including augmented members
     ///
     /// # Example
     /// ```typescript

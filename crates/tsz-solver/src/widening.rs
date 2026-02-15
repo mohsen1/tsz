@@ -8,7 +8,7 @@
 //! - **String literals** → `string`
 //! - **Number literals** → `number`
 //! - **Boolean literals** → `boolean`
-//! - **BigInt literals** → `bigint`
+//! - **`BigInt` literals** → `bigint`
 //! - **Union types**: All members are widened recursively
 //! - **Object types**: Property types are widened unless `readonly`
 //! - **Type parameters**: Never widened

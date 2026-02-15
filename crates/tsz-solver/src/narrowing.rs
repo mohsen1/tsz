@@ -17,7 +17,7 @@
 //! }
 //! ```
 //!
-//! ## TypeGuard Abstraction
+//! ## `TypeGuard` Abstraction
 //!
 //! The `TypeGuard` enum provides an AST-agnostic representation of narrowing
 //! conditions. This allows the Solver to perform pure type algebra without
@@ -64,7 +64,7 @@ pub enum TypeofKind {
 }
 
 impl TypeofKind {
-    /// Parse a typeof result string into a TypeofKind.
+    /// Parse a typeof result string into a `TypeofKind`.
     /// Returns None for non-standard typeof strings (which don't narrow).
     pub fn parse(s: &str) -> Option<Self> {
         match s {
@@ -81,7 +81,7 @@ impl TypeofKind {
     }
 
     /// Get the string representation of this typeof kind.
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::String => "string",
             Self::Number => "number",
@@ -237,7 +237,7 @@ pub struct DiscriminantInfo {
 /// Narrowing context for type guards and control flow analysis.
 pub struct NarrowingContext<'a> {
     db: &'a dyn QueryDatabase,
-    /// Optional TypeResolver for resolving Lazy types (e.g., type aliases).
+    /// Optional `TypeResolver` for resolving Lazy types (e.g., type aliases).
     /// When present, this enables proper narrowing of type aliases like `type Shape = Circle | Square`.
     resolver: Option<&'a dyn TypeResolver>,
 }
@@ -247,10 +247,10 @@ impl<'a> NarrowingContext<'a> {
         NarrowingContext { db, resolver: None }
     }
 
-    /// Set the TypeResolver for this context.
+    /// Set the `TypeResolver` for this context.
     ///
     /// This enables proper resolution of Lazy types (type aliases) during narrowing.
-    /// The resolver should be borrowed from the Checker's TypeEnvironment.
+    /// The resolver should be borrowed from the Checker's `TypeEnvironment`.
     pub fn with_resolver(mut self, resolver: &'a dyn TypeResolver) -> Self {
         self.resolver = Some(resolver);
         self
@@ -1707,7 +1707,7 @@ impl<'a> NarrowingContext<'a> {
         source_type
     }
 
-    /// Helper for narrow_excluding_types with type parameters
+    /// Helper for `narrow_excluding_types` with type parameters
     fn narrow_type_param_excluding_set(
         &self,
         source: TypeId,
@@ -1787,13 +1787,13 @@ impl<'a> NarrowingContext<'a> {
     }
 
     /// Check if a type is a literal type.
-    /// Uses the visitor pattern from solver::visitor.
+    /// Uses the visitor pattern from `solver::visitor`.
     fn is_literal_type(&self, type_id: TypeId) -> bool {
         is_literal_type_db(self.db, type_id)
     }
 
     /// Check if a type is a function type.
-    /// Uses the visitor pattern from solver::visitor.
+    /// Uses the visitor pattern from `solver::visitor`.
     fn is_function_type(&self, type_id: TypeId) -> bool {
         is_function_type_db(self.db, type_id)
     }
@@ -1831,7 +1831,7 @@ impl<'a> NarrowingContext<'a> {
     }
 
     /// Check if a type has typeof "object".
-    /// Uses the visitor pattern from solver::visitor.
+    /// Uses the visitor pattern from `solver::visitor`.
     fn is_object_typeof(&self, type_id: TypeId) -> bool {
         is_object_like_type_db(self.db, type_id)
     }
@@ -2224,7 +2224,7 @@ impl<'a> NarrowingContext<'a> {
 
     /// Check if a type is definitely falsy.
     ///
-    /// Returns true for: null, undefined, void, false, 0, -0, NaN, "", 0n
+    /// Returns true for: null, undefined, void, false, 0, -0, `NaN`, "", 0n
     fn is_definitely_falsy(&self, type_id: TypeId) -> bool {
         let resolved = self.resolve_type(type_id);
 
@@ -2314,7 +2314,7 @@ impl<'a> NarrowingContext<'a> {
     /// Falsy values in TypeScript:
     /// - null, undefined, void
     /// - false (boolean literal)
-    /// - 0, -0, NaN (number literals)
+    /// - 0, -0, `NaN` (number literals)
     /// - "" (empty string)
     /// - 0n (bigint literal)
     ///
@@ -2388,7 +2388,7 @@ impl<'a> NarrowingContext<'a> {
     /// This matches TypeScript's behavior where `if (x)` narrows out:
     /// - null, undefined, void
     /// - false (boolean literal)
-    /// - 0, -0, NaN (number literals)
+    /// - 0, -0, `NaN` (number literals)
     /// - "" (empty string)
     /// - 0n (bigint literal)
     fn narrow_by_truthiness(&self, source_type: TypeId) -> TypeId {
@@ -2656,9 +2656,9 @@ impl<'a> NarrowingContext<'a> {
         source_type
     }
 
-    /// Check if a type is array-like (Array, Tuple, or ReadonlyArray).
+    /// Check if a type is array-like (Array, Tuple, or `ReadonlyArray`).
     ///
-    /// This unwraps ReadonlyType recursively to check the underlying type.
+    /// This unwraps `ReadonlyType` recursively to check the underlying type.
     fn is_array_like(&self, type_id: TypeId) -> bool {
         use crate::type_queries;
 
@@ -2677,16 +2677,16 @@ impl<'a> NarrowingContext<'a> {
 struct NarrowingVisitor<'a> {
     db: &'a dyn QueryDatabase,
     narrower: TypeId,
-    /// PERF: Reusable SubtypeChecker to avoid per-call hash allocations
+    /// PERF: Reusable `SubtypeChecker` to avoid per-call hash allocations
     checker: SubtypeChecker<'a>,
 }
 
 impl<'a> TypeVisitor for NarrowingVisitor<'a> {
     type Output = TypeId;
 
-    /// Override visit_type to handle types that need special handling.
+    /// Override `visit_type` to handle types that need special handling.
     /// We intercept Lazy/Ref/Application types for resolution, and Object/Function
-    /// types for proper subtype checking (we need the TypeId here).
+    /// types for proper subtype checking (we need the `TypeId` here).
     fn visit_type(&mut self, types: &dyn TypeDatabase, type_id: TypeId) -> Self::Output {
         // Check if this is a type that needs special handling
         if let Some(type_key) = types.lookup(type_id) {
@@ -2702,14 +2702,7 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                     // Otherwise, fall through to normal visitation
                 }
                 // Ref types: resolve and recurse
-                TypeData::TypeQuery(_) => {
-                    let resolved = self.db.evaluate_type(type_id);
-                    if resolved != type_id {
-                        return self.visit_type(types, resolved);
-                    }
-                }
-                // Application types (generics): resolve and recurse
-                TypeData::Application(_) => {
+                TypeData::TypeQuery(_) | TypeData::Application(_) => {
                     let resolved = self.db.evaluate_type(type_id);
                     if resolved != type_id {
                         return self.visit_type(types, resolved);
@@ -2971,11 +2964,11 @@ fn top_level_union_members(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
     union_list_id(types, type_id).map(|list_id| types.type_list(list_id).to_vec())
 }
 
-fn is_nullish_intrinsic(type_id: TypeId) -> bool {
+const fn is_nullish_intrinsic(type_id: TypeId) -> bool {
     matches!(type_id, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID)
 }
 
-fn is_undefined_intrinsic(type_id: TypeId) -> bool {
+const fn is_undefined_intrinsic(type_id: TypeId) -> bool {
     matches!(type_id, TypeId::UNDEFINED | TypeId::VOID)
 }
 

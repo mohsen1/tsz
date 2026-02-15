@@ -277,7 +277,7 @@ impl<'a> Printer<'a> {
         true
     }
 
-    /// Collect variable names from a declaration list for CommonJS export
+    /// Collect variable names from a declaration list for `CommonJS` export
     pub(super) fn collect_variable_names(&self, declarations: &NodeList) -> Vec<String> {
         let mut names = Vec::new();
         for &decl_list_idx in &declarations.nodes {

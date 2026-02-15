@@ -8,7 +8,7 @@ struct NamespaceInfo {
     is_exported: bool,
 }
 
-/// Helper to find the namespace node (unwraps EXPORT_DECLARATION if needed)
+/// Helper to find the namespace node (unwraps `EXPORT_DECLARATION` if needed)
 fn find_namespace_info(parser: &ParserState, stmt_idx: NodeIndex) -> Option<NamespaceInfo> {
     let stmt_node = parser.arena.get(stmt_idx)?;
 
@@ -80,7 +80,7 @@ fn transform_and_emit(source: &str) -> String {
     String::new()
 }
 
-/// Helper to parse, transform and emit with CommonJS mode
+/// Helper to parse, transform and emit with `CommonJS` mode
 fn transform_and_emit_commonjs(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -322,8 +322,7 @@ fn test_namespace_es5_commonjs_exported_output() {
     // The pattern is: M = exports.M || (exports.M = {})
     assert!(
         output.contains("exports.M"),
-        "Should reference exports.M in CommonJS mode. Got: {}",
-        output
+        "Should reference exports.M in CommonJS mode. Got: {output}"
     );
 }
 
@@ -333,8 +332,7 @@ fn test_namespace_es5_commonjs_non_exported() {
     // Non-exported namespace in CommonJS mode should not attach to exports
     assert!(
         !output.contains("exports.M"),
-        "Non-exported namespace should not reference exports. Got: {}",
-        output
+        "Non-exported namespace should not reference exports. Got: {output}"
     );
 }
 
@@ -572,8 +570,7 @@ fn test_namespace_leading_comment_preserved() {
     let output = transform_and_emit_with_comments(source);
     assert!(
         output.contains("// this is a leading comment"),
-        "Leading comment should be preserved. Got: {}",
-        output
+        "Leading comment should be preserved. Got: {output}"
     );
 }
 
@@ -585,8 +582,7 @@ fn test_namespace_trailing_comment_preserved() {
     let output = transform_and_emit_with_comments(source);
     assert!(
         output.contains("//trailing comment"),
-        "Trailing comment should be preserved. Got: {}",
-        output
+        "Trailing comment should be preserved. Got: {output}"
     );
 }
 
@@ -598,8 +594,7 @@ fn test_namespace_exported_function_trailing_comment_stays_on_function() {
     let output = transform_and_emit_with_comments(source);
     assert!(
         output.contains("} //trailing comment\n    M.foo = foo;"),
-        "Trailing comment should stay on function declaration. Got: {}",
-        output
+        "Trailing comment should stay on function declaration. Got: {output}"
     );
 }
 
@@ -610,8 +605,7 @@ fn test_namespace_trailing_comment_variable() {
     let output = transform_and_emit_with_comments(source);
     assert!(
         output.contains("//comment"),
-        "Trailing comment on variable should be preserved. Got: {}",
-        output
+        "Trailing comment on variable should be preserved. Got: {output}"
     );
 }
 
@@ -622,8 +616,7 @@ fn test_trailing_comment_extraction_direct() {
     let ranges = tsz_common::comments::get_comment_ranges(source);
     assert!(
         !ranges.is_empty(),
-        "Should find at least one comment range in: {}",
-        source
+        "Should find at least one comment range in: {source}"
     );
     let comment_text = ranges[0].get_text(source);
     assert_eq!(comment_text, "//comment", "Comment text should match");
@@ -648,11 +641,10 @@ fn test_trailing_comment_ir_structure() {
             let has_trailing = body.iter().any(|n| matches!(n, IRNode::TrailingComment(_)));
             assert!(
                 has_trailing,
-                "Body should contain TrailingComment node. Body: {:?}",
-                body
+                "Body should contain TrailingComment node. Body: {body:?}"
             );
         } else {
-            panic!("Expected NamespaceIIFE, got: {:?}", ir);
+            panic!("Expected NamespaceIIFE, got: {ir:?}");
         }
     }
 }
@@ -674,8 +666,7 @@ fn test_namespace_comment_after_erased_interface() {
     let output = transform_and_emit_with_comments(source);
     assert!(
         output.contains("// valid since Point is exported"),
-        "Comment after erased interface should be preserved. Got:\n{}",
-        output
+        "Comment after erased interface should be preserved. Got:\n{output}"
     );
 }
 
@@ -696,13 +687,11 @@ fn test_namespace_comment_between_value_exports() {
 
     assert!(
         origin_pos < comment_pos,
-        "Comment should appear after Origin assignment. Got:\n{}",
-        output
+        "Comment should appear after Origin assignment. Got:\n{output}"
     );
     assert!(
         comment_pos < unit_pos,
-        "Comment should appear before Unit assignment. Got:\n{}",
-        output
+        "Comment should appear before Unit assignment. Got:\n{output}"
     );
 }
 
@@ -715,7 +704,6 @@ fn test_namespace_inline_block_comment_preserved() {
     let output = transform_and_emit_with_comments(source);
     assert!(
         output.contains("/* block comment */"),
-        "Block comment should be preserved. Got: {}",
-        output
+        "Block comment should be preserved. Got: {output}"
     );
 }

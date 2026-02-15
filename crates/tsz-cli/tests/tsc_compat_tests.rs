@@ -25,7 +25,7 @@ impl TempDir {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        path.push(format!("tsz_tsc_compat_{}_{}", name, nanos));
+        path.push(format!("tsz_tsc_compat_{name}_{nanos}"));
         std::fs::create_dir_all(&path)?;
         Ok(Self { path })
     }
@@ -196,8 +196,7 @@ fn tsc_compat_cannot_find_name_plain() {
 
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
-            "tsz output does not match tsc (non-pretty):\n{}\n\ntsc output:\n{}\n\ntsz output:\n{}",
-            diff, tsc_out, tsz_out
+            "tsz output does not match tsc (non-pretty):\n{diff}\n\ntsc output:\n{tsc_out}\n\ntsz output:\n{tsz_out}"
         );
     }
 }
@@ -218,8 +217,7 @@ fn tsc_compat_cannot_find_name_pretty() {
 
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
-            "tsz output does not match tsc (pretty):\n{}\n\ntsc output:\n{}\n\ntsz output:\n{}",
-            diff, tsc_out, tsz_out
+            "tsz output does not match tsc (pretty):\n{diff}\n\ntsc output:\n{tsc_out}\n\ntsz output:\n{tsz_out}"
         );
     }
 }
@@ -243,8 +241,7 @@ fn tsc_compat_multiple_cannot_find_name_plain() {
 
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
-            "tsz output does not match tsc (non-pretty, multiple errors):\n{}\n\ntsc:\n{}\n\ntsz:\n{}",
-            diff, tsc_out, tsz_out
+            "tsz output does not match tsc (non-pretty, multiple errors):\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}"
         );
     }
 }
@@ -268,8 +265,7 @@ fn tsc_compat_multiple_cannot_find_name_pretty() {
 
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
-            "tsz output does not match tsc (pretty, multiple errors):\n{}\n\ntsc:\n{}\n\ntsz:\n{}",
-            diff, tsc_out, tsz_out
+            "tsz output does not match tsc (pretty, multiple errors):\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}"
         );
     }
 }
@@ -385,8 +381,7 @@ fn tsc_compat_structure_type_error_plain() {
     let tsz_count = tsz_out.lines().filter(|l| l.contains("error TS")).count();
     assert_eq!(
         tsc_count, tsz_count,
-        "Different number of errors:\ntsc ({}):\n{}\ntsz ({}):\n{}",
-        tsc_count, tsc_out, tsz_count, tsz_out
+        "Different number of errors:\ntsc ({tsc_count}):\n{tsc_out}\ntsz ({tsz_count}):\n{tsz_out}"
     );
 }
 
@@ -408,10 +403,7 @@ fn tsc_compat_structure_type_error_pretty() {
         run_tsz(&temp.path, &["--noEmit", "--pretty", "true", "test.ts"]).expect("tsz failed");
 
     if let Some(diff) = compare_output_structure(&tsc_out, &tsz_out) {
-        panic!(
-            "Output structure mismatch:\n{}\n\ntsc:\n{}\n\ntsz:\n{}",
-            diff, tsc_out, tsz_out
-        );
+        panic!("Output structure mismatch:\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}");
     }
 }
 
@@ -435,13 +427,11 @@ fn tsc_compat_no_errors_plain() {
     // Both should produce empty output for valid code
     assert!(
         tsc_out.trim().is_empty(),
-        "tsc should have no errors: {}",
-        tsc_out
+        "tsc should have no errors: {tsc_out}"
     );
     assert!(
         tsz_out.trim().is_empty(),
-        "tsz should have no errors: {}",
-        tsz_out
+        "tsz should have no errors: {tsz_out}"
     );
 }
 
@@ -541,20 +531,17 @@ fn tsc_compat_line_endings_normalized() {
     // Both should detect the same error
     assert!(
         tsc_out.contains("error TS2304"),
-        "tsc should find TS2304: {}",
-        tsc_out
+        "tsc should find TS2304: {tsc_out}"
     );
     assert!(
         tsz_out.contains("error TS2304"),
-        "tsz should find TS2304: {}",
-        tsz_out
+        "tsz should find TS2304: {tsz_out}"
     );
 
     // Exact match for this case (TS2304 spans agree)
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
-            "tsz output does not match tsc (Windows line endings):\n{}\n\ntsc:\n{}\n\ntsz:\n{}",
-            diff, tsc_out, tsz_out
+            "tsz output does not match tsc (Windows line endings):\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}"
         );
     }
 }
@@ -586,20 +573,17 @@ fn tsc_compat_plain_format_structure() {
         // Each line should match: file(line,col): category TScode: message
         assert!(
             line.contains("): error TS") || line.contains("): warning TS"),
-            "Non-pretty line doesn't match format 'file(line,col): error TScode: message': {}",
-            line
+            "Non-pretty line doesn't match format 'file(line,col): error TScode: message': {line}"
         );
         // Should contain parenthesized position
         assert!(
             line.contains('(') && line.contains(')'),
-            "Non-pretty line missing parenthesized position: {}",
-            line
+            "Non-pretty line missing parenthesized position: {line}"
         );
         // Should NOT contain source snippets
         assert!(
             !line.contains('~'),
-            "Non-pretty line should not have underline markers: {}",
-            line
+            "Non-pretty line should not have underline markers: {line}"
         );
     }
 }
@@ -668,8 +652,7 @@ fn tsc_compat_pretty_format_structure() {
     let has_found = lines.iter().any(|l| l.starts_with("Found "));
     assert!(
         has_found,
-        "Should have 'Found N error(s)' summary:\n{}",
-        tsz_out
+        "Should have 'Found N error(s)' summary:\n{tsz_out}"
     );
 }
 
@@ -682,7 +665,7 @@ fn tsc_compat_double_digit_line_number_pretty() {
     let temp = TempDir::new("double_digit_line").expect("temp dir");
     let mut source = String::new();
     for i in 1..=9 {
-        source.push_str(&format!("const a{} = {};\n", i, i));
+        source.push_str(&format!("const a{i} = {i};\n"));
     }
     source.push_str("const a10 = unknownVar;\n");
     write_file(&temp.path.join("test.ts"), &source);
@@ -695,8 +678,7 @@ fn tsc_compat_double_digit_line_number_pretty() {
     // Exact match: TS2304 spans should agree for both compilers
     if let Some(diff) = diff_outputs(&tsc_out, &tsz_out) {
         panic!(
-            "Double-digit line number output mismatch:\n{}\n\ntsc:\n{}\n\ntsz:\n{}",
-            diff, tsc_out, tsz_out
+            "Double-digit line number output mismatch:\n{diff}\n\ntsc:\n{tsc_out}\n\ntsz:\n{tsz_out}"
         );
     }
 }

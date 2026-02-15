@@ -1283,7 +1283,7 @@ impl BinderState {
     }
 
     /// Check if a node kind is a declaration that should be bound
-    pub(crate) fn is_declaration(kind: u16) -> bool {
+    pub(crate) const fn is_declaration(kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::CLASS_DECLARATION
             || kind == syntax_kind_ext::VARIABLE_STATEMENT
@@ -1400,15 +1400,14 @@ impl BinderState {
                             // Shorthand ambient module: `declare module "*.json";` (no body)
                             // Even when classified as augmentation, a bodyless declaration
                             // is a shorthand that makes matching imports resolve to `any`.
-                            self.shorthand_ambient_modules
-                                .insert(module_specifier.clone());
+                            self.shorthand_ambient_modules.insert(module_specifier);
                         } else {
                             self.node_scope_ids
                                 .insert(module.body.0, self.current_scope_id);
                             let was_in_augmentation = self.in_module_augmentation;
                             let prev_module = self.current_augmented_module.take();
                             self.in_module_augmentation = true;
-                            self.current_augmented_module = Some(module_specifier.clone());
+                            self.current_augmented_module = Some(module_specifier);
                             self.bind_node(arena, module.body);
                             self.in_module_augmentation = was_in_augmentation;
                             self.current_augmented_module = prev_module;
@@ -1982,7 +1981,7 @@ impl BinderState {
     // Public accessors
 
     /// Check if lib symbols have been merged into this binder's local arena.
-    pub fn lib_symbols_are_merged(&self) -> bool {
+    pub const fn lib_symbols_are_merged(&self) -> bool {
         self.lib_symbols_merged
     }
 
@@ -1990,7 +1989,7 @@ impl BinderState {
     ///
     /// This should be called when a binder is reconstructed from a `MergedProgram`
     /// where all lib symbols have already been remapped to unique global IDs.
-    pub fn set_lib_symbols_merged(&mut self, merged: bool) {
+    pub const fn set_lib_symbols_merged(&mut self, merged: bool) {
         self.lib_symbols_merged = merged;
     }
 
@@ -2143,13 +2142,13 @@ impl BinderState {
         self.node_symbols.get(&node.0).copied()
     }
 
-    pub fn get_symbols(&self) -> &SymbolArena {
+    pub const fn get_symbols(&self) -> &SymbolArena {
         &self.symbols
     }
 
     /// Check if the current source file is an external module (has top-level import/export).
     /// This is used by the checker to determine if ES module semantics apply.
-    pub fn is_external_module(&self) -> bool {
+    pub const fn is_external_module(&self) -> bool {
         self.is_external_module
     }
 
@@ -2364,7 +2363,7 @@ impl BinderState {
     // Expression binding for flow analysis
     // =========================================================================
 
-    pub(crate) fn is_assignment_operator(operator: u16) -> bool {
+    pub(crate) const fn is_assignment_operator(operator: u16) -> bool {
         matches!(
             operator,
             k if k == SyntaxKind::EqualsToken as u16

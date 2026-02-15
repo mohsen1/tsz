@@ -5,7 +5,7 @@
 //! - Accessor abstract consistency (TS1044)
 //! - Setter parameter validation (TS1052, TS1053, TS7006)
 //!
-//! This module extends CheckerState with accessor-related methods as part of
+//! This module extends `CheckerState` with accessor-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::diagnostics::diagnostic_codes;

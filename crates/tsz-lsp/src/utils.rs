@@ -1,6 +1,6 @@
 //! Utility functions for LSP operations.
 //!
-//! Provides efficient node lookup using the flat NodeArena structure.
+//! Provides efficient node lookup using the flat `NodeArena` structure.
 
 use std::path::{Path, PathBuf};
 
@@ -127,7 +127,7 @@ pub fn is_symbol_query_node(arena: &NodeArena, node: NodeIndex) -> bool {
 /// * `current_specifier` - The current import specifier (e.g., "./utils" or "../types")
 ///
 /// # Returns
-/// * `Some(String)` - The new import specifier in the same style as current_specifier
+/// * `Some(String)` - The new import specifier in the same style as `current_specifier`
 /// * `None` - If the calculation fails
 ///
 /// # Examples
@@ -162,7 +162,7 @@ pub fn calculate_new_relative_path(
 
     // Apply user's prefix style
     if has_dot_slash_prefix && !result.starts_with("./") && !result.starts_with("../") {
-        result = format!("./{}", result);
+        result = format!("./{result}");
     } else if !has_dot_slash_prefix && !has_parent_reference && result.starts_with("./") {
         // Remove ./ if user didn't use it originally
         result = result[2..].to_string();
@@ -173,7 +173,7 @@ pub fn calculate_new_relative_path(
 
 /// Calculate a relative path from `from` to `to`.
 ///
-/// This is a simplified version of pathdiff that uses std::path only.
+/// This is a simplified version of pathdiff that uses `std::path` only.
 fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
     use std::path::PathBuf;
 

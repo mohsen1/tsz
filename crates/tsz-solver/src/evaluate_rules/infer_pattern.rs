@@ -208,7 +208,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Filter an inferred type by its constraint.
     ///
-    /// Returns Some(filtered_type) if any part of the inferred type satisfies the constraint,
+    /// Returns `Some(filtered_type)` if any part of the inferred type satisfies the constraint,
     /// or None if no part satisfies it.
     pub(crate) fn filter_inferred_by_constraint(
         &self,

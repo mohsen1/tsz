@@ -21,7 +21,7 @@ use tsz_solver::{
     ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, apparent_primitive_members, visitor,
 };
 
-/// The kind of completion item, matching tsserver's ScriptElementKind values.
+/// The kind of completion item, matching tsserver's `ScriptElementKind` values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CompletionItemKind {
     /// A variable or constant
@@ -72,13 +72,13 @@ pub mod sort_priority {
     pub const GLOBALS_OR_KEYWORDS: &str = "15";
     /// Completions from auto-import candidates.
     pub const AUTO_IMPORT: &str = "16";
-    /// Legacy alias for GLOBALS_OR_KEYWORDS.
+    /// Legacy alias for `GLOBALS_OR_KEYWORDS`.
     pub const KEYWORD: &str = "15";
 
     /// Produce a deprecated sort text by prefixing "z" to the base sort text.
     /// This matches TypeScript's `SortText.Deprecated()` transformation.
     pub fn deprecated(base: &str) -> String {
-        format!("z{}", base)
+        format!("z{base}")
     }
 }
 
@@ -152,8 +152,8 @@ pub struct CompletionItem {
     pub additional_text_edits: Option<Vec<crate::rename::TextEdit>>,
 }
 
-/// Custom deserializer that always returns None for additional_text_edits.
-/// Since CompletionItem is only sent from server to client, we never
+/// Custom deserializer that always returns None for `additional_text_edits`.
+/// Since `CompletionItem` is only sent from server to client, we never
 /// deserialize this field from the client.
 mod deserialize_additional_edits {
     use crate::rename::TextEdit;
@@ -170,7 +170,7 @@ mod deserialize_additional_edits {
 
 impl CompletionItem {
     /// Create a new completion item with only the required fields.
-    pub fn new(label: String, kind: CompletionItemKind) -> Self {
+    pub const fn new(label: String, kind: CompletionItemKind) -> Self {
         Self {
             label,
             kind,
@@ -213,13 +213,13 @@ impl CompletionItem {
     }
 
     /// Mark this completion as a snippet (insert text contains tab-stop placeholders).
-    pub fn as_snippet(mut self) -> Self {
+    pub const fn as_snippet(mut self) -> Self {
         self.is_snippet = true;
         self
     }
 
     /// Mark this completion as requiring an additional action (e.g. auto-import).
-    pub fn with_has_action(mut self) -> Self {
+    pub const fn with_has_action(mut self) -> Self {
         self.has_action = true;
         self
     }
@@ -250,14 +250,14 @@ impl CompletionItem {
     }
 
     /// Set the replacement span (byte offsets).
-    pub fn with_replacement_span(mut self, start: u32, end: u32) -> Self {
+    pub const fn with_replacement_span(mut self, start: u32, end: u32) -> Self {
         self.replacement_span = Some((start, end));
         self
     }
 
     /// Return the effective sort text: the explicitly set value, or a default
     /// derived from the completion kind.
-    pub fn effective_sort_text(&self) -> &str {
+    pub const fn effective_sort_text(&self) -> &str {
         if let Some(ref s) = self.sort_text {
             s.as_str()
         } else {
@@ -268,7 +268,7 @@ impl CompletionItem {
 
 /// Derive a default sort text from the completion kind, following tsserver
 /// conventions.
-pub fn default_sort_text(kind: CompletionItemKind) -> &'static str {
+pub const fn default_sort_text(kind: CompletionItemKind) -> &'static str {
     match kind {
         // Scope-level declarations: variables, functions, parameters
         // TypeScript uses LocationPriority ("11") for most items in scope.
@@ -559,7 +559,7 @@ fn compare_case_sensitive_ui(a: &str, b: &str) -> std::cmp::Ordering {
 
 impl<'a> Completions<'a> {
     /// Create a new Completions provider.
-    pub fn new(
+    pub const fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -577,7 +577,7 @@ impl<'a> Completions<'a> {
     }
 
     /// Create a completions provider with type-aware member completion support.
-    pub fn new_with_types(
+    pub const fn new_with_types(
         arena: &'a NodeArena,
         binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -597,7 +597,7 @@ impl<'a> Completions<'a> {
     }
 
     /// Create a completions provider with type-aware member completion support and explicit strict mode.
-    pub fn with_strict(
+    pub const fn with_strict(
         arena: &'a NodeArena,
         binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -789,25 +789,9 @@ impl<'a> Completions<'a> {
                     return true;
                 }
             }
-            // After `(` in function calls, constructor calls, parenthesized expressions
-            Some(b'(') => return true,
-            // After `,` in function arguments, array elements, object properties
-            Some(b',') => return true,
-            // After `[` in array literals, index signatures, computed properties
-            Some(b'[') => return true,
-            // After `{` in object literals, blocks, destructuring
-            Some(b'{') => return true,
-            // After `<` in type arguments, JSX
-            Some(b'<') => return true,
-            // After `:` in type annotations, ternary, object properties
-            Some(b':') => return true,
-            // After `?` in ternary expressions
-            Some(b'?') => return true,
-            // After `|` or `&` in union/intersection types
-            Some(b'|') => return true,
-            Some(b'&') => return true,
-            // After `!` in logical not
-            Some(b'!') => return true,
+            // After these characters, a new identifier/expression may start.
+            Some(b'(') | Some(b',') | Some(b'[') | Some(b'{') | Some(b'<') | Some(b':')
+            | Some(b'?') | Some(b'|') | Some(b'&') | Some(b'!') => return true,
             _ => {}
         }
 
@@ -1788,7 +1772,7 @@ impl<'a> Completions<'a> {
                         item.kind_modifiers = Some(modifiers);
                     }
                     if kind == CompletionItemKind::Function || kind == CompletionItemKind::Method {
-                        item.insert_text = Some(format!("{}($1)", name));
+                        item.insert_text = Some(format!("{name}($1)"));
                         item.is_snippet = true;
                     }
 
@@ -1834,7 +1818,7 @@ impl<'a> Completions<'a> {
                     }
                 }
                 if kind == CompletionItemKind::Function {
-                    item.insert_text = Some(format!("{}($1)", name));
+                    item.insert_text = Some(format!("{name}($1)"));
                     item.is_snippet = true;
                 }
                 completions.push(item);
@@ -1878,7 +1862,7 @@ impl<'a> Completions<'a> {
     }
 
     /// Determine the completion kind from a symbol.
-    fn determine_completion_kind(&self, symbol: &tsz_binder::Symbol) -> CompletionItemKind {
+    const fn determine_completion_kind(&self, symbol: &tsz_binder::Symbol) -> CompletionItemKind {
         use tsz_binder::symbol_flags;
 
         if symbol.flags & symbol_flags::CONSTRUCTOR != 0 {
@@ -2027,7 +2011,7 @@ impl<'a> Completions<'a> {
                     interner,
                     file_name.clone(),
                     cache_value,
-                    compiler_options.clone(),
+                    compiler_options,
                 )
             } else {
                 CheckerState::new(
@@ -2035,7 +2019,7 @@ impl<'a> Completions<'a> {
                     self.binder,
                     interner,
                     file_name.clone(),
-                    compiler_options.clone(),
+                    compiler_options,
                 )
             }
         } else {
@@ -2066,7 +2050,7 @@ impl<'a> Completions<'a> {
 
             // Add snippet insert text for method completions
             if info.is_method {
-                item.insert_text = Some(format!("{}($1)", name));
+                item.insert_text = Some(format!("{name}($1)"));
                 item.is_snippet = true;
             }
 
@@ -2145,8 +2129,7 @@ impl<'a> Completions<'a> {
         let members = apparent_primitive_members(interner, kind);
         for member in members {
             let type_id = match member.kind {
-                ApparentMemberKind::Value(type_id) => type_id,
-                ApparentMemberKind::Method(type_id) => type_id,
+                ApparentMemberKind::Value(type_id) | ApparentMemberKind::Method(type_id) => type_id,
             };
             let is_method = matches!(member.kind, ApparentMemberKind::Method(_));
             self.add_property_completion(
@@ -2159,7 +2142,10 @@ impl<'a> Completions<'a> {
         }
     }
 
-    fn literal_intrinsic_kind(&self, literal: &tsz_solver::LiteralValue) -> Option<IntrinsicKind> {
+    const fn literal_intrinsic_kind(
+        &self,
+        literal: &tsz_solver::LiteralValue,
+    ) -> Option<IntrinsicKind> {
         match literal {
             tsz_solver::LiteralValue::String(_) => Some(IntrinsicKind::String),
             tsz_solver::LiteralValue::Number(_) => Some(IntrinsicKind::Number),
@@ -2221,7 +2207,7 @@ impl<'a> Completions<'a> {
                     interner,
                     file_name.clone(),
                     cache_value,
-                    compiler_options.clone(),
+                    compiler_options,
                 )
             } else {
                 CheckerState::new(
@@ -2229,7 +2215,7 @@ impl<'a> Completions<'a> {
                     self.binder,
                     interner,
                     file_name.clone(),
-                    compiler_options.clone(),
+                    compiler_options,
                 )
             }
         } else {
@@ -2275,7 +2261,7 @@ impl<'a> Completions<'a> {
 
                 // Add snippet insert text for method completions in object literals
                 if info.is_method {
-                    item.insert_text = Some(format!("{}($1)", name));
+                    item.insert_text = Some(format!("{name}($1)"));
                     item.is_snippet = true;
                 }
 

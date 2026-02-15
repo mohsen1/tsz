@@ -2139,18 +2139,15 @@ fn test_codefix_registry_fix_all_description_present() {
         for (fix_name, fix_id, _desc, fix_all_desc) in &fixes {
             assert!(
                 !fix_name.is_empty(),
-                "fix_name should not be empty for code {}",
-                code
+                "fix_name should not be empty for code {code}"
             );
             assert!(
                 !fix_id.is_empty(),
-                "fix_id should not be empty for code {}",
-                code
+                "fix_id should not be empty for code {code}"
             );
             assert!(
                 !fix_all_desc.is_empty(),
-                "fix_all_description should not be empty for code {}",
-                code
+                "fix_all_description should not be empty for code {code}"
             );
         }
     }

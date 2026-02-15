@@ -1548,7 +1548,7 @@ impl ParserState {
 
     /// Returns true for statement-only keywords that should stop argument parsing
     /// during recovery to avoid cascading diagnostics.
-    fn is_argument_list_recovery_boundary(&self) -> bool {
+    const fn is_argument_list_recovery_boundary(&self) -> bool {
         matches!(
             self.token(),
             SyntaxKind::ReturnKeyword
@@ -2736,7 +2736,7 @@ impl ParserState {
 
     /// Check if current token can start an object property
     /// Used for error recovery in object literals when commas are missing
-    pub(crate) fn is_property_start(&self) -> bool {
+    pub(crate) const fn is_property_start(&self) -> bool {
         match self.token() {
             SyntaxKind::DotDotDotToken
             | SyntaxKind::GetKeyword

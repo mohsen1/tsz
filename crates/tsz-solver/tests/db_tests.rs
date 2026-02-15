@@ -96,12 +96,12 @@ fn query_cache_caches_evaluate_and_subtype() {
 /// Test cache poisoning prevention.
 ///
 /// CRITICAL: This test ensures that separate caches don't interfere.
-/// The assignability cache (CompatChecker) and subtype cache (SubtypeChecker)
+/// The assignability cache (`CompatChecker`) and subtype cache (`SubtypeChecker`)
 /// are kept separate to prevent cross-contamination.
 ///
-/// For example, with sound_mode enabled:
-/// - `is_subtype_of`: SubtypeChecker with configured any_propagation mode
-/// - `is_assignable_to`: CompatChecker with full TypeScript rules (weak types, etc.)
+/// For example, with `sound_mode` enabled:
+/// - `is_subtype_of`: `SubtypeChecker` with configured `any_propagation` mode
+/// - `is_assignable_to`: `CompatChecker` with full TypeScript rules (weak types, etc.)
 ///
 /// Even though both may return similar results for basic `any` checks,
 /// the caches must be separate because they can diverge in complex cases.
@@ -150,11 +150,11 @@ fn relation_cache_stats_track_hits_and_misses() {
     assert!(stats.subtype_entries >= 1);
 }
 
-/// Test that is_subtype_of and is_assignable_to both handle `any` correctly.
+/// Test that `is_subtype_of` and `is_assignable_to` both handle `any` correctly.
 ///
 /// The key difference is:
-/// - `is_subtype_of`: Direct SubtypeChecker - structural subtyping with any propagation
-/// - `is_assignable_to`: CompatChecker - adds weak type detection, empty object rules, etc.
+/// - `is_subtype_of`: Direct `SubtypeChecker` - structural subtyping with any propagation
+/// - `is_assignable_to`: `CompatChecker` - adds weak type detection, empty object rules, etc.
 ///
 /// For basic `any` checks, both return true (TypeScript compatibility).
 #[test]

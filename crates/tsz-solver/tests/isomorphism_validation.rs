@@ -2,10 +2,10 @@
 //!
 //! This test suite validates the North Star goal: "Type equality check: O(1) via interning"
 //!
-//! The invariant we must maintain: **Structural identity implies TypeId equality**
+//! The invariant we must maintain: **Structural identity implies `TypeId` equality**
 //!
 //! These tests verify that different evaluation paths producing the same structure
-//! result in the exact same TypeId. If a test fails, it means canonicalization is
+//! result in the exact same `TypeId`. If a test fails, it means canonicalization is
 //! broken and O(1) equality is not achieved.
 
 use crate::intern::TypeInterner;
@@ -71,7 +71,7 @@ fn test_intersection_order_independence() {
     let prop_b = PropertyInfo::new(interner.intern_string("b"), TypeId::STRING);
 
     let obj1 = interner.object(vec![prop_a.clone(), prop_b.clone()]);
-    let obj2 = interner.object(vec![prop_b.clone(), prop_a.clone()]);
+    let obj2 = interner.object(vec![prop_b, prop_a]);
 
     assert_eq!(obj1, obj2, "Object property order independence failed");
 }
@@ -181,8 +181,8 @@ fn test_intersection_duplication_elimination() {
 
     let prop_b = PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER);
 
-    let obj_a = interner.object(vec![prop_a.clone()]);
-    let obj_b = interner.object(vec![prop_b.clone()]);
+    let obj_a = interner.object(vec![prop_a]);
+    let obj_b = interner.object(vec![prop_b]);
 
     let intersection1 = interner.intersection(vec![obj_a, obj_b, obj_a]);
     let intersection2 = interner.intersection2(obj_a, obj_b);

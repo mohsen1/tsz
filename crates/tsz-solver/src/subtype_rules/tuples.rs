@@ -367,7 +367,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check if Array<element_type> (the interface) is a subtype of the target.
+    /// Check if Array<`element_type`> (the interface) is a subtype of the target.
     ///
     /// This is analogous to `is_boxed_primitive_subtype` — when a T[] is checked
     /// against a structural type (e.g., `{ length: number; toString(): string }`),

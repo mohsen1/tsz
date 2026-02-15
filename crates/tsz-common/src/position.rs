@@ -14,7 +14,7 @@ pub struct Position {
 
 impl Position {
     #[must_use]
-    pub fn new(line: u32, character: u32) -> Self {
+    pub const fn new(line: u32, character: u32) -> Self {
         Self { line, character }
     }
 }
@@ -28,7 +28,7 @@ pub struct Range {
 
 impl Range {
     #[must_use]
-    pub fn new(start: Position, end: Position) -> Self {
+    pub const fn new(start: Position, end: Position) -> Self {
         Self { start, end }
     }
 }
@@ -43,7 +43,7 @@ pub struct Location {
 
 impl Location {
     #[must_use]
-    pub fn new(file_path: String, range: Range) -> Self {
+    pub const fn new(file_path: String, range: Range) -> Self {
         Self { file_path, range }
     }
 }
@@ -61,7 +61,7 @@ pub struct SourceLocation {
 
 impl SourceLocation {
     #[must_use]
-    pub fn new(offset: u32, line: u32, character: u32) -> Self {
+    pub const fn new(offset: u32, line: u32, character: u32) -> Self {
         Self {
             offset,
             line,
@@ -166,7 +166,7 @@ impl LineMap {
 
     /// Get the number of lines.
     #[must_use]
-    pub fn line_count(&self) -> usize {
+    pub const fn line_count(&self) -> usize {
         self.line_starts.len()
     }
 

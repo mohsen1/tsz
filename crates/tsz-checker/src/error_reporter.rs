@@ -1,6 +1,6 @@
 //! Error Reporter Module
 //!
-//! This module contains all error reporting methods for CheckerState
+//! This module contains all error reporting methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! ## Naming Convention
@@ -8,7 +8,7 @@
 //! - `error_*` methods: Core error emission functions
 //! - `report_*` methods: Higher-level wrapper methods with additional logic
 //!
-//! This module extends CheckerState with additional impl blocks rather than moving
+//! This module extends `CheckerState` with additional impl blocks rather than moving
 //! existing code, to maintain backward compatibility during the refactoring.
 
 use crate::diagnostics::{
@@ -220,7 +220,7 @@ impl<'a> CheckerState<'a> {
                 let rest = if p.rest { "..." } else { "" };
                 let optional = if p.optional { "?" } else { "" };
                 let ty = self.format_type_for_assignability_message(p.type_id);
-                format!("{}{}{}: {}", rest, name, optional, ty)
+                format!("{rest}{name}{optional}: {ty}")
             })
             .collect();
 
@@ -660,7 +660,7 @@ impl<'a> CheckerState<'a> {
                         true,
                     );
                     if self.is_abstract_constructor_target(target) {
-                        target_sig = format!("abstract {}", target_sig);
+                        target_sig = format!("abstract {target_sig}");
                     }
                     let assignable = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -687,7 +687,7 @@ impl<'a> CheckerState<'a> {
                     false,
                 );
                 if self.is_abstract_constructor_target(target) {
-                    target_sig = format!("abstract {}", target_sig);
+                    target_sig = format!("abstract {target_sig}");
                 }
                 return Some(format_message(
                     diagnostic_messages::TYPE_PROVIDES_NO_MATCH_FOR_THE_SIGNATURE,
@@ -803,7 +803,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_prop_str, &target_prop_str],
                 );
-                return Some(format!("{} {}", prop_message, nested));
+                return Some(format!("{prop_message} {nested}"));
             }
 
             if source_prop.optional && !target_prop.optional {
@@ -831,7 +831,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_prop_str, &target_prop_str],
                 );
-                return Some(format!("{} {}", prop_message, nested));
+                return Some(format!("{prop_message} {nested}"));
             }
         }
 
@@ -938,7 +938,7 @@ impl<'a> CheckerState<'a> {
     // Type Assignability Errors
     // =========================================================================
 
-    /// Report a type not assignable error (delegates to diagnose_assignment_failure).
+    /// Report a type not assignable error (delegates to `diagnose_assignment_failure`).
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         self.diagnose_assignment_failure(source, target, idx);
     }
@@ -1072,7 +1072,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Recursively render a SubtypeFailureReason into a Diagnostic.
+    /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
     fn render_failure_reason(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
@@ -1278,7 +1278,7 @@ impl<'a> CheckerState<'a> {
                             &[&src, &tgt],
                         )
                     };
-                    let message = format!("{} {} {}", base, prop_message, nested_message);
+                    let message = format!("{base} {prop_message} {nested_message}");
                     return Diagnostic::error(
                         file_name,
                         start,
@@ -1293,13 +1293,8 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                     &[&prop_name],
                 );
-                let mut diag = Diagnostic::error(
-                    file_name.clone(),
-                    start,
-                    length,
-                    message,
-                    reason.diagnostic_code(),
-                );
+                let mut diag =
+                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code());
 
                 if let Some(nested) = nested_reason
                     && depth < 5
@@ -1337,7 +1332,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &source_str, &target_str],
                     );
-                    let message = format!("{} {}", base, detail);
+                    let message = format!("{base} {detail}");
                     Diagnostic::error(
                         file_name,
                         start,
@@ -1408,7 +1403,7 @@ impl<'a> CheckerState<'a> {
                         &[&prop_name],
                     ),
                 };
-                let message = format!("{} {}", base, detail);
+                let message = format!("{base} {detail}");
                 Diagnostic::error(
                     file_name,
                     start,
@@ -1456,7 +1451,7 @@ impl<'a> CheckerState<'a> {
                         &[&prop_name],
                     ),
                 };
-                let message = format!("{} {}", base, detail);
+                let message = format!("{base} {detail}");
                 Diagnostic::error(
                     file_name,
                     start,
@@ -1486,17 +1481,10 @@ impl<'a> CheckerState<'a> {
             } => {
                 let source_str = self.format_type(*source_return);
                 let target_str = self.format_type(*target_return);
-                let message = format!(
-                    "Return type '{}' is not assignable to '{}'.",
-                    source_str, target_str
-                );
-                let mut diag = Diagnostic::error(
-                    file_name.clone(),
-                    start,
-                    length,
-                    message,
-                    reason.diagnostic_code(),
-                );
+                let message =
+                    format!("Return type '{source_str}' is not assignable to '{target_str}'.");
+                let mut diag =
+                    Diagnostic::error(file_name, start, length, message, reason.diagnostic_code());
 
                 if let Some(nested) = nested_reason
                     && depth < 5
@@ -1536,8 +1524,7 @@ impl<'a> CheckerState<'a> {
                 target_count,
             } => {
                 let message = format!(
-                    "Tuple type has {} elements but target requires {}.",
-                    source_count, target_count
+                    "Tuple type has {source_count} elements but target requires {target_count}."
                 );
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
@@ -1550,8 +1537,7 @@ impl<'a> CheckerState<'a> {
                 let source_str = self.format_type(*source_element);
                 let target_str = self.format_type(*target_element);
                 let message = format!(
-                    "Type of element at index {} is incompatible: '{}' is not assignable to '{}'.",
-                    index, source_str, target_str
+                    "Type of element at index {index} is incompatible: '{source_str}' is not assignable to '{target_str}'."
                 );
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
@@ -1563,8 +1549,7 @@ impl<'a> CheckerState<'a> {
                 let source_str = self.format_type(*source_element);
                 let target_str = self.format_type(*target_element);
                 let message = format!(
-                    "Array element type '{}' is not assignable to '{}'.",
-                    source_str, target_str
+                    "Array element type '{source_str}' is not assignable to '{target_str}'."
                 );
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
@@ -1577,8 +1562,7 @@ impl<'a> CheckerState<'a> {
                 let source_str = self.format_type(*source_value_type);
                 let target_str = self.format_type(*target_value_type);
                 let message = format!(
-                    "{} index signature is incompatible: '{}' is not assignable to '{}'.",
-                    index_kind, source_str, target_str
+                    "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
                 );
                 Diagnostic::error(file_name, start, length, message, reason.diagnostic_code())
             }
@@ -1693,7 +1677,7 @@ impl<'a> CheckerState<'a> {
                                 &[&member_name, &target_str, &source_str],
                             ),
                         };
-                        let message = format!("{} {}", base, detail);
+                        let message = format!("{base} {detail}");
                         return Diagnostic::error(
                             file_name,
                             start,
@@ -1707,7 +1691,7 @@ impl<'a> CheckerState<'a> {
                 if depth == 0
                     && let Some(detail) = self.elaborate_type_mismatch_detail(source, target)
                 {
-                    let message = format!("{} {}", base, detail);
+                    let message = format!("{base} {detail}");
                     Diagnostic::error(
                         file_name,
                         start,
@@ -1991,8 +1975,7 @@ impl<'a> CheckerState<'a> {
         let index_str = formatter.format(index_type);
         let object_str = formatter.format(object_type);
         let message = format!(
-            "Element implicitly has an 'any' type because expression of type '{}' can't be used to index type '{}'.",
-            index_str, object_str
+            "Element implicitly has an 'any' type because expression of type '{index_str}' can't be used to index type '{object_str}'."
         );
 
         self.error_at_node(idx, &message, diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN);
@@ -2457,8 +2440,7 @@ impl<'a> CheckerState<'a> {
             self.unresolved_unused_renaming_property_in_type_query(name, idx)
         {
             let message = format!(
-                "'{}' is an unused renaming of '{}'. Did you intend to use it as a type annotation?",
-                name, original_name
+                "'{name}' is an unused renaming of '{original_name}'. Did you intend to use it as a type annotation?"
             );
             self.error_at_node(
                 idx,
@@ -2564,14 +2546,13 @@ impl<'a> CheckerState<'a> {
                 (
                     lib_loader::MISSING_ES2015_LIB_SUPPORT,
                     format!(
-                        "Cannot find name '{}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later.",
-                        name
+                        "Cannot find name '{name}'. Do you need to change your target library? Try changing the 'lib' compiler option to es2015 or later."
                     ),
                 )
             } else {
                 (
                     lib_loader::CANNOT_FIND_GLOBAL_TYPE,
-                    format!("Cannot find global type '{}'.", name),
+                    format!("Cannot find global type '{name}'."),
                 )
             };
 
@@ -2613,7 +2594,7 @@ impl<'a> CheckerState<'a> {
     /// Report TS2584: Cannot find name 'X' - suggest including 'dom' lib.
     ///
     /// This error is emitted when a known DOM/ScriptHost global (console, window,
-    /// document, HTMLElement, etc.) is used but the 'dom' lib is not included.
+    /// document, `HTMLElement`, etc.) is used but the 'dom' lib is not included.
     pub fn error_cannot_find_name_change_target_lib(&mut self, name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
@@ -2717,21 +2698,14 @@ impl<'a> CheckerState<'a> {
             let suggestions_text = if suggestions.len() == 1 {
                 format!("'{}'", suggestions[0])
             } else {
-                let formatted: Vec<String> =
-                    suggestions.iter().map(|s| format!("'{}", s)).collect();
+                let formatted: Vec<String> = suggestions.iter().map(|s| format!("'{s}")).collect();
                 formatted.join(", ")
             };
 
             let message = if suggestions.len() == 1 {
-                format!(
-                    "Cannot find name '{}'. Did you mean {}?",
-                    name, suggestions_text
-                )
+                format!("Cannot find name '{name}'. Did you mean {suggestions_text}?")
             } else {
-                format!(
-                    "Cannot find name '{}'. Did you mean one of: {}?",
-                    name, suggestions_text
-                )
+                format!("Cannot find name '{name}'. Did you mean one of: {suggestions_text}?")
             };
 
             self.ctx.push_diagnostic(Diagnostic {
@@ -2758,10 +2732,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         if let Some(loc) = self.get_source_location(idx) {
-            let message = format!(
-                "Cannot find name '{}'. Did you mean '{}'?",
-                name, suggestion
-            );
+            let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
             self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
                 category: DiagnosticCategory::Error,
@@ -2783,8 +2754,7 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format!(
-                "Cannot find name '{}'. Did you mean the static member '{}.{}'?",
-                name, class_name, name
+                "Cannot find name '{name}'. Did you mean the static member '{class_name}.{name}'?"
             );
             self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
@@ -3417,7 +3387,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     &[&prop, &arg_str, &param_str],
                 );
-                message = format!("{} {}", message, detail);
+                message = format!("{message} {detail}");
             } else if (param_str == "Callable" || param_str == "Applicable")
                 && !tsz_solver::is_primitive_type(self.ctx.types, arg_type)
             {
@@ -3430,9 +3400,9 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     &[prop, &arg_str, &param_str],
                 );
-                message = format!("{} {}", message, detail);
+                message = format!("{message} {detail}");
             } else if let Some(detail) = self.elaborate_type_mismatch_detail(arg_type, param_type) {
-                message = format!("{} {}", message, detail);
+                message = format!("{message} {detail}");
             }
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
@@ -3493,10 +3463,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         if let Some(loc) = self.get_source_location(idx) {
-            let message = format!(
-                "Expected at least {} arguments, but got {}.",
-                expected_min, got
-            );
+            let message = format!("Expected at least {expected_min} arguments, but got {got}.");
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
                 category: DiagnosticCategory::Error,
@@ -3604,10 +3571,8 @@ impl<'a> CheckerState<'a> {
         if let Some(loc) = self.get_source_location(idx) {
             use tsz_common::diagnostics::diagnostic_codes;
 
-            let message = format!(
-                "'{}' only refers to a type, but is being used as a value here.",
-                name
-            );
+            let message =
+                format!("'{name}' only refers to a type, but is being used as a value here.");
 
             self.ctx.push_diagnostic(Diagnostic {
                 code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
@@ -3979,8 +3944,7 @@ impl<'a> CheckerState<'a> {
         if op == "+" {
             if let Some(loc) = self.get_source_location(node_idx) {
                 let message = format!(
-                    "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                    op, left_str, right_str
+                    "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
                 );
                 self.ctx.diagnostics.push(Diagnostic {
                     code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
@@ -4035,8 +3999,7 @@ impl<'a> CheckerState<'a> {
             // (e.g., mixing number and bigint), emit TS2365
             if !emitted_specific_error && let Some(loc) = self.get_source_location(node_idx) {
                 let message = format!(
-                    "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                    op, left_str, right_str
+                    "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
                 );
                 self.ctx.diagnostics.push(Diagnostic {
                     code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
@@ -4071,8 +4034,7 @@ impl<'a> CheckerState<'a> {
                 };
                 if let Some(loc) = self.get_source_location(node_idx) {
                     let message = format!(
-                        "The '{}' operator is not allowed for boolean types. Consider using '{}' instead.",
-                        op, suggestion
+                        "The '{op}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
                     );
                     self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
@@ -4121,8 +4083,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if !emitted_specific_error && let Some(loc) = self.get_source_location(node_idx) {
                     let message = format!(
-                        "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                        op, left_str, right_str
+                        "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
                     );
                     self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
@@ -4164,8 +4125,7 @@ impl<'a> CheckerState<'a> {
             let prev_type_str = self.format_type(prev_type);
             let current_type_str = self.format_type(current_type);
             let message = format!(
-                "Subsequent variable declarations must have the same type. Variable '{}' must be of type '{}', but here has type '{}'.",
-                name, prev_type_str, current_type_str
+                "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
             );
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP,
@@ -4211,8 +4171,7 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format!(
-                "Abstract property '{}' in class '{}' cannot be accessed in the constructor.",
-                prop_name, class_name
+                "Abstract property '{prop_name}' in class '{class_name}' cannot be accessed in the constructor."
             );
             self.ctx.diagnostics.push(Diagnostic {
                 code: diagnostic_codes::ABSTRACT_PROPERTY_IN_CLASS_CANNOT_BE_ACCESSED_IN_THE_CONSTRUCTOR,
@@ -4238,10 +4197,8 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
     ) {
         if let Some(loc) = self.get_source_location(idx) {
-            let message = format!(
-                "Namespace '{}' has no exported member '{}'.",
-                namespace_name, member_name
-            );
+            let message =
+                format!("Namespace '{namespace_name}' has no exported member '{member_name}'.");
             self.ctx.diagnostics.push(Diagnostic {
                 code: 2694,
                 category: DiagnosticCategory::Error,
@@ -4799,14 +4756,13 @@ impl<'a> CheckerState<'a> {
                 (
                     lib_loader::MISSING_ES2015_LIB_SUPPORT,
                     format!(
-                        "Cannot find name '{}'. Do you need to change your target library? Try changing the 'lib' compiler option to 'es2015' or later.",
-                        name
+                        "Cannot find name '{name}'. Do you need to change your target library? Try changing the 'lib' compiler option to 'es2015' or later."
                     ),
                 )
             } else {
                 (
                     lib_loader::CANNOT_FIND_GLOBAL_TYPE,
-                    format!("Cannot find global type '{}'.", name),
+                    format!("Cannot find global type '{name}'."),
                 )
             };
 
@@ -5001,7 +4957,7 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-/// Check if a name is a known DOM or ScriptHost global that requires the 'dom' lib.
+/// Check if a name is a known DOM or `ScriptHost` global that requires the 'dom' lib.
 /// These names are well-known browser/runtime APIs that tsc suggests including
 /// the 'dom' lib for when they can't be resolved (TS2584).
 pub fn is_known_dom_global(name: &str) -> bool {

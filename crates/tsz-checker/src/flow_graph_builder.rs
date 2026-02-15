@@ -3,7 +3,7 @@
 //! This module provides the `FlowGraph` side-table and `FlowGraphBuilder` for
 //! constructing control flow graphs from Node AST post-binding.
 //!
-//! The FlowGraph is a side-table that tracks:
+//! The `FlowGraph` is a side-table that tracks:
 //! - Flow nodes for each control flow point (conditions, branches, loops)
 //! - Mapping from AST nodes to their corresponding flow nodes
 //! - Antecedent relationships between flow nodes
@@ -81,12 +81,12 @@ impl Default for FlowGraph {
     }
 }
 
-/// Builder for constructing a FlowGraph from Node AST.
+/// Builder for constructing a `FlowGraph` from Node AST.
 ///
-/// The FlowGraphBuilder traverses the AST post-binding and constructs
+/// The `FlowGraphBuilder` traverses the AST post-binding and constructs
 /// the control flow graph without mutating the AST nodes.
 pub struct FlowGraphBuilder<'a> {
-    /// Reference to the NodeArena
+    /// Reference to the `NodeArena`
     arena: &'a NodeArena,
     /// The flow graph being constructed
     graph: FlowGraph,
@@ -123,7 +123,7 @@ enum FlowContextType {
 }
 
 impl<'a> FlowGraphBuilder<'a> {
-    /// Create a new FlowGraphBuilder.
+    /// Create a new `FlowGraphBuilder`.
     pub fn new(arena: &'a NodeArena) -> Self {
         let mut graph = FlowGraph::new();
         let start_flow = graph.nodes.alloc(flow_flags::START);
@@ -293,20 +293,8 @@ impl<'a> FlowGraphBuilder<'a> {
                 }
             }
 
-            // Variable statement - contains variable declaration list
-            syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var_data) = self.arena.get_variable(node) {
-                    for &decl_idx in &var_data.declarations.nodes {
-                        if !decl_idx.is_none() {
-                            self.build_statement(decl_idx);
-                        }
-                    }
-                }
-                self.record_node_flow(stmt_idx);
-            }
-
-            // Variable declaration list - contains variable declarations
-            syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
+            // Variable declaration - both direct statement and declaration list
+            syntax_kind_ext::VARIABLE_STATEMENT | syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
                 if let Some(var_data) = self.arena.get_variable(node) {
                     for &decl_idx in &var_data.declarations.nodes {
                         if !decl_idx.is_none() {
@@ -1169,12 +1157,12 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Check if currently inside an async function.
-    fn in_async_function(&self) -> bool {
+    const fn in_async_function(&self) -> bool {
         self.async_depth > 0
     }
 
     /// Check if currently inside a generator function.
-    fn in_generator_function(&self) -> bool {
+    const fn in_generator_function(&self) -> bool {
         self.generator_depth > 0
     }
 
@@ -1434,7 +1422,7 @@ impl<'a> FlowGraphBuilder<'a> {
         }
     }
 
-    fn is_assignment_operator_token(operator_token: u16) -> bool {
+    const fn is_assignment_operator_token(operator_token: u16) -> bool {
         matches!(
             operator_token,
             x if x == SyntaxKind::EqualsToken as u16
@@ -1518,7 +1506,7 @@ impl<'a> FlowGraphBuilder<'a> {
         id
     }
 
-    /// Handle an await expression by creating an AWAIT_POINT flow node.
+    /// Handle an await expression by creating an `AWAIT_POINT` flow node.
     fn handle_await_expression(&mut self, await_node: NodeIndex) {
         if self.in_async_function() {
             // Create an AWAIT_POINT flow node to track this suspension point
@@ -1529,7 +1517,7 @@ impl<'a> FlowGraphBuilder<'a> {
         // If not in async function, this is a semantic error but we still continue flow analysis
     }
 
-    /// Handle a yield expression by creating a YIELD_POINT flow node.
+    /// Handle a yield expression by creating a `YIELD_POINT` flow node.
     fn handle_yield_expression(&mut self, yield_node: NodeIndex) {
         if self.in_generator_function() {
             // Create a YIELD_POINT flow node to track this suspension point
@@ -1541,7 +1529,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     /// Get the flow graph being constructed.
-    pub fn graph(&self) -> &FlowGraph {
+    pub const fn graph(&self) -> &FlowGraph {
         &self.graph
     }
 

@@ -54,12 +54,12 @@ impl FileFeatures {
 
     #[inline]
     #[must_use]
-    pub fn has(self, flag: Self) -> bool {
+    pub const fn has(self, flag: Self) -> bool {
         (self.0 & flag.0) != 0
     }
 
     #[inline]
-    pub fn set(&mut self, flag: Self) {
+    pub const fn set(&mut self, flag: Self) {
         self.0 |= flag.0;
     }
 }
@@ -128,13 +128,13 @@ pub struct GlobalAugmentation {
 impl GlobalAugmentation {
     /// Create a new global augmentation without arena context (during binding).
     #[must_use]
-    pub fn new(node: NodeIndex) -> Self {
+    pub const fn new(node: NodeIndex) -> Self {
         Self { node, arena: None }
     }
 
     /// Create a new global augmentation with arena context (during merge).
     #[must_use]
-    pub fn with_arena(node: NodeIndex, arena: Arc<NodeArena>) -> Self {
+    pub const fn with_arena(node: NodeIndex, arena: Arc<NodeArena>) -> Self {
         Self {
             node,
             arena: Some(arena),
@@ -155,7 +155,7 @@ pub struct ModuleAugmentation {
 impl ModuleAugmentation {
     /// Create a new module augmentation without arena context (during binding).
     #[must_use]
-    pub fn new(name: String, node: NodeIndex) -> Self {
+    pub const fn new(name: String, node: NodeIndex) -> Self {
         Self {
             name,
             node,
@@ -165,7 +165,7 @@ impl ModuleAugmentation {
 
     /// Create a new module augmentation with arena context (during merge).
     #[must_use]
-    pub fn with_arena(name: String, node: NodeIndex, arena: Arc<NodeArena>) -> Self {
+    pub const fn with_arena(name: String, node: NodeIndex, arena: Arc<NodeArena>) -> Self {
         Self {
             name,
             node,
@@ -1326,7 +1326,7 @@ impl BinderState {
     /// - Class + Interface (merging for class declarations)
     /// - Namespace + Class/Function/Enum (augmentation)
     /// - Enum + Enum (declaration merging)
-    pub(crate) fn can_merge_symbols(existing_flags: u32, new_flags: u32) -> bool {
+    pub(crate) const fn can_merge_symbols(existing_flags: u32, new_flags: u32) -> bool {
         // Interface can merge with interface
         if (existing_flags & symbol_flags::INTERFACE) != 0
             && (new_flags & symbol_flags::INTERFACE) != 0
@@ -3861,7 +3861,7 @@ impl BinderState {
     /// Check if two symbol flag sets can be merged.
     /// Made public for use in checker to detect duplicate identifiers (TS2300).
     #[must_use]
-    pub fn can_merge_flags(existing_flags: u32, new_flags: u32) -> bool {
+    pub const fn can_merge_flags(existing_flags: u32, new_flags: u32) -> bool {
         if (existing_flags & symbol_flags::INTERFACE) != 0
             && (new_flags & symbol_flags::INTERFACE) != 0
         {

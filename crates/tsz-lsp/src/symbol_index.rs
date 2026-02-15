@@ -36,7 +36,7 @@ pub struct ImportInfo {
     pub local_name: String,
     /// The module specifier (e.g., './utils', 'lodash')
     pub source_module: String,
-    /// The exported name from the source module (may differ from local_name)
+    /// The exported name from the source module (may differ from `local_name`)
     pub exported_name: String,
     /// The kind of import
     pub kind: ImportKind,
@@ -98,13 +98,13 @@ pub struct SymbolIndex {
     /// Heritage clause tracking: symbol name -> files that extend/implement it
     /// Enables O(1) lookup for Go to Implementation feature
     /// For example, if "class B extends A" and "class C implements A",
-    /// then heritage_clauses["A"] = {"B.ts", "C.ts"}
+    /// then `heritage_clauses`["A"] = {"B.ts", "C.ts"}
     heritage_clauses: FxHashMap<String, FxHashSet<String>>,
 
     /// Reverse heritage tracking: class name -> base classes it extends/implements
     /// Enables upward traversal for heritage-aware rename
     /// For example, if "class B extends A, implements I",
-    /// then sub_to_bases["B"] = {"A", "I"}
+    /// then `sub_to_bases`["B"] = {"A", "I"}
     sub_to_bases: FxHashMap<String, FxHashSet<String>>,
 }
 
@@ -211,7 +211,7 @@ impl SymbolIndex {
     /// Remove a file from the index.
     ///
     /// This cleans up all entries associated with the file using the
-    /// file_symbols reverse mapping for O(1) complexity per symbol.
+    /// `file_symbols` reverse mapping for O(1) complexity per symbol.
     pub fn remove_file(&mut self, file_name: &str) {
         // Use the reverse mapping for efficient cleanup
         if let Some(symbols) = self.file_symbols.remove(file_name) {
@@ -304,7 +304,7 @@ impl SymbolIndex {
     /// Extracts symbol information from the binder state and AST, adding it
     /// to the appropriate index structures. This includes:
     /// - **All identifier mentions** from the AST (via pool scan of identifiers pool)
-    /// - Declarations from binder.file_locals
+    /// - Declarations from `binder.file_locals`
     /// - Symbol kinds from binder flags
     /// - Exports and re-exports
     ///
@@ -740,7 +740,7 @@ impl SymbolIndex {
 /// Checks flags in specificity order so that, e.g., a const-enum is
 /// reported as `Enum` rather than `Variable`.  Falls back to
 /// `SymbolKind::Variable` when no recognisable flag is set.
-fn symbol_flags_to_kind(flags: u32) -> SymbolKind {
+const fn symbol_flags_to_kind(flags: u32) -> SymbolKind {
     if flags & symbol_flags::FUNCTION != 0 {
         SymbolKind::Function
     } else if flags & symbol_flags::CLASS != 0 {

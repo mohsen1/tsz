@@ -19,11 +19,11 @@ pub struct ScopeCacheStats {
 }
 
 impl ScopeCacheStats {
-    fn record_hit(&mut self) {
+    const fn record_hit(&mut self) {
         self.hits = self.hits.saturating_add(1);
     }
 
-    fn record_miss(&mut self) {
+    const fn record_miss(&mut self) {
         self.misses = self.misses.saturating_add(1);
     }
 }
@@ -37,9 +37,9 @@ pub type ScopeCache = FxHashMap<u32, Vec<SymbolTable>>;
 pub struct ScopeWalker<'a> {
     arena: &'a NodeArena,
     binder: &'a BinderState,
-    /// Stack of active scopes (maps name -> SymbolId)
+    /// Stack of active scopes (maps name -> `SymbolId`)
     scope_stack: Vec<SymbolTable>,
-    /// Indices of function-scoped entries within scope_stack
+    /// Indices of function-scoped entries within `scope_stack`
     function_scope_indices: Vec<usize>,
 }
 
@@ -1477,7 +1477,7 @@ impl<'a> ScopeWalker<'a> {
         result
     }
 
-    fn is_var_declaration_list(&self, node: &Node) -> bool {
+    const fn is_var_declaration_list(&self, node: &Node) -> bool {
         (node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0
     }
 

@@ -1,6 +1,6 @@
 //! Indexed Access Type Utilities Module
 //!
-//! This module contains indexed access type utility methods for CheckerState
+//! This module contains indexed access type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Indexed access type evaluation helpers
 //! - String and number literal index handling
 //!
-//! This module extends CheckerState with utilities for indexed access type
+//! This module extends `CheckerState` with utilities for indexed access type
 //! operations, providing cleaner APIs for T[K] type checking.
 
 use crate::query_boundaries::indexed_access_type as query;

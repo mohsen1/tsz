@@ -106,11 +106,7 @@ fn test_type_id_intrinsic_constants() {
     for (i, a) in intrinsics.iter().enumerate() {
         for (j, b) in intrinsics.iter().enumerate() {
             if i != j {
-                assert_ne!(
-                    a, b,
-                    "Intrinsic constants {:?} and {:?} should be unique",
-                    a, b
-                );
+                assert_ne!(a, b, "Intrinsic constants {a:?} and {b:?} should be unique");
             }
         }
     }
@@ -119,8 +115,7 @@ fn test_type_id_intrinsic_constants() {
     for id in &intrinsics {
         assert!(
             id.0 < TypeId::FIRST_USER,
-            "Intrinsic {:?} should be below FIRST_USER",
-            id
+            "Intrinsic {id:?} should be below FIRST_USER"
         );
     }
 }

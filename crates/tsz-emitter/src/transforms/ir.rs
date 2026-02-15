@@ -235,9 +235,9 @@ pub enum IRNode {
         name: String,
         base_class: Option<Box<Self>>,
         body: Vec<Self>,
-        /// WeakMap declarations for private fields (before the IIFE)
+        /// `WeakMap` declarations for private fields (before the IIFE)
         weakmap_decls: Vec<String>,
-        /// WeakMap instantiations (after the IIFE)
+        /// `WeakMap` instantiations (after the IIFE)
         weakmap_inits: Vec<String>,
     },
 
@@ -249,7 +249,7 @@ pub enum IRNode {
         class_name: String,
         method_name: IRMethodName,
         function: Box<Self>,
-        /// Leading JSDoc or block comment from the original method declaration
+        /// Leading `JSDoc` or block comment from the original method declaration
         leading_comment: Option<String>,
         /// Trailing comment from the original method declaration line
         trailing_comment: Option<String>,
@@ -260,7 +260,7 @@ pub enum IRNode {
         class_name: String,
         method_name: IRMethodName,
         function: Box<Self>,
-        /// Leading JSDoc or block comment from the original method declaration
+        /// Leading `JSDoc` or block comment from the original method declaration
         leading_comment: Option<String>,
         /// Trailing comment from the original method declaration line
         trailing_comment: Option<String>,
@@ -297,7 +297,7 @@ pub enum IRNode {
         comment: Option<String>,
     },
 
-    /// _a.sent() - get the sent value in generator
+    /// _`a.sent()` - get the sent value in generator
     GeneratorSent,
 
     /// _a.label - the label property
@@ -606,7 +606,7 @@ impl IRNode {
     }
 
     /// Create a function expression
-    pub fn func_expr(name: Option<String>, params: Vec<IRParam>, body: Vec<Self>) -> Self {
+    pub const fn func_expr(name: Option<String>, params: Vec<IRParam>, body: Vec<Self>) -> Self {
         Self::FunctionExpr {
             name,
             parameters: params,
@@ -627,17 +627,17 @@ impl IRNode {
     }
 
     /// Create `this` reference
-    pub fn this() -> Self {
+    pub const fn this() -> Self {
         Self::This { captured: false }
     }
 
     /// Create `_this` reference (captured)
-    pub fn this_captured() -> Self {
+    pub const fn this_captured() -> Self {
         Self::This { captured: true }
     }
 
     /// Create `void 0`
-    pub fn void_0() -> Self {
+    pub const fn void_0() -> Self {
         Self::Undefined
     }
 
@@ -647,7 +647,7 @@ impl IRNode {
     }
 
     /// Create a block
-    pub fn block(stmts: Vec<Self>) -> Self {
+    pub const fn block(stmts: Vec<Self>) -> Self {
         Self::Block(stmts)
     }
 
@@ -657,7 +657,7 @@ impl IRNode {
     }
 
     /// Create an object literal
-    pub fn object(props: Vec<IRProperty>) -> Self {
+    pub const fn object(props: Vec<IRProperty>) -> Self {
         Self::ObjectLiteral {
             properties: props,
             source_range: None,
@@ -665,7 +665,7 @@ impl IRNode {
     }
 
     /// Create an object literal with source range for formatting
-    pub fn object_with_source(props: Vec<IRProperty>, source_range: (u32, u32)) -> Self {
+    pub const fn object_with_source(props: Vec<IRProperty>, source_range: (u32, u32)) -> Self {
         Self::ObjectLiteral {
             properties: props,
             source_range: Some(source_range),
@@ -673,7 +673,7 @@ impl IRNode {
     }
 
     /// Create an empty object literal
-    pub fn empty_object() -> Self {
+    pub const fn empty_object() -> Self {
         Self::ObjectLiteral {
             properties: Vec::new(),
             source_range: None,
@@ -681,12 +681,12 @@ impl IRNode {
     }
 
     /// Create an array literal
-    pub fn array(elements: Vec<Self>) -> Self {
+    pub const fn array(elements: Vec<Self>) -> Self {
         Self::ArrayLiteral(elements)
     }
 
     /// Create an empty array literal
-    pub fn empty_array() -> Self {
+    pub const fn empty_array() -> Self {
         Self::ArrayLiteral(Vec::new())
     }
 
@@ -707,7 +707,7 @@ impl IRNode {
     }
 
     /// Create a sequence of statements
-    pub fn sequence(nodes: Vec<Self>) -> Self {
+    pub const fn sequence(nodes: Vec<Self>) -> Self {
         Self::Sequence(nodes)
     }
 

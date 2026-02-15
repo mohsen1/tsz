@@ -1267,13 +1267,13 @@ impl NodeArena {
 
     /// Number of nodes in the arena
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Check if arena is empty
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 }
@@ -1415,35 +1415,35 @@ impl<'a> NodeView<'a> {
     /// Get the `SyntaxKind`.
     #[inline]
     #[must_use]
-    pub fn kind(&self) -> u16 {
+    pub const fn kind(&self) -> u16 {
         self.node.kind
     }
 
     /// Get the start position.
     #[inline]
     #[must_use]
-    pub fn pos(&self) -> u32 {
+    pub const fn pos(&self) -> u32 {
         self.node.pos
     }
 
     /// Get the end position.
     #[inline]
     #[must_use]
-    pub fn end(&self) -> u32 {
+    pub const fn end(&self) -> u32 {
         self.node.end
     }
 
     /// Get the flags.
     #[inline]
     #[must_use]
-    pub fn flags(&self) -> u16 {
+    pub const fn flags(&self) -> u16 {
         self.node.flags
     }
 
     /// Check if this node has associated data.
     #[inline]
     #[must_use]
-    pub fn has_data(&self) -> bool {
+    pub const fn has_data(&self) -> bool {
         self.node.has_data()
     }
 
@@ -1542,7 +1542,7 @@ impl Node {
     /// Check if this is an identifier node
     #[inline]
     #[must_use]
-    pub fn is_identifier(&self) -> bool {
+    pub const fn is_identifier(&self) -> bool {
         use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::Identifier as u16
     }
@@ -1550,7 +1550,7 @@ impl Node {
     /// Check if this is a string literal
     #[inline]
     #[must_use]
-    pub fn is_string_literal(&self) -> bool {
+    pub const fn is_string_literal(&self) -> bool {
         use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::StringLiteral as u16
     }
@@ -1558,7 +1558,7 @@ impl Node {
     /// Check if this is a numeric literal
     #[inline]
     #[must_use]
-    pub fn is_numeric_literal(&self) -> bool {
+    pub const fn is_numeric_literal(&self) -> bool {
         use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::NumericLiteral as u16
     }
@@ -1566,7 +1566,7 @@ impl Node {
     /// Check if this is a function declaration
     #[inline]
     #[must_use]
-    pub fn is_function_declaration(&self) -> bool {
+    pub const fn is_function_declaration(&self) -> bool {
         use super::syntax_kind_ext::FUNCTION_DECLARATION;
         self.kind == FUNCTION_DECLARATION
     }
@@ -1574,7 +1574,7 @@ impl Node {
     /// Check if this is a class declaration
     #[inline]
     #[must_use]
-    pub fn is_class_declaration(&self) -> bool {
+    pub const fn is_class_declaration(&self) -> bool {
         use super::syntax_kind_ext::CLASS_DECLARATION;
         self.kind == CLASS_DECLARATION
     }
@@ -1582,7 +1582,7 @@ impl Node {
     /// Check if this is any kind of function-like node
     #[inline]
     #[must_use]
-    pub fn is_function_like(&self) -> bool {
+    pub const fn is_function_like(&self) -> bool {
         matches!(
             self.kind,
             FUNCTION_DECLARATION
