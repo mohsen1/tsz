@@ -1405,9 +1405,7 @@ fn resolve_export_entry(
 }
 
 fn package_type_from_json(package_json: Option<&PackageJson>) -> Option<PackageType> {
-    let Some(package_json) = package_json else {
-        return None;
-    };
+    let package_json = package_json?;
 
     match package_json.package_type.as_deref() {
         Some("module") => Some(PackageType::Module),
@@ -1488,9 +1486,7 @@ fn resolve_types_versions(
         }
     }
 
-    let Some(value) = best_value else {
-        return None;
-    };
+    let value = best_value?;
 
     let mut targets = Vec::new();
     match value {

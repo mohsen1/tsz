@@ -624,9 +624,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         use tsz_binder::symbol_flags;
 
-        if tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type).is_none() {
-            return None;
-        }
+        tsz_solver::visitor::lazy_def_id(self.ctx.types, constructor_type)?;
         let sym_id = self
             .ctx
             .binder
@@ -2871,9 +2869,7 @@ impl<'a> CheckerState<'a> {
     /// If `type_id` is an object type with a synthetic `"new"` member, return that member type.
     /// This supports constructor-like interfaces that lower construct signatures as properties.
     fn constructor_type_from_new_property(&self, type_id: TypeId) -> Option<TypeId> {
-        let Some(shape_id) = query::object_shape_id(self.ctx.types, type_id) else {
-            return None;
-        };
+        let shape_id = query::object_shape_id(self.ctx.types, type_id)?;
 
         let new_atom = self.ctx.types.intern_string("new");
         let shape = self.ctx.types.object_shape(shape_id);

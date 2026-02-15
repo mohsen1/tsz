@@ -298,10 +298,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// finds comments within the span that have code on the same line before them
     /// (i.e., they're trailing comments, not standalone leading comments).
     fn extract_trailing_comment_in_stmt(&self, stmt_pos: u32, stmt_end: u32) -> Option<String> {
-        let source_text = match self.source_text {
-            Some(t) => t,
-            None => return None,
-        };
+        let source_text = self.source_text?;
         let bytes = source_text.as_bytes();
 
         for c in &self.comment_ranges {
@@ -2464,9 +2461,7 @@ fn rewrite_exported_var_refs(
 }
 
 fn collect_qualified_name_parts(arena: &NodeArena, name_idx: NodeIndex) -> Option<Vec<String>> {
-    let Some(node) = arena.get(name_idx) else {
-        return None;
-    };
+    let node = arena.get(name_idx)?;
 
     if node.kind == SyntaxKind::Identifier as u16 {
         if let Some(id) = arena.get_identifier(node) {

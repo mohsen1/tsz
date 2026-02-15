@@ -62,13 +62,9 @@ impl<'a> EnumES5Transformer<'a> {
     pub fn transform_enum(&mut self, enum_idx: NodeIndex) -> Option<IRNode> {
         self.last_value = Some(-1); // Start at -1 so first increment is 0
 
-        let Some(enum_node) = self.arena.get(enum_idx) else {
-            return None;
-        };
+        let enum_node = self.arena.get(enum_idx)?;
 
-        let Some(enum_data) = self.arena.get_enum(enum_node) else {
-            return None;
-        };
+        let enum_data = self.arena.get_enum(enum_node)?;
 
         // Check for const enum - erase by default (preserveConstEnums not yet supported)
         if self.is_const_enum(&enum_data.modifiers) {

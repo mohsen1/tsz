@@ -1270,9 +1270,7 @@ impl ParserState {
         &self,
         expression: NodeIndex,
     ) -> Option<(u32, u32, String)> {
-        let Some(node) = self.arena.get(expression) else {
-            return None;
-        };
+        let node = self.arena.get(expression)?;
 
         if node.kind != SyntaxKind::Identifier as u16 {
             return None;

@@ -3115,14 +3115,10 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         use tsz_binder::symbol_flags;
 
         // Convert member DefId to SymbolId
-        let Some(sym_id) = self.def_to_symbol_id(member_def_id) else {
-            return None;
-        };
+        let sym_id = self.def_to_symbol_id(member_def_id)?;
 
         // Get the symbol
-        let Some(symbol) = self.binder.get_symbol(sym_id) else {
-            return None;
-        };
+        let symbol = self.binder.get_symbol(sym_id)?;
 
         // Check if this is an enum member
         if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {

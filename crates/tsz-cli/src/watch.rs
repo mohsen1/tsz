@@ -448,9 +448,7 @@ impl Debouncer {
     }
 
     pub(crate) fn flush_ready(&mut self, now: Instant) -> Option<Vec<PathBuf>> {
-        let Some(last) = self.last_event_at else {
-            return None;
-        };
+        let last = self.last_event_at?;
 
         if now.duration_since(last) < self.delay || self.pending.is_empty() {
             return None;

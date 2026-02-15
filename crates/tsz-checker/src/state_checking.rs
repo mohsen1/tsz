@@ -3165,9 +3165,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the class name from an expression, if it's a class instance.
     pub(crate) fn get_class_name_from_expression(&mut self, expr_idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(expr_idx)?;
 
         // If it's a simple identifier, look up its type from the binder
         if self.ctx.arena.get_identifier(node).is_some()
@@ -3860,9 +3858,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(node) = self.ctx.arena.get(type_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(type_idx)?;
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
@@ -3888,9 +3884,7 @@ impl<'a> CheckerState<'a> {
                 None
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
-                let Some(func_type) = self.ctx.arena.get_function_type(node) else {
-                    return None;
-                };
+                let func_type = self.ctx.arena.get_function_type(node)?;
 
                 let own_params = self.collect_type_parameter_names(&func_type.type_parameters);
                 let filtered: Vec<String> = class_type_param_names

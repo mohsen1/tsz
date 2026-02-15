@@ -563,11 +563,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let resolved_target = match target_key {
             Some(TypeData::Lazy(def_id)) => {
                 // Try to resolve the Lazy type
-                if let Some(resolved) = self.subtype.resolver.resolve_lazy(def_id, self.interner) {
-                    resolved
-                } else {
-                    return None;
-                }
+                self.subtype.resolver.resolve_lazy(def_id, self.interner)?
             }
             Some(TypeData::Mapped(_)) | Some(TypeData::Application(_)) => {
                 // Evaluate mapped and application types

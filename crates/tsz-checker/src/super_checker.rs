@@ -568,9 +568,7 @@ impl<'a> CheckerState<'a> {
             if parent_idx.is_none() {
                 return None;
             }
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                return None;
-            };
+            let parent_node = self.ctx.arena.get(parent_idx)?;
             if parent_node.kind == syntax_kind_ext::CONSTRUCTOR {
                 return Some(parent_idx);
             }

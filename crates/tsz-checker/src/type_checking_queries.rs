@@ -683,9 +683,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the name of a class member (property, method, or accessor).
     pub(crate) fn get_member_name(&self, member_idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(member_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(member_idx)?;
 
         // Use helper to get name node, then get property name text
         let name_idx = self.get_member_name_node(node)?;
@@ -694,16 +692,12 @@ impl<'a> CheckerState<'a> {
 
     /// Get the name of a function declaration.
     pub(crate) fn get_function_name_from_node(&self, stmt_idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(stmt_idx)?;
 
         if let Some(func) = self.ctx.arena.get_function(node)
             && !func.name.is_none()
         {
-            let Some(name_node) = self.ctx.arena.get(func.name) else {
-                return None;
-            };
+            let name_node = self.ctx.arena.get(func.name)?;
             if let Some(id) = self.ctx.arena.get_identifier(name_node) {
                 return Some(id.escaped_text.clone());
             }
@@ -810,9 +804,7 @@ impl<'a> CheckerState<'a> {
     /// Get a numeric literal index from a node.
     /// Returns None if the node is not a non-negative integer literal.
     pub(crate) fn get_literal_index_from_node(&self, idx: NodeIndex) -> Option<usize> {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(idx)?;
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(paren) = self.ctx.arena.get_parenthesized(node)
@@ -836,9 +828,7 @@ impl<'a> CheckerState<'a> {
     /// Get a string literal from a node.
     /// Returns None if the node is not a string literal or template literal.
     pub(crate) fn get_literal_string_from_node(&self, idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(idx)?;
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(paren) = self.ctx.arena.get_parenthesized(node)
@@ -3505,16 +3495,11 @@ impl<'a> CheckerState<'a> {
             NamespaceMemberKind::Enum(def_id) => {
                 // Resolve the DefId to a SymbolId and reuse the enum member lookup logic
                 let sym_id = self.ctx.def_to_symbol.borrow().get(&def_id).copied();
-                let Some(sym_id) = sym_id else {
-                    return None;
-                };
+                let sym_id = sym_id?;
 
                 // Use cross-file-aware lookup: SymbolIds from cross-file enums
                 // map to wrong symbols in the local binder (SymbolId collision).
-                let symbol = match self.get_cross_file_symbol(sym_id) {
-                    Some(symbol) => symbol,
-                    None => return None,
-                };
+                let symbol = self.get_cross_file_symbol(sym_id)?;
 
                 if symbol.flags & symbol_flags::ENUM == 0 {
                     return None;
@@ -4390,9 +4375,7 @@ impl<'a> CheckerState<'a> {
     /// literal_type_from_initializer(arr_node) → None
     /// ```
     pub(crate) fn literal_type_from_initializer(&self, idx: NodeIndex) -> Option<TypeId> {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(idx)?;
 
         match node.kind {
             k if k == SyntaxKind::StringLiteral as u16
@@ -4422,9 +4405,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let operand = unary.operand;
-                let Some(operand_node) = self.ctx.arena.get(operand) else {
-                    return None;
-                };
+                let operand_node = self.ctx.arena.get(operand)?;
                 if operand_node.kind == SyntaxKind::BigIntLiteral as u16 {
                     let lit = self.ctx.arena.get_literal(operand_node)?;
                     let text = lit.text.strip_suffix('n').unwrap_or(&lit.text);

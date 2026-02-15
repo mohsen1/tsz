@@ -2721,12 +2721,8 @@ impl<'a> LoweringPass<'a> {
             return None;
         }
 
-        let Some(node) = self.arena.get(specifier) else {
-            return None;
-        };
-        let Some(literal) = self.arena.get_literal(node) else {
-            return None;
-        };
+        let node = self.arena.get(specifier)?;
+        let literal = self.arena.get_literal(node)?;
 
         Some(literal.text.clone())
     }
