@@ -229,7 +229,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 .is_some_and(|j| Self::jsdoc_has_type_annotations(j));
             if !func.is_async && !has_jsdoc_return {
                 let func_name = self.get_function_name_from_node(func_idx);
-                let name_node = (!func.name.is_none()).then(|| func.name);
+                let name_node = (!func.name.is_none()).then_some(func.name);
                 self.maybe_report_implicit_any_return(
                     func_name,
                     name_node,
@@ -381,7 +381,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 self.has_declare_modifier(&func.modifiers) || self.ctx.file_name.ends_with(".d.ts");
             if is_ambient && let Some(func_name) = self.get_function_name_from_node(func_idx) {
                 use crate::diagnostics::diagnostic_codes;
-                let name_node = (!func.name.is_none()).then(|| func.name);
+                let name_node = (!func.name.is_none()).then_some(func.name);
                 self.error_at_node_msg(
                     name_node.unwrap_or(func_idx),
                     diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,

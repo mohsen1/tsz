@@ -85,7 +85,7 @@ fn transform_enum_members(
 
         let value = if member_data.initializer.is_none() {
             // Auto-increment
-            let next_val = last_value.map(|v| v + 1).unwrap_or(0);
+            let next_val = last_value.map_or(0, |v| v + 1);
             last_value = Some(next_val);
             EnumMemberValue::Auto(next_val)
         } else if is_string_literal(arena, member_data.initializer) {

@@ -587,7 +587,7 @@ impl<'a> CodeActionProvider<'a> {
         for &node_idx in import_nodes {
             let node = self.arena.get(node_idx)?;
             let leading = get_leading_comments_from_cache(comments, node.pos, self.source);
-            let start = leading.first().map(|c| c.pos).unwrap_or(node.pos);
+            let start = leading.first().map_or(node.pos, |c| c.pos);
 
             block_start = block_start.min(start);
             block_end = block_end.max(node.end);
@@ -1419,8 +1419,7 @@ impl<'a> CodeActionProvider<'a> {
             let last_end = self
                 .arena
                 .get(last_ident)
-                .map(|node| node.end)
-                .unwrap_or(last_node.end);
+                .map_or(last_node.end, |node| node.end);
             let between = self.source.get(last_end as usize..close_offset as usize)?;
             let trimmed = between.trim_start();
             if trimmed.contains("//") || trimmed.contains("/*") {
@@ -2006,16 +2005,8 @@ impl<'a> CodeActionProvider<'a> {
         if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(binary) = self.arena.get_binary_expr(expr_node)
         {
-            start = self
-                .arena
-                .get(binary.left)
-                .map(|node| node.pos)
-                .unwrap_or(start);
-            end = self
-                .arena
-                .get(binary.right)
-                .map(|node| node.end)
-                .unwrap_or(end);
+            start = self.arena.get(binary.left).map_or(start, |node| node.pos);
+            end = self.arena.get(binary.right).map_or(end, |node| node.end);
         }
 
         if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
@@ -2519,8 +2510,7 @@ impl<'a> CodeActionProvider<'a> {
     fn jsx_tag_is_component(name: &str) -> bool {
         name.chars()
             .next()
-            .map(|ch| ch.is_ascii_uppercase())
-            .unwrap_or(false)
+            .is_some_and(|ch| ch.is_ascii_uppercase())
     }
 
     fn find_enclosing_scope_id(&self, node_idx: NodeIndex) -> Option<ScopeId> {

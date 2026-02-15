@@ -108,8 +108,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .arena
                             .get(sig.type_annotation)
-                            .map(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE)
-                            .unwrap_or(false);
+                            .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE);
                         if is_predicate {
                             self.return_type_and_predicate(sig.type_annotation, &params)
                         } else {
@@ -141,8 +140,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .arena
                             .get(sig.type_annotation)
-                            .map(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE)
-                            .unwrap_or(false);
+                            .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_PREDICATE);
                         if is_predicate {
                             self.return_type_and_predicate(sig.type_annotation, &params)
                         } else {

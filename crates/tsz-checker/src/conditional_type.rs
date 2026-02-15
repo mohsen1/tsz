@@ -62,9 +62,7 @@ impl<'a> CheckerState<'a> {
     /// Distributive conditionals automatically distribute over unions:
     /// `(A | B) extends C ? X : Y` becomes `(A extends C ? X : Y) | (B extends C ? X : Y)`
     pub fn is_distributive_conditional(&self, type_id: TypeId) -> bool {
-        query::conditional_type(self.ctx.types, type_id)
-            .map(|cond| cond.is_distributive)
-            .unwrap_or(false)
+        query::conditional_type(self.ctx.types, type_id).is_some_and(|cond| cond.is_distributive)
     }
 
     // =========================================================================

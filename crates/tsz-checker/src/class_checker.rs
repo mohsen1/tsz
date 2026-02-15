@@ -175,14 +175,13 @@ impl<'a> CheckerState<'a> {
                     .nodes
                     .first()
                     .and_then(|&p| self.ctx.arena.get_parameter_at(p))
-                    .map(|param| {
+                    .map_or(TypeId::ANY, |param| {
                         if !param.type_annotation.is_none() {
                             self.get_type_from_type_node(param.type_annotation)
                         } else {
                             TypeId::ANY
                         }
-                    })
-                    .unwrap_or(TypeId::ANY);
+                    });
                 let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
                 Some(ClassMemberInfo {
                     name,

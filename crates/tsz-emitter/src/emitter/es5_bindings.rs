@@ -364,8 +364,7 @@ impl<'a> Printer<'a> {
         let is_simple_ident = self
             .arena
             .get(decl.initializer)
-            .map(|n| n.kind == SyntaxKind::Identifier as u16)
-            .unwrap_or(false);
+            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
 
         if is_simple_ident {
             // Use the identifier directly without temp variable
@@ -566,8 +565,7 @@ impl<'a> Printer<'a> {
                 self.arena
                     .get(elem_idx)
                     .and_then(|n| self.arena.get_binding_element(n))
-                    .map(|e| !e.dot_dot_dot_token)
-                    .unwrap_or(false)
+                    .is_some_and(|e| !e.dot_dot_dot_token)
             })
             .count();
 
@@ -2569,8 +2567,7 @@ impl<'a> Printer<'a> {
         let is_simple = self
             .arena
             .get(right_idx)
-            .map(|n| n.kind == SyntaxKind::Identifier as u16)
-            .unwrap_or(false);
+            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
 
         // Count elements to determine if we need a temp for complex sources.
         // TypeScript creates a temp for non-identifier sources when there are 2+ elements
@@ -2709,12 +2706,10 @@ impl<'a> Printer<'a> {
                     if bin.operator_token == SyntaxKind::EqualsToken as u16 {
                         // Element with default: target = source[i] === void 0 ? default : source[i]
                         let target_node = self.arena.get(bin.left);
-                        let is_nested = target_node
-                            .map(|n| {
-                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                    || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            })
-                            .unwrap_or(false);
+                        let is_nested = target_node.is_some_and(|n| {
+                            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        });
 
                         if is_nested {
                             let extract_temp = self.make_unique_name_hoisted();
@@ -2828,12 +2823,10 @@ impl<'a> Printer<'a> {
 
                         // Check if value is a nested pattern
                         let value_node = self.arena.get(prop.initializer);
-                        let is_nested = value_node
-                            .map(|n| {
-                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                                    || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            })
-                            .unwrap_or(false);
+                        let is_nested = value_node.is_some_and(|n| {
+                            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        });
 
                         if is_nested {
                             let temp = self.make_unique_name_hoisted();

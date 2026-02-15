@@ -100,7 +100,7 @@ impl<'a> Printer<'a> {
         }
         if let Some(lit) = self.arena.get_literal(node) {
             // Preserve original quote style from source text
-            let quote = self.detect_original_quote(node).unwrap_or_else(|| {
+            let quote = self.detect_original_quote(node).unwrap_or({
                 if self.ctx.options.single_quote {
                     '\''
                 } else {

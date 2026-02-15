@@ -1149,7 +1149,7 @@ impl BinderState {
                             .get(self.current_scope_idx)
                             .and_then(|ctx| {
                                 (ctx.container_kind == ContainerKind::Module)
-                                    .then(|| ctx.container_node)
+                                    .then_some(ctx.container_node)
                             })
                             .and_then(|container_idx| {
                                 self.node_symbols.get(&container_idx.0).copied()
@@ -1921,8 +1921,7 @@ impl BinderState {
                         let module_name = self
                             .symbols
                             .get(module_symbol_id)
-                            .map(|sym| sym.escaped_name.as_str())
-                            .unwrap_or("<unknown>");
+                            .map_or("<unknown>", |sym| sym.escaped_name.as_str());
                         tracing::debug!(
                             module_name,
                             exported_names = ?exported_names,

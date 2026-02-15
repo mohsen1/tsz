@@ -2759,8 +2759,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                         .binder
                         .symbols
                         .get(sym_id)
-                        .map(|s| s.escaped_name.as_str())
-                        .unwrap_or("?"),
+                        .map_or("?", |s| s.escaped_name.as_str()),
                     "resolve_lazy: found in symbol_types cache"
                 );
                 return Some(ty);

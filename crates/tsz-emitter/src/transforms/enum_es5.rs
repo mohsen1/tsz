@@ -197,7 +197,7 @@ impl<'a> EnumES5Transformer<'a> {
                 }
             } else {
                 // Auto-increment: E[E["A"] = 0] = "A";
-                let next_val = self.last_value.map(|v| v + 1).unwrap_or(0);
+                let next_val = self.last_value.map_or(0, |v| v + 1);
                 self.last_value = Some(next_val);
 
                 let inner_assign = IRNode::BinaryExpr {

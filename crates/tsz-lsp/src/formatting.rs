@@ -675,7 +675,7 @@ impl DocumentFormattingProvider {
         let prev_indent = &prev_line[..prev_indent_len];
 
         // Check the current line for dedent
-        let current_trimmed = lines.get(line_idx).map(|l| l.trim()).unwrap_or("");
+        let current_trimmed = lines.get(line_idx).map_or("", |l| l.trim());
         let needs_dedent = Self::line_starts_with_closing(current_trimmed)
             || Self::is_case_or_default(current_trimmed);
 

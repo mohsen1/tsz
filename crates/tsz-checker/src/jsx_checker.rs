@@ -60,13 +60,7 @@ impl<'a> CheckerState<'a> {
         // Determine if this is an intrinsic element (lowercase first char)
         let is_intrinsic = tag_name
             .as_ref()
-            .map(|name| {
-                name.chars()
-                    .next()
-                    .map(|c| c.is_ascii_lowercase())
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false);
+            .is_some_and(|name| name.chars().next().is_some_and(|c| c.is_ascii_lowercase()));
 
         if is_intrinsic {
             // Intrinsic elements: look up JSX.IntrinsicElements[tagName]

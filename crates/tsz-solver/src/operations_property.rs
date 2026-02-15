@@ -324,7 +324,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let write = (prop.write_type != prop.type_id).then(|| prop.write_type);
+            let write = (prop.write_type != prop.type_id).then_some(prop.write_type);
             return Some(PropertyAccessResult::Success {
                 type_id: self.optional_property_type(prop),
                 write_type: write,
@@ -396,7 +396,7 @@ impl<'a> TypeVisitor for &PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let write = (prop.write_type != prop.type_id).then(|| prop.write_type);
+            let write = (prop.write_type != prop.type_id).then_some(prop.write_type);
             return Some(PropertyAccessResult::Success {
                 type_id: self.optional_property_type(prop),
                 write_type: write,
@@ -547,7 +547,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let write = (prop.write_type != prop.type_id).then(|| prop.write_type);
+            let write = (prop.write_type != prop.type_id).then_some(prop.write_type);
             return Some(PropertyAccessResult::Success {
                 type_id: self.optional_property_type(prop),
                 write_type: write,
@@ -620,7 +620,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if let Some(prop) =
             self.lookup_object_property(ObjectShapeId(shape_id), &shape.properties, prop_atom)
         {
-            let write = (prop.write_type != prop.type_id).then(|| prop.write_type);
+            let write = (prop.write_type != prop.type_id).then_some(prop.write_type);
             return Some(PropertyAccessResult::Success {
                 type_id: self.optional_property_type(prop),
                 write_type: write,
@@ -2195,7 +2195,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         parent_id: prop.parent_id,
                     });
                     let write = (instantiated_write_type != instantiated_read_type)
-                        .then(|| instantiated_write_type);
+                        .then_some(instantiated_write_type);
                     return PropertyAccessResult::Success {
                         type_id: read_type,
                         write_type: write,

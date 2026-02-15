@@ -4266,10 +4266,7 @@ fn extract_iterator_result_types(
     let (yield_type, return_type) = extract_iterator_result_value_types(db, iterator_result_type);
 
     // Extract next_type from the first parameter of next()
-    let next_type = next_params
-        .first()
-        .map(|p| p.type_id)
-        .unwrap_or(TypeId::UNDEFINED);
+    let next_type = next_params.first().map_or(TypeId::UNDEFINED, |p| p.type_id);
 
     Some(IteratorInfo {
         iterator_type,
@@ -4362,8 +4359,7 @@ fn extract_iterator_result_value_types(
                 .properties
                 .iter()
                 .find(|p| p.name == value_atom)
-                .map(|p| p.type_id)
-                .unwrap_or(TypeId::ANY);
+                .map_or(TypeId::ANY, |p| p.type_id);
             (value_type, TypeId::ANY)
         }
         _ => (TypeId::ANY, TypeId::ANY),

@@ -1200,10 +1200,11 @@ pub fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeK
         Some(TypeData::Array(elem)) => ArrayLikeKind::Array(elem),
         Some(TypeData::Tuple(_)) => ArrayLikeKind::Tuple,
         Some(TypeData::ReadonlyType(inner)) => ArrayLikeKind::Readonly(inner),
-        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info
-            .constraint
-            .map(|constraint| classify_array_like(db, constraint))
-            .unwrap_or(ArrayLikeKind::Other),
+        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => {
+            info.constraint.map_or(ArrayLikeKind::Other, |constraint| {
+                classify_array_like(db, constraint)
+            })
+        }
         Some(TypeData::Union(members_id)) => {
             ArrayLikeKind::Union(db.type_list(members_id).to_vec())
         }

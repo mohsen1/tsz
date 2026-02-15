@@ -51,8 +51,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                     .ctx
                     .arena
                     .get_expr_type_args_at(type_idx)
-                    .map(|e| e.expression)
-                    .unwrap_or(type_idx);
+                    .map_or(type_idx, |e| e.expression);
 
                 if let Some(parent_sym) = self.resolve_heritage_symbol(expr_idx) {
                     // Check for direct self-reference
@@ -258,8 +257,10 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             .and_then(|node| self.ctx.arena.get_class(node))
             .and_then(|class| self.ctx.arena.get(class.name))
             .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-            .map(|ident| ident.escaped_text.clone())
-            .unwrap_or_else(|| String::from("<class>"));
+            .map_or_else(
+                || String::from("<class>"),
+                |ident| ident.escaped_text.clone(),
+            );
 
         if let Some((start, end)) = self.ctx.get_node_span(error_node_idx) {
             let length = end.saturating_sub(start);

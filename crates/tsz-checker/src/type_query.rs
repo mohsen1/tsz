@@ -34,8 +34,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .arena
             .get(idx)
-            .map(|node| node.kind == TYPE_QUERY)
-            .unwrap_or(false)
+            .is_some_and(|node| node.kind == TYPE_QUERY)
     }
 
     /// Get the typeof type name for a given type.

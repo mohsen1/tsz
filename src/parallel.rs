@@ -407,7 +407,7 @@ pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::Li
         .iter()
         .filter_map(|p| {
             let path = p.to_path_buf();
-            path.exists().then(|| path)
+            path.exists().then_some(path)
         })
         .collect();
 
@@ -1155,8 +1155,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     .first()
                     .and_then(|first_decl| result.node_scope_ids.get(&first_decl.0))
                     .and_then(|scope_id| result.scopes.get(scope_id.0 as usize))
-                    .map(|scope| scope.parent != ScopeId::NONE)
-                    .unwrap_or(false);
+                    .is_some_and(|scope| scope.parent != ScopeId::NONE);
 
                 // Check if symbol already exists in globals (cross-file merging)
                 // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
@@ -1455,8 +1454,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // other files try to resolve the import and get incorrect types.
                 let is_alias = global_symbols
                     .get(new_sym_id)
-                    .map(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0)
-                    .unwrap_or(false);
+                    .is_some_and(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0);
                 if !is_alias {
                     globals.set(name.clone(), new_sym_id);
                 }

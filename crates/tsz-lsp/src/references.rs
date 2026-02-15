@@ -457,8 +457,7 @@ impl<'a> FindReferences<'a> {
         let parent_idx = self
             .arena
             .get_extended(node_idx)
-            .map(|ext| ext.parent)
-            .unwrap_or(NodeIndex::NONE);
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
 
         if parent_idx.is_none() {
             return false;

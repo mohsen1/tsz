@@ -741,11 +741,8 @@ impl<'a> Printer<'a> {
                         // Also handle export { interface/type } by checking export clause
                         if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                             if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                                let inner_kind = self
-                                    .arena
-                                    .get(export.export_clause)
-                                    .map(|n| n.kind)
-                                    .unwrap_or(0);
+                                let inner_kind =
+                                    self.arena.get(export.export_clause).map_or(0, |n| n.kind);
                                 if inner_kind == syntax_kind_ext::INTERFACE_DECLARATION
                                     || inner_kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                                 {
@@ -762,8 +759,7 @@ impl<'a> Printer<'a> {
                             // Strip "export" and handle inner clause
                             if let Some(export) = self.arena.get_export_decl(stmt_node) {
                                 let inner_idx = export.export_clause;
-                                let inner_kind =
-                                    self.arena.get(inner_idx).map(|n| n.kind).unwrap_or(0);
+                                let inner_kind = self.arena.get(inner_idx).map_or(0, |n| n.kind);
 
                                 if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
                                     // export var x = 10; → ns.x = 10;

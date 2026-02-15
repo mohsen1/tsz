@@ -893,14 +893,13 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_enum(node)
                     .and_then(|enum_decl| enum_decl.modifiers.as_ref())
-                    .map(|modifiers| {
+                    .is_some_and(|modifiers| {
                         modifiers.nodes.iter().any(|&mod_idx| {
                             self.ctx.arena.get(mod_idx).is_some_and(|mod_node| {
                                 mod_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
                             })
                         })
-                    })
-                    .unwrap_or(false);
+                    });
                 if is_const_enum {
                     Some(symbol_flags::CONST_ENUM)
                 } else {
@@ -2142,8 +2141,7 @@ impl<'a> CheckerState<'a> {
                                 .iter()
                                 .find(|e| e.rest)
                                 .or_else(|| elems.last())
-                                .map(|e| e.type_id)
-                                .unwrap_or(TypeId::ANY);
+                                .map_or(TypeId::ANY, |e| e.type_id);
                             self.rest_binding_array_type(rest_elem)
                         } else {
                             continue;
@@ -2180,8 +2178,7 @@ impl<'a> CheckerState<'a> {
                             .iter()
                             .find(|e| e.rest)
                             .or_else(|| elems.last())
-                            .map(|e| e.type_id)
-                            .unwrap_or(TypeId::ANY)
+                            .map_or(TypeId::ANY, |e| e.type_id)
                     } else {
                         TypeId::ANY
                     };
@@ -2234,9 +2231,8 @@ impl<'a> CheckerState<'a> {
                 .is_some();
 
             if !computed_is_identifier {
-                let key_type = computed_expr
-                    .map(|expr_idx| self.get_type_of_node(expr_idx))
-                    .unwrap_or(TypeId::ANY);
+                let key_type =
+                    computed_expr.map_or(TypeId::ANY, |expr_idx| self.get_type_of_node(expr_idx));
                 let key_is_string = key_type == TypeId::STRING;
                 let key_is_number = key_type == TypeId::NUMBER;
 
@@ -3449,17 +3445,17 @@ impl<'a> CheckerState<'a> {
                             {
                                 // Check if we are inside the class that defines the private constructor
                                 // Nested classes can extend a class with private constructor
-                                let is_accessible =
-                                    if let Some(ref enclosing) = self.ctx.enclosing_class {
-                                        // Get the symbol of the enclosing class
-                                        self.ctx
-                                            .binder
-                                            .get_node_symbol(enclosing.class_idx)
-                                            .map(|enclosing_sym| enclosing_sym == sym_to_check)
-                                            .unwrap_or(false)
-                                    } else {
-                                        false
-                                    };
+                                let is_accessible = if let Some(ref enclosing) =
+                                    self.ctx.enclosing_class
+                                {
+                                    // Get the symbol of the enclosing class
+                                    self.ctx
+                                        .binder
+                                        .get_node_symbol(enclosing.class_idx)
+                                        .is_some_and(|enclosing_sym| enclosing_sym == sym_to_check)
+                                } else {
+                                    false
+                                };
 
                                 if !is_accessible {
                                     if let Some(name) = self.heritage_name_text(expr_idx) {
@@ -3492,16 +3488,12 @@ impl<'a> CheckerState<'a> {
                         // like Array, Object, Promise have both interface and variable
                         // declarations (`interface Array` + `declare var Array: ArrayConstructor`),
                         // and the variable provides the constructor for extends.
-                        let is_interface_only = self
-                            .ctx
-                            .binder
-                            .get_symbol(sym_to_check)
-                            .map(|s| {
+                        let is_interface_only =
+                            self.ctx.binder.get_symbol(sym_to_check).is_some_and(|s| {
                                 (s.flags & symbol_flags::INTERFACE) != 0
                                     && (s.flags & symbol_flags::CLASS) == 0
                                     && (s.flags & symbol_flags::VARIABLE) == 0
-                            })
-                            .unwrap_or(false);
+                            });
 
                         if is_interface_only && is_class_declaration {
                             // Emit TS2689: Cannot extend an interface (only for classes)
@@ -3532,11 +3524,10 @@ impl<'a> CheckerState<'a> {
                                 .ctx
                                 .binder
                                 .get_symbol(sym_to_check)
-                                .map(|s| {
+                                .is_none_or(|s| {
                                     !((s.flags & symbol_flags::INTERFACE) != 0
                                         && (s.flags & symbol_flags::VARIABLE) != 0)
                                 })
-                                .unwrap_or(true)
                         {
                             // For classes extending non-interfaces: emit TS2507 if not a constructor type
                             // For interfaces: don't check constructor types (interfaces can extend any interface)
@@ -4184,8 +4175,9 @@ impl<'a> CheckerState<'a> {
                 let is_private_identifier = member_name_idx
                     .filter(|idx| !idx.is_none())
                     .and_then(|idx| self.ctx.arena.get(idx))
-                    .map(|node| node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16)
-                    .unwrap_or(false);
+                    .is_some_and(|node| {
+                        node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                    });
 
                 if is_private_identifier {
                     use crate::context::ScriptTarget;
@@ -4337,8 +4329,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .arena
                     .get_identifier(name_node)
-                    .map(|id| id.escaped_text.clone())
-                    .unwrap_or_else(|| "<anonymous>".to_string())
+                    .map_or_else(|| "<anonymous>".to_string(), |id| id.escaped_text.clone())
             } else {
                 "<anonymous>".to_string()
             };
@@ -4967,11 +4958,7 @@ impl<'a> CheckerState<'a> {
                     if idx == line_num {
                         break;
                     }
-                    pos += source_text
-                        .lines()
-                        .nth(idx)
-                        .map(|l| l.len() + 1)
-                        .unwrap_or(0) as u32;
+                    pos += source_text.lines().nth(idx).map_or(0, |l| l.len() + 1) as u32;
                 }
 
                 // Find the actual directive on the line to get accurate position
@@ -4984,8 +4971,7 @@ impl<'a> CheckerState<'a> {
                 let length = source_text
                     .lines()
                     .nth(line_num)
-                    .map(|l| l.len() as u32)
-                    .unwrap_or(0);
+                    .map_or(0, |l| l.len() as u32);
 
                 use crate::diagnostics::{diagnostic_codes, format_message};
                 let message = format_message("File '{0}' not found.", &[&reference_path]);
@@ -5016,11 +5002,7 @@ impl<'a> CheckerState<'a> {
                 if idx == *line_num {
                     break;
                 }
-                pos += source_text
-                    .lines()
-                    .nth(idx)
-                    .map(|l| l.len() + 1)
-                    .unwrap_or(0) as u32;
+                pos += source_text.lines().nth(idx).map_or(0, |l| l.len() + 1) as u32;
             }
 
             // Find the actual directive on the line to get accurate position
@@ -5033,8 +5015,7 @@ impl<'a> CheckerState<'a> {
             let length = source_text
                 .lines()
                 .nth(*line_num)
-                .map(|l| l.len() as u32)
-                .unwrap_or(0);
+                .map_or(0, |l| l.len() as u32);
 
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.emit_error_at(

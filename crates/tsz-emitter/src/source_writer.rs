@@ -503,7 +503,7 @@ pub fn compute_line_col(text: &str, pos: u32) -> (u32, u32) {
     if pos >= text.len() {
         // Return end of file position
         let line = text.matches('\n').count() as u32;
-        let last_newline = text.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let last_newline = text.rfind('\n').map_or(0, |i| i + 1);
         // Count UTF-16 code units in the last line
         let col = text[last_newline..]
             .chars()

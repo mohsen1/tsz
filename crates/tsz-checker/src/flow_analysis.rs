@@ -1650,8 +1650,7 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .scopes
                 .get(scope_id.0 as usize)
-                .map(|scope| scope.parent)
-                .unwrap_or(tsz_binder::ScopeId::NONE);
+                .map_or(tsz_binder::ScopeId::NONE, |scope| scope.parent);
 
             iterations += 1;
         }
@@ -1748,8 +1747,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .binder
             .get_symbol(sym_id)
-            .map(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)
-            .unwrap_or(false)
+            .is_some_and(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)
     }
 
     /// Emit TS2454 error for variable used before definite assignment.
@@ -1775,8 +1773,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol(sym_id)
-            .map(|s| s.escaped_name.clone())
-            .unwrap_or_else(|| "<unknown>".to_string());
+            .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
 
         // Get the location for error reporting
         let length = node.end - node.pos;

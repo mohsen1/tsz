@@ -568,8 +568,7 @@ impl<'a> CheckerState<'a> {
             .type_arguments
             .as_ref()
             .and_then(|args| args.nodes.first().copied())
-            .map(|idx| self.get_type_from_type_node(idx))
-            .unwrap_or(TypeId::ERROR);
+            .map_or(TypeId::ERROR, |idx| self.get_type_from_type_node(idx));
         let array_type = factory.array(elem_type);
         if name == "ReadonlyArray" {
             factory.readonly_type(array_type)
@@ -1110,8 +1109,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .symbol_arenas
                     .get(&sym_id)
-                    .map(|arena| arena.as_ref())
-                    .unwrap_or(self.ctx.arena);
+                    .map_or(self.ctx.arena, |arena| arena.as_ref());
 
                 let has_declaration_arenas = symbol.declarations.iter().any(|&decl_idx| {
                     self.ctx
@@ -1129,8 +1127,7 @@ impl<'a> CheckerState<'a> {
                             .binder
                             .declaration_arenas
                             .get(&(sym_id, decl_idx))
-                            .map(|arc| arc.as_ref())
-                            .unwrap_or(fallback_arena);
+                            .map_or(fallback_arena, |arc| arc.as_ref());
                         (decl_idx, arena)
                     })
                     .collect();

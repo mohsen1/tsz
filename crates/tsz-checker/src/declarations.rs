@@ -1389,10 +1389,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     .get(module.name)
                     .and_then(|name_node| self.ctx.arena.get_literal(name_node))
                     .map(|lit| lit.text.clone());
-                let module_key = module_specifier
-                    .as_deref()
-                    .map(|spec| self.normalize_module_augmentation_key(spec))
-                    .unwrap_or_else(|| "<unknown>".to_string());
+                let module_key = module_specifier.as_deref().map_or_else(
+                    || "<unknown>".to_string(),
+                    |spec| self.normalize_module_augmentation_key(spec),
+                );
 
                 let mut value_decl_map = self
                     .ctx
