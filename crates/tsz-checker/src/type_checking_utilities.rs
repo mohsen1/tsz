@@ -2181,7 +2181,10 @@ impl<'a> CheckerState<'a> {
         let name = name.trim_end_matches(']');
         // Handle backtick-quoted names like `args`
         let name = name.trim_matches('`');
-        name == param_name
+        if name == param_name {
+            return true;
+        }
+        false
     }
 
     /// Check if a JSDoc comment has any type annotations (`@param {type}`, `@returns {type}`,
