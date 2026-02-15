@@ -514,21 +514,27 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
     // TypeScript's `strict` flag sets defaults for the strict option family when they are
     // not explicitly provided. Materialize those defaults so downstream option parsing
     // preserves both `strict: true` and `strict: false` behavior.
-    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
-        let strict = *strict;
-        for key in [
-            "noImplicitAny",
-            "noImplicitThis",
-            "strictNullChecks",
-            "strictFunctionTypes",
-            "strictBindCallApply",
-            "strictPropertyInitialization",
-            "useUnknownInCatchVariables",
-            "alwaysStrict",
-        ] {
-            opts.entry(key.to_string())
-                .or_insert(serde_json::Value::Bool(strict));
-        }
+    //
+    // When `strict` is NOT specified, tsc defaults all strict-family flags to false.
+    // We must explicitly materialize `false` for any unset strict flags, because tsz's
+    // internal defaults are "strict by default" — without this, unset flags would be
+    // treated as `true` by the checker, causing false positive TS7006 etc.
+    let strict_value = match opts.get("strict") {
+        Some(serde_json::Value::Bool(strict)) => *strict,
+        _ => false, // tsc defaults to strict: false when not specified
+    };
+    for key in [
+        "noImplicitAny",
+        "noImplicitThis",
+        "strictNullChecks",
+        "strictFunctionTypes",
+        "strictBindCallApply",
+        "strictPropertyInitialization",
+        "useUnknownInCatchVariables",
+        "alwaysStrict",
+    ] {
+        opts.entry(key.to_string())
+            .or_insert(serde_json::Value::Bool(strict_value));
     }
 
     // Match tsc default compiler behavior for tests that omit @target.
