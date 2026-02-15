@@ -2082,7 +2082,7 @@ impl ParserState {
             SyntaxKind::AsyncKeyword => self.parse_export_async_declaration_or_expression(),
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
             SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
-            SyntaxKind::TypeKeyword => self.parse_type_alias_declaration(),
+            SyntaxKind::TypeKeyword => self.parse_export_type_alias_declaration(),
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
             SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
                 self.parse_module_declaration()
@@ -2100,6 +2100,43 @@ impl ParserState {
                 self.parse_expression_statement()
             }
         }
+    }
+
+    fn parse_export_type_alias_declaration(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::TypeKeyword);
+
+        let name = self.parse_identifier();
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
+
+        let type_node = if self.is_token(SyntaxKind::EqualsToken) {
+            self.next_token();
+            let diag_len = self.parse_diagnostics.len();
+            let parsed_type = self.parse_type();
+            if self.parse_diagnostics.len() > diag_len {
+                self.parse_diagnostics.truncate(diag_len);
+            }
+            parsed_type
+        } else {
+            NodeIndex::NONE
+        };
+
+        self.parse_optional(SyntaxKind::SemicolonToken);
+
+        let end_pos = self.token_end();
+        self.arena.add_type_alias(
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION,
+            start_pos,
+            end_pos,
+            crate::parser::node::TypeAliasData {
+                modifiers: None,
+                name,
+                type_parameters,
+                type_node,
+            },
+        )
     }
 
     fn parse_export_async_declaration_or_expression(&mut self) -> NodeIndex {
