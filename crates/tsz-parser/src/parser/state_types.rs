@@ -299,7 +299,6 @@ impl ParserState {
     }
 
     /// Parse primary type (keywords, references, parenthesized, tuples, arrays, function types)
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_primary_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -320,171 +319,143 @@ impl ParserState {
             );
         }
 
-        // Handle abstract constructor types: abstract new () => T
-        if self.is_token(SyntaxKind::AbstractKeyword) {
-            // Look ahead to see if this is "abstract new"
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
+        let base_type = if self.should_parse_abstract_constructor_type() {
             self.next_token();
-            let is_abstract_new = self.is_token(SyntaxKind::NewKeyword);
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
+            self.parse_constructor_type(true)
+        } else if self.is_token(SyntaxKind::NewKeyword) {
+            self.parse_constructor_type(false)
+        } else if self.is_token(SyntaxKind::LessThanToken) {
+            self.parse_generic_function_type()
+        } else {
+            self.parse_primary_type_base(start_pos)
+        };
 
-            if is_abstract_new {
-                // Consume 'abstract' and parse the constructor type
-                self.next_token();
-                return self.parse_constructor_type(true);
-            }
+        self.parse_primary_type_array_suffix(start_pos, base_type)
+    }
+
+    fn should_parse_abstract_constructor_type(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::AbstractKeyword) {
+            return false;
         }
 
-        // Handle constructor types: new () => T or new <T>() => T
-        if self.is_token(SyntaxKind::NewKeyword) {
-            return self.parse_constructor_type(false);
-        }
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let is_abstract_new = self.is_token(SyntaxKind::NewKeyword);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_abstract_new
+    }
 
-        // Handle generic function types: <T>() => T or <T, U>(x: T) => U
-        if self.is_token(SyntaxKind::LessThanToken) {
-            return self.parse_generic_function_type();
-        }
-
-        // Handle parenthesized types or function types
+    fn parse_primary_type_base(&mut self, start_pos: u32) -> NodeIndex {
         if self.is_token(SyntaxKind::OpenParenToken) {
-            // Check if this is a function type: () => T or (x: T) => U
-            if self.look_ahead_is_function_type() {
-                return self.parse_function_type();
-            }
-
-            // Otherwise it's a parenthesized type
-            self.next_token();
-            let inner = self.parse_type();
-            self.parse_expected(SyntaxKind::CloseParenToken);
-
-            // Handle array types on parenthesized: (A | B)[]
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, inner);
-            }
-            return inner;
+            return self.parse_parenthesized_type_or_function_type();
         }
 
-        // Handle tuple types: [T, U, V]
         if self.is_token(SyntaxKind::OpenBracketToken) {
             return self.parse_tuple_type();
         }
 
-        // Handle object type literal or mapped type: { ... } or { [K in T]: U }
         if self.is_token(SyntaxKind::OpenBraceToken) {
-            let obj_type = self.parse_object_or_mapped_type();
-            // Handle array/indexed access on object literal: {...}[] or {...}["key"]
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, obj_type);
-            }
-            return obj_type;
+            return self.parse_object_or_mapped_type();
         }
 
-        // Handle typeof type: typeof x, typeof x[]
         if self.is_token(SyntaxKind::TypeOfKeyword) {
-            let typeof_type = self.parse_typeof_type();
-            // Handle array type on typeof: typeof x[]
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, typeof_type);
-            }
-            return typeof_type;
+            return self.parse_typeof_type();
         }
 
-        // Handle keyof type: keyof T, keyof T[]
         if self.is_token(SyntaxKind::KeyOfKeyword) {
-            let keyof_type = self.parse_keyof_type();
-            // Handle array type on keyof: keyof T[]
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, keyof_type);
-            }
-            return keyof_type;
+            return self.parse_keyof_type();
         }
 
-        // Handle unique type: unique symbol
         if self.is_token(SyntaxKind::UniqueKeyword) {
-            let unique_type = self.parse_unique_type();
-            // Handle array type on unique: unique symbol[]
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, unique_type);
-            }
-            return unique_type;
+            return self.parse_unique_type();
         }
 
-        // Handle readonly type: readonly T[]
         if self.is_token(SyntaxKind::ReadonlyKeyword) {
             return self.parse_readonly_type();
         }
 
-        // Handle infer type: infer T (used in conditional types)
         if self.is_token(SyntaxKind::InferKeyword) {
             return self.parse_infer_type();
         }
 
-        // Handle 'this' type (polymorphic this)
         if self.is_token(SyntaxKind::ThisKeyword) {
             let this_start = self.token_pos();
             let this_end = self.token_end();
             self.next_token();
-            let this_type = self
+            return self
                 .arena
                 .add_token(syntax_kind_ext::THIS_TYPE, this_start, this_end);
-            // Handle array types of this (e.g., this[], this[][])
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, this_type);
-            }
-            return this_type;
         }
 
-        // Handle literal types: "foo", 42, true, false
         if self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
             || self.is_token(SyntaxKind::BigIntLiteral)
             || self.is_token(SyntaxKind::TrueKeyword)
             || self.is_token(SyntaxKind::FalseKeyword)
         {
-            let lit = self.parse_literal_type();
-            // Handle array types of literal types (e.g., 1[], "foo"[], true[])
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, lit);
-            }
-            return lit;
+            return self.parse_literal_type();
         }
 
-        // Handle negative numeric literal types: -1, -42
         if self.is_token(SyntaxKind::MinusToken) {
-            let lit = self.parse_prefix_unary_literal_type();
-            // Handle array types of negative literal types (e.g., (-1)[])
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, lit);
-            }
-            return lit;
+            return self.parse_prefix_unary_literal_type();
         }
 
-        // Handle template literal types: `hello` or `prefix${T}suffix`
         if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
             || self.is_token(SyntaxKind::TemplateHead)
         {
-            let lit = self.parse_template_literal_type();
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, lit);
-            }
-            return lit;
+            return self.parse_template_literal_type();
         }
 
-        // Handle import types: import("./module") or import("./module").Type
         if self.is_token(SyntaxKind::ImportKeyword) {
-            let import_type = self.parse_import_type();
-            // Handle array type on import: import("./a")[]
-            if self.is_token(SyntaxKind::OpenBracketToken) {
-                return self.parse_array_type(start_pos, import_type);
-            }
-            return import_type;
+            return self.parse_import_type();
         }
 
-        // Check for type keywords (string, number, boolean, etc.)
-        // Also handle contextual keywords (await, yield) which are valid as type names
-        let first_name = match self.token() {
+        let first_name = self.parse_type_identifier_or_keyword();
+        let type_name = self.parse_qualified_name_rest(first_name);
+        let type_arguments = if self.is_less_than_or_compound() {
+            Some(self.parse_type_arguments())
+        } else {
+            None
+        };
+
+        self.arena.add_type_ref(
+            syntax_kind_ext::TYPE_REFERENCE,
+            start_pos,
+            self.token_end(),
+            crate::parser::node::TypeRefData {
+                type_name,
+                type_arguments,
+            },
+        )
+    }
+
+    fn parse_primary_type_array_suffix(
+        &mut self,
+        start_pos: u32,
+        base_type: NodeIndex,
+    ) -> NodeIndex {
+        if self.is_token(SyntaxKind::OpenBracketToken) {
+            self.parse_array_type(start_pos, base_type)
+        } else {
+            base_type
+        }
+    }
+
+    fn parse_parenthesized_type_or_function_type(&mut self) -> NodeIndex {
+        if self.look_ahead_is_function_type() {
+            return self.parse_function_type();
+        }
+
+        self.next_token();
+        let inner = self.parse_type();
+        self.parse_expected(SyntaxKind::CloseParenToken);
+        inner
+    }
+
+    fn parse_type_identifier_or_keyword(&mut self) -> NodeIndex {
+        match self.token() {
             SyntaxKind::StringKeyword
             | SyntaxKind::NumberKeyword
             | SyntaxKind::BooleanKeyword
@@ -499,44 +470,10 @@ impl ParserState {
             | SyntaxKind::ObjectKeyword
             | SyntaxKind::AwaitKeyword
             | SyntaxKind::YieldKeyword
-            | SyntaxKind::AssertsKeyword => {
-                // Parse keyword as identifier for type reference
-                self.parse_keyword_as_identifier()
-            }
+            | SyntaxKind::AssertsKeyword => self.parse_keyword_as_identifier(),
             SyntaxKind::PrivateIdentifier => self.parse_private_identifier(),
-            _ => {
-                // Regular identifier
-                self.parse_identifier()
-            }
-        };
-
-        // Handle qualified names (foo.Bar, A.B.C)
-        let type_name = self.parse_qualified_name_rest(first_name);
-
-        // Check for type arguments: Foo<T, U>
-        // Also handles Foo<<T>...> where `<<` must be split.
-        let type_arguments = if self.is_less_than_or_compound() {
-            Some(self.parse_type_arguments())
-        } else {
-            None
-        };
-
-        let base_type = self.arena.add_type_ref(
-            syntax_kind_ext::TYPE_REFERENCE,
-            start_pos,
-            self.token_end(),
-            crate::parser::node::TypeRefData {
-                type_name,
-                type_arguments,
-            },
-        );
-
-        // Handle array types (T[])
-        if self.is_token(SyntaxKind::OpenBracketToken) {
-            return self.parse_array_type(start_pos, base_type);
+            _ => self.parse_identifier(),
         }
-
-        base_type
     }
 
     /// Parse a single element in a tuple type, handling:
