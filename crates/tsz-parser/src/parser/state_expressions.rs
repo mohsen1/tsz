@@ -826,8 +826,19 @@ impl ParserState {
                 }
                 let operand = self.parse_unary_expression();
                 if operand.is_none() {
-                    // Emit TS1109 for incomplete unary expression: +[missing], ++[missing], etc.
-                    self.error_expression_expected();
+                    if is_update_operator {
+                        // For `++`/`--` with no operand (e.g., `a++ ++;`), emit TS1109
+                        // unconditionally. Bypass should_report_error() because `++;`
+                        // is a distinct syntactic unit — the TS1109 must not be
+                        // suppressed by a prior TS1005 for `';' expected` at `++`.
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "Expression expected.",
+                            diagnostic_codes::EXPRESSION_EXPECTED,
+                        );
+                    } else {
+                        self.error_expression_expected();
+                    }
                 }
                 let end_pos = self.token_end();
 
