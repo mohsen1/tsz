@@ -19,7 +19,7 @@ use tsz_solver::{
         PropertyPresenceKind, TypeParameterConstraintKind, UnionMembersKind,
         classify_for_constructor_instance, classify_for_literal_value, classify_for_non_object,
         classify_for_predicate_signature, classify_for_property_presence,
-        classify_for_type_parameter_constraint, classify_for_union_members,
+        classify_for_type_parameter_constraint, classify_for_union_members, is_narrowing_literal,
     },
 };
 
@@ -1019,7 +1019,14 @@ impl<'a> FlowAnalyzer<'a> {
                     _ => None,
                 }
             }
-            _ => None,
+            _ => {
+                // Fallback: look up the already-computed type for this expression.
+                // This handles enum member access (e.g., Types.Str), const enum members,
+                // and other expressions that evaluate to literal or enum types.
+                let node_types = self.node_types?;
+                let &type_id = node_types.get(&idx.0)?;
+                is_narrowing_literal(self.interner, type_id)
+            }
         }
     }
 
