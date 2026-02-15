@@ -2151,17 +2151,15 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_DISALLOW_IN;
         let initializer = if self.is_token(SyntaxKind::SemicolonToken) {
             NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::VarKeyword)
+            || self.is_token(SyntaxKind::LetKeyword)
+            || self.is_token(SyntaxKind::ConstKeyword)
+            || self.is_token(SyntaxKind::UsingKeyword)
+            || (self.is_token(SyntaxKind::AwaitKeyword) && self.look_ahead_is_await_using())
+        {
+            self.parse_for_variable_declaration()
         } else {
-            if self.is_token(SyntaxKind::VarKeyword)
-                || self.is_token(SyntaxKind::LetKeyword)
-                || self.is_token(SyntaxKind::ConstKeyword)
-                || self.is_token(SyntaxKind::UsingKeyword)
-                || (self.is_token(SyntaxKind::AwaitKeyword) && self.look_ahead_is_await_using())
-            {
-                self.parse_for_variable_declaration()
-            } else {
-                self.parse_expression()
-            }
+            self.parse_expression()
         };
         self.context_flags = saved_flags;
 
