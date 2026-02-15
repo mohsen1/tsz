@@ -563,7 +563,7 @@ pub fn default_build_info_path(config_path: &Path, out_dir: Option<&Path>) -> Pa
     } else {
         config_path
             .parent()
-            .unwrap_or(Path::new("."))
+            .unwrap_or_else(|| Path::new("."))
             .join(&build_info_name)
     }
 }

@@ -1208,13 +1208,15 @@ impl ParserState {
         if !initializer.is_none() {
             self.arena
                 .get(initializer)
-                .map_or(self.token_pos(), |n| n.end)
+                .map_or_else(|| self.token_pos(), |n| n.end)
         } else if !type_annotation.is_none() {
             self.arena
                 .get(type_annotation)
-                .map_or(self.token_pos(), |n| n.end)
+                .map_or_else(|| self.token_pos(), |n| n.end)
         } else {
-            self.arena.get(name).map_or(self.token_pos(), |n| n.end)
+            self.arena
+                .get(name)
+                .map_or_else(|| self.token_pos(), |n| n.end)
         };
         end_pos = end_pos.max(self.token_end()).max(start_pos);
         end_pos

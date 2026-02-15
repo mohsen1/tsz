@@ -402,7 +402,7 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
                         let local_name = get_identifier_text(arena, spec.name).unwrap_or_default();
                         let import_name = if !spec.property_name.is_none() {
                             get_identifier_text(arena, spec.property_name)
-                                .unwrap_or(local_name.clone())
+                                .unwrap_or_else(|| local_name.clone())
                         } else {
                             local_name.clone()
                         };

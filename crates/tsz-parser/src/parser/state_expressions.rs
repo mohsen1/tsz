@@ -3452,7 +3452,10 @@ impl ParserState {
                 self.arena
                     .add_token(SyntaxKind::NewKeyword as u16, start_pos, start_pos + 3);
             let name = self.parse_identifier_name();
-            let end_pos = self.arena.get(name).map_or(self.token_end(), |n| n.end);
+            let end_pos = self
+                .arena
+                .get(name)
+                .map_or_else(|| self.token_end(), |n| n.end);
             return self.arena.add_access_expr(
                 syntax_kind_ext::META_PROPERTY,
                 start_pos,
@@ -3476,7 +3479,7 @@ impl ParserState {
         let mut end_pos = self
             .arena
             .get(expression)
-            .map_or(self.token_end(), |node| node.end);
+            .map_or_else(|| self.token_end(), |node| node.end);
 
         // Parse type arguments: new Array<string>()
         // Use try_parse to handle ambiguity with comparison operators (e.g., new Date<A)

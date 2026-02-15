@@ -1290,7 +1290,10 @@ impl ParserState {
             };
             self.parse_expected(SyntaxKind::ColonToken);
             let value = self.parse_assignment_expression();
-            let attr_end = self.arena.get(value).map_or(self.token_end(), |n| n.end);
+            let attr_end = self
+                .arena
+                .get(value)
+                .map_or_else(|| self.token_end(), |n| n.end);
 
             let attr_node = self.arena.add_import_attribute(
                 syntax_kind_ext::IMPORT_ATTRIBUTE,

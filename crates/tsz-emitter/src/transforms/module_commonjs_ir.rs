@@ -175,7 +175,7 @@ impl<'a> CommonJsTransformContext<'a> {
                             get_identifier_text(self.arena, spec.name).unwrap_or_default();
                         let import_name = if !spec.property_name.is_none() {
                             get_identifier_text(self.arena, spec.property_name)
-                                .unwrap_or(local_name.clone())
+                                .unwrap_or_else(|| local_name.clone())
                         } else {
                             local_name.clone()
                         };
@@ -258,7 +258,7 @@ impl<'a> CommonJsTransformContext<'a> {
                         get_identifier_text(self.arena, spec.name).unwrap_or_default();
                     let import_name = if !spec.property_name.is_none() {
                         get_identifier_text(self.arena, spec.property_name)
-                            .unwrap_or(export_name.clone())
+                            .unwrap_or_else(|| export_name.clone())
                     } else {
                         export_name.clone()
                     };
