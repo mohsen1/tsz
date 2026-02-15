@@ -1274,18 +1274,10 @@ impl<'a> CheckerState<'a> {
         let overload_signatures = match classification {
             query::CallSignaturesKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
-                if shape.call_signatures.len() > 1 {
-                    Some(shape.call_signatures.clone())
-                } else {
-                    None
-                }
+                (shape.call_signatures.len() > 1).then(|| shape.call_signatures.clone())
             }
             query::CallSignaturesKind::MultipleSignatures(signatures) => {
-                if signatures.len() > 1 {
-                    Some(signatures)
-                } else {
-                    None
-                }
+                (signatures.len() > 1).then_some(signatures)
             }
             query::CallSignaturesKind::NoSignatures => None,
         };

@@ -1012,22 +1012,12 @@ impl<'a> Judge for DefaultJudge<'a> {
                     IndexKind::Number => shape.number_index.as_ref().map(|s| s.value_type),
                 }
             }
-            TypeData::Array(elem) => {
-                if kind == IndexKind::Number {
-                    Some(elem)
-                } else {
-                    None
-                }
-            }
-            TypeData::Tuple(list_id) => {
-                if kind == IndexKind::Number {
-                    let elements = self.db.tuple_list(list_id);
-                    let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
-                    Some(self.db.union(types))
-                } else {
-                    None
-                }
-            }
+            TypeData::Array(elem) => (kind == IndexKind::Number).then(|| elem),
+            TypeData::Tuple(list_id) => (kind == IndexKind::Number).then(|| {
+                let elements = self.db.tuple_list(list_id);
+                let types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
+                self.db.union(types)
+            }),
             _ => None,
         }
     }

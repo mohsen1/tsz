@@ -826,9 +826,8 @@ impl BinderState {
             return None;
         };
 
-        let mut consider = |sym_id: SymbolId| -> Option<SymbolId> {
-            if accept(sym_id) { Some(sym_id) } else { None }
-        };
+        let mut consider =
+            |sym_id: SymbolId| -> Option<SymbolId> { accept(sym_id).then(|| sym_id) };
 
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
             let mut iterations = 0;
@@ -1175,11 +1174,7 @@ impl BinderState {
         }
 
         // If no scope found, return the root scope (index 0) if it exists
-        if !self.scopes.is_empty() {
-            Some(ScopeId(0))
-        } else {
-            None
-        }
+        (!self.scopes.is_empty()).then_some(ScopeId(0))
     }
 
     /// Enter a new persistent scope (in addition to legacy scope chain).

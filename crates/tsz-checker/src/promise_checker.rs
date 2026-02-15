@@ -569,12 +569,7 @@ impl<'a> CheckerState<'a> {
         // Check if base is Generator, AsyncGenerator, Iterator, or AsyncIterator
         let is_generator_like = self.is_generator_like_base_type(app.base);
 
-        if is_generator_like {
-            // Return the second type argument (TReturn)
-            Some(app.args[1])
-        } else {
-            None
-        }
+        is_generator_like.then(|| app.args[1])
     }
 
     /// Extract the TYield type argument from Generator<Y, R, N> or AsyncGenerator<Y, R, N>.
@@ -588,11 +583,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if self.is_generator_like_base_type(app.base) {
-            Some(app.args[0])
-        } else {
-            None
-        }
+        self.is_generator_like_base_type(app.base)
+            .then(|| app.args[0])
     }
 
     /// Check if a type is a Generator-like base type (Generator, AsyncGenerator,

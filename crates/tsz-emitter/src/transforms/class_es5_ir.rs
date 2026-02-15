@@ -414,11 +414,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     return None;
                 }
                 // Include if has initializer
-                if !prop_data.initializer.is_none() {
-                    Some(member_idx)
-                } else {
-                    None
-                }
+                (!prop_data.initializer.is_none()).then(|| member_idx)
             })
             .collect();
 
@@ -1192,7 +1188,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 let body_source_range = self
                     .arena
                     .get(method_data.body)
-                    .map(|body_node| (body_node.pos as u32, body_node.end as u32));
+                    .map(|body_node| (body_node.pos, body_node.end));
 
                 let method_body = if is_async {
                     // Async method: use async transformer to build proper generator body
@@ -1298,10 +1294,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let accessor_node = self.arena.get(accessor_idx)?;
         let accessor_data = self.arena.get_accessor(accessor_node)?;
 
-        let body_source_range = self
-            .arena
-            .get(accessor_data.body)
-            .map(|n| (n.pos as u32, n.end as u32));
+        let body_source_range = self.arena.get(accessor_data.body).map(|n| (n.pos, n.end));
 
         let body = if accessor_data.body.is_none() {
             vec![]
@@ -1334,10 +1327,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let params = self.extract_parameters(&accessor_data.parameters);
 
-        let body_source_range = self
-            .arena
-            .get(accessor_data.body)
-            .map(|n| (n.pos as u32, n.end as u32));
+        let body_source_range = self.arena.get(accessor_data.body).map(|n| (n.pos, n.end));
 
         let body = if accessor_data.body.is_none() {
             vec![]
@@ -1426,7 +1416,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 let body_source_range = self
                     .arena
                     .get(method_data.body)
-                    .map(|body_node| (body_node.pos as u32, body_node.end as u32));
+                    .map(|body_node| (body_node.pos, body_node.end));
 
                 // Extract leading JSDoc comment
                 let leading_comment = self.extract_leading_comment(member_node);
@@ -2670,7 +2660,7 @@ impl<'a> AstToIr<'a> {
             let body_source_range = if !func.body.is_none() {
                 self.arena
                     .get(func.body)
-                    .map(|body_node| (body_node.pos as u32, body_node.end as u32))
+                    .map(|body_node| (body_node.pos, body_node.end))
             } else {
                 None
             };
@@ -2743,7 +2733,7 @@ impl<'a> AstToIr<'a> {
                             .iter()
                             .map(|&s| self.convert_statement(s))
                             .collect();
-                        let range = Some((body_node.pos as u32, body_node.end as u32));
+                        let range = Some((body_node.pos, body_node.end));
                         (stmts, false, range)
                     } else {
                         // Expression body
@@ -2793,11 +2783,8 @@ impl<'a> AstToIr<'a> {
                 let name = get_identifier_text(self.arena, param.name)?;
                 let rest = param.dot_dot_dot_token;
                 // Convert default value if present
-                let default_value = if !param.initializer.is_none() {
-                    Some(Box::new(self.convert_expression(param.initializer)))
-                } else {
-                    None
-                };
+                let default_value = (!param.initializer.is_none())
+                    .then(|| Box::new(self.convert_expression(param.initializer)));
                 Some(IRParam {
                     name,
                     rest,

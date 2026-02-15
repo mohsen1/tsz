@@ -1289,11 +1289,9 @@ impl ParserState {
         };
 
         // Parse optional type parameters: <T, U extends V>
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse parameters
         self.parse_expected(SyntaxKind::OpenParenToken);
@@ -1369,11 +1367,9 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
@@ -1505,11 +1501,9 @@ impl ParserState {
         };
 
         // Parse optional type parameters: <T, U extends V>
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse parameters
         self.parse_expected(SyntaxKind::OpenParenToken);
@@ -1579,11 +1573,9 @@ impl ParserState {
         };
 
         // Parse optional type parameters
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse heritage (extends/implements)
         let heritage = self.parse_heritage_clauses();
@@ -1945,11 +1937,9 @@ impl ParserState {
         };
 
         // Parse type parameters: class Foo<T, U> {}
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse heritage clauses (extends, implements)
         let heritage_clauses = self.parse_heritage_clauses();
@@ -2004,11 +1994,9 @@ impl ParserState {
         };
 
         // Parse type parameters: class Foo<T, U> {}
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse heritage clauses (extends, implements)
         let heritage_clauses = self.parse_heritage_clauses();
@@ -2058,11 +2046,9 @@ impl ParserState {
         };
 
         // Parse type parameters: abstract class Foo<T, U> {}
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse heritage clauses (extends, implements)
         let heritage_clauses = self.parse_heritage_clauses();
@@ -2101,11 +2087,9 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         let heritage_clauses = self.parse_heritage_clauses();
 
@@ -2161,11 +2145,9 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         let heritage_clauses = self.parse_heritage_clauses();
 
@@ -2375,11 +2357,9 @@ impl ParserState {
         };
 
         // Parse type parameters
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse heritage clauses (extends, implements)
         let heritage_clauses = self.parse_heritage_clauses();
@@ -2434,11 +2414,9 @@ impl ParserState {
         };
 
         // Parse type parameters
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+        let type_parameters = self
+            .is_token(SyntaxKind::LessThanToken)
+            .then(|| self.parse_type_parameters());
 
         // Parse heritage clauses (extends, implements)
         let heritage_clauses = self.parse_heritage_clauses();
@@ -3243,17 +3221,13 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ConstructorKeyword);
 
         // Check for type parameters on constructor (invalid but parse for better error reporting)
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-            // Report TS1092: Type parameters cannot appear on a constructor declaration
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
             self.parse_error_at_current_token(
                 "Type parameters cannot appear on a constructor declaration.",
                 diagnostic_codes::TYPE_PARAMETERS_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
             );
-            // Parse the type parameters for error recovery (will be validated later)
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+            self.parse_type_parameters()
+        });
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let saved_flags = self.context_flags;
@@ -3305,16 +3279,14 @@ impl ParserState {
 
         let name = self.parse_property_name();
 
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
                 diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
             );
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+            self.parse_type_parameters()
+        });
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
@@ -3385,16 +3357,14 @@ impl ParserState {
 
         let name = self.parse_property_name();
 
-        let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "An accessor cannot have type parameters.",
                 diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
             );
-            Some(self.parse_type_parameters())
-        } else {
-            None
-        };
+            self.parse_type_parameters()
+        });
 
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
@@ -3743,11 +3713,9 @@ impl ParserState {
             && !has_var_let_modifier
         {
             // Parse optional type parameters: foo<T, U>()
-            let type_parameters = if self.is_token(SyntaxKind::LessThanToken) {
-                Some(self.parse_type_parameters())
-            } else {
-                None
-            };
+            let type_parameters = self
+                .is_token(SyntaxKind::LessThanToken)
+                .then(|| self.parse_type_parameters());
 
             // Method
             self.parse_expected(SyntaxKind::OpenParenToken);

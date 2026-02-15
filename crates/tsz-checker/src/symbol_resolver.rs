@@ -162,7 +162,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_parser::parser::NodeIndex> {
         self.ctx.binder.symbols.get(sym_id).and_then(|symbol| {
             let decl = symbol.value_declaration;
-            if decl.0 != u32::MAX { Some(decl) } else { None }
+            (decl.0 != u32::MAX).then_some(decl)
         })
     }
 
@@ -1371,11 +1371,7 @@ impl<'a> CheckerState<'a> {
         };
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        if (symbol.flags & symbol_flags::TYPE) != 0 {
-            Some(sym_id.0)
-        } else {
-            None
-        }
+        ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id.0)
     }
 
     /// Resolve a value symbol for type lowering.

@@ -1185,11 +1185,7 @@ impl<'a> CheckerState<'a> {
                     }
                     let sym_id = binder.file_locals.get(ident_name)?;
                     let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                    if (symbol.flags & symbol_flags::TYPE) != 0 {
-                        Some(sym_id)
-                    } else {
-                        None
-                    }
+                    ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id)
                 };
 
                 let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
@@ -1334,11 +1330,7 @@ impl<'a> CheckerState<'a> {
                             }
                             let sym_id = binder.file_locals.get(ident_name)?;
                             let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                            if (symbol.flags & symbol_flags::TYPE) != 0 {
-                                Some(sym_id.0)
-                            } else {
-                                None
-                            }
+                            ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id.0)
                         };
                         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
                             self.resolve_value_symbol_for_lowering(node_idx)
@@ -1351,11 +1343,8 @@ impl<'a> CheckerState<'a> {
                                 }
                                 let sym_id = binder.file_locals.get(ident_name)?;
                                 let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                                if (symbol.flags & symbol_flags::TYPE) != 0 {
-                                    Some(self.ctx.get_or_create_def_id(sym_id))
-                                } else {
-                                    None
-                                }
+                                ((symbol.flags & symbol_flags::TYPE) != 0)
+                                    .then(|| self.ctx.get_or_create_def_id(sym_id))
                             };
 
                         let lowering = TypeLowering::with_hybrid_resolver(

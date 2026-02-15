@@ -148,7 +148,7 @@ impl TsLanguageService {
                                 },
                                 &self.source_text,
                             )
-                            .unwrap_or(0) as u32;
+                            .unwrap_or(0);
                         let end_offset = self
                             .line_map
                             .position_to_offset(
@@ -158,7 +158,7 @@ impl TsLanguageService {
                                 },
                                 &self.source_text,
                             )
-                            .unwrap_or(0) as u32;
+                            .unwrap_or(0);
                         TextSpanJson {
                             start: start_offset,
                             length: end_offset.saturating_sub(start_offset),
@@ -201,7 +201,7 @@ impl TsLanguageService {
                             start: self
                                 .line_map
                                 .position_to_offset(loc.range.start, &self.source_text)
-                                .unwrap_or(0) as u32,
+                                .unwrap_or(0),
                             length: (self
                                 .line_map
                                 .position_to_offset(loc.range.end, &self.source_text)
@@ -209,7 +209,7 @@ impl TsLanguageService {
                                 - self
                                     .line_map
                                     .position_to_offset(loc.range.start, &self.source_text)
-                                    .unwrap_or(0)) as u32,
+                                    .unwrap_or(0)),
                         },
                     })
                     .collect();
@@ -249,7 +249,7 @@ impl TsLanguageService {
                             start: self
                                 .line_map
                                 .position_to_offset(loc.range.start, &self.source_text)
-                                .unwrap_or(0) as u32,
+                                .unwrap_or(0),
                             length: (self
                                 .line_map
                                 .position_to_offset(loc.range.end, &self.source_text)
@@ -257,7 +257,7 @@ impl TsLanguageService {
                                 - self
                                     .line_map
                                     .position_to_offset(loc.range.start, &self.source_text)
-                                    .unwrap_or(0)) as u32,
+                                    .unwrap_or(0)),
                         },
                         is_write_access: false,
                         is_definition: false,

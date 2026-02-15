@@ -2235,11 +2235,7 @@ fn types_package_name(package_name: &str) -> String {
 /// Match an export pattern against a subpath
 fn match_export_pattern(pattern: &str, subpath: &str) -> Option<String> {
     if !pattern.contains('*') {
-        return if pattern == subpath {
-            Some(String::new())
-        } else {
-            None
-        };
+        return (pattern == subpath).then(|| String::new());
     }
 
     let parts: Vec<&str> = pattern.split('*').collect();
@@ -2267,11 +2263,7 @@ fn match_export_pattern(pattern: &str, subpath: &str) -> Option<String> {
 /// Match an imports pattern against a specifier (#-prefixed)
 fn match_imports_pattern(pattern: &str, specifier: &str) -> Option<String> {
     if !pattern.contains('*') {
-        return if pattern == specifier {
-            Some(String::new())
-        } else {
-            None
-        };
+        return (pattern == specifier).then(|| String::new());
     }
 
     // Strip # prefix for matching
@@ -2303,11 +2295,7 @@ fn match_imports_pattern(pattern: &str, specifier: &str) -> Option<String> {
 /// Match a typesVersions pattern against a subpath
 fn match_types_versions_pattern(pattern: &str, subpath: &str) -> Option<String> {
     if !pattern.contains('*') {
-        return if pattern == subpath {
-            Some(String::new())
-        } else {
-            None
-        };
+        return (pattern == subpath).then(|| String::new());
     }
 
     let star_pos = pattern.find('*')?;

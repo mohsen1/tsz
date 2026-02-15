@@ -1052,8 +1052,8 @@ impl<'a> CheckerState<'a> {
 
         // Check if this is a using/await using declaration list
         use tsz_parser::parser::flags::node_flags;
-        let is_using = (node.flags as u32 & node_flags::USING as u32) != 0;
-        let is_await_using = (node.flags as u32 & node_flags::AWAIT_USING as u32) != 0;
+        let is_using = (node.flags as u32 & node_flags::USING) != 0;
+        let is_await_using = (node.flags as u32 & node_flags::AWAIT_USING) != 0;
 
         // VariableDeclarationList uses the same VariableData structure
         if let Some(var_list) = self.ctx.arena.get_variable(node) {
@@ -3058,11 +3058,7 @@ impl<'a> CheckerState<'a> {
                     .filter_map(|&decl_idx| {
                         let constructor = self.ctx.arena.get_constructor_at(decl_idx)?;
                         // Only count constructors with a body as implementations
-                        if !constructor.body.is_none() {
-                            Some(decl_idx)
-                        } else {
-                            None
-                        }
+                        (!constructor.body.is_none()).then(|| decl_idx)
                     })
                     .collect();
 
@@ -3700,13 +3696,8 @@ impl<'a> CheckerState<'a> {
 
         let enum_declarations: Vec<NodeIndex> = declarations
             .iter()
-            .filter_map(|(decl_idx, flags)| {
-                if (flags & symbol_flags::ENUM) != 0 {
-                    Some(*decl_idx)
-                } else {
-                    None
-                }
-            })
+            .filter(|&(_decl_idx, flags)| (flags & symbol_flags::ENUM) != 0)
+            .map(|(decl_idx, _flags)| *decl_idx)
             .collect();
 
         if enum_declarations.len() <= 1 {

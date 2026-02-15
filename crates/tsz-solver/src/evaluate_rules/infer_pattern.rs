@@ -231,11 +231,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
         }
 
-        if checker.is_subtype_of(inferred, constraint) {
-            Some(inferred)
-        } else {
-            None
-        }
+        checker
+            .is_subtype_of(inferred, constraint)
+            .then(|| inferred)
     }
 
     /// Filter an inferred type by its constraint, returning undefined for non-matching parts.

@@ -596,7 +596,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let is_homomorphic = type_param_info(self.interner, idx)
                         .map(|param| param.name == mapped.type_param.name)
                         .unwrap_or(false);
-                    let source_object = if is_homomorphic { Some(obj) } else { None };
+                    let source_object = is_homomorphic.then_some(obj);
                     (source_object, is_homomorphic)
                 }
                 None => (None, false),

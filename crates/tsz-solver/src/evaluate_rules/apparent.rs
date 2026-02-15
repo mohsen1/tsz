@@ -75,15 +75,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         properties.sort_by_key(|a| a.name);
 
-        let number_index = if kind == IntrinsicKind::String {
-            Some(IndexSignature {
-                key_type: TypeId::NUMBER,
-                value_type: TypeId::STRING,
-                readonly: false,
-            })
-        } else {
-            None
-        };
+        let number_index = (kind == IntrinsicKind::String).then(|| IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: false,
+        });
 
         ObjectShape {
             flags: ObjectFlags::empty(),

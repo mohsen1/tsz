@@ -871,17 +871,13 @@ impl<'a> FlowGraphBuilder<'a> {
         let pre_finally_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
 
         // Push try context to track finally block for exit statements
-        let finally_ctx = if has_finally {
-            Some(FlowContext {
-                break_label: FlowNodeId::NONE, // Not used for try
-                continue_label: None,
-                context_type: FlowContextType::Try,
-                finally_block: try_data.finally_block,
-                label: NodeIndex::NONE,
-            })
-        } else {
-            None
-        };
+        let finally_ctx = has_finally.then_some(FlowContext {
+            break_label: FlowNodeId::NONE, // Not used for try
+            continue_label: None,
+            context_type: FlowContextType::Try,
+            finally_block: try_data.finally_block,
+            label: NodeIndex::NONE,
+        });
 
         if let Some(ctx) = finally_ctx {
             self.flow_stack.push(ctx);

@@ -268,13 +268,7 @@ impl<'a> SemanticTokensProvider<'a> {
             {
                 self.arena
                     .get_function(parent)
-                    .and_then(|f| {
-                        if f.name == ident_idx {
-                            Some(true)
-                        } else {
-                            None
-                        }
-                    })
+                    .and_then(|f| (f.name == ident_idx).then(|| true))
                     .unwrap_or(false)
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION

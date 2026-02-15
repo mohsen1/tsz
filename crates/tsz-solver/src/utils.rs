@@ -158,11 +158,7 @@ pub trait TypeIdExt {
 impl TypeIdExt for TypeId {
     #[inline]
     fn non_never(self) -> Option<Self> {
-        if self != TypeId::NEVER {
-            Some(self)
-        } else {
-            None
-        }
+        (self != TypeId::NEVER).then(|| self)
     }
 }
 

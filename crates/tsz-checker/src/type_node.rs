@@ -1057,11 +1057,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                         .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                         .and_then(|param| {
-                            if !param.type_annotation.is_none() {
-                                Some(self.check(param.type_annotation))
-                            } else {
-                                None
-                            }
+                            (!param.type_annotation.is_none())
+                                .then(|| self.check(param.type_annotation))
                         })
                         .unwrap_or(TypeId::UNKNOWN);
                     if let Some(existing) = properties.iter_mut().find(|p| p.name == name_atom) {
@@ -1299,11 +1296,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                 // Check for 'this' parameter
                 if name == "this" {
-                    this_type = if !param_data.type_annotation.is_none() {
-                        Some(self.check(param_data.type_annotation))
-                    } else {
-                        None
-                    };
+                    this_type = (!param_data.type_annotation.is_none())
+                        .then(|| self.check(param_data.type_annotation));
                     continue;
                 }
 
