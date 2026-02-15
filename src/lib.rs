@@ -2298,15 +2298,11 @@ pub fn compare_strings_case_sensitive(a: Option<String>, b: Option<String>) -> C
         (None, None) => Comparison::EqualTo,
         (None, Some(_)) => Comparison::LessThan,
         (Some(_), None) => Comparison::GreaterThan,
-        (Some(a), Some(b)) => {
-            if a == b {
-                Comparison::EqualTo
-            } else if a < b {
-                Comparison::LessThan
-            } else {
-                Comparison::GreaterThan
-            }
-        }
+        (Some(a), Some(b)) => match a.cmp(&b) {
+            std::cmp::Ordering::Equal => Comparison::EqualTo,
+            std::cmp::Ordering::Less => Comparison::LessThan,
+            std::cmp::Ordering::Greater => Comparison::GreaterThan,
+        },
     }
 }
 

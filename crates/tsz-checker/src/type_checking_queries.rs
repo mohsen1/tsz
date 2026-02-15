@@ -2938,16 +2938,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut lib_type_id = if lib_types.len() == 1 {
-            Some(lib_types[0])
-        } else if lib_types.len() > 1 {
-            let mut merged = lib_types[0];
-            for &ty in &lib_types[1..] {
-                merged = factory.intersection(vec![merged, ty]);
+        let mut lib_type_id = match lib_types.len() {
+            1 => Some(lib_types[0]),
+            n if n > 1 => {
+                let mut merged = lib_types[0];
+                for &ty in &lib_types[1..] {
+                    merged = factory.intersection(vec![merged, ty]);
+                }
+                Some(merged)
             }
-            Some(merged)
-        } else {
-            None
+            _ => None,
         };
 
         // Merge global augmentations (same as resolve_lib_type_by_name)
