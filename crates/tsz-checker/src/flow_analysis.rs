@@ -1417,29 +1417,29 @@ impl<'a> CheckerState<'a> {
             }
 
             // Filter source members: keep only those where the sibling's property type
-            // is assignable to the narrowed sibling type
-            let is_object = !sib_info.property_name.is_empty();
-            remaining_members.retain(|&member| {
-                let member_prop_type = if is_object {
-                    if let Some(shape) = object_shape_for_type(self.ctx.types, member) {
-                        shape
-                            .properties
-                            .iter()
-                            .find(|p| {
-                                self.ctx.types.resolve_atom_ref(p.name).as_ref()
-                                    == sib_info.property_name
-                            })
-                            .map(|p| p.type_id)
-                    } else {
-                        None
+            // is assignable to the narrowed sibling type.
+            let member_binding_type = |member: TypeId,
+                                       binding: &crate::context::DestructuredBindingInfo|
+             -> Option<TypeId> {
+                if !binding.property_name.is_empty() {
+                    let mut current = member;
+                    for segment in binding.property_name.split('.') {
+                        let shape = object_shape_for_type(self.ctx.types, current)?;
+                        let prop = shape.properties.iter().find(|p| {
+                            self.ctx.types.resolve_atom_ref(p.name).as_ref() == segment
+                        })?;
+                        current = prop.type_id;
                     }
+                    Some(current)
                 } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, member) {
-                    elems
-                        .get(sib_info.element_index as usize)
-                        .map(|e| e.type_id)
+                    elems.get(binding.element_index as usize).map(|e| e.type_id)
                 } else {
                     None
-                };
+                }
+            };
+
+            remaining_members.retain(|&member| {
+                let member_prop_type = member_binding_type(member, sib_info);
 
                 if let Some(prop_type) = member_prop_type {
                     // Keep this member if the sibling's narrowed type overlaps
@@ -1471,23 +1471,34 @@ impl<'a> CheckerState<'a> {
         }
 
         // Re-derive this symbol's property type from the remaining source members
-        let is_object = !info.property_name.is_empty();
         let mut result_types = Vec::new();
         for member in &remaining_members {
-            if is_object {
-                if let Some(shape) = object_shape_for_type(self.ctx.types, *member) {
-                    for prop in &shape.properties {
-                        if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == info.property_name
-                        {
-                            result_types.push(prop.type_id);
-                            break;
-                        }
+            let member_prop_type = if !info.property_name.is_empty() {
+                let mut current = *member;
+                let mut resolved = Some(current);
+                for segment in info.property_name.split('.') {
+                    resolved = object_shape_for_type(self.ctx.types, current).and_then(|shape| {
+                        shape
+                            .properties
+                            .iter()
+                            .find(|p| self.ctx.types.resolve_atom_ref(p.name).as_ref() == segment)
+                            .map(|p| p.type_id)
+                    });
+                    if let Some(next) = resolved {
+                        current = next;
+                    } else {
+                        break;
                     }
                 }
-            } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, *member)
-                && let Some(e) = elems.get(info.element_index as usize)
-            {
-                result_types.push(e.type_id);
+                resolved
+            } else if let Some(elems) = tuple_elements_for_type(self.ctx.types, *member) {
+                elems.get(info.element_index as usize).map(|e| e.type_id)
+            } else {
+                None
+            };
+
+            if let Some(ty) = member_prop_type {
+                result_types.push(ty);
             }
         }
 

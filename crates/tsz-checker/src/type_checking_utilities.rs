@@ -161,6 +161,58 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Record destructured parameter binding groups for correlated narrowing.
+    ///
+    /// This enables cases like:
+    /// `function f({ data, isSuccess }: Result) { if (isSuccess) data... }`
+    /// where narrowing one binding should narrow sibling bindings from the same source union.
+    pub(crate) fn record_destructured_parameter_binding_groups(
+        &mut self,
+        params: &[NodeIndex],
+        param_types: &[Option<TypeId>],
+    ) {
+        use crate::query_boundaries::state_checking as query;
+
+        for (i, &param_idx) in params.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+
+            let is_binding_pattern = name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+            if !is_binding_pattern {
+                continue;
+            }
+
+            let Some(param_type) = param_types.get(i).and_then(|t| *t) else {
+                continue;
+            };
+            if param_type == TypeId::UNKNOWN || param_type == TypeId::ERROR {
+                continue;
+            }
+
+            let resolved_for_union = self.evaluate_type_for_assignability(param_type);
+            if query::union_members(self.ctx.types, resolved_for_union).is_none() {
+                continue;
+            }
+
+            // Parameters with binding patterns are treated as stable for correlated
+            // narrowing, matching TypeScript's alias-aware flow behavior.
+            self.record_destructured_binding_group(
+                param.name,
+                resolved_for_union,
+                true,
+                name_node.kind,
+            );
+        }
+    }
+
     // ============================================================================
     // Section 53: Type and Symbol Utilities
     // ============================================================================
@@ -1793,9 +1845,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if let Some(comment_scope) = self.function_scope_for_position(comment.pos)
-                && !anchor_scopes.contains(&comment_scope) {
-                    continue;
-                }
+                && !anchor_scopes.contains(&comment_scope)
+            {
+                continue;
+            }
 
             let content = get_jsdoc_content(comment, source_text);
             for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
@@ -1816,13 +1869,14 @@ impl<'a> CheckerState<'a> {
             if !node.is_function_like() {
                 continue;
             }
-            if node.pos <= pos && pos <= node.end
+            if node.pos <= pos
+                && pos <= node.end
                 && best
                     .as_ref()
                     .is_none_or(|(best_pos, _)| *best_pos < node.pos)
-                {
-                    best = Some((node.pos, NodeIndex(idx as u32)));
-                }
+            {
+                best = Some((node.pos, NodeIndex(idx as u32)));
+            }
         }
 
         best.map(|(_, idx)| idx)
