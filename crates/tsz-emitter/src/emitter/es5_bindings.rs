@@ -1025,7 +1025,6 @@ impl<'a> Printer<'a> {
         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
             tracing::debug!("emit_es5_destructuring_with_read_node entered");
         }
-
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
             return;
         };
@@ -1154,7 +1153,7 @@ impl<'a> Printer<'a> {
                                 elem_source
                             );
                         }
-                        self.write(", ");
+                         self.write(", ");
                         let source_expr = if elem.initializer.is_none() {
                             elem_source
                         } else {

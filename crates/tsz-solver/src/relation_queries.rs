@@ -135,7 +135,6 @@ pub fn query_relation_with_resolver<'a, R: TypeResolver>(
 }
 
 /// Query a relation using a custom resolver and checker-provided overrides.
-#[allow(clippy::too_many_arguments)]
 pub fn query_relation_with_overrides<
     'a,
     R: TypeResolver,
