@@ -288,7 +288,8 @@ impl<'a> CheckerState<'a> {
         signatures: &[tsz_solver::CallSignature],
         force_bivariant_callbacks: bool,
     ) -> Option<TypeId> {
-        use tsz_solver::{CallResult, FunctionShape};
+        use tsz_solver::FunctionShape;
+        use tsz_solver::operations::CallResult;
 
         if signatures.is_empty() {
             return None;
