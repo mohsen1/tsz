@@ -2401,16 +2401,25 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenParenToken);
         let argument = self.parse_assignment_expression();
 
-        // Optional second argument (import attributes in some proposals)
+        // Optional second argument (import attributes/assertions)
         let options = if self.parse_optional(SyntaxKind::CommaToken) {
             if self.is_token(SyntaxKind::CloseParenToken) {
-                None // Trailing comma
+                None // Trailing comma after first arg
             } else {
                 Some(self.parse_assignment_expression())
             }
         } else {
             None
         };
+
+        // Consume trailing comma and any excess arguments to avoid
+        // cascading TS1005 parse errors. The checker validates arity.
+        while self.parse_optional(SyntaxKind::CommaToken) {
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                break; // Trailing comma
+            }
+            self.parse_assignment_expression();
+        }
 
         let end_pos = self.token_end();
         self.parse_expected(SyntaxKind::CloseParenToken);
