@@ -4567,17 +4567,10 @@ impl<'a> CheckerState<'a> {
 
             // Use TS2524 if there's a constructor (definite assignment analysis)
             // Use TS2564 if no constructor (just missing initializer)
-            let (message, code) = if constructor_body.is_some() {
-                (
-                    diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
-                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
-                )
-            } else {
-                (
-                    diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
-                    diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
-                )
-            };
+            let (message, code) = (
+                diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+                diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+            );
 
             self.error_at_node(name_node, &format_message(message, &[&name]), code);
         }

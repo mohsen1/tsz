@@ -2435,9 +2435,9 @@ fn collect_diagnostics(
             // Build resolved_modules set for backward compatibility
             let mut resolved_modules = rustc_hash::FxHashSet::default();
             for (specifier, _, _) in &module_specifiers {
-                if resolved_module_specifiers.contains(&(file_idx, specifier.clone())) {
-                    resolved_modules.insert(specifier.clone());
-                } else if resolved_module_paths.contains_key(&(file_idx, specifier.clone())) {
+                if resolved_module_specifiers.contains(&(file_idx, specifier.clone()))
+                    || resolved_module_paths.contains_key(&(file_idx, specifier.clone()))
+                {
                     resolved_modules.insert(specifier.clone());
                 } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone())) {
                     if let Some(resolved) = resolve_module_specifier(

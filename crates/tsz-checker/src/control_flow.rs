@@ -1161,19 +1161,7 @@ impl<'a> FlowAnalyzer<'a> {
                     // All antecedents processed - compute result (all must be true)
                     results.iter().all(|&r| r)
                 }
-            } else if flow.has_any_flags(flow_flags::LOOP_LABEL) {
-                if let Some(&ant) = flow.antecedent.first() {
-                    if let Some(&ant_result) = local_cache.get(&ant) {
-                        ant_result
-                    } else {
-                        add_to_worklist(ant, &mut worklist, &mut in_worklist);
-                        waiting_for.entry(current_flow).or_default().insert(ant);
-                        continue;
-                    }
-                } else {
-                    false
-                }
-            } else if flow.has_any_flags(flow_flags::CONDITION) {
+            } else if flow.has_any_flags(flow_flags::LOOP_LABEL | flow_flags::CONDITION) {
                 if let Some(&ant) = flow.antecedent.first() {
                     if let Some(&ant_result) = local_cache.get(&ant) {
                         ant_result
