@@ -833,6 +833,7 @@ impl<'a> CheckerState<'a> {
     ///   set(key: K, value: V): void;
     /// }
     /// ```
+    #[allow(clippy::type_complexity)]
     pub(crate) fn push_type_parameters(
         &mut self,
         type_parameters: &Option<tsz_parser::parser::NodeList>,

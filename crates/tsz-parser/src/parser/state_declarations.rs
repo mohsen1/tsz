@@ -580,10 +580,17 @@ impl ParserState {
             );
         }
 
-        // Parse colon and parameter type
-        self.parse_expected(SyntaxKind::ColonToken);
-        let param_type_token = self.token();
-        let param_type = self.parse_type();
+        // Parse colon and parameter type.
+        // After a rest parameter (`[...a]`), the `:type` may be missing —
+        // skip it to avoid cascading TS1005/TS1110.
+        let (param_type, param_type_token) =
+            if dot_dot_dot_token && self.is_token(SyntaxKind::CloseBracketToken) {
+                (NodeIndex::NONE, SyntaxKind::Unknown)
+            } else {
+                self.parse_expected(SyntaxKind::ColonToken);
+                let tok = self.token();
+                (self.parse_type(), tok)
+            };
 
         // TS1020: initializer in index signature
         let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {

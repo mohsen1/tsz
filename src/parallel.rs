@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 //! Parallel Processing Module
 //!
 //! Provides parallel file parsing and processing using Rayon.
