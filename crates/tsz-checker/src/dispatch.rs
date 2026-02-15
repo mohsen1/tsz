@@ -182,6 +182,34 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         Some(self.type_node_includes_undefined(first_arg))
     }
 
+    /// Get the declared generator type (`Generator<TYield, TReturn, TNext>`) for the enclosing generator function.
+    /// Returns `None` if not in a generator or if the generator has no explicit type annotation.
+    fn get_expected_generator_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let enclosing_fn_idx = self.checker.find_enclosing_function(idx)?;
+        let fn_node = self.checker.ctx.arena.get(enclosing_fn_idx)?;
+
+        let declared_return_type_node =
+            if let Some(func) = self.checker.ctx.arena.get_function(fn_node) {
+                if !func.asterisk_token || func.type_annotation.is_none() {
+                    return None;
+                }
+                func.type_annotation
+            } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node) {
+                if !method.asterisk_token || method.type_annotation.is_none() {
+                    return None;
+                }
+                method.type_annotation
+            } else {
+                return None;
+            };
+
+        // Get the declared generator type
+        let declared_return_type = self
+            .checker
+            .get_type_from_type_node(declared_return_type_node);
+        Some(declared_return_type)
+    }
+
     fn get_type_of_yield_expression(&mut self, idx: NodeIndex) -> TypeId {
         let Some(node) = self.checker.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -256,6 +284,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 && expected_yield_type != TypeId::ANY
                 && expected_yield_type != TypeId::UNKNOWN
                 && expected_yield_type != TypeId::ERROR
+                && expected_yield_type != TypeId::VOID  // Allow bare yield for void
                 && !syntactic_yield_allows_undefined
                 && !self.checker.type_includes_undefined(expected_yield_type)
                 && !self
@@ -292,8 +321,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         }
 
         // TypeScript models `yield` result type as the value received by `.next(...)` (TNext).
-        // We currently use `any` here until full Generator<TYield, TReturn, TNext>
-        // flow is threaded through expression typing.
+        // Extract TNext from Generator<TYield, TReturn, TNext> or AsyncGenerator<TYield, TReturn, TNext>.
+        if let Some(generator_type) = self.get_expected_generator_type(idx) {
+            // Use contextual helper to extract TNext (argument index 2)
+            let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                self.checker.ctx.types,
+                generator_type,
+            );
+            if let Some(next_type) = ctx.get_generator_next_type() {
+                return next_type;
+            }
+        }
+
+        // Fallback to `any` if no generator context is available
         TypeId::ANY
     }
 
