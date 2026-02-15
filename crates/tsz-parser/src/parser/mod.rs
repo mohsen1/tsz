@@ -59,8 +59,8 @@ pub use node::NodeArena;
 // Parser implementation (NodeArena-based).
 pub use state::{ParseDiagnostic, ParserState};
 
-/// Extended SyntaxKind values for AST nodes that are not tokens.
-/// These match TypeScript's SyntaxKind enum values exactly.
+/// Extended `SyntaxKind` values for AST nodes that are not tokens.
+/// These match TypeScript's `SyntaxKind` enum values exactly.
 pub mod syntax_kind_ext {
     // First AST node kinds (after tokens, starting at 167)
     pub const QUALIFIED_NAME: u16 = 167;

@@ -1,4 +1,4 @@
-//! Parser - Cache-optimized parser using NodeArena
+//! Parser - Cache-optimized parser using `NodeArena`
 //!
 //! This parser uses the Node architecture (16 bytes per node vs 208 bytes)
 //! for 13x better cache locality. It produces the same AST semantically
@@ -6,8 +6,10 @@
 //!
 //! # Architecture
 //!
-//! - Uses NodeArena instead of NodeArena
+//! - Uses `NodeArena` instead of `NodeArena`
 //! - Each node is 16 bytes (vs 208 bytes for fat Node enum)
+
+#![allow(clippy::too_many_lines)]
 
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
@@ -86,8 +88,8 @@ pub struct IncrementalParseResult {
 /// - Too large: Genuine secondary errors are suppressed
 const ERROR_SUPPRESSION_DISTANCE: u32 = 3;
 
-/// This parser produces the same AST semantically as ParserState,
-/// but uses the cache-optimized NodeArena for storage.
+/// This parser produces the same AST semantically as `ParserState`,
+/// but uses the cache-optimized `NodeArena` for storage.
 pub struct ParserState {
     /// The scanner for tokenizing
     pub(crate) scanner: ScannerState,
@@ -113,7 +115,22 @@ pub struct ParserState {
 }
 
 impl ParserState {
+    #[inline]
+    #[must_use]
+    pub(crate) fn u32_from_usize(&self, value: usize) -> u32 {
+        let _ = self;
+        u32::try_from(value).expect("parser offsets must fit in u32")
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn u16_from_node_flags(&self, value: u32) -> u16 {
+        let _ = self;
+        u16::try_from(value).expect("parser node flags must fit in u16")
+    }
+
     /// Create a new Parser for the given source text.
+    #[must_use]
     pub fn new(file_name: String, source_text: String) -> ParserState {
         let estimated_nodes = source_text.len() / 20; // Rough estimate
         // Zero-copy: Pass source_text directly to scanner without cloning
@@ -165,7 +182,7 @@ impl ParserState {
     /// Centralized error suppression heuristic
     ///
     /// Prevents cascading errors by suppressing error reports if we've already
-    /// emitted an error recently (within ERROR_SUPPRESSION_DISTANCE tokens).
+    /// emitted an error recently (within `ERROR_SUPPRESSION_DISTANCE` tokens).
     ///
     /// This standardizes the inconsistency where:
     /// - `parse_expected()` uses strict equality `!=`
@@ -195,7 +212,10 @@ impl ParserState {
 
     /// Check if we're in a JSX file (.tsx or .jsx)
     pub(crate) fn is_jsx_file(&self) -> bool {
-        self.file_name.ends_with(".tsx") || self.file_name.ends_with(".jsx")
+        std::path::Path::new(&self.file_name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("tsx") || ext.eq_ignore_ascii_case("jsx"))
     }
 
     /// Get current token
@@ -207,13 +227,13 @@ impl ParserState {
     /// Get current token position
     #[inline]
     pub(crate) fn token_pos(&self) -> u32 {
-        self.scanner.get_token_start() as u32
+        self.u32_from_usize(self.scanner.get_token_start())
     }
 
     /// Get current token end position
     #[inline]
     pub(crate) fn token_end(&self) -> u32 {
-        self.scanner.get_token_end() as u32
+        self.u32_from_usize(self.scanner.get_token_end())
     }
 
     /// Advance to next token
@@ -223,7 +243,7 @@ impl ParserState {
     }
 
     /// Consume a keyword token, checking for TS1260 (keywords cannot contain escape characters).
-    /// Call this instead of next_token() when consuming a keyword in a keyword position.
+    /// Call this instead of `next_token()` when consuming a keyword in a keyword position.
     pub(crate) fn consume_keyword(&mut self) {
         self.check_keyword_with_escape();
         self.next_token();
@@ -241,8 +261,8 @@ impl ParserState {
         if (flags & TokenFlags::UnicodeEscape as u32) != 0 {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
-                self.scanner.get_token_start() as u32,
-                (self.scanner.get_token_end() - self.scanner.get_token_start()) as u32,
+                self.u32_from_usize(self.scanner.get_token_start()),
+                self.u32_from_usize(self.scanner.get_token_end() - self.scanner.get_token_start()),
                 "Keywords cannot contain escape characters.",
                 diagnostic_codes::KEYWORDS_CANNOT_CONTAIN_ESCAPE_CHARACTERS,
             );
@@ -397,7 +417,7 @@ impl ParserState {
 
     /// Parse expected token, report error if not found
     /// Suppresses error if we already emitted an error at the current position
-    /// (to prevent cascading errors from sequential parse_expected calls)
+    /// (to prevent cascading errors from sequential `parse_expected` calls)
     pub fn parse_expected(&mut self, kind: SyntaxKind) -> bool {
         if self.is_token(kind) {
             // Check for TS1260 if consuming a keyword
@@ -472,7 +492,7 @@ impl ParserState {
         }
     }
 
-    /// Convert SyntaxKind to human-readable token string
+    /// Convert `SyntaxKind` to human-readable token string
     pub(crate) fn token_to_string(kind: SyntaxKind) -> &'static str {
         match kind {
             SyntaxKind::OpenBraceToken => "{",
@@ -517,8 +537,8 @@ impl ParserState {
 
     /// Report parse error at current token with specific error code
     pub fn parse_error_at_current_token(&mut self, message: &str, code: u32) {
-        let start = self.scanner.get_token_start() as u32;
-        let end = self.scanner.get_token_end() as u32;
+        let start = self.u32_from_usize(self.scanner.get_token_start());
+        let end = self.u32_from_usize(self.scanner.get_token_end());
         self.parse_error_at(start, end - start, message, code);
     }
 
@@ -583,7 +603,7 @@ impl ParserState {
         let content_start = token_start + content_start_offset;
 
         let len = raw.len();
-        let err_len = |offset: usize| if offset < len { 1 } else { 0 };
+        let err_len = |offset: usize| u32::from(offset < len);
         let mut i = 0usize;
 
         while i < raw.len() {
@@ -602,14 +622,14 @@ impl ParserState {
                     let second = i + 3;
                     if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
                         self.parse_error_at(
-                            (content_start + first) as u32,
+                            self.u32_from_usize(content_start + first),
                             err_len(first),
                             diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                             diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                         );
                     } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
                         self.parse_error_at(
-                            (content_start + second) as u32,
+                            self.u32_from_usize(content_start + second),
                             err_len(second),
                             diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                             diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
@@ -620,7 +640,7 @@ impl ParserState {
                 b'u' => {
                     if i + 2 >= raw.len() {
                         self.parse_error_at(
-                            (content_start + i + 2) as u32,
+                            self.u32_from_usize(content_start + i + 2),
                             err_len(i + 2),
                             diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                             diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
@@ -639,7 +659,7 @@ impl ParserState {
 
                         if close >= raw.len() {
                             self.parse_error_at(
-                                (content_start + close) as u32,
+                                self.u32_from_usize(content_start + close),
                                 0,
                                 diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
                                 diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
@@ -647,7 +667,7 @@ impl ParserState {
                         } else if raw[close] == b'}' {
                             if !has_digit {
                                 self.parse_error_at(
-                                    (content_start + close) as u32,
+                                    self.u32_from_usize(content_start + close),
                                     1,
                                     diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                     diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
@@ -655,14 +675,14 @@ impl ParserState {
                             }
                         } else if !has_digit {
                             self.parse_error_at(
-                                (content_start + i + 3) as u32,
+                                self.u32_from_usize(content_start + i + 3),
                                 1,
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
                         } else {
                             self.parse_error_at(
-                                (content_start + close) as u32,
+                                self.u32_from_usize(content_start + close),
                                 1,
                                 diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
                                 diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
@@ -677,28 +697,28 @@ impl ParserState {
                         let fourth = i + 5;
                         if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
                             self.parse_error_at(
-                                (content_start + first) as u32,
+                                self.u32_from_usize(content_start + first),
                                 err_len(first),
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
                         } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
                             self.parse_error_at(
-                                (content_start + second) as u32,
+                                self.u32_from_usize(content_start + second),
                                 err_len(second),
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
                         } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
                             self.parse_error_at(
-                                (content_start + third) as u32,
+                                self.u32_from_usize(content_start + third),
                                 err_len(third),
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
                         } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
                             self.parse_error_at(
-                                (content_start + fourth) as u32,
+                                self.u32_from_usize(content_start + fourth),
                                 err_len(fourth),
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
@@ -795,15 +815,15 @@ impl ParserState {
                     let second = j + 3;
                     if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
                         self.parse_error_at(
-                            (body_start + first) as u32,
-                            if first < raw.len() { 1 } else { 0 },
+                            self.u32_from_usize(body_start + first),
+                            u32::from(first < raw.len()),
                             diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                             diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                         );
                     } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
                         self.parse_error_at(
-                            (body_start + second) as u32,
-                            if second < raw.len() { 1 } else { 0 },
+                            self.u32_from_usize(body_start + second),
+                            u32::from(second < raw.len()),
                             diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                             diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                         );
@@ -821,7 +841,7 @@ impl ParserState {
 
                         if close >= raw.len() {
                             self.parse_error_at(
-                                (body_start + close) as u32,
+                                self.u32_from_usize(body_start + close),
                                 0,
                                 diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
                                 diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
@@ -830,7 +850,7 @@ impl ParserState {
                         } else if raw[close] == b'}' {
                             if !has_digit {
                                 self.parse_error_at(
-                                    (body_start + close) as u32,
+                                    self.u32_from_usize(body_start + close),
                                     1,
                                     diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                     diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
@@ -838,20 +858,20 @@ impl ParserState {
                             }
                         } else if !has_digit {
                             self.parse_error_at(
-                                (body_start + j + 3) as u32,
+                                self.u32_from_usize(body_start + j + 3),
                                 1,
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
                         } else {
                             self.parse_error_at(
-                                (body_start + close) as u32,
+                                self.u32_from_usize(body_start + close),
                                 1,
                                 diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
                                 diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
                             );
                             self.parse_error_at(
-                                (body_start + close) as u32,
+                                self.u32_from_usize(body_start + close),
                                 1,
                                 diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
                                 diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
@@ -865,29 +885,29 @@ impl ParserState {
                         let fourth = j + 5;
                         if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
                             self.parse_error_at(
-                                (body_start + first) as u32,
-                                if first < raw.len() { 1 } else { 0 },
+                                self.u32_from_usize(body_start + first),
+                                u32::from(first < raw.len()),
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
                         } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
                             self.parse_error_at(
-                                (body_start + second) as u32,
-                                if second < raw.len() { 1 } else { 0 },
+                                self.u32_from_usize(body_start + second),
+                                u32::from(second < raw.len()),
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
                         } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
                             self.parse_error_at(
-                                (body_start + third) as u32,
-                                if third < raw.len() { 1 } else { 0 },
+                                self.u32_from_usize(body_start + third),
+                                u32::from(third < raw.len()),
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
                         } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
                             self.parse_error_at(
-                                (body_start + fourth) as u32,
-                                if fourth < raw.len() { 1 } else { 0 },
+                                self.u32_from_usize(body_start + fourth),
+                                u32::from(fourth < raw.len()),
                                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                             );
@@ -953,7 +973,7 @@ impl ParserState {
     }
 
     /// Check if current token is a reserved word that cannot be used as an identifier
-    /// Reserved words are keywords from BreakKeyword through WithKeyword
+    /// Reserved words are keywords from `BreakKeyword` through `WithKeyword`
     #[inline]
     pub(crate) fn is_reserved_word(&self) -> bool {
         // Match TypeScript's isReservedWord logic:
@@ -1013,8 +1033,7 @@ impl ParserState {
             let word = self.current_keyword_text();
             self.parse_error_at_current_token(
                 &format!(
-                    "Identifier expected. '{}' is a reserved word that cannot be used here.",
-                    word
+                    "Identifier expected. '{word}' is a reserved word that cannot be used here."
                 ),
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
             );
@@ -1031,7 +1050,7 @@ impl ParserState {
         if self.should_report_error() {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
-                &format!("'{}' expected", token),
+                &format!("'{token}' expected"),
                 diagnostic_codes::EXPECTED,
             );
         }
@@ -1097,8 +1116,9 @@ impl ParserState {
             // Check if it's a variable statement (not a block)
             if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
                 // Check if it has using or await using flags
-                let is_using =
-                    (node.flags & (node_flags::USING as u16 | node_flags::AWAIT_USING as u16)) != 0;
+                let is_using = (node.flags
+                    & self.u16_from_node_flags(node_flags::USING | node_flags::AWAIT_USING))
+                    != 0;
                 if is_using {
                     // Emit TS1156 error at the statement position
                     self.parse_error_at(
@@ -1182,8 +1202,8 @@ impl ParserState {
             (node.pos, node.end)
         } else {
             (
-                self.scanner.get_token_start() as u32,
-                self.scanner.get_token_end() as u32,
+                self.u32_from_usize(self.scanner.get_token_start()),
+                self.u32_from_usize(self.scanner.get_token_end()),
             )
         };
         let len = end - pos;
@@ -1317,7 +1337,7 @@ impl ParserState {
     /// 3. At EOF
     /// 4. After line break (no additional checks!)
     ///
-    /// Note: This matches TypeScript's canParseSemicolon() implementation exactly.
+    /// Note: This matches TypeScript's `canParseSemicolon()` implementation exactly.
     /// The previous "enhanced" ASI with statement start checks was causing
     /// false-positive TS1005 errors because it was more restrictive than TypeScript.
     pub(crate) fn can_parse_semicolon(&self) -> bool {
@@ -1404,86 +1424,77 @@ impl ParserState {
 
     /// Check if current token can start a statement (synchronization point)
     pub(crate) fn is_statement_start(&self) -> bool {
-        match self.token() {
-            // Keywords that start statements
+        matches!(
+            self.token(),
             SyntaxKind::VarKeyword
-            | SyntaxKind::LetKeyword
-            | SyntaxKind::ConstKeyword
-            | SyntaxKind::FunctionKeyword
-            | SyntaxKind::ClassKeyword
-            | SyntaxKind::IfKeyword
-            | SyntaxKind::ForKeyword
-            | SyntaxKind::WhileKeyword
-            | SyntaxKind::DoKeyword
-            | SyntaxKind::SwitchKeyword
-            | SyntaxKind::TryKeyword
-            | SyntaxKind::WithKeyword
-            | SyntaxKind::DebuggerKeyword
-            | SyntaxKind::ReturnKeyword
-            | SyntaxKind::BreakKeyword
-            | SyntaxKind::ContinueKeyword
-            | SyntaxKind::ThrowKeyword
-            | SyntaxKind::AsyncKeyword
-            | SyntaxKind::UsingKeyword  // using declarations (ES2024+)
-            | SyntaxKind::AwaitKeyword  // await using declarations
-            | SyntaxKind::InterfaceKeyword
-            | SyntaxKind::TypeKeyword
-            | SyntaxKind::EnumKeyword
-            | SyntaxKind::NamespaceKeyword
-            | SyntaxKind::ModuleKeyword
-            | SyntaxKind::ImportKeyword
-            | SyntaxKind::ExportKeyword
-            | SyntaxKind::DeclareKeyword => true,
-            // Identifiers, string literals, and decorators can start statements
-            SyntaxKind::Identifier
-            | SyntaxKind::StringLiteral
-            | SyntaxKind::AtToken => true,
-            // Expression literals that can start statements (enhanced ASI support)
-            SyntaxKind::NumericLiteral
-            | SyntaxKind::BigIntLiteral
-            | SyntaxKind::TrueKeyword
-            | SyntaxKind::FalseKeyword
-            | SyntaxKind::NullKeyword
-            | SyntaxKind::ThisKeyword
-            | SyntaxKind::SuperKeyword => true,
-            // Prefix operators that can start expression statements
-            SyntaxKind::ExclamationToken  // !
-            | SyntaxKind::TildeToken  // ~
-            | SyntaxKind::PlusToken  // + (unary)
-            | SyntaxKind::MinusToken  // - (unary)
-            | SyntaxKind::PlusPlusToken  // ++ (prefix)
-            | SyntaxKind::MinusMinusToken  // -- (prefix)
-            | SyntaxKind::TypeOfKeyword
-            | SyntaxKind::VoidKeyword
-            | SyntaxKind::DeleteKeyword => true,
-            // Structural tokens that can start statements
-            SyntaxKind::OpenBraceToken  // block
-            | SyntaxKind::SemicolonToken  // empty statement
-            | SyntaxKind::OpenParenToken  // parenthesized expression
-            | SyntaxKind::OpenBracketToken  // array literal/destructuring
-            | SyntaxKind::LessThanToken => true,  // JSX/type argument
-            _ => false,
-        }
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::ConstKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::IfKeyword
+                | SyntaxKind::ForKeyword
+                | SyntaxKind::WhileKeyword
+                | SyntaxKind::DoKeyword
+                | SyntaxKind::SwitchKeyword
+                | SyntaxKind::TryKeyword
+                | SyntaxKind::WithKeyword
+                | SyntaxKind::DebuggerKeyword
+                | SyntaxKind::ReturnKeyword
+                | SyntaxKind::BreakKeyword
+                | SyntaxKind::ContinueKeyword
+                | SyntaxKind::ThrowKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::UsingKeyword
+                | SyntaxKind::AwaitKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::TypeKeyword
+                | SyntaxKind::EnumKeyword
+                | SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::ImportKeyword
+                | SyntaxKind::ExportKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::Identifier
+                | SyntaxKind::StringLiteral
+                | SyntaxKind::AtToken
+                | SyntaxKind::NumericLiteral
+                | SyntaxKind::BigIntLiteral
+                | SyntaxKind::TrueKeyword
+                | SyntaxKind::FalseKeyword
+                | SyntaxKind::NullKeyword
+                | SyntaxKind::ThisKeyword
+                | SyntaxKind::SuperKeyword
+                | SyntaxKind::ExclamationToken
+                | SyntaxKind::TildeToken
+                | SyntaxKind::PlusToken
+                | SyntaxKind::MinusToken
+                | SyntaxKind::PlusPlusToken
+                | SyntaxKind::MinusMinusToken
+                | SyntaxKind::TypeOfKeyword
+                | SyntaxKind::VoidKeyword
+                | SyntaxKind::DeleteKeyword
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::SemicolonToken
+                | SyntaxKind::OpenParenToken
+                | SyntaxKind::OpenBracketToken
+                | SyntaxKind::LessThanToken
+        )
     }
 
     /// Check if current token is a synchronization point for error recovery
     /// This includes statement starts plus additional keywords that indicate
     /// boundaries in control structures (else, case, default, catch, finally, etc.)
     pub(crate) fn is_resync_sync_point(&self) -> bool {
-        if self.is_statement_start() {
-            return true;
-        }
-
-        // Additional sync points that indicate statement boundaries in control structures
-        match self.token() {
-            // Control structure boundaries
-            SyntaxKind::ElseKeyword => true, // if statement alternative
-            SyntaxKind::CaseKeyword | SyntaxKind::DefaultKeyword => true, // switch cases
-            SyntaxKind::CatchKeyword | SyntaxKind::FinallyKeyword => true, // try-catch-finally
-            // Comma can be a sync point in declaration lists and object/array literals
-            SyntaxKind::CommaToken => true,
-            _ => false,
-        }
+        self.is_statement_start()
+            || matches!(
+                self.token(),
+                SyntaxKind::ElseKeyword
+                    | SyntaxKind::CaseKeyword
+                    | SyntaxKind::DefaultKeyword
+                    | SyntaxKind::CatchKeyword
+                    | SyntaxKind::FinallyKeyword
+                    | SyntaxKind::CommaToken
+            )
     }
 
     /// Resynchronize after a parse error by skipping to the next statement boundary
@@ -1584,6 +1595,7 @@ impl ParserState {
     // =========================================================================
 
     /// Check if current token can start an expression
+    #[allow(clippy::match_same_arms)]
     pub(crate) fn is_expression_start(&self) -> bool {
         match self.token() {
             // Literals
@@ -1596,9 +1608,8 @@ impl ParserState {
             | SyntaxKind::TemplateTail
             | SyntaxKind::TrueKeyword
             | SyntaxKind::FalseKeyword
-            | SyntaxKind::NullKeyword => true,
-            // Identifiers and expression keywords
-            SyntaxKind::Identifier
+            | SyntaxKind::NullKeyword
+            | SyntaxKind::Identifier
             | SyntaxKind::ThisKeyword
             | SyntaxKind::SuperKeyword
             | SyntaxKind::ImportKeyword
@@ -1817,10 +1828,10 @@ impl ParserState {
 
     /// Consume a single `<` from the current token.
     /// Handles compound tokens like `<<` and `<<=` by leaving the scanner
-    /// position unchanged (past the compound token) and setting current_token
+    /// position unchanged (past the compound token) and setting `current_token`
     /// to the remainder. Unlike `>`, `<` is eagerly combined by the scanner,
     /// so we cannot back up—the scanner would re-combine. Instead, we leave
-    /// pos past the compound and set current_token to the remainder.
+    /// pos past the compound and set `current_token` to the remainder.
     /// When the remainder is later consumed via `parse_expected(<)` →
     /// `next_token()`, the scanner scans from past the compound, correctly
     /// yielding the token that follows.
@@ -1846,8 +1857,9 @@ impl ParserState {
         }
     }
 
-    /// Create a NodeList from a Vec of NodeIndex
+    /// Create a `NodeList` from a Vec of `NodeIndex`
     pub(crate) fn make_node_list(&self, nodes: Vec<NodeIndex>) -> NodeList {
+        let _ = self;
         NodeList {
             nodes,
             pos: 0,
@@ -1934,11 +1946,11 @@ impl ParserState {
             if current_scope.contains_key(label_name) {
                 // Duplicate label - emit TS1114
                 use tsz_common::diagnostics::diagnostic_codes;
-                let message = format!("Duplicate label '{}'.", label_name);
+                let message = format!("Duplicate label '{label_name}'.");
                 trace!(label_name, "duplicate label found");
                 self.parse_error_at(
                     label_pos,
-                    label_name.len() as u32,
+                    self.u32_from_usize(label_name.len()),
                     &message,
                     diagnostic_codes::DUPLICATE_LABEL,
                 );

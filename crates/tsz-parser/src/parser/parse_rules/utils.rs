@@ -119,6 +119,7 @@ pub struct ParsedModifier {
 ///     self.arena.create_modifier(SyntaxKind::StaticKeyword, start_pos)
 /// }
 /// ```
+#[must_use]
 pub fn parse_modifier_token(token: SyntaxKind, start_pos: u32) -> Option<ParsedModifier> {
     match token {
         SyntaxKind::StaticKeyword
@@ -143,6 +144,7 @@ pub fn parse_modifier_token(token: SyntaxKind, start_pos: u32) -> Option<ParsedM
 }
 
 /// Check if a token is a valid class member modifier.
+#[must_use]
 pub fn is_class_member_modifier(token: SyntaxKind) -> bool {
     matches!(
         token,
@@ -162,6 +164,7 @@ pub fn is_class_member_modifier(token: SyntaxKind) -> bool {
 }
 
 /// Check if a token is a valid declaration modifier.
+#[must_use]
 pub fn is_declaration_modifier(token: SyntaxKind) -> bool {
     matches!(
         token,
@@ -177,6 +180,7 @@ pub fn is_declaration_modifier(token: SyntaxKind) -> bool {
 }
 
 /// Check if a token is a valid parameter modifier.
+#[must_use]
 pub fn is_parameter_modifier(token: SyntaxKind) -> bool {
     matches!(
         token,
@@ -194,9 +198,10 @@ pub fn is_parameter_modifier(token: SyntaxKind) -> bool {
 // =============================================================================
 
 mod token_validation {
-    use super::*;
+    use super::SyntaxKind;
 
     /// Check if a token can start a type.
+    #[must_use]
     pub fn can_token_start_type(token: SyntaxKind) -> bool {
         matches!(
             token,
@@ -226,12 +231,14 @@ mod token_validation {
     }
 
     /// Check if a token is an identifier or keyword (can be used as identifier).
+    #[must_use]
     pub fn is_identifier_or_keyword(token: SyntaxKind) -> bool {
         // Match TypeScript's isIdentifierOrKeyword: Identifier or any keyword
         token == SyntaxKind::Identifier || tsz_scanner::token_is_keyword(token)
     }
 
     /// Check if a token is a valid property name.
+    #[must_use]
     pub fn is_property_name(token: SyntaxKind) -> bool {
         matches!(
             token,
@@ -314,6 +321,7 @@ mod token_validation {
 }
 
 /// Check if a token is a literal.
+#[must_use]
 pub fn is_literal(token: SyntaxKind) -> bool {
     matches!(
         token,
@@ -348,7 +356,7 @@ pub fn look_ahead_is_module_declaration(
 /// Look ahead to check if "type" starts a type alias declaration.
 /// Matches tsc's `nextTokenIsIdentifierOnSameLine`: accepts both `Identifier`
 /// and contextual keywords (e.g. `type type = ...` where `type` is the name).
-/// This is needed because the scanner returns keyword SyntaxKind for identifiers
+/// This is needed because the scanner returns keyword `SyntaxKind` for identifiers
 /// that happen to match keyword text (including via unicode escapes).
 pub fn look_ahead_is_type_alias_declaration(
     scanner: &mut ScannerState,

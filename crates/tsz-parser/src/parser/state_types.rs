@@ -1,7 +1,9 @@
-//! Parser state - type parsing, JSX, accessors, and into_parts methods
+//! Parser state - type parsing, JSX, accessors, and `into_parts` methods
+
+#![allow(clippy::too_many_lines)]
 
 use super::state::{ParseDiagnostic, ParserState};
-use crate::parser::{NodeIndex, NodeList, node::*, syntax_kind_ext};
+use crate::parser::{NodeArena, NodeIndex, NodeList, node, syntax_kind_ext};
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
@@ -725,7 +727,7 @@ impl ParserState {
 
     /// Parse prefix unary literal type: -1, -42
     /// In TypeScript, negative number literals in type position are
-    /// represented as a PrefixUnaryExpression wrapped in a LiteralType
+    /// represented as a `PrefixUnaryExpression` wrapped in a `LiteralType`
     pub(crate) fn parse_prefix_unary_literal_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -1027,7 +1029,7 @@ impl ParserState {
         )
     }
 
-    /// Parse template literal head (NoSubstitutionTemplateLiteral or TemplateHead)
+    /// Parse template literal head (`NoSubstitutionTemplateLiteral` or `TemplateHead`)
     pub(crate) fn parse_template_literal_head(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let is_unterminated = self.scanner.is_unterminated();
@@ -1044,7 +1046,7 @@ impl ParserState {
             kind,
             start_pos,
             end_pos,
-            LiteralData {
+            node::LiteralData {
                 text,
                 raw_text: None,
                 value: None,
@@ -1052,7 +1054,7 @@ impl ParserState {
         )
     }
 
-    /// Parse template literal span (TemplateMiddle or TemplateTail)
+    /// Parse template literal span (`TemplateMiddle` or `TemplateTail`)
     pub(crate) fn parse_template_literal_span(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let is_unterminated = self.scanner.is_unterminated();
@@ -1069,7 +1071,7 @@ impl ParserState {
             kind,
             start_pos,
             end_pos,
-            LiteralData {
+            node::LiteralData {
                 text,
                 raw_text: None,
                 value: None,
@@ -1078,7 +1080,7 @@ impl ParserState {
     }
 
     /// Parse object type literal or mapped type
-    /// Object type: { prop: T; method(): U }
+    /// Object type: { prop: T; `method()`: U }
     /// Mapped type: { [K in keyof T]: U } or { readonly [K in T]?: U }
     /// Index signature: { [key: string]: T }
     pub(crate) fn parse_object_or_mapped_type(&mut self) -> NodeIndex {
@@ -1359,9 +1361,7 @@ impl ParserState {
             self.parse_expected_greater_than();
 
             // Check if followed by ( to confirm this is a call
-            if self.is_token(SyntaxKind::OpenParenToken) {
-                return Some(self.make_node_list(Vec::new()));
-            } else {
+            if !self.is_token(SyntaxKind::OpenParenToken) {
                 // Not a call - rollback
                 self.scanner.restore_state(snapshot);
                 self.current_token = saved_token;
@@ -1369,6 +1369,7 @@ impl ParserState {
                 self.parse_diagnostics.truncate(saved_diagnostics_len);
                 return None;
             }
+            return Some(self.make_node_list(Vec::new()));
         }
 
         let mut args = Vec::new();
@@ -1390,8 +1391,7 @@ impl ParserState {
             if self.is_greater_than_or_compound() {
                 depth -= 1;
             } else if self.is_token(SyntaxKind::CommaToken) {
-                // Continue to next type argument
-                continue;
+                // Comma indicates another type argument follows.
             } else if self.is_token(SyntaxKind::SemicolonToken)
                 || self.is_token(SyntaxKind::CloseBraceToken)
                 || self.is_token(SyntaxKind::EndOfFileToken)
@@ -1430,7 +1430,7 @@ impl ParserState {
     ///
     /// Returns true for:
     /// - `(` — call expression: `f<T>(args)`
-    /// - template literal — tagged template: `f<T>\`...\``
+    /// - template literal — tagged template: "f<T>\`...\`"
     /// - line break — instantiation expression: `f<T>\n`
     /// - binary operator — instantiation expression: `f<T> || fallback`
     /// - non-expression-starter — instantiation expression: `f<T>; f<T>}`
@@ -1934,7 +1934,7 @@ impl ParserState {
             SyntaxKind::Identifier as u16,
             start_pos,
             end_pos,
-            IdentifierData {
+            node::IdentifierData {
                 atom,
                 escaped_text: text,
                 original_text: None,
@@ -1978,17 +1978,20 @@ impl ParserState {
     // =========================================================================
 
     /// Get parse diagnostics
+    #[must_use]
     pub fn get_diagnostics(&self) -> &[ParseDiagnostic] {
         &self.parse_diagnostics
     }
 
     /// Get the arena
+    #[must_use]
     pub fn get_arena(&self) -> &NodeArena {
         &self.arena
     }
 
     /// Consume the parser and return the arena.
     /// This is used for lib files where we need to store the arena in an Arc.
+    #[must_use]
     pub fn into_arena(mut self) -> NodeArena {
         // Transfer the interner from the scanner to the arena so atoms can be resolved
         self.arena.set_interner(self.scanner.take_interner());
@@ -1996,17 +1999,20 @@ impl ParserState {
     }
 
     /// Get node count
+    #[must_use]
     pub fn get_node_count(&self) -> usize {
         self.arena.len()
     }
 
     /// Get the source text.
     /// Delegates to the scanner which owns the source text.
+    #[must_use]
     pub fn get_source_text(&self) -> &str {
         self.scanner.source_text()
     }
 
     /// Get the file name
+    #[must_use]
     pub fn get_file_name(&self) -> &str {
         &self.file_name
     }
@@ -2045,9 +2051,9 @@ impl ParserState {
             syntax_kind_ext::TYPE_ASSERTION,
             start_pos,
             end_pos,
-            TypeAssertionData {
-                type_node,
+            node::TypeAssertionData {
                 expression,
+                type_node,
             },
         )
     }
@@ -2062,7 +2068,7 @@ impl ParserState {
         let opening = self.parse_jsx_opening_or_self_closing_or_fragment(in_expression_context);
 
         // Check what type of opening element we got
-        let kind = self.arena.get(opening).map(|n| n.kind).unwrap_or(0);
+        let kind = self.arena.get(opening).map_or(0, |n| n.kind);
 
         if kind == syntax_kind_ext::JSX_OPENING_ELEMENT {
             // Parse children and closing element
@@ -2181,7 +2187,7 @@ impl ParserState {
                 SyntaxKind::Identifier as u16,
                 start_pos,
                 end_pos,
-                IdentifierData {
+                node::IdentifierData {
                     atom: Atom::NONE,
                     escaped_text: String::new(),
                     original_text: None,
@@ -2484,6 +2490,7 @@ impl ParserState {
 
     /// Consume the parser and return its parts.
     /// This is useful for taking ownership of the arena after parsing.
+    #[must_use]
     pub fn into_parts(mut self) -> (NodeArena, Vec<ParseDiagnostic>) {
         // Transfer the interner from the scanner to the arena so atoms can be resolved
         self.arena.set_interner(self.scanner.take_interner());

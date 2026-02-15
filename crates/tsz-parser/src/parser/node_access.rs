@@ -1,14 +1,62 @@
-//! NodeArena access methods, NodeView, and NodeAccess trait.
+//! `NodeArena` access methods, `NodeView`, and `NodeAccess` trait.
 //!
-//! This module contains all node access/query methods, the NodeView ergonomic wrapper,
-//! Node kind utility methods, and the NodeAccess trait.
+//! This module contains all node access/query methods, the `NodeView` ergonomic wrapper,
+//! `Node` kind utility methods, and the `NodeAccess` trait.
 
 use super::base::{NodeIndex, NodeList};
-use super::node::*;
+use super::node::{
+    AccessExprData, AccessorData, ArrayTypeData, BinaryExprData, BindingElementData,
+    BindingPatternData, BlockData, CallExprData, CaseClauseData, CatchClauseData, ClassData,
+    CompositeTypeData, ComputedPropertyData, ConditionalExprData, ConditionalTypeData,
+    ConstructorData, DecoratorData, EnumData, EnumMemberData, ExportAssignmentData, ExportDeclData,
+    ExprStatementData, ExprWithTypeArgsData, ExtendedNodeInfo, ForInOfData, FunctionData,
+    FunctionTypeData, HeritageData, IdentifierData, IfStatementData, ImportClauseData,
+    ImportDeclData, IndexSignatureData, IndexedAccessTypeData, InferTypeData, InterfaceData,
+    JsxAttributeData, JsxAttributesData, JsxClosingData, JsxElementData, JsxExpressionData,
+    JsxFragmentData, JsxNamespacedNameData, JsxOpeningData, JsxSpreadAttributeData, JsxTextData,
+    JumpData, LabeledData, LiteralData, LiteralExprData, LiteralTypeData, LoopData, MappedTypeData,
+    MethodDeclData, ModuleBlockData, ModuleData, NamedImportsData, NamedTupleMemberData, Node,
+    NodeArena, ParameterData, ParenthesizedData, PropertyAssignmentData, PropertyDeclData,
+    QualifiedNameData, ReturnData, ShorthandPropertyData, SignatureData, SourceFileData,
+    SpecifierData, SpreadData, SwitchData, TaggedTemplateData, TemplateExprData,
+    TemplateLiteralTypeData, TemplateSpanData, TryData, TupleTypeData, TypeAliasData,
+    TypeAssertionData, TypeLiteralData, TypeOperatorData, TypeParameterData, TypePredicateData,
+    TypeQueryData, TypeRefData, UnaryExprData, UnaryExprDataEx, VariableData,
+    VariableDeclarationData, WrappedTypeData,
+};
+use super::syntax_kind_ext::{
+    ARRAY_BINDING_PATTERN, ARRAY_LITERAL_EXPRESSION, ARRAY_TYPE, ARROW_FUNCTION, AS_EXPRESSION,
+    AWAIT_EXPRESSION, BINARY_EXPRESSION, BINDING_ELEMENT, BLOCK, BREAK_STATEMENT, CALL_EXPRESSION,
+    CALL_SIGNATURE, CASE_BLOCK, CASE_CLAUSE, CATCH_CLAUSE, CLASS_DECLARATION, CLASS_EXPRESSION,
+    CLASS_STATIC_BLOCK_DECLARATION, COMPUTED_PROPERTY_NAME, CONDITIONAL_EXPRESSION,
+    CONDITIONAL_TYPE, CONSTRUCT_SIGNATURE, CONSTRUCTOR, CONSTRUCTOR_TYPE, CONTINUE_STATEMENT,
+    DEBUGGER_STATEMENT, DECORATOR, DEFAULT_CLAUSE, DO_STATEMENT, ELEMENT_ACCESS_EXPRESSION,
+    ENUM_DECLARATION, ENUM_MEMBER, EXPORT_ASSIGNMENT, EXPORT_DECLARATION, EXPORT_SPECIFIER,
+    EXPRESSION_STATEMENT, EXPRESSION_WITH_TYPE_ARGUMENTS, FOR_IN_STATEMENT, FOR_OF_STATEMENT,
+    FOR_STATEMENT, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, FUNCTION_TYPE, GET_ACCESSOR,
+    HERITAGE_CLAUSE, IF_STATEMENT, IMPORT_CLAUSE, IMPORT_DECLARATION, IMPORT_EQUALS_DECLARATION,
+    IMPORT_SPECIFIER, IMPORT_TYPE, INDEX_SIGNATURE, INDEXED_ACCESS_TYPE, INFER_TYPE,
+    INTERFACE_DECLARATION, INTERSECTION_TYPE, JSX_ATTRIBUTE, JSX_ATTRIBUTES, JSX_CLOSING_ELEMENT,
+    JSX_ELEMENT, JSX_EXPRESSION, JSX_FRAGMENT, JSX_NAMESPACED_NAME, JSX_OPENING_ELEMENT,
+    JSX_SELF_CLOSING_ELEMENT, JSX_SPREAD_ATTRIBUTE, LABELED_STATEMENT, LITERAL_TYPE, MAPPED_TYPE,
+    METHOD_DECLARATION, METHOD_SIGNATURE, MODULE_BLOCK, MODULE_DECLARATION, NAMED_EXPORTS,
+    NAMED_IMPORTS, NAMED_TUPLE_MEMBER, NAMESPACE_EXPORT, NAMESPACE_IMPORT, NEW_EXPRESSION,
+    NON_NULL_EXPRESSION, OBJECT_BINDING_PATTERN, OBJECT_LITERAL_EXPRESSION, OPTIONAL_TYPE,
+    PARAMETER, PARENTHESIZED_EXPRESSION, PARENTHESIZED_TYPE, POSTFIX_UNARY_EXPRESSION,
+    PREFIX_UNARY_EXPRESSION, PROPERTY_ACCESS_EXPRESSION, PROPERTY_ASSIGNMENT, PROPERTY_DECLARATION,
+    PROPERTY_SIGNATURE, QUALIFIED_NAME, REST_TYPE, RETURN_STATEMENT, SATISFIES_EXPRESSION,
+    SET_ACCESSOR, SHORTHAND_PROPERTY_ASSIGNMENT, SOURCE_FILE, SPREAD_ASSIGNMENT, SPREAD_ELEMENT,
+    SWITCH_STATEMENT, TAGGED_TEMPLATE_EXPRESSION, TEMPLATE_EXPRESSION, TEMPLATE_LITERAL_TYPE,
+    TEMPLATE_SPAN, THROW_STATEMENT, TRY_STATEMENT, TUPLE_TYPE, TYPE_ALIAS_DECLARATION,
+    TYPE_ASSERTION, TYPE_LITERAL, TYPE_OPERATOR, TYPE_PARAMETER, TYPE_PREDICATE, TYPE_QUERY,
+    TYPE_REFERENCE, UNION_TYPE, VARIABLE_DECLARATION, VARIABLE_DECLARATION_LIST,
+    VARIABLE_STATEMENT, WHILE_STATEMENT, WITH_STATEMENT, YIELD_EXPRESSION,
+};
 
 impl NodeArena {
     /// Get a thin node by index
     #[inline]
+    #[must_use]
     pub fn get(&self, index: NodeIndex) -> Option<&Node> {
         if index.is_none() {
             None
@@ -19,6 +67,7 @@ impl NodeArena {
 
     /// Get a mutable thin node by index
     #[inline]
+    #[must_use]
     pub fn get_mut(&mut self, index: NodeIndex) -> Option<&mut Node> {
         if index.is_none() {
             None
@@ -29,6 +78,7 @@ impl NodeArena {
 
     /// Get extended info for a node
     #[inline]
+    #[must_use]
     pub fn get_extended(&self, index: NodeIndex) -> Option<&ExtendedNodeInfo> {
         if index.is_none() {
             None
@@ -39,6 +89,7 @@ impl NodeArena {
 
     /// Get mutable extended info for a node
     #[inline]
+    #[must_use]
     pub fn get_extended_mut(&mut self, index: NodeIndex) -> Option<&mut ExtendedNodeInfo> {
         if index.is_none() {
             None
@@ -50,6 +101,7 @@ impl NodeArena {
     /// Get identifier data for a node.
     /// Returns None if node is not an identifier or has no data.
     #[inline]
+    #[must_use]
     pub fn get_identifier(&self, node: &Node) -> Option<&IdentifierData> {
         use tsz_scanner::SyntaxKind;
         if node.has_data()
@@ -65,6 +117,7 @@ impl NodeArena {
     /// Get literal data for a node.
     /// Returns None if node is not a literal or has no data.
     #[inline]
+    #[must_use]
     pub fn get_literal(&self, node: &Node) -> Option<&LiteralData> {
         use tsz_scanner::SyntaxKind;
         if node.has_data()
@@ -88,6 +141,7 @@ impl NodeArena {
     /// Get binary expression data.
     /// Returns None if node is not a binary expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_binary_expr(&self, node: &Node) -> Option<&BinaryExprData> {
         use super::syntax_kind_ext::BINARY_EXPRESSION;
         if node.has_data() && node.kind == BINARY_EXPRESSION {
@@ -100,6 +154,7 @@ impl NodeArena {
     /// Get call expression data.
     /// Returns None if node is not a call/new expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_call_expr(&self, node: &Node) -> Option<&CallExprData> {
         use super::syntax_kind_ext::{CALL_EXPRESSION, NEW_EXPRESSION};
         if node.has_data() && (node.kind == CALL_EXPRESSION || node.kind == NEW_EXPRESSION) {
@@ -112,6 +167,7 @@ impl NodeArena {
     /// Get access expression data (property access or element access).
     /// Returns None if node is not an access expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_access_expr(&self, node: &Node) -> Option<&AccessExprData> {
         use super::syntax_kind_ext::{ELEMENT_ACCESS_EXPRESSION, PROPERTY_ACCESS_EXPRESSION};
         if node.has_data()
@@ -126,6 +182,7 @@ impl NodeArena {
     /// Get conditional expression data (ternary: a ? b : c).
     /// Returns None if node is not a conditional expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_conditional_expr(&self, node: &Node) -> Option<&ConditionalExprData> {
         use super::syntax_kind_ext::CONDITIONAL_EXPRESSION;
         if node.has_data() && node.kind == CONDITIONAL_EXPRESSION {
@@ -138,6 +195,7 @@ impl NodeArena {
     /// Get qualified name data (A.B syntax).
     /// Returns None if node is not a qualified name or has no data.
     #[inline]
+    #[must_use]
     pub fn get_qualified_name(&self, node: &Node) -> Option<&QualifiedNameData> {
         use super::syntax_kind_ext::QUALIFIED_NAME;
         if node.has_data() && node.kind == QUALIFIED_NAME {
@@ -150,6 +208,7 @@ impl NodeArena {
     /// Get literal expression data (array or object literal).
     /// Returns None if node is not a literal expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_literal_expr(&self, node: &Node) -> Option<&LiteralExprData> {
         use super::syntax_kind_ext::{ARRAY_LITERAL_EXPRESSION, OBJECT_LITERAL_EXPRESSION};
         if node.has_data()
@@ -164,6 +223,7 @@ impl NodeArena {
     /// Get property assignment data.
     /// Returns None if node is not a property assignment or has no data.
     #[inline]
+    #[must_use]
     pub fn get_property_assignment(&self, node: &Node) -> Option<&PropertyAssignmentData> {
         use super::syntax_kind_ext::PROPERTY_ASSIGNMENT;
         if node.has_data() && node.kind == PROPERTY_ASSIGNMENT {
@@ -176,6 +236,7 @@ impl NodeArena {
     /// Get type assertion data (as/satisfies/type assertion).
     /// Returns None if node is not a type assertion or has no data.
     #[inline]
+    #[must_use]
     pub fn get_type_assertion(&self, node: &Node) -> Option<&TypeAssertionData> {
         use super::syntax_kind_ext::{AS_EXPRESSION, SATISFIES_EXPRESSION, TYPE_ASSERTION};
         if node.has_data()
@@ -192,6 +253,7 @@ impl NodeArena {
     /// Get unary expression data (prefix or postfix).
     /// Returns None if node is not a unary expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_unary_expr(&self, node: &Node) -> Option<&UnaryExprData> {
         use super::syntax_kind_ext::{POSTFIX_UNARY_EXPRESSION, PREFIX_UNARY_EXPRESSION};
         if node.has_data()
@@ -206,6 +268,7 @@ impl NodeArena {
     /// Get extended unary expression data (await/yield/non-null/spread).
     /// Returns None if node is not an await/yield/non-null/spread expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_unary_expr_ex(&self, node: &Node) -> Option<&UnaryExprDataEx> {
         use super::syntax_kind_ext::{
             AWAIT_EXPRESSION, NON_NULL_EXPRESSION, SPREAD_ELEMENT, YIELD_EXPRESSION,
@@ -225,8 +288,8 @@ impl NodeArena {
     /// Get function data.
     /// Returns None if node is not a function-like node or has no data.
     #[inline]
+    #[must_use]
     pub fn get_function(&self, node: &Node) -> Option<&FunctionData> {
-        use super::syntax_kind_ext::*;
         if node.has_data()
             && matches!(
                 node.kind,
@@ -242,6 +305,7 @@ impl NodeArena {
     /// Get class data.
     /// Returns None if node is not a class declaration/expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_class(&self, node: &Node) -> Option<&ClassData> {
         use super::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION};
         if node.has_data() && (node.kind == CLASS_DECLARATION || node.kind == CLASS_EXPRESSION) {
@@ -254,6 +318,7 @@ impl NodeArena {
     /// Get block data.
     /// Returns None if node is not a block or has no data.
     #[inline]
+    #[must_use]
     pub fn get_block(&self, node: &Node) -> Option<&BlockData> {
         use super::syntax_kind_ext::{BLOCK, CASE_BLOCK, CLASS_STATIC_BLOCK_DECLARATION};
         if node.has_data()
@@ -270,6 +335,7 @@ impl NodeArena {
     /// Get source file data.
     /// Returns None if node is not a source file or has no data.
     #[inline]
+    #[must_use]
     pub fn get_source_file(&self, node: &Node) -> Option<&SourceFileData> {
         use super::syntax_kind_ext::SOURCE_FILE;
         if node.has_data() && node.kind == SOURCE_FILE {
@@ -279,8 +345,9 @@ impl NodeArena {
         }
     }
 
-    /// Get variable data (VariableStatement or VariableDeclarationList).
+    /// Get variable data (`VariableStatement` or `VariableDeclarationList`).
     #[inline]
+    #[must_use]
     pub fn get_variable(&self, node: &Node) -> Option<&VariableData> {
         use super::syntax_kind_ext::{VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT};
         if node.has_data()
@@ -294,6 +361,7 @@ impl NodeArena {
 
     /// Get variable declaration data.
     #[inline]
+    #[must_use]
     pub fn get_variable_declaration(&self, node: &Node) -> Option<&VariableDeclarationData> {
         use super::syntax_kind_ext::VARIABLE_DECLARATION;
         if node.has_data() && node.kind == VARIABLE_DECLARATION {
@@ -305,6 +373,7 @@ impl NodeArena {
 
     /// Get interface data.
     #[inline]
+    #[must_use]
     pub fn get_interface(&self, node: &Node) -> Option<&InterfaceData> {
         use super::syntax_kind_ext::INTERFACE_DECLARATION;
         if node.has_data() && node.kind == INTERFACE_DECLARATION {
@@ -316,6 +385,7 @@ impl NodeArena {
 
     /// Get type alias data.
     #[inline]
+    #[must_use]
     pub fn get_type_alias(&self, node: &Node) -> Option<&TypeAliasData> {
         use super::syntax_kind_ext::TYPE_ALIAS_DECLARATION;
         if node.has_data() && node.kind == TYPE_ALIAS_DECLARATION {
@@ -327,6 +397,7 @@ impl NodeArena {
 
     /// Get enum data.
     #[inline]
+    #[must_use]
     pub fn get_enum(&self, node: &Node) -> Option<&EnumData> {
         use super::syntax_kind_ext::ENUM_DECLARATION;
         if node.has_data() && node.kind == ENUM_DECLARATION {
@@ -338,6 +409,7 @@ impl NodeArena {
 
     /// Get enum member data.
     #[inline]
+    #[must_use]
     pub fn get_enum_member(&self, node: &Node) -> Option<&EnumMemberData> {
         use super::syntax_kind_ext::ENUM_MEMBER;
         if node.has_data() && node.kind == ENUM_MEMBER {
@@ -349,6 +421,7 @@ impl NodeArena {
 
     /// Get module data.
     #[inline]
+    #[must_use]
     pub fn get_module(&self, node: &Node) -> Option<&ModuleData> {
         use super::syntax_kind_ext::MODULE_DECLARATION;
         if node.has_data() && node.kind == MODULE_DECLARATION {
@@ -360,6 +433,7 @@ impl NodeArena {
 
     /// Get module block data.
     #[inline]
+    #[must_use]
     pub fn get_module_block(&self, node: &Node) -> Option<&ModuleBlockData> {
         use super::syntax_kind_ext::MODULE_BLOCK;
         if node.has_data() && node.kind == MODULE_BLOCK {
@@ -371,6 +445,7 @@ impl NodeArena {
 
     /// Get if statement data.
     #[inline]
+    #[must_use]
     pub fn get_if_statement(&self, node: &Node) -> Option<&IfStatementData> {
         use super::syntax_kind_ext::IF_STATEMENT;
         if node.has_data() && node.kind == IF_STATEMENT {
@@ -382,6 +457,7 @@ impl NodeArena {
 
     /// Get loop data (while, for, do-while).
     #[inline]
+    #[must_use]
     pub fn get_loop(&self, node: &Node) -> Option<&LoopData> {
         use super::syntax_kind_ext::{DO_STATEMENT, FOR_STATEMENT, WHILE_STATEMENT};
         if node.has_data()
@@ -397,6 +473,7 @@ impl NodeArena {
 
     /// Get for-in/for-of data.
     #[inline]
+    #[must_use]
     pub fn get_for_in_of(&self, node: &Node) -> Option<&ForInOfData> {
         use super::syntax_kind_ext::{FOR_IN_STATEMENT, FOR_OF_STATEMENT};
         if node.has_data() && (node.kind == FOR_IN_STATEMENT || node.kind == FOR_OF_STATEMENT) {
@@ -408,6 +485,7 @@ impl NodeArena {
 
     /// Get switch data.
     #[inline]
+    #[must_use]
     pub fn get_switch(&self, node: &Node) -> Option<&SwitchData> {
         use super::syntax_kind_ext::SWITCH_STATEMENT;
         if node.has_data() && node.kind == SWITCH_STATEMENT {
@@ -419,6 +497,7 @@ impl NodeArena {
 
     /// Get case clause data.
     #[inline]
+    #[must_use]
     pub fn get_case_clause(&self, node: &Node) -> Option<&CaseClauseData> {
         use super::syntax_kind_ext::{CASE_CLAUSE, DEFAULT_CLAUSE};
         if node.has_data() && (node.kind == CASE_CLAUSE || node.kind == DEFAULT_CLAUSE) {
@@ -430,6 +509,7 @@ impl NodeArena {
 
     /// Get try data.
     #[inline]
+    #[must_use]
     pub fn get_try(&self, node: &Node) -> Option<&TryData> {
         use super::syntax_kind_ext::TRY_STATEMENT;
         if node.has_data() && node.kind == TRY_STATEMENT {
@@ -441,6 +521,7 @@ impl NodeArena {
 
     /// Get catch clause data.
     #[inline]
+    #[must_use]
     pub fn get_catch_clause(&self, node: &Node) -> Option<&CatchClauseData> {
         use super::syntax_kind_ext::CATCH_CLAUSE;
         if node.has_data() && node.kind == CATCH_CLAUSE {
@@ -452,6 +533,7 @@ impl NodeArena {
 
     /// Get labeled statement data.
     #[inline]
+    #[must_use]
     pub fn get_labeled_statement(&self, node: &Node) -> Option<&LabeledData> {
         use super::syntax_kind_ext::LABELED_STATEMENT;
         if node.has_data() && node.kind == LABELED_STATEMENT {
@@ -463,6 +545,7 @@ impl NodeArena {
 
     /// Get jump data (break/continue statements).
     #[inline]
+    #[must_use]
     pub fn get_jump_data(&self, node: &Node) -> Option<&JumpData> {
         use super::syntax_kind_ext::{BREAK_STATEMENT, CONTINUE_STATEMENT};
         if node.has_data() && (node.kind == BREAK_STATEMENT || node.kind == CONTINUE_STATEMENT) {
@@ -474,6 +557,7 @@ impl NodeArena {
 
     /// Get with statement data (stored in if statement pool).
     #[inline]
+    #[must_use]
     pub fn get_with_statement(&self, node: &Node) -> Option<&IfStatementData> {
         use super::syntax_kind_ext::WITH_STATEMENT;
         if node.has_data() && node.kind == WITH_STATEMENT {
@@ -483,8 +567,9 @@ impl NodeArena {
         }
     }
 
-    /// Get import declaration data (handles both IMPORT_DECLARATION and IMPORT_EQUALS_DECLARATION).
+    /// Get import declaration data (handles both `IMPORT_DECLARATION` and `IMPORT_EQUALS_DECLARATION`).
     #[inline]
+    #[must_use]
     pub fn get_import_decl(&self, node: &Node) -> Option<&ImportDeclData> {
         use super::syntax_kind_ext::{IMPORT_DECLARATION, IMPORT_EQUALS_DECLARATION};
         if node.has_data()
@@ -498,6 +583,7 @@ impl NodeArena {
 
     /// Get import clause data.
     #[inline]
+    #[must_use]
     pub fn get_import_clause(&self, node: &Node) -> Option<&ImportClauseData> {
         use super::syntax_kind_ext::IMPORT_CLAUSE;
         if node.has_data() && node.kind == IMPORT_CLAUSE {
@@ -508,8 +594,9 @@ impl NodeArena {
     }
 
     /// Get named imports/exports data.
-    /// Works for NAMED_IMPORTS, NAMESPACE_IMPORT, and NAMED_EXPORTS (they share the same data structure).
+    /// Works for `NAMED_IMPORTS`, `NAMESPACE_IMPORT`, and `NAMED_EXPORTS` (they share the same data structure).
     #[inline]
+    #[must_use]
     pub fn get_named_imports(&self, node: &Node) -> Option<&NamedImportsData> {
         use super::syntax_kind_ext::{NAMED_EXPORTS, NAMED_IMPORTS, NAMESPACE_IMPORT};
         if node.has_data()
@@ -525,6 +612,7 @@ impl NodeArena {
 
     /// Get import/export specifier data.
     #[inline]
+    #[must_use]
     pub fn get_specifier(&self, node: &Node) -> Option<&SpecifierData> {
         use super::syntax_kind_ext::{EXPORT_SPECIFIER, IMPORT_SPECIFIER};
         if node.has_data() && (node.kind == IMPORT_SPECIFIER || node.kind == EXPORT_SPECIFIER) {
@@ -536,6 +624,7 @@ impl NodeArena {
 
     /// Get export declaration data.
     #[inline]
+    #[must_use]
     pub fn get_export_decl(&self, node: &Node) -> Option<&ExportDeclData> {
         use super::syntax_kind_ext::EXPORT_DECLARATION;
         if node.has_data() && node.kind == EXPORT_DECLARATION {
@@ -547,6 +636,7 @@ impl NodeArena {
 
     /// Get export assignment data (export = expr).
     #[inline]
+    #[must_use]
     pub fn get_export_assignment(&self, node: &Node) -> Option<&ExportAssignmentData> {
         use super::syntax_kind_ext::EXPORT_ASSIGNMENT;
         if node.has_data() && node.kind == EXPORT_ASSIGNMENT {
@@ -558,6 +648,7 @@ impl NodeArena {
 
     /// Get parameter data.
     #[inline]
+    #[must_use]
     pub fn get_parameter(&self, node: &Node) -> Option<&ParameterData> {
         use super::syntax_kind_ext::PARAMETER;
         if node.has_data() && node.kind == PARAMETER {
@@ -569,6 +660,7 @@ impl NodeArena {
 
     /// Get property declaration data.
     #[inline]
+    #[must_use]
     pub fn get_property_decl(&self, node: &Node) -> Option<&PropertyDeclData> {
         use super::syntax_kind_ext::PROPERTY_DECLARATION;
         if node.has_data() && node.kind == PROPERTY_DECLARATION {
@@ -580,6 +672,7 @@ impl NodeArena {
 
     /// Get method declaration data.
     #[inline]
+    #[must_use]
     pub fn get_method_decl(&self, node: &Node) -> Option<&MethodDeclData> {
         use super::syntax_kind_ext::METHOD_DECLARATION;
         if node.has_data() && node.kind == METHOD_DECLARATION {
@@ -591,6 +684,7 @@ impl NodeArena {
 
     /// Get constructor data.
     #[inline]
+    #[must_use]
     pub fn get_constructor(&self, node: &Node) -> Option<&ConstructorData> {
         use super::syntax_kind_ext::CONSTRUCTOR;
         if node.has_data() && node.kind == CONSTRUCTOR {
@@ -602,6 +696,7 @@ impl NodeArena {
 
     /// Get accessor data (get/set accessor).
     #[inline]
+    #[must_use]
     pub fn get_accessor(&self, node: &Node) -> Option<&AccessorData> {
         use super::syntax_kind_ext::{GET_ACCESSOR, SET_ACCESSOR};
         if node.has_data() && (node.kind == GET_ACCESSOR || node.kind == SET_ACCESSOR) {
@@ -613,6 +708,7 @@ impl NodeArena {
 
     /// Get decorator data.
     #[inline]
+    #[must_use]
     pub fn get_decorator(&self, node: &Node) -> Option<&DecoratorData> {
         use super::syntax_kind_ext::DECORATOR;
         if node.has_data() && node.kind == DECORATOR {
@@ -624,6 +720,7 @@ impl NodeArena {
 
     /// Get type reference data.
     #[inline]
+    #[must_use]
     pub fn get_type_ref(&self, node: &Node) -> Option<&TypeRefData> {
         use super::syntax_kind_ext::TYPE_REFERENCE;
         if node.has_data() && node.kind == TYPE_REFERENCE {
@@ -635,6 +732,7 @@ impl NodeArena {
 
     /// Get expression statement data (returns the expression node index).
     #[inline]
+    #[must_use]
     pub fn get_expression_statement(&self, node: &Node) -> Option<&ExprStatementData> {
         use super::syntax_kind_ext::EXPRESSION_STATEMENT;
         if node.has_data() && node.kind == EXPRESSION_STATEMENT {
@@ -646,6 +744,7 @@ impl NodeArena {
 
     /// Get return statement data (returns the expression node index).
     #[inline]
+    #[must_use]
     pub fn get_return_statement(&self, node: &Node) -> Option<&ReturnData> {
         use super::syntax_kind_ext::{RETURN_STATEMENT, THROW_STATEMENT};
         if node.has_data() && (node.kind == RETURN_STATEMENT || node.kind == THROW_STATEMENT) {
@@ -657,6 +756,7 @@ impl NodeArena {
 
     /// Get JSX element data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_element(&self, node: &Node) -> Option<&JsxElementData> {
         use super::syntax_kind_ext::JSX_ELEMENT;
         if node.has_data() && node.kind == JSX_ELEMENT {
@@ -668,6 +768,7 @@ impl NodeArena {
 
     /// Get JSX opening/self-closing element data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_opening(&self, node: &Node) -> Option<&JsxOpeningData> {
         use super::syntax_kind_ext::{JSX_OPENING_ELEMENT, JSX_SELF_CLOSING_ELEMENT};
         if node.has_data()
@@ -681,6 +782,7 @@ impl NodeArena {
 
     /// Get JSX closing element data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_closing(&self, node: &Node) -> Option<&JsxClosingData> {
         use super::syntax_kind_ext::JSX_CLOSING_ELEMENT;
         if node.has_data() && node.kind == JSX_CLOSING_ELEMENT {
@@ -692,6 +794,7 @@ impl NodeArena {
 
     /// Get JSX fragment data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_fragment(&self, node: &Node) -> Option<&JsxFragmentData> {
         use super::syntax_kind_ext::JSX_FRAGMENT;
         if node.has_data() && node.kind == JSX_FRAGMENT {
@@ -703,6 +806,7 @@ impl NodeArena {
 
     /// Get JSX attributes data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_attributes(&self, node: &Node) -> Option<&JsxAttributesData> {
         use super::syntax_kind_ext::JSX_ATTRIBUTES;
         if node.has_data() && node.kind == JSX_ATTRIBUTES {
@@ -714,6 +818,7 @@ impl NodeArena {
 
     /// Get JSX attribute data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_attribute(&self, node: &Node) -> Option<&JsxAttributeData> {
         use super::syntax_kind_ext::JSX_ATTRIBUTE;
         if node.has_data() && node.kind == JSX_ATTRIBUTE {
@@ -725,6 +830,7 @@ impl NodeArena {
 
     /// Get JSX spread attribute data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_spread_attribute(&self, node: &Node) -> Option<&JsxSpreadAttributeData> {
         use super::syntax_kind_ext::JSX_SPREAD_ATTRIBUTE;
         if node.has_data() && node.kind == JSX_SPREAD_ATTRIBUTE {
@@ -736,6 +842,7 @@ impl NodeArena {
 
     /// Get JSX expression data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_expression(&self, node: &Node) -> Option<&JsxExpressionData> {
         use super::syntax_kind_ext::JSX_EXPRESSION;
         if node.has_data() && node.kind == JSX_EXPRESSION {
@@ -747,6 +854,7 @@ impl NodeArena {
 
     /// Get JSX text data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_text(&self, node: &Node) -> Option<&JsxTextData> {
         use tsz_scanner::SyntaxKind;
         if node.has_data() && node.kind == SyntaxKind::JsxText as u16 {
@@ -758,6 +866,7 @@ impl NodeArena {
 
     /// Get JSX namespaced name data.
     #[inline]
+    #[must_use]
     pub fn get_jsx_namespaced_name(&self, node: &Node) -> Option<&JsxNamespacedNameData> {
         use super::syntax_kind_ext::JSX_NAMESPACED_NAME;
         if node.has_data() && node.kind == JSX_NAMESPACED_NAME {
@@ -769,6 +878,7 @@ impl NodeArena {
 
     /// Get signature data (call, construct, method, property signatures).
     #[inline]
+    #[must_use]
     pub fn get_signature(&self, node: &Node) -> Option<&SignatureData> {
         use super::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
@@ -787,6 +897,7 @@ impl NodeArena {
 
     /// Get index signature data.
     #[inline]
+    #[must_use]
     pub fn get_index_signature(&self, node: &Node) -> Option<&IndexSignatureData> {
         use super::syntax_kind_ext::INDEX_SIGNATURE;
         if node.has_data() && node.kind == INDEX_SIGNATURE {
@@ -798,6 +909,7 @@ impl NodeArena {
 
     /// Get heritage clause data.
     #[inline]
+    #[must_use]
     pub fn get_heritage_clause(&self, node: &Node) -> Option<&HeritageData> {
         use super::syntax_kind_ext::HERITAGE_CLAUSE;
         if node.has_data() && node.kind == HERITAGE_CLAUSE {
@@ -809,6 +921,7 @@ impl NodeArena {
 
     /// Get composite type data (union or intersection).
     #[inline]
+    #[must_use]
     pub fn get_composite_type(&self, node: &Node) -> Option<&CompositeTypeData> {
         use super::syntax_kind_ext::{INTERSECTION_TYPE, UNION_TYPE};
         if node.has_data() && (node.kind == UNION_TYPE || node.kind == INTERSECTION_TYPE) {
@@ -820,6 +933,7 @@ impl NodeArena {
 
     /// Get array type data.
     #[inline]
+    #[must_use]
     pub fn get_array_type(&self, node: &Node) -> Option<&ArrayTypeData> {
         use super::syntax_kind_ext::ARRAY_TYPE;
         if node.has_data() && node.kind == ARRAY_TYPE {
@@ -831,6 +945,7 @@ impl NodeArena {
 
     /// Get tuple type data.
     #[inline]
+    #[must_use]
     pub fn get_tuple_type(&self, node: &Node) -> Option<&TupleTypeData> {
         use super::syntax_kind_ext::TUPLE_TYPE;
         if node.has_data() && node.kind == TUPLE_TYPE {
@@ -842,6 +957,7 @@ impl NodeArena {
 
     /// Get function type data.
     #[inline]
+    #[must_use]
     pub fn get_function_type(&self, node: &Node) -> Option<&FunctionTypeData> {
         use super::syntax_kind_ext::{CONSTRUCTOR_TYPE, FUNCTION_TYPE};
         if node.has_data() && (node.kind == FUNCTION_TYPE || node.kind == CONSTRUCTOR_TYPE) {
@@ -853,6 +969,7 @@ impl NodeArena {
 
     /// Get type literal data.
     #[inline]
+    #[must_use]
     pub fn get_type_literal(&self, node: &Node) -> Option<&TypeLiteralData> {
         use super::syntax_kind_ext::TYPE_LITERAL;
         if node.has_data() && node.kind == TYPE_LITERAL {
@@ -864,6 +981,7 @@ impl NodeArena {
 
     /// Get conditional type data.
     #[inline]
+    #[must_use]
     pub fn get_conditional_type(&self, node: &Node) -> Option<&ConditionalTypeData> {
         use super::syntax_kind_ext::CONDITIONAL_TYPE;
         if node.has_data() && node.kind == CONDITIONAL_TYPE {
@@ -875,6 +993,7 @@ impl NodeArena {
 
     /// Get mapped type data.
     #[inline]
+    #[must_use]
     pub fn get_mapped_type(&self, node: &Node) -> Option<&MappedTypeData> {
         use super::syntax_kind_ext::MAPPED_TYPE;
         if node.has_data() && node.kind == MAPPED_TYPE {
@@ -886,6 +1005,7 @@ impl NodeArena {
 
     /// Get indexed access type data.
     #[inline]
+    #[must_use]
     pub fn get_indexed_access_type(&self, node: &Node) -> Option<&IndexedAccessTypeData> {
         use super::syntax_kind_ext::INDEXED_ACCESS_TYPE;
         if node.has_data() && node.kind == INDEXED_ACCESS_TYPE {
@@ -897,6 +1017,7 @@ impl NodeArena {
 
     /// Get literal type data.
     #[inline]
+    #[must_use]
     pub fn get_literal_type(&self, node: &Node) -> Option<&LiteralTypeData> {
         use super::syntax_kind_ext::LITERAL_TYPE;
         if node.has_data() && node.kind == LITERAL_TYPE {
@@ -908,6 +1029,7 @@ impl NodeArena {
 
     /// Get wrapped type data (parenthesized, optional, rest types).
     #[inline]
+    #[must_use]
     pub fn get_wrapped_type(&self, node: &Node) -> Option<&WrappedTypeData> {
         use super::syntax_kind_ext::{OPTIONAL_TYPE, PARENTHESIZED_TYPE, REST_TYPE};
         if node.has_data()
@@ -923,6 +1045,7 @@ impl NodeArena {
 
     /// Get heritage clause data.
     #[inline]
+    #[must_use]
     pub fn get_heritage(&self, node: &Node) -> Option<&HeritageData> {
         use super::syntax_kind_ext::HERITAGE_CLAUSE;
         if node.has_data() && node.kind == HERITAGE_CLAUSE {
@@ -934,6 +1057,7 @@ impl NodeArena {
 
     /// Get expression with type arguments data (e.g., `extends Base<T>`).
     #[inline]
+    #[must_use]
     pub fn get_expr_type_args(&self, node: &Node) -> Option<&ExprWithTypeArgsData> {
         use super::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS;
         if node.has_data() && node.kind == EXPRESSION_WITH_TYPE_ARGUMENTS {
@@ -945,6 +1069,7 @@ impl NodeArena {
 
     /// Get type query data (typeof in type position).
     #[inline]
+    #[must_use]
     pub fn get_type_query(&self, node: &Node) -> Option<&TypeQueryData> {
         use super::syntax_kind_ext::TYPE_QUERY;
         if node.has_data() && node.kind == TYPE_QUERY {
@@ -956,6 +1081,7 @@ impl NodeArena {
 
     /// Get type operator data (keyof, unique, readonly).
     #[inline]
+    #[must_use]
     pub fn get_type_operator(&self, node: &Node) -> Option<&TypeOperatorData> {
         use super::syntax_kind_ext::TYPE_OPERATOR;
         if node.has_data() && node.kind == TYPE_OPERATOR {
@@ -967,6 +1093,7 @@ impl NodeArena {
 
     /// Get infer type data.
     #[inline]
+    #[must_use]
     pub fn get_infer_type(&self, node: &Node) -> Option<&InferTypeData> {
         use super::syntax_kind_ext::INFER_TYPE;
         if node.has_data() && node.kind == INFER_TYPE {
@@ -978,6 +1105,7 @@ impl NodeArena {
 
     /// Get template literal type data.
     #[inline]
+    #[must_use]
     pub fn get_template_literal_type(&self, node: &Node) -> Option<&TemplateLiteralTypeData> {
         use super::syntax_kind_ext::TEMPLATE_LITERAL_TYPE;
         if node.has_data() && node.kind == TEMPLATE_LITERAL_TYPE {
@@ -989,6 +1117,7 @@ impl NodeArena {
 
     /// Get named tuple member data.
     #[inline]
+    #[must_use]
     pub fn get_named_tuple_member(&self, node: &Node) -> Option<&NamedTupleMemberData> {
         use super::syntax_kind_ext::NAMED_TUPLE_MEMBER;
         if node.has_data() && node.kind == NAMED_TUPLE_MEMBER {
@@ -1000,6 +1129,7 @@ impl NodeArena {
 
     /// Get type predicate data.
     #[inline]
+    #[must_use]
     pub fn get_type_predicate(&self, node: &Node) -> Option<&TypePredicateData> {
         use super::syntax_kind_ext::TYPE_PREDICATE;
         if node.has_data() && node.kind == TYPE_PREDICATE {
@@ -1011,6 +1141,7 @@ impl NodeArena {
 
     /// Get type parameter data.
     #[inline]
+    #[must_use]
     pub fn get_type_parameter(&self, node: &Node) -> Option<&TypeParameterData> {
         use super::syntax_kind_ext::TYPE_PARAMETER;
         if node.has_data() && node.kind == TYPE_PARAMETER {
@@ -1023,6 +1154,7 @@ impl NodeArena {
     /// Get parenthesized expression data.
     /// Returns None if node is not a parenthesized expression or has no data.
     #[inline]
+    #[must_use]
     pub fn get_parenthesized(&self, node: &Node) -> Option<&ParenthesizedData> {
         use super::syntax_kind_ext::PARENTHESIZED_EXPRESSION;
         if node.has_data() && node.kind == PARENTHESIZED_EXPRESSION {
@@ -1034,6 +1166,7 @@ impl NodeArena {
 
     /// Get template expression data.
     #[inline]
+    #[must_use]
     pub fn get_template_expr(&self, node: &Node) -> Option<&TemplateExprData> {
         use super::syntax_kind_ext::TEMPLATE_EXPRESSION;
         if node.has_data() && node.kind == TEMPLATE_EXPRESSION {
@@ -1047,6 +1180,7 @@ impl NodeArena {
     /// and `TEMPLATE_LITERAL_TYPE_SPAN` (type-level) since both store data in
     /// the same `template_spans` array.
     #[inline]
+    #[must_use]
     pub fn get_template_span(&self, node: &Node) -> Option<&TemplateSpanData> {
         use super::syntax_kind_ext::{TEMPLATE_LITERAL_TYPE_SPAN, TEMPLATE_SPAN};
         if node.has_data()
@@ -1060,6 +1194,7 @@ impl NodeArena {
 
     /// Get tagged template expression data.
     #[inline]
+    #[must_use]
     pub fn get_tagged_template(&self, node: &Node) -> Option<&TaggedTemplateData> {
         use super::syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION;
         if node.has_data() && node.kind == TAGGED_TEMPLATE_EXPRESSION {
@@ -1071,6 +1206,7 @@ impl NodeArena {
 
     /// Get spread element/assignment data.
     #[inline]
+    #[must_use]
     pub fn get_spread(&self, node: &Node) -> Option<&SpreadData> {
         use super::syntax_kind_ext::{SPREAD_ASSIGNMENT, SPREAD_ELEMENT};
         if node.has_data() && (node.kind == SPREAD_ELEMENT || node.kind == SPREAD_ASSIGNMENT) {
@@ -1082,6 +1218,7 @@ impl NodeArena {
 
     /// Get shorthand property assignment data.
     #[inline]
+    #[must_use]
     pub fn get_shorthand_property(&self, node: &Node) -> Option<&ShorthandPropertyData> {
         use super::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT;
         if node.has_data() && node.kind == SHORTHAND_PROPERTY_ASSIGNMENT {
@@ -1091,8 +1228,9 @@ impl NodeArena {
         }
     }
 
-    /// Get binding pattern data (ObjectBindingPattern or ArrayBindingPattern).
+    /// Get binding pattern data (`ObjectBindingPattern` or `ArrayBindingPattern`).
     #[inline]
+    #[must_use]
     pub fn get_binding_pattern(&self, node: &Node) -> Option<&BindingPatternData> {
         use super::syntax_kind_ext::{ARRAY_BINDING_PATTERN, OBJECT_BINDING_PATTERN};
         if node.has_data()
@@ -1106,6 +1244,7 @@ impl NodeArena {
 
     /// Get binding element data.
     #[inline]
+    #[must_use]
     pub fn get_binding_element(&self, node: &Node) -> Option<&BindingElementData> {
         use super::syntax_kind_ext::BINDING_ELEMENT;
         if node.has_data() && node.kind == BINDING_ELEMENT {
@@ -1117,6 +1256,7 @@ impl NodeArena {
 
     /// Get computed property name data
     #[inline]
+    #[must_use]
     pub fn get_computed_property(&self, node: &Node) -> Option<&ComputedPropertyData> {
         use super::syntax_kind_ext::COMPUTED_PROPERTY_NAME;
         if node.has_data() && node.kind == COMPUTED_PROPERTY_NAME {
@@ -1127,11 +1267,13 @@ impl NodeArena {
     }
 
     /// Number of nodes in the arena
+    #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Check if arena is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
@@ -1148,6 +1290,7 @@ macro_rules! define_at_accessors {
         impl NodeArena {
             $(
                 #[inline]
+#[must_use]
                 pub fn $at_name(&self, index: NodeIndex) -> Option<&$ret> {
                     self.$getter(self.get(index)?)
                 }
@@ -1263,112 +1406,130 @@ pub struct NodeView<'a> {
 }
 
 impl<'a> NodeView<'a> {
-    /// Create a new NodeView
+    /// Create a new `NodeView`.
     #[inline]
+    #[must_use]
     pub fn new(arena: &'a NodeArena, index: NodeIndex) -> Option<NodeView<'a>> {
         arena.get(index).map(|node| NodeView { node, arena, index })
     }
 
-    /// Get the SyntaxKind
+    /// Get the `SyntaxKind`.
     #[inline]
+    #[must_use]
     pub fn kind(&self) -> u16 {
         self.node.kind
     }
 
-    /// Get the start position
+    /// Get the start position.
     #[inline]
+    #[must_use]
     pub fn pos(&self) -> u32 {
         self.node.pos
     }
 
-    /// Get the end position
+    /// Get the end position.
     #[inline]
+    #[must_use]
     pub fn end(&self) -> u32 {
         self.node.end
     }
 
-    /// Get the flags
+    /// Get the flags.
     #[inline]
+    #[must_use]
     pub fn flags(&self) -> u16 {
         self.node.flags
     }
 
-    /// Check if this node has associated data
+    /// Check if this node has associated data.
     #[inline]
+    #[must_use]
     pub fn has_data(&self) -> bool {
         self.node.has_data()
     }
 
-    /// Get extended node info (parent, id, modifier/transform flags)
+    /// Get extended node info (`parent`, `id`, modifier/transform flags).
     #[inline]
+    #[must_use]
     pub fn extended(&self) -> Option<&'a ExtendedNodeInfo> {
         self.arena.get_extended(self.index)
     }
 
-    /// Get parent node index
+    /// Get parent node index.
     #[inline]
+    #[must_use]
     pub fn parent(&self) -> NodeIndex {
         self.extended().map_or(NodeIndex::NONE, |e| e.parent)
     }
 
-    /// Get node id
+    /// Get node id.
     #[inline]
+    #[must_use]
     pub fn id(&self) -> u32 {
         self.extended().map_or(0, |e| e.id)
     }
 
-    /// Get a child node as a NodeView
+    /// Get a child node as a `NodeView`.
     #[inline]
+    #[must_use]
     pub fn child(&self, index: NodeIndex) -> Option<NodeView<'a>> {
         NodeView::new(self.arena, index)
     }
 
     // Typed data accessors - return Option<&T> based on node kind
 
-    /// Get identifier data (for Identifier, PrivateIdentifier nodes)
+    /// Get identifier data (for `Identifier`, `PrivateIdentifier` nodes).
     #[inline]
+    #[must_use]
     pub fn as_identifier(&self) -> Option<&'a IdentifierData> {
         self.arena.get_identifier(self.node)
     }
 
-    /// Get literal data (for StringLiteral, NumericLiteral, etc.)
+    /// Get literal data (for `StringLiteral`, `NumericLiteral`, etc.).
     #[inline]
+    #[must_use]
     pub fn as_literal(&self) -> Option<&'a LiteralData> {
         self.arena.get_literal(self.node)
     }
 
     /// Get binary expression data
     #[inline]
+    #[must_use]
     pub fn as_binary_expr(&self) -> Option<&'a BinaryExprData> {
         self.arena.get_binary_expr(self.node)
     }
 
     /// Get call expression data
     #[inline]
+    #[must_use]
     pub fn as_call_expr(&self) -> Option<&'a CallExprData> {
         self.arena.get_call_expr(self.node)
     }
 
     /// Get function data
     #[inline]
+    #[must_use]
     pub fn as_function(&self) -> Option<&'a FunctionData> {
         self.arena.get_function(self.node)
     }
 
     /// Get class data
     #[inline]
+    #[must_use]
     pub fn as_class(&self) -> Option<&'a ClassData> {
         self.arena.get_class(self.node)
     }
 
     /// Get block data
     #[inline]
+    #[must_use]
     pub fn as_block(&self) -> Option<&'a BlockData> {
         self.arena.get_block(self.node)
     }
 
     /// Get source file data
     #[inline]
+    #[must_use]
     pub fn as_source_file(&self) -> Option<&'a SourceFileData> {
         self.arena.get_source_file(self.node)
     }
@@ -1381,6 +1542,7 @@ impl<'a> NodeView<'a> {
 impl Node {
     /// Check if this is an identifier node
     #[inline]
+    #[must_use]
     pub fn is_identifier(&self) -> bool {
         use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::Identifier as u16
@@ -1388,6 +1550,7 @@ impl Node {
 
     /// Check if this is a string literal
     #[inline]
+    #[must_use]
     pub fn is_string_literal(&self) -> bool {
         use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::StringLiteral as u16
@@ -1395,6 +1558,7 @@ impl Node {
 
     /// Check if this is a numeric literal
     #[inline]
+    #[must_use]
     pub fn is_numeric_literal(&self) -> bool {
         use tsz_scanner::SyntaxKind;
         self.kind == SyntaxKind::NumericLiteral as u16
@@ -1402,6 +1566,7 @@ impl Node {
 
     /// Check if this is a function declaration
     #[inline]
+    #[must_use]
     pub fn is_function_declaration(&self) -> bool {
         use super::syntax_kind_ext::FUNCTION_DECLARATION;
         self.kind == FUNCTION_DECLARATION
@@ -1409,6 +1574,7 @@ impl Node {
 
     /// Check if this is a class declaration
     #[inline]
+    #[must_use]
     pub fn is_class_declaration(&self) -> bool {
         use super::syntax_kind_ext::CLASS_DECLARATION;
         self.kind == CLASS_DECLARATION
@@ -1416,8 +1582,8 @@ impl Node {
 
     /// Check if this is any kind of function-like node
     #[inline]
+    #[must_use]
     pub fn is_function_like(&self) -> bool {
-        use super::syntax_kind_ext::*;
         matches!(
             self.kind,
             FUNCTION_DECLARATION
@@ -1432,22 +1598,22 @@ impl Node {
 
     /// Check if this is a statement
     #[inline]
+    #[must_use]
     pub fn is_statement(&self) -> bool {
-        use super::syntax_kind_ext::*;
         (BLOCK..=DEBUGGER_STATEMENT).contains(&self.kind) || self.kind == VARIABLE_STATEMENT
     }
 
     /// Check if this is a declaration
     #[inline]
+    #[must_use]
     pub fn is_declaration(&self) -> bool {
-        use super::syntax_kind_ext::*;
         (VARIABLE_DECLARATION..=EXPORT_SPECIFIER).contains(&self.kind)
     }
 
     /// Check if this is a type node
     #[inline]
+    #[must_use]
     pub fn is_type_node(&self) -> bool {
-        use super::syntax_kind_ext::*;
         (TYPE_PREDICATE..=IMPORT_TYPE).contains(&self.kind)
     }
 }
@@ -1471,10 +1637,11 @@ pub struct NodeInfo {
 
 impl NodeInfo {
     /// Create from a Node and its extended info
+    #[must_use]
     pub fn from_thin(node: &Node, ext: &ExtendedNodeInfo) -> NodeInfo {
         NodeInfo {
             kind: node.kind,
-            flags: node.flags as u32,
+            flags: u32::from(node.flags),
             modifier_flags: ext.modifier_flags,
             pos: node.pos,
             end: node.end,
@@ -1512,7 +1679,8 @@ pub trait NodeAccess {
     fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex>;
 }
 
-/// Implementation of NodeAccess for NodeArena
+/// Implementation of `NodeAccess` for `NodeArena`
+#[allow(clippy::too_many_lines)]
 impl NodeAccess for NodeArena {
     fn node_info(&self, index: NodeIndex) -> Option<NodeInfo> {
         if index.is_none() {
@@ -1555,9 +1723,8 @@ impl NodeAccess for NodeArena {
             return Vec::new();
         }
 
-        let node = match self.nodes.get(index.0 as usize) {
-            Some(n) => n,
-            None => return Vec::new(),
+        let Some(node) = self.nodes.get(index.0 as usize) else {
+            return Vec::new();
         };
 
         // Helper to add optional NodeIndex (ignoring NONE)
@@ -1578,8 +1745,6 @@ impl NodeAccess for NodeArena {
                 children.extend(l.nodes.iter().copied());
             }
         };
-
-        use super::syntax_kind_ext::*;
 
         let mut children = Vec::new();
 
@@ -1658,12 +1823,7 @@ impl NodeAccess for NodeArena {
                     children.push(data.body);
                 }
             }
-            ARRAY_LITERAL_EXPRESSION => {
-                if let Some(data) = self.get_literal_expr(node) {
-                    add_list(&mut children, &data.elements);
-                }
-            }
-            OBJECT_LITERAL_EXPRESSION => {
+            ARRAY_LITERAL_EXPRESSION | OBJECT_LITERAL_EXPRESSION => {
                 if let Some(data) = self.get_literal_expr(node) {
                     add_list(&mut children, &data.elements);
                 }
@@ -1673,17 +1833,12 @@ impl NodeAccess for NodeArena {
                     children.push(data.expression);
                 }
             }
-            YIELD_EXPRESSION => {
-                if let Some(data) = self.get_unary_expr_ex(node) {
-                    add_opt(&mut children, data.expression);
-                }
-            }
-            AWAIT_EXPRESSION => {
+            YIELD_EXPRESSION | AWAIT_EXPRESSION | NON_NULL_EXPRESSION => {
                 if let Some(data) = self.get_unary_expr_ex(node) {
                     children.push(data.expression);
                 }
             }
-            SPREAD_ELEMENT => {
+            SPREAD_ASSIGNMENT | SPREAD_ELEMENT => {
                 if let Some(data) = self.get_spread(node) {
                     children.push(data.expression);
                 }
@@ -1700,12 +1855,6 @@ impl NodeAccess for NodeArena {
                     children.push(data.expression);
                 }
             }
-            NON_NULL_EXPRESSION => {
-                if let Some(data) = self.get_unary_expr_ex(node) {
-                    children.push(data.expression);
-                }
-            }
-
             // Statements
             VARIABLE_STATEMENT => {
                 if let Some(data) = self.get_variable(node) {
@@ -1759,7 +1908,7 @@ impl NodeAccess for NodeArena {
                     children.push(data.case_block);
                 }
             }
-            CASE_BLOCK => {
+            CASE_BLOCK | BLOCK | CLASS_STATIC_BLOCK_DECLARATION => {
                 if let Some(data) = self.get_block(node) {
                     add_list(&mut children, &data.statements);
                 }
@@ -1808,11 +1957,6 @@ impl NodeAccess for NodeArena {
                 if let Some(data) = self.get_with_statement(node) {
                     children.push(data.expression);
                     children.push(data.then_statement);
-                }
-            }
-            BLOCK | CLASS_STATIC_BLOCK_DECLARATION => {
-                if let Some(data) = self.get_block(node) {
-                    add_list(&mut children, &data.statements);
                 }
             }
 
@@ -2125,12 +2269,6 @@ impl NodeAccess for NodeArena {
                     add_opt(&mut children, data.object_assignment_initializer);
                 }
             }
-            SPREAD_ASSIGNMENT => {
-                if let Some(data) = self.get_spread(node) {
-                    children.push(data.expression);
-                }
-            }
-
             // JSX nodes
             JSX_ELEMENT => {
                 if let Some(data) = self.get_jsx_element(node) {
@@ -2157,9 +2295,6 @@ impl NodeAccess for NodeArena {
                     add_list(&mut children, &data.children);
                     children.push(data.closing_fragment);
                 }
-            }
-            JSX_OPENING_FRAGMENT | JSX_CLOSING_FRAGMENT => {
-                // No children
             }
             JSX_ATTRIBUTES => {
                 if let Some(data) = self.get_jsx_attributes(node) {
@@ -2231,7 +2366,7 @@ impl NodeAccess for NodeArena {
                 }
             }
 
-            // Nodes with no children (tokens, identifiers, literals)
+            // Nodes with no children (tokens, identifiers, literals, fragments)
             _ => {
                 // Tokens, identifiers, literals, etc. have no children
             }

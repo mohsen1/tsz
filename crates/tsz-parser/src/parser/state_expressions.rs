@@ -1,10 +1,21 @@
 //! Parser state - expression parsing methods
 
+#![allow(clippy::too_many_lines)]
+
 use super::state::{
     CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN,
     CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
 };
-use crate::parser::{NodeIndex, NodeList, node::*, node_flags, syntax_kind_ext};
+use crate::parser::{
+    NodeIndex, NodeList,
+    node::{
+        AccessExprData, BinaryExprData, CallExprData, ConditionalExprData, FunctionData,
+        IdentifierData, LiteralData, LiteralExprData, ParenthesizedData, TaggedTemplateData,
+        TemplateExprData, TemplateSpanData, UnaryExprData, UnaryExprDataEx,
+    },
+    node_flags, syntax_kind_ext,
+};
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
@@ -476,7 +487,7 @@ impl ParserState {
         )
     }
 
-    /// Parse type parameters: <T, U extends Foo, V = DefaultType>
+    /// Parse type parameters: <T, U extends Foo, V = `DefaultType`>
     pub(crate) fn parse_type_parameters(&mut self) -> NodeList {
         let mut params = Vec::new();
 
@@ -1226,8 +1237,9 @@ impl ParserState {
                             arguments: Some(arguments),
                         },
                     );
+                    let optional_chain_flag = self.u16_from_node_flags(node_flags::OPTIONAL_CHAIN);
                     if is_optional_chain && let Some(call_node) = self.arena.get_mut(call_expr) {
-                        call_node.flags |= node_flags::OPTIONAL_CHAIN as u16;
+                        call_node.flags |= optional_chain_flag;
                     }
                     expr = call_expr;
                 }
@@ -1270,8 +1282,10 @@ impl ParserState {
                                     arguments: Some(arguments),
                                 },
                             );
+                            let optional_chain_flag =
+                                self.u16_from_node_flags(node_flags::OPTIONAL_CHAIN);
                             if let Some(call_node) = self.arena.get_mut(call_expr) {
-                                call_node.flags |= node_flags::OPTIONAL_CHAIN as u16;
+                                call_node.flags |= optional_chain_flag;
                             }
                             expr = call_expr;
                             continue;
@@ -1328,8 +1342,10 @@ impl ParserState {
                                 arguments: Some(arguments),
                             },
                         );
+                        let optional_chain_flag =
+                            self.u16_from_node_flags(node_flags::OPTIONAL_CHAIN);
                         if let Some(call_node) = self.arena.get_mut(call_expr) {
-                            call_node.flags |= node_flags::OPTIONAL_CHAIN as u16;
+                            call_node.flags |= optional_chain_flag;
                         }
                         expr = call_expr;
                     } else {
@@ -1428,8 +1444,6 @@ impl ParserState {
                         } else {
                             // Not a call or tagged template - this is an instantiation expression
                             // (e.g., f<string>, new Foo<number>, a<b>?.())
-                            // Continue the loop so optional chaining (?.),
-                            // property access (.), etc. can follow
                             let end_pos = self.token_end();
                             expr = self.arena.add_expr_with_type_args(
                                 crate::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
@@ -1440,7 +1454,6 @@ impl ParserState {
                                     type_arguments: Some(type_args),
                                 },
                             );
-                            continue;
                         }
                     } else {
                         break;
@@ -1546,7 +1559,20 @@ impl ParserState {
             SyntaxKind::StringLiteral => self.parse_string_literal(),
             SyntaxKind::TrueKeyword | SyntaxKind::FalseKeyword => self.parse_boolean_literal(),
             SyntaxKind::NullKeyword => self.parse_null_literal(),
-            SyntaxKind::UndefinedKeyword => self.parse_keyword_as_identifier(),
+            SyntaxKind::UndefinedKeyword
+            | SyntaxKind::AnyKeyword
+            | SyntaxKind::StringKeyword
+            | SyntaxKind::NumberKeyword
+            | SyntaxKind::BooleanKeyword
+            | SyntaxKind::SymbolKeyword
+            | SyntaxKind::BigIntKeyword
+            | SyntaxKind::ObjectKeyword
+            | SyntaxKind::NeverKeyword
+            | SyntaxKind::UnknownKeyword
+            | SyntaxKind::RequireKeyword
+            | SyntaxKind::ModuleKeyword
+            | SyntaxKind::AwaitKeyword
+            | SyntaxKind::YieldKeyword => self.parse_keyword_as_identifier(),
             SyntaxKind::ThisKeyword => self.parse_this_expression(),
             SyntaxKind::SuperKeyword => self.parse_super_expression(),
             SyntaxKind::OpenParenToken => self.parse_parenthesized_expression(),
@@ -1575,21 +1601,6 @@ impl ParserState {
             SyntaxKind::SlashToken | SyntaxKind::SlashEqualsToken => self.parse_regex_literal(),
             // Dynamic import or import.meta
             SyntaxKind::ImportKeyword => self.parse_import_expression(),
-            // Type keywords and some reserved words can be used as identifiers in expression context
-            // e.g., new any[1], new string(), new require() (when require is aliased), etc.
-            SyntaxKind::AnyKeyword
-            | SyntaxKind::StringKeyword
-            | SyntaxKind::NumberKeyword
-            | SyntaxKind::BooleanKeyword
-            | SyntaxKind::SymbolKeyword
-            | SyntaxKind::BigIntKeyword
-            | SyntaxKind::ObjectKeyword
-            | SyntaxKind::NeverKeyword
-            | SyntaxKind::UnknownKeyword
-            | SyntaxKind::RequireKeyword
-            | SyntaxKind::ModuleKeyword
-            | SyntaxKind::AwaitKeyword
-            | SyntaxKind::YieldKeyword => self.parse_keyword_as_identifier(),
             SyntaxKind::Unknown => {
                 // TS1127: Invalid character - emit specific error for invalid characters
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -2044,10 +2055,8 @@ impl ParserState {
                 use tsz_common::diagnostics::diagnostic_codes;
                 // Convert legacy octal to modern octal for the suggestion (e.g., "01" -> "0o1")
                 let suggested = format!("0o{}", &integer_part[1..]);
-                let message = format!(
-                    "Octal literals are not allowed. Use the syntax '{}'.",
-                    suggested
-                );
+                let message =
+                    format!("Octal literals are not allowed. Use the syntax '{suggested}'.");
                 self.parse_error_at(
                     start_pos,
                     end_pos - start_pos,
@@ -2184,7 +2193,7 @@ impl ParserState {
                 self.parse_error_at(
                     self.token_pos(),
                     self.token_end() - self.token_pos(),
-                    &format!("Cannot find name '{}'.", missing_name),
+                    &format!("Cannot find name '{missing_name}'."),
                     diagnostic_codes::CANNOT_FIND_NAME,
                 );
             }
@@ -2228,7 +2237,6 @@ impl ParserState {
             return;
         }
 
-        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
         let (message, code) = if self.scanner.invalid_separator_is_consecutive() {
             (
                 diagnostic_messages::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
@@ -2242,7 +2250,7 @@ impl ParserState {
         };
 
         if let Some(pos) = self.scanner.get_invalid_separator_pos() {
-            self.parse_error_at(pos as u32, 1, message, code);
+            self.parse_error_at(self.u32_from_usize(pos), 1, message, code);
         } else {
             self.parse_error_at_current_token(message, code);
         }
@@ -2324,7 +2332,7 @@ impl ParserState {
                     1502,
                 ),
             };
-            self.parse_error_at(error.pos as u32, 1, message, code);
+            self.parse_error_at(self.u32_from_usize(error.pos), 1, message, code);
         }
 
         self.arena.add_literal(
@@ -2373,10 +2381,10 @@ impl ParserState {
 
         // Optional second argument (import attributes in some proposals)
         let options = if self.parse_optional(SyntaxKind::CommaToken) {
-            if !self.is_token(SyntaxKind::CloseParenToken) {
-                Some(self.parse_assignment_expression())
-            } else {
+            if self.is_token(SyntaxKind::CloseParenToken) {
                 None // Trailing comma
+            } else {
+                Some(self.parse_assignment_expression())
             }
         } else {
             None
@@ -2483,8 +2491,7 @@ impl ParserState {
                 let span_start = self
                     .arena
                     .get(expression)
-                    .map(|node| node.pos)
-                    .unwrap_or(literal_start);
+                    .map_or(literal_start, |node| node.pos);
                 let span = self.arena.add_template_span(
                     syntax_kind_ext::TEMPLATE_SPAN,
                     span_start,
@@ -2524,8 +2531,7 @@ impl ParserState {
                 let span_start = self
                     .arena
                     .get(expression)
-                    .map(|node| node.pos)
-                    .unwrap_or(literal_start);
+                    .map_or(literal_start, |node| node.pos);
                 let span = self.arena.add_template_span(
                     syntax_kind_ext::TEMPLATE_SPAN,
                     span_start,
@@ -2702,22 +2708,16 @@ impl ParserState {
     /// Used for error recovery in object literals when commas are missing
     pub(crate) fn is_property_start(&self) -> bool {
         match self.token() {
-            // Spread operator
-            SyntaxKind::DotDotDotToken => true,
-            // Get/Set accessors
-            SyntaxKind::GetKeyword | SyntaxKind::SetKeyword => true,
-            // Async keyword (for async methods)
-            SyntaxKind::AsyncKeyword => true,
-            // Asterisk (for generator methods)
-            SyntaxKind::AsteriskToken => true,
-            // String/number literals (computed properties or shorthand)
-            SyntaxKind::StringLiteral | SyntaxKind::NumericLiteral | SyntaxKind::BigIntLiteral => {
-                true
-            }
-            // Identifier or keyword (property names)
-            SyntaxKind::Identifier => true,
-            // Bracket (computed property)
-            SyntaxKind::OpenBracketToken => true,
+            SyntaxKind::DotDotDotToken
+            | SyntaxKind::GetKeyword
+            | SyntaxKind::SetKeyword
+            | SyntaxKind::AsyncKeyword
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::StringLiteral
+            | SyntaxKind::NumericLiteral
+            | SyntaxKind::BigIntLiteral
+            | SyntaxKind::Identifier
+            | SyntaxKind::OpenBracketToken => true,
             _ => self.is_identifier_or_keyword(),
         }
     }
@@ -2820,7 +2820,7 @@ impl ParserState {
                     _ => "modifier",
                 };
                 self.parse_error_at_current_token(
-                    &format!("{} modifier cannot be used here.", modifier_name),
+                    &format!("{modifier_name} modifier cannot be used here."),
                     diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE, // TS1042
                 );
                 self.next_token(); // consume the modifier
@@ -3002,7 +3002,7 @@ impl ParserState {
         is_method
     }
 
-    /// Parse get accessor in object literal: get foo() { }
+    /// Parse get accessor in object literal: get `foo()` { }
     pub(crate) fn parse_object_get_accessor(&mut self, start_pos: u32) -> NodeIndex {
         self.next_token(); // consume 'get'
         let name = self.parse_property_name();
@@ -3052,10 +3052,10 @@ impl ParserState {
             NodeIndex::NONE
         };
         // If there's a type annotation, use its end; otherwise use close paren end
-        let signature_end = if !type_annotation.is_none() {
-            self.token_pos()
-        } else {
+        let signature_end = if type_annotation.is_none() {
             close_paren_end
+        } else {
+            self.token_pos()
         };
 
         // Parse body if present. Missing body is reported in grammar check, not here.
@@ -3171,7 +3171,7 @@ impl ParserState {
         )
     }
 
-    /// Parse method in object literal: foo() { } or async foo() { } or *foo() { }
+    /// Parse method in object literal: `foo()` { } or async `foo()` { } or *`foo()` { }
     pub(crate) fn parse_object_method(
         &mut self,
         start_pos: u32,
@@ -3441,11 +3441,7 @@ impl ParserState {
                 self.arena
                     .add_token(SyntaxKind::NewKeyword as u16, start_pos, start_pos + 3);
             let name = self.parse_identifier_name();
-            let end_pos = self
-                .arena
-                .get(name)
-                .map(|n| n.end)
-                .unwrap_or(self.token_end());
+            let end_pos = self.arena.get(name).map_or(self.token_end(), |n| n.end);
             return self.arena.add_access_expr(
                 syntax_kind_ext::META_PROPERTY,
                 start_pos,
@@ -3469,8 +3465,7 @@ impl ParserState {
         let mut end_pos = self
             .arena
             .get(expression)
-            .map(|node| node.end)
-            .unwrap_or(self.token_end());
+            .map_or(self.token_end(), |node| node.end);
 
         // Parse type arguments: new Array<string>()
         // Use try_parse to handle ambiguity with comparison operators (e.g., new Date<A)

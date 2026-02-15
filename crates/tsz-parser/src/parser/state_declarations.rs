@@ -1,7 +1,18 @@
 //! Parser state - interface, type alias, enum, module, import/export, and control flow parsing methods
 
+#![allow(clippy::too_many_lines)]
+
 use super::state::{CONTEXT_FLAG_DISALLOW_IN, ParserState};
-use crate::parser::{NodeIndex, NodeList, node::*, node_flags, syntax_kind_ext};
+use crate::parser::{
+    NodeIndex, NodeList,
+    node::{
+        BlockData, CaseClauseData, CatchClauseData, EnumData, EnumMemberData, ExportAssignmentData,
+        ExportDeclData, ExprStatementData, IdentifierData, IfStatementData, ImportClauseData,
+        ImportDeclData, LiteralData, LoopData, NamedImportsData, ParameterData, ReturnData,
+        SpecifierData, SwitchData, TryData, VariableData, VariableDeclarationData,
+    },
+    node_flags, syntax_kind_ext,
+};
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
@@ -157,7 +168,7 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
 
             // Save the modifier name for error message
-            let modifier_text = self.scanner.get_token_text().to_string();
+            let modifier_text = self.scanner.get_token_text().clone();
 
             // Check if this is an index signature - peek ahead to determine the right error
             let snapshot = self.scanner.save_state();
@@ -171,10 +182,7 @@ impl ParserState {
             if is_index_signature {
                 // TS1071: '{0}' modifier cannot appear on an index signature.
                 self.parse_error_at_current_token(
-                    &format!(
-                        "'{}' modifier cannot appear on an index signature.",
-                        modifier_text
-                    ),
+                    &format!("'{modifier_text}' modifier cannot appear on an index signature."),
                     diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATURE,
                 );
             } else {
@@ -287,10 +295,9 @@ impl ParserState {
                     None
                 };
                 return self.parse_index_signature_with_modifiers(modifiers, start_pos);
-            } else {
-                // Computed property name
-                self.parse_property_name()
             }
+            // Computed property name
+            self.parse_property_name()
         } else {
             return NodeIndex::NONE;
         };
@@ -549,7 +556,7 @@ impl ParserState {
         )
     }
 
-    /// Parse get accessor signature in type context: get foo(): type
+    /// Parse get accessor signature in type context: get `foo()`: type
     /// Note: TypeScript allows bodies here (which is an error), so we parse them for error recovery
     pub(crate) fn parse_get_accessor_signature(&mut self, start_pos: u32) -> NodeIndex {
         self.parse_expected(SyntaxKind::GetKeyword);
@@ -647,7 +654,9 @@ impl ParserState {
 
         // Parse expected equals token, but recover gracefully if missing
         // If the next token can start a type (e.g., {, (, [), emit error and continue parsing
-        if !self.is_token(SyntaxKind::EqualsToken) {
+        if self.is_token(SyntaxKind::EqualsToken) {
+            self.next_token(); // Consume the equals token
+        } else {
             // Emit TS1005 for missing equals token
             self.error_token_expected("=");
             // If the next token looks like a type, continue parsing anyway
@@ -666,8 +675,6 @@ impl ParserState {
                     },
                 );
             }
-        } else {
-            self.next_token(); // Consume the equals token
         }
 
         let type_node = self.parse_type();
@@ -871,10 +878,9 @@ impl ParserState {
                 let modifiers = Some(self.make_node_list(vec![declare_modifier]));
                 self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
             }
-            SyntaxKind::NamespaceKeyword | SyntaxKind::ModuleKeyword => {
-                self.parse_declare_module_with_modifiers(start_pos, all_modifiers)
-            }
-            SyntaxKind::GlobalKeyword => {
+            SyntaxKind::NamespaceKeyword
+            | SyntaxKind::ModuleKeyword
+            | SyntaxKind::GlobalKeyword => {
                 self.parse_declare_module_with_modifiers(start_pos, all_modifiers)
             }
             SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => {
@@ -1002,8 +1008,9 @@ impl ParserState {
             },
         );
 
+        let global_augmentation_flag = self.u16_from_node_flags(node_flags::GLOBAL_AUGMENTATION);
         if is_global && let Some(node) = self.arena.get_mut(module_idx) {
-            node.flags |= node_flags::GLOBAL_AUGMENTATION as u16;
+            node.flags |= global_augmentation_flag;
         }
 
         module_idx
@@ -1089,8 +1096,9 @@ impl ParserState {
             },
         );
 
+        let global_augmentation_flag = self.u16_from_node_flags(node_flags::GLOBAL_AUGMENTATION);
         if is_global && let Some(node) = self.arena.get_mut(module_idx) {
-            node.flags |= node_flags::GLOBAL_AUGMENTATION as u16;
+            node.flags |= global_augmentation_flag;
         }
 
         module_idx
@@ -1134,7 +1142,7 @@ impl ParserState {
     }
 
     /// Parse module block: { statements }
-    /// is_ambient: true if this is a declare namespace/module, false for regular namespace
+    /// `is_ambient`: true if this is a declare namespace/module, false for regular namespace
     pub(crate) fn parse_module_block(&mut self, is_ambient: bool) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
@@ -1184,10 +1192,10 @@ impl ParserState {
         };
 
         // Parse module specifier
-        let module_specifier = if !import_clause.is_none() {
-            self.parse_expected(SyntaxKind::FromKeyword);
+        let module_specifier = if import_clause.is_none() {
             self.parse_string_literal()
         } else {
+            self.parse_expected(SyntaxKind::FromKeyword);
             self.parse_string_literal()
         };
 
@@ -1211,7 +1219,7 @@ impl ParserState {
     }
 
     /// Parse optional import attributes: `with { type: "json" }` or `assert { type: "json" }`
-    /// Returns NodeIndex::NONE if no attributes are present.
+    /// Returns `NodeIndex::NONE` if no attributes are present.
     pub(crate) fn parse_import_attributes(&mut self) -> NodeIndex {
         // Check for 'with' or 'assert' keyword (not on a new line to avoid ASI issues)
         if !self.is_token(SyntaxKind::WithKeyword) && !self.is_token(SyntaxKind::AssertKeyword) {
@@ -1241,11 +1249,7 @@ impl ParserState {
             };
             self.parse_expected(SyntaxKind::ColonToken);
             let value = self.parse_assignment_expression();
-            let attr_end = self
-                .arena
-                .get(value)
-                .map(|n| n.end)
-                .unwrap_or(self.token_end());
+            let attr_end = self.arena.get(value).map_or(self.token_end(), |n| n.end);
 
             let attr_node = self.arena.add_import_attribute(
                 syntax_kind_ext::IMPORT_ATTRIBUTE,
@@ -1484,7 +1488,7 @@ impl ParserState {
     /// export { x } from "mod";
     /// export * from "mod";
     /// export default x;
-    /// export function f() {}
+    /// export function `f()` {}
     /// export class C {}
     pub(crate) fn parse_export_declaration(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -1595,7 +1599,7 @@ impl ParserState {
 
     /// Parse `export as namespace Foo;` (UMD global namespace declaration)
     ///
-    /// This creates a NamespaceExportDeclaration node. The syntax declares that the module's
+    /// This creates a `NamespaceExportDeclaration` node. The syntax declares that the module's
     /// exports are also available globally under the given namespace name.
     pub(crate) fn parse_namespace_export_declaration(&mut self, start_pos: u32) -> NodeIndex {
         self.parse_expected(SyntaxKind::AsKeyword);
@@ -1708,10 +1712,10 @@ impl ParserState {
         };
 
         // Parse optional import attributes: with { ... } or assert { ... }
-        let attributes = if !module_specifier.is_none() {
-            self.parse_import_attributes()
-        } else {
+        let attributes = if module_specifier.is_none() {
             NodeIndex::NONE
+        } else {
+            self.parse_import_attributes()
         };
 
         self.parse_semicolon();
@@ -2032,10 +2036,10 @@ impl ParserState {
 
         // For restricted productions (return), ASI applies immediately after line break
         // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        let expression = if !self.can_parse_semicolon_for_restricted_production() {
-            self.parse_expression()
-        } else {
+        let expression = if self.can_parse_semicolon_for_restricted_production() {
             NodeIndex::NONE
+        } else {
+            self.parse_expression()
         };
 
         self.parse_semicolon();
@@ -2100,7 +2104,9 @@ impl ParserState {
         // Disallow 'in' as a binary operator so it's recognized as the for-in keyword
         let saved_flags = self.context_flags;
         self.context_flags |= CONTEXT_FLAG_DISALLOW_IN;
-        let initializer = if !self.is_token(SyntaxKind::SemicolonToken) {
+        let initializer = if self.is_token(SyntaxKind::SemicolonToken) {
+            NodeIndex::NONE
+        } else {
             if self.is_token(SyntaxKind::VarKeyword)
                 || self.is_token(SyntaxKind::LetKeyword)
                 || self.is_token(SyntaxKind::ConstKeyword)
@@ -2111,8 +2117,6 @@ impl ParserState {
             } else {
                 self.parse_expression()
             }
-        } else {
-            NodeIndex::NONE
         };
         self.context_flags = saved_flags;
 
@@ -2142,7 +2146,9 @@ impl ParserState {
         self.parse_expected(SyntaxKind::SemicolonToken);
 
         // Condition
-        let condition = if !self.is_token(SyntaxKind::SemicolonToken) {
+        let condition = if self.is_token(SyntaxKind::SemicolonToken) {
+            NodeIndex::NONE
+        } else {
             let cond = self.parse_expression();
 
             // Check for missing for condition: for (init; ; incr) when there was content to parse
@@ -2151,8 +2157,6 @@ impl ParserState {
             }
 
             cond
-        } else {
-            NodeIndex::NONE
         };
 
         // Error recovery: if condition parsing failed badly, resync to semicolon
@@ -2166,7 +2170,9 @@ impl ParserState {
         self.parse_expected(SyntaxKind::SemicolonToken);
 
         // Incrementor
-        let incrementor = if !self.is_token(SyntaxKind::CloseParenToken) {
+        let incrementor = if self.is_token(SyntaxKind::CloseParenToken) {
+            NodeIndex::NONE
+        } else {
             let incr = self.parse_expression();
 
             // Check for missing for incrementor: for (init; cond; ) when there was content to parse
@@ -2175,8 +2181,6 @@ impl ParserState {
             }
 
             incr
-        } else {
-            NodeIndex::NONE
         };
 
         // Error recovery: if incrementor parsing failed badly, resync to close paren
@@ -2211,14 +2215,14 @@ impl ParserState {
         let start_pos = self.token_pos();
         let decl_keyword = self.token();
         let flags: u16 = match decl_keyword {
-            SyntaxKind::LetKeyword => node_flags::LET as u16,
-            SyntaxKind::ConstKeyword => node_flags::CONST as u16,
-            SyntaxKind::UsingKeyword => node_flags::USING as u16,
+            SyntaxKind::LetKeyword => self.u16_from_node_flags(node_flags::LET),
+            SyntaxKind::ConstKeyword => self.u16_from_node_flags(node_flags::CONST),
+            SyntaxKind::UsingKeyword => self.u16_from_node_flags(node_flags::USING),
             SyntaxKind::AwaitKeyword => {
                 // await using declaration in for loops
                 self.next_token(); // consume 'await'
                 self.parse_expected(SyntaxKind::UsingKeyword); // consume 'using'
-                node_flags::AWAIT_USING as u16
+                self.u16_from_node_flags(node_flags::AWAIT_USING)
             }
             _ => 0,
         };
@@ -2874,10 +2878,10 @@ impl ParserState {
             }
             // Try to parse semicolon for partial recovery, then resync
             let _ = self.can_parse_semicolon();
-            if !self.is_token(SyntaxKind::SemicolonToken) {
-                self.resync_after_error();
-            } else {
+            if self.is_token(SyntaxKind::SemicolonToken) {
                 self.next_token();
+            } else {
+                self.resync_after_error();
             }
             return NodeIndex::NONE;
         }

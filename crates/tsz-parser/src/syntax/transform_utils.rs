@@ -2,10 +2,13 @@
 //!
 //! Common functions used by ES5 transformations.
 
+#![allow(clippy::too_many_lines)]
+
 use crate::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 /// Check if an AST node contains a reference to `this` or `super`.
+#[must_use]
 pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(node_idx) else {
         return false;
@@ -392,6 +395,7 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
 ///
 /// Important: Regular functions have their own `arguments`, so we don't recurse
 /// into them. Only arrow functions inherit the parent's `arguments`.
+#[must_use]
 pub fn contains_arguments_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(node_idx) else {
         return false;
@@ -773,6 +777,7 @@ pub fn contains_arguments_reference(arena: &NodeArena, node_idx: NodeIndex) -> b
 }
 
 /// Check if a node is a private identifier (#field)
+#[must_use]
 pub fn is_private_identifier(arena: &NodeArena, name_idx: NodeIndex) -> bool {
     let Some(node) = arena.get(name_idx) else {
         return false;

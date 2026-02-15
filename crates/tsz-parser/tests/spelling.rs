@@ -6,61 +6,50 @@ use super::*;
 
 #[test]
 fn levenshtein_identical_strings() {
-    assert_eq!(levenshtein_with_max("abc", "abc", 5.0), Some(0.0));
+    assert_eq!(levenshtein_with_max("abc", "abc", 50), Some(0));
 }
 
 #[test]
 fn levenshtein_case_difference_is_cheap() {
-    let dist =
-        levenshtein_with_max("Abc", "abc", 5.0).expect("distance calculation should succeed");
-    // Case-only substitution costs 0.1
-    assert!(dist < 1.0, "case-only diff should be < 1.0, got {dist}");
-    assert!((dist - 0.1).abs() < f64::EPSILON);
+    let dist = levenshtein_with_max("Abc", "abc", 50).expect("distance calculation should succeed");
+    // Case-only substitution costs 1 (scaled by 10).
+    assert_eq!(dist, 1, "case-only diff should be 1, got {dist}");
 }
 
 #[test]
 fn levenshtein_single_char_substitution() {
-    // "asynd" vs "async": positions 1-4 identical, pos 5: d→c (cost 2.0)
+    // "asynd" vs "async": positions 1-4 identical, pos 5: d→c (cost 20 scaled)
     let dist =
-        levenshtein_with_max("asynd", "async", 3.0).expect("distance calculation should succeed");
-    assert!(
-        (dist - 2.0).abs() < f64::EPSILON,
-        "expected 2.0, got {dist}"
-    );
+        levenshtein_with_max("asynd", "async", 30).expect("distance calculation should succeed");
+    assert!(dist == 20, "expected 20, got {dist}");
 }
 
 #[test]
 fn levenshtein_insertion() {
-    // "classs" vs "class": one extra 's' (cost 1.0)
+    // "classs" vs "class": one extra 's' (cost 10)
     let dist =
-        levenshtein_with_max("classs", "class", 3.0).expect("distance calculation should succeed");
-    assert!(
-        (dist - 1.0).abs() < f64::EPSILON,
-        "expected 1.0, got {dist}"
-    );
+        levenshtein_with_max("classs", "class", 30).expect("distance calculation should succeed");
+    assert!(dist == 10, "expected 10, got {dist}");
 }
 
 #[test]
 fn levenshtein_deletion() {
-    // "clas" vs "class": one missing 's' (cost 1.0)
+    // "clas" vs "class": one missing 's' (cost 10)
     let dist =
-        levenshtein_with_max("clas", "class", 3.0).expect("distance calculation should succeed");
-    assert!(
-        (dist - 1.0).abs() < f64::EPSILON,
-        "expected 1.0, got {dist}"
-    );
+        levenshtein_with_max("clas", "class", 30).expect("distance calculation should succeed");
+    assert!(dist == 10, "expected 10, got {dist}");
 }
 
 #[test]
 fn levenshtein_exceeds_max() {
-    assert!(levenshtein_with_max("abc", "xyz", 1.0).is_none());
+    assert!(levenshtein_with_max("abc", "xyz", 10).is_none());
 }
 
 #[test]
 fn levenshtein_empty_strings() {
-    assert_eq!(levenshtein_with_max("", "", 5.0), Some(0.0));
-    assert_eq!(levenshtein_with_max("abc", "", 5.0), Some(3.0));
-    assert_eq!(levenshtein_with_max("", "abc", 5.0), Some(3.0));
+    assert_eq!(levenshtein_with_max("", "", 50), Some(0));
+    assert_eq!(levenshtein_with_max("abc", "", 50), Some(30));
+    assert_eq!(levenshtein_with_max("", "abc", 50), Some(30));
 }
 
 // =====================================================================
