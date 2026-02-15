@@ -9,8 +9,6 @@
 //! - Uses `NodeArena` instead of `NodeArena`
 //! - Each node is 16 bytes (vs 208 bytes for fat Node enum)
 
-#![allow(clippy::too_many_lines)]
-
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
 
@@ -543,6 +541,7 @@ impl ParserState {
     }
 
     /// Report escaped sequence diagnostics for string and template tokens.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn report_invalid_string_or_template_escape_errors(&mut self) {
         use tsz_common::diagnostics::diagnostic_codes;
         use tsz_common::diagnostics::diagnostic_messages;
@@ -740,6 +739,7 @@ impl ParserState {
     }
 
     /// Parse regex unicode escape diagnostics for regex literals in /u or /v mode.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn report_invalid_regular_expression_escape_errors(&mut self) {
         use tsz_common::diagnostics::diagnostic_codes;
         use tsz_common::diagnostics::diagnostic_messages;
@@ -1168,6 +1168,7 @@ impl ParserState {
     ///
     /// `expression` is the node index of the expression that was parsed before
     /// the missing semicolon.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_error_for_missing_semicolon_after(&mut self, expression: NodeIndex) {
         use crate::parser::spelling;
         use tsz_common::diagnostics::diagnostic_codes;
