@@ -1,5 +1,6 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::{CheckerOptions, CheckerState};
+use std::path::PathBuf;
 use tsz_binder::BinderState;
 use tsz_parser::parser::{NodeIndex, ParserState, node::NodeAccess};
 use tsz_scanner::SyntaxKind;
@@ -8,19 +9,41 @@ use tsz_solver::TypeInterner;
 #[cfg(test)]
 #[test]
 fn repro_parser_real_14_type_ids() {
-    let source = include_str!(
-        "../../../TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource14.ts"
-    );
-    run_and_print_source_line(source, "parserRealSource14.ts", 36, 20, "clone");
+    let Some(source) = load_test_source(
+        "TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource14.ts",
+    ) else {
+        return;
+    };
+    run_and_print_source_line(&source, "parserRealSource14.ts", 36, 20, "clone");
 }
 
 #[cfg(test)]
 #[test]
 fn repro_parser_harness_type_ids() {
-    let source = include_str!(
-        "../../../TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserharness.ts"
-    );
-    run_and_print_source_line(source, "parserharness.ts", 611, 64, "Dataset");
+    let Some(source) = load_test_source(
+        "TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserharness.ts",
+    ) else {
+        return;
+    };
+    run_and_print_source_line(&source, "parserharness.ts", 611, 64, "Dataset");
+}
+
+#[cfg(test)]
+fn load_test_source(rel_path: &str) -> Option<String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest_dir.join("../../").join(rel_path),
+        manifest_dir.join("../../../").join(rel_path),
+    ];
+
+    for candidate in candidates {
+        if candidate.exists() {
+            return std::fs::read_to_string(candidate).ok();
+        }
+    }
+
+    eprintln!("Skipping repro_parserreal test; fixture not found: {rel_path}");
+    None
 }
 
 #[cfg(test)]
