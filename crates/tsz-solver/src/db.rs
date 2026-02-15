@@ -2303,7 +2303,7 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn insert_subtype_cache(&self, key: RelationCacheKey, result: bool) {
-        self.query_cache.insert_subtype_cache(key, result)
+        self.query_cache.insert_subtype_cache(key, result);
     }
 
     fn lookup_assignability_cache(&self, key: RelationCacheKey) -> Option<bool> {
@@ -2311,7 +2311,7 @@ impl QueryDatabase for BinderTypeDatabase<'_> {
     }
 
     fn insert_assignability_cache(&self, key: RelationCacheKey, result: bool) {
-        self.query_cache.insert_assignability_cache(key, result)
+        self.query_cache.insert_assignability_cache(key, result);
     }
 
     fn new_inference_context(&self) -> crate::infer::InferenceContext<'_> {

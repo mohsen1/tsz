@@ -1595,7 +1595,7 @@ impl<'a> Printer<'a> {
                             TransformDirective::SubstituteArguments => self.write("_arguments"),
                             TransformDirective::SubstituteThis { capture_name } => {
                                 let name = capture_name.clone();
-                                self.write(&name)
+                                self.write(&name);
                             }
                             _ => self.emit_identifier(node),
                         }
