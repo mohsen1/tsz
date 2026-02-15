@@ -2838,13 +2838,17 @@ impl ParserState {
     fn parse_switch_case_clauses(&mut self) -> Vec<NodeIndex> {
         let mut clauses = Vec::new();
         let mut seen_default = false;
+        let mut reported_duplicate_default = false;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
             if self.is_token(SyntaxKind::CaseKeyword) {
                 clauses.push(self.parse_switch_case_clause());
             } else if self.is_token(SyntaxKind::DefaultKeyword) {
-                clauses.push(self.parse_switch_default_clause(&mut seen_default));
+                clauses.push(self.parse_switch_default_clause(
+                    &mut seen_default,
+                    &mut reported_duplicate_default,
+                ));
             } else {
                 self.parse_switch_case_recovery();
             }
@@ -2874,14 +2878,19 @@ impl ParserState {
         )
     }
 
-    fn parse_switch_default_clause(&mut self, seen_default: &mut bool) -> NodeIndex {
+    fn parse_switch_default_clause(
+        &mut self,
+        seen_default: &mut bool,
+        reported_duplicate_default: &mut bool,
+    ) -> NodeIndex {
         let clause_start = self.token_pos();
-        if *seen_default {
+        if *seen_default && !*reported_duplicate_default {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'default' clause cannot appear more than once in a 'switch' statement.",
                 diagnostic_codes::A_DEFAULT_CLAUSE_CANNOT_APPEAR_MORE_THAN_ONCE_IN_A_SWITCH_STATEMENT,
             );
+            *reported_duplicate_default = true;
         }
         *seen_default = true;
 
