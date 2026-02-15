@@ -59,66 +59,60 @@ pub enum IRNode {
     // =========================================================================
     /// Binary expression: `left op right`
     BinaryExpr {
-        left: Box<IRNode>,
+        left: Box<Self>,
         operator: String,
-        right: Box<IRNode>,
+        right: Box<Self>,
     },
 
     /// Unary prefix expression: `!x`, `-x`, `++x`
     PrefixUnaryExpr {
         operator: String,
-        operand: Box<IRNode>,
+        operand: Box<Self>,
     },
 
     /// Unary postfix expression: `x++`, `x--`
     PostfixUnaryExpr {
-        operand: Box<IRNode>,
+        operand: Box<Self>,
         operator: String,
     },
 
     /// Call expression: `callee(args)`
     CallExpr {
-        callee: Box<IRNode>,
-        arguments: Vec<IRNode>,
+        callee: Box<Self>,
+        arguments: Vec<Self>,
     },
 
     /// New expression: `new Callee(args)`
     NewExpr {
-        callee: Box<IRNode>,
-        arguments: Vec<IRNode>,
+        callee: Box<Self>,
+        arguments: Vec<Self>,
         explicit_arguments: bool,
     },
 
     /// Property access: `object.property`
-    PropertyAccess {
-        object: Box<IRNode>,
-        property: String,
-    },
+    PropertyAccess { object: Box<Self>, property: String },
 
     /// Element access: `object[index]`
-    ElementAccess {
-        object: Box<IRNode>,
-        index: Box<IRNode>,
-    },
+    ElementAccess { object: Box<Self>, index: Box<Self> },
 
     /// Conditional expression: `cond ? then : else`
     ConditionalExpr {
-        condition: Box<IRNode>,
-        when_true: Box<IRNode>,
-        when_false: Box<IRNode>,
+        condition: Box<Self>,
+        when_true: Box<Self>,
+        when_false: Box<Self>,
     },
 
     /// Parenthesized expression: `(expr)`
-    Parenthesized(Box<IRNode>),
+    Parenthesized(Box<Self>),
 
     /// Comma expression: `(a, b, c)`
-    CommaExpr(Vec<IRNode>),
+    CommaExpr(Vec<Self>),
 
     /// Array literal: `[a, b, c]`
-    ArrayLiteral(Vec<IRNode>),
+    ArrayLiteral(Vec<Self>),
 
     /// Spread element: `...expr`
-    SpreadElement(Box<IRNode>),
+    SpreadElement(Box<Self>),
 
     /// Object literal: `{ key: value, ... }`
     ObjectLiteral {
@@ -131,7 +125,7 @@ pub enum IRNode {
     FunctionExpr {
         name: Option<String>,
         parameters: Vec<IRParam>,
-        body: Vec<IRNode>,
+        body: Vec<Self>,
         /// Whether body is a single expression (for arrow conversion)
         is_expression_body: bool,
         /// Source range of the body block (pos, end) for single-line detection
@@ -139,16 +133,10 @@ pub enum IRNode {
     },
 
     /// Logical OR: `left || right`
-    LogicalOr {
-        left: Box<IRNode>,
-        right: Box<IRNode>,
-    },
+    LogicalOr { left: Box<Self>, right: Box<Self> },
 
     /// Logical AND: `left && right`
-    LogicalAnd {
-        left: Box<IRNode>,
-        right: Box<IRNode>,
-    },
+    LogicalAnd { left: Box<Self>, right: Box<Self> },
 
     // =========================================================================
     // Statements
@@ -156,66 +144,66 @@ pub enum IRNode {
     /// Variable declaration: `var x = value;`
     VarDecl {
         name: String,
-        initializer: Option<Box<IRNode>>,
+        initializer: Option<Box<Self>>,
     },
 
     /// Multiple variable declarations: `var a = 1, b = 2;`
-    VarDeclList(Vec<IRNode>),
+    VarDeclList(Vec<Self>),
 
     /// Expression statement: `expr;`
-    ExpressionStatement(Box<IRNode>),
+    ExpressionStatement(Box<Self>),
 
     /// Return statement: `return expr;`
-    ReturnStatement(Option<Box<IRNode>>),
+    ReturnStatement(Option<Box<Self>>),
 
     /// If statement: `if (cond) { then } else { else }`
     IfStatement {
-        condition: Box<IRNode>,
-        then_branch: Box<IRNode>,
-        else_branch: Option<Box<IRNode>>,
+        condition: Box<Self>,
+        then_branch: Box<Self>,
+        else_branch: Option<Box<Self>>,
     },
 
     /// Block statement: `{ statements }`
-    Block(Vec<IRNode>),
+    Block(Vec<Self>),
 
     /// Empty statement: `;`
     EmptyStatement,
 
     /// Switch statement
     SwitchStatement {
-        expression: Box<IRNode>,
+        expression: Box<Self>,
         cases: Vec<IRSwitchCase>,
     },
 
     /// For statement: `for (init; cond; incr) { body }`
     ForStatement {
-        initializer: Option<Box<IRNode>>,
-        condition: Option<Box<IRNode>>,
-        incrementor: Option<Box<IRNode>>,
-        body: Box<IRNode>,
+        initializer: Option<Box<Self>>,
+        condition: Option<Box<Self>>,
+        incrementor: Option<Box<Self>>,
+        body: Box<Self>,
     },
 
     /// While statement: `while (cond) { body }`
     WhileStatement {
-        condition: Box<IRNode>,
-        body: Box<IRNode>,
+        condition: Box<Self>,
+        body: Box<Self>,
     },
 
     /// Do-while statement: `do { body } while (cond)`
     DoWhileStatement {
-        body: Box<IRNode>,
-        condition: Box<IRNode>,
+        body: Box<Self>,
+        condition: Box<Self>,
     },
 
     /// Try statement: `try { block } catch (e) { handler } finally { finalizer }`
     TryStatement {
-        try_block: Box<IRNode>,
+        try_block: Box<Self>,
         catch_clause: Option<IRCatchClause>,
-        finally_block: Option<Box<IRNode>>,
+        finally_block: Option<Box<Self>>,
     },
 
     /// Throw statement: `throw expr;`
-    ThrowStatement(Box<IRNode>),
+    ThrowStatement(Box<Self>),
 
     /// Break statement: `break;` or `break label;`
     BreakStatement(Option<String>),
@@ -224,10 +212,7 @@ pub enum IRNode {
     ContinueStatement(Option<String>),
 
     /// Labeled statement: `label: stmt`
-    LabeledStatement {
-        label: String,
-        statement: Box<IRNode>,
-    },
+    LabeledStatement { label: String, statement: Box<Self> },
 
     // =========================================================================
     // Declarations
@@ -236,7 +221,7 @@ pub enum IRNode {
     FunctionDecl {
         name: String,
         parameters: Vec<IRParam>,
-        body: Vec<IRNode>,
+        body: Vec<Self>,
         /// Source range of the body block (for preserving single-line formatting)
         body_source_range: Option<(u32, u32)>,
     },
@@ -248,8 +233,8 @@ pub enum IRNode {
     /// `var ClassName = /** @class */ (function (_super) { ... }(BaseClass));`
     ES5ClassIIFE {
         name: String,
-        base_class: Option<Box<IRNode>>,
-        body: Vec<IRNode>,
+        base_class: Option<Box<Self>>,
+        body: Vec<Self>,
         /// WeakMap declarations for private fields (before the IIFE)
         weakmap_decls: Vec<String>,
         /// WeakMap instantiations (after the IIFE)
@@ -263,7 +248,7 @@ pub enum IRNode {
     PrototypeMethod {
         class_name: String,
         method_name: IRMethodName,
-        function: Box<IRNode>,
+        function: Box<Self>,
         /// Leading JSDoc or block comment from the original method declaration
         leading_comment: Option<String>,
         /// Trailing comment from the original method declaration line
@@ -274,7 +259,7 @@ pub enum IRNode {
     StaticMethod {
         class_name: String,
         method_name: IRMethodName,
-        function: Box<IRNode>,
+        function: Box<Self>,
         /// Leading JSDoc or block comment from the original method declaration
         leading_comment: Option<String>,
         /// Trailing comment from the original method declaration line
@@ -283,7 +268,7 @@ pub enum IRNode {
 
     /// Object.defineProperty for getters/setters
     DefineProperty {
-        target: Box<IRNode>,
+        target: Box<Self>,
         property_name: IRMethodName,
         descriptor: IRPropertyDescriptor,
     },
@@ -293,8 +278,8 @@ pub enum IRNode {
     // =========================================================================
     /// __awaiter helper call
     AwaiterCall {
-        this_arg: Box<IRNode>,
-        generator_body: Box<IRNode>,
+        this_arg: Box<Self>,
+        generator_body: Box<Self>,
     },
 
     /// __generator helper body
@@ -308,7 +293,7 @@ pub enum IRNode {
     /// Generator operation: `[opcode, value]`
     GeneratorOp {
         opcode: u32,
-        value: Option<Box<IRNode>>,
+        value: Option<Box<Self>>,
         comment: Option<String>,
     },
 
@@ -323,22 +308,22 @@ pub enum IRNode {
     // =========================================================================
     /// __classPrivateFieldGet(receiver, weakmap, "f")
     PrivateFieldGet {
-        receiver: Box<IRNode>,
+        receiver: Box<Self>,
         weakmap_name: String,
     },
 
     /// __classPrivateFieldSet(receiver, weakmap, value, "f")
     PrivateFieldSet {
-        receiver: Box<IRNode>,
+        receiver: Box<Self>,
         weakmap_name: String,
-        value: Box<IRNode>,
+        value: Box<Self>,
     },
 
     /// WeakMap.set for private field init: `_weakmap.set(this, value);`
     WeakMapSet {
         weakmap_name: String,
-        key: Box<IRNode>,
-        value: Box<IRNode>,
+        key: Box<Self>,
+        value: Box<Self>,
     },
 
     // =========================================================================
@@ -356,7 +341,7 @@ pub enum IRNode {
     TrailingComment(String),
 
     /// Sequence of statements/nodes
-    Sequence(Vec<IRNode>),
+    Sequence(Vec<Self>),
 
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
@@ -425,7 +410,7 @@ pub enum IRNode {
     NamespaceIIFE {
         name: String,
         name_parts: Vec<String>,
-        body: Vec<IRNode>,
+        body: Vec<Self>,
         is_exported: bool,
         attach_to_exports: bool,
         /// Whether to emit the `var name;` declaration for this namespace.
@@ -449,7 +434,7 @@ pub enum IRNode {
     NamespaceExport {
         namespace: String,
         name: String,
-        value: Box<IRNode>,
+        value: Box<Self>,
     },
 }
 
@@ -552,46 +537,46 @@ pub struct IRGeneratorCase {
 impl IRNode {
     /// Create an identifier node
     pub fn id(name: impl Into<String>) -> Self {
-        IRNode::Identifier(name.into())
+        Self::Identifier(name.into())
     }
 
     /// Create a string literal
     pub fn string(s: impl Into<String>) -> Self {
-        IRNode::StringLiteral(s.into())
+        Self::StringLiteral(s.into())
     }
 
     /// Create a numeric literal
     pub fn number(n: impl Into<String>) -> Self {
-        IRNode::NumericLiteral(n.into())
+        Self::NumericLiteral(n.into())
     }
 
     /// Create a call expression
-    pub fn call(callee: IRNode, args: Vec<IRNode>) -> Self {
-        IRNode::CallExpr {
+    pub fn call(callee: Self, args: Vec<Self>) -> Self {
+        Self::CallExpr {
             callee: Box::new(callee),
             arguments: args,
         }
     }
 
     /// Create a property access
-    pub fn prop(object: IRNode, property: impl Into<String>) -> Self {
-        IRNode::PropertyAccess {
+    pub fn prop(object: Self, property: impl Into<String>) -> Self {
+        Self::PropertyAccess {
             object: Box::new(object),
             property: property.into(),
         }
     }
 
     /// Create an element access
-    pub fn elem(object: IRNode, index: IRNode) -> Self {
-        IRNode::ElementAccess {
+    pub fn elem(object: Self, index: Self) -> Self {
+        Self::ElementAccess {
             object: Box::new(object),
             index: Box::new(index),
         }
     }
 
     /// Create a binary expression
-    pub fn binary(left: IRNode, op: impl Into<String>, right: IRNode) -> Self {
-        IRNode::BinaryExpr {
+    pub fn binary(left: Self, op: impl Into<String>, right: Self) -> Self {
+        Self::BinaryExpr {
             left: Box::new(left),
             operator: op.into(),
             right: Box::new(right),
@@ -599,8 +584,8 @@ impl IRNode {
     }
 
     /// Create an assignment expression
-    pub fn assign(target: IRNode, value: IRNode) -> Self {
-        IRNode::BinaryExpr {
+    pub fn assign(target: Self, value: Self) -> Self {
+        Self::BinaryExpr {
             left: Box::new(target),
             operator: "=".to_string(),
             right: Box::new(value),
@@ -608,21 +593,21 @@ impl IRNode {
     }
 
     /// Create a var declaration
-    pub fn var_decl(name: impl Into<String>, init: Option<IRNode>) -> Self {
-        IRNode::VarDecl {
+    pub fn var_decl(name: impl Into<String>, init: Option<Self>) -> Self {
+        Self::VarDecl {
             name: name.into(),
             initializer: init.map(Box::new),
         }
     }
 
     /// Create a return statement
-    pub fn ret(expr: Option<IRNode>) -> Self {
-        IRNode::ReturnStatement(expr.map(Box::new))
+    pub fn ret(expr: Option<Self>) -> Self {
+        Self::ReturnStatement(expr.map(Box::new))
     }
 
     /// Create a function expression
-    pub fn func_expr(name: Option<String>, params: Vec<IRParam>, body: Vec<IRNode>) -> Self {
-        IRNode::FunctionExpr {
+    pub fn func_expr(name: Option<String>, params: Vec<IRParam>, body: Vec<Self>) -> Self {
+        Self::FunctionExpr {
             name,
             parameters: params,
             body,
@@ -632,8 +617,8 @@ impl IRNode {
     }
 
     /// Create a function declaration
-    pub fn func_decl(name: impl Into<String>, params: Vec<IRParam>, body: Vec<IRNode>) -> Self {
-        IRNode::FunctionDecl {
+    pub fn func_decl(name: impl Into<String>, params: Vec<IRParam>, body: Vec<Self>) -> Self {
+        Self::FunctionDecl {
             name: name.into(),
             parameters: params,
             body,
@@ -643,37 +628,37 @@ impl IRNode {
 
     /// Create `this` reference
     pub fn this() -> Self {
-        IRNode::This { captured: false }
+        Self::This { captured: false }
     }
 
     /// Create `_this` reference (captured)
     pub fn this_captured() -> Self {
-        IRNode::This { captured: true }
+        Self::This { captured: true }
     }
 
     /// Create `void 0`
     pub fn void_0() -> Self {
-        IRNode::Undefined
+        Self::Undefined
     }
 
     /// Wrap in parentheses
     pub fn paren(self) -> Self {
-        IRNode::Parenthesized(Box::new(self))
+        Self::Parenthesized(Box::new(self))
     }
 
     /// Create a block
-    pub fn block(stmts: Vec<IRNode>) -> Self {
-        IRNode::Block(stmts)
+    pub fn block(stmts: Vec<Self>) -> Self {
+        Self::Block(stmts)
     }
 
     /// Create an expression statement
-    pub fn expr_stmt(expr: IRNode) -> Self {
-        IRNode::ExpressionStatement(Box::new(expr))
+    pub fn expr_stmt(expr: Self) -> Self {
+        Self::ExpressionStatement(Box::new(expr))
     }
 
     /// Create an object literal
     pub fn object(props: Vec<IRProperty>) -> Self {
-        IRNode::ObjectLiteral {
+        Self::ObjectLiteral {
             properties: props,
             source_range: None,
         }
@@ -681,7 +666,7 @@ impl IRNode {
 
     /// Create an object literal with source range for formatting
     pub fn object_with_source(props: Vec<IRProperty>, source_range: (u32, u32)) -> Self {
-        IRNode::ObjectLiteral {
+        Self::ObjectLiteral {
             properties: props,
             source_range: Some(source_range),
         }
@@ -689,46 +674,46 @@ impl IRNode {
 
     /// Create an empty object literal
     pub fn empty_object() -> Self {
-        IRNode::ObjectLiteral {
+        Self::ObjectLiteral {
             properties: Vec::new(),
             source_range: None,
         }
     }
 
     /// Create an array literal
-    pub fn array(elements: Vec<IRNode>) -> Self {
-        IRNode::ArrayLiteral(elements)
+    pub fn array(elements: Vec<Self>) -> Self {
+        Self::ArrayLiteral(elements)
     }
 
     /// Create an empty array literal
     pub fn empty_array() -> Self {
-        IRNode::ArrayLiteral(Vec::new())
+        Self::ArrayLiteral(Vec::new())
     }
 
     /// Create a logical OR expression: `left || right`
-    pub fn logical_or(left: IRNode, right: IRNode) -> Self {
-        IRNode::LogicalOr {
+    pub fn logical_or(left: Self, right: Self) -> Self {
+        Self::LogicalOr {
             left: Box::new(left),
             right: Box::new(right),
         }
     }
 
     /// Create a logical AND expression: `left && right`
-    pub fn logical_and(left: IRNode, right: IRNode) -> Self {
-        IRNode::LogicalAnd {
+    pub fn logical_and(left: Self, right: Self) -> Self {
+        Self::LogicalAnd {
             left: Box::new(left),
             right: Box::new(right),
         }
     }
 
     /// Create a sequence of statements
-    pub fn sequence(nodes: Vec<IRNode>) -> Self {
-        IRNode::Sequence(nodes)
+    pub fn sequence(nodes: Vec<Self>) -> Self {
+        Self::Sequence(nodes)
     }
 
     /// Create a new expression: `new Constructor(args)`
-    pub fn new_expr(callee: IRNode, args: Vec<IRNode>, explicit_args: bool) -> Self {
-        IRNode::NewExpr {
+    pub fn new_expr(callee: Self, args: Vec<Self>, explicit_args: bool) -> Self {
+        Self::NewExpr {
             callee: Box::new(callee),
             arguments: args,
             explicit_arguments: explicit_args,
@@ -738,7 +723,7 @@ impl IRNode {
 
 impl IRParam {
     pub fn new(name: impl Into<String>) -> Self {
-        IRParam {
+        Self {
             name: name.into(),
             rest: false,
             default_value: None,
@@ -746,7 +731,7 @@ impl IRParam {
     }
 
     pub fn rest(name: impl Into<String>) -> Self {
-        IRParam {
+        Self {
             name: name.into(),
             rest: true,
             default_value: None,
@@ -762,7 +747,7 @@ impl IRParam {
 impl IRProperty {
     /// Create a simple property with identifier key: `{ key: value }`
     pub fn init(key: impl Into<String>, value: IRNode) -> Self {
-        IRProperty {
+        Self {
             key: IRPropertyKey::Identifier(key.into()),
             value,
             kind: IRPropertyKind::Init,
@@ -771,7 +756,7 @@ impl IRProperty {
 
     /// Create a property with string literal key: `{ "key": value }`
     pub fn init_string(key: impl Into<String>, value: IRNode) -> Self {
-        IRProperty {
+        Self {
             key: IRPropertyKey::StringLiteral(key.into()),
             value,
             kind: IRPropertyKind::Init,
@@ -780,7 +765,7 @@ impl IRProperty {
 
     /// Create a getter property
     pub fn getter(key: impl Into<String>, get: IRNode) -> Self {
-        IRProperty {
+        Self {
             key: IRPropertyKey::Identifier(key.into()),
             value: get,
             kind: IRPropertyKind::Get,
@@ -789,7 +774,7 @@ impl IRProperty {
 
     /// Create a setter property
     pub fn setter(key: impl Into<String>, set: IRNode) -> Self {
-        IRProperty {
+        Self {
             key: IRPropertyKey::Identifier(key.into()),
             value: set,
             kind: IRPropertyKind::Set,

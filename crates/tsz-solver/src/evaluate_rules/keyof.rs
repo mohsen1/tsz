@@ -23,7 +23,7 @@ pub(crate) struct KeyofKeySet {
 
 impl KeyofKeySet {
     pub fn new() -> Self {
-        KeyofKeySet {
+        Self {
             has_string: false,
             has_number: false,
             has_symbol: false,

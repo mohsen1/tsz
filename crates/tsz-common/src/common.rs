@@ -60,37 +60,37 @@ impl ScriptTarget {
     /// Check if this target supports ES2015+ features (classes, arrows, etc.)
     #[must_use]
     pub fn supports_es2015(self) -> bool {
-        (self as u8) >= (ScriptTarget::ES2015 as u8)
+        (self as u8) >= (Self::ES2015 as u8)
     }
 
     /// Check if this target supports ES2017+ features (async, etc.)
     #[must_use]
     pub fn supports_es2017(self) -> bool {
-        (self as u8) >= (ScriptTarget::ES2017 as u8)
+        (self as u8) >= (Self::ES2017 as u8)
     }
 
     /// Check if this target supports ES2020+ features (optional chaining, etc.)
     #[must_use]
     pub fn supports_es2020(self) -> bool {
-        (self as u8) >= (ScriptTarget::ES2020 as u8)
+        (self as u8) >= (Self::ES2020 as u8)
     }
 
     /// Check if this target supports ES2018+ features (async generators, dotAll regex, etc.)
     #[must_use]
     pub fn supports_es2018(self) -> bool {
-        (self as u8) >= (ScriptTarget::ES2018 as u8)
+        (self as u8) >= (Self::ES2018 as u8)
     }
 
     /// Check if this target supports ES2022+ features (class fields, regex 'd' flag, etc.)
     #[must_use]
     pub fn supports_es2022(self) -> bool {
-        (self as u8) >= (ScriptTarget::ES2022 as u8)
+        (self as u8) >= (Self::ES2022 as u8)
     }
 
     /// Check if this is an ES5 or earlier target (requires downleveling)
     #[must_use]
     pub fn is_es5(self) -> bool {
-        (self as u8) <= (ScriptTarget::ES5 as u8)
+        (self as u8) <= (Self::ES5 as u8)
     }
 }
 
@@ -144,7 +144,7 @@ impl ModuleKind {
     pub fn is_commonjs(self) -> bool {
         matches!(
             self,
-            ModuleKind::CommonJS | ModuleKind::UMD | ModuleKind::Node16 | ModuleKind::NodeNext
+            Self::CommonJS | Self::UMD | Self::Node16 | Self::NodeNext
         )
     }
 
@@ -157,11 +157,7 @@ impl ModuleKind {
     pub fn is_es_module(self) -> bool {
         matches!(
             self,
-            ModuleKind::ES2015
-                | ModuleKind::ES2020
-                | ModuleKind::ES2022
-                | ModuleKind::ESNext
-                | ModuleKind::Preserve
+            Self::ES2015 | Self::ES2020 | Self::ES2022 | Self::ESNext | Self::Preserve
         )
     }
 }
@@ -182,8 +178,8 @@ impl NewLineKind {
     #[must_use]
     pub fn as_bytes(&self) -> &'static [u8] {
         match self {
-            NewLineKind::LineFeed => b"\n",
-            NewLineKind::CarriageReturnLineFeed => b"\r\n",
+            Self::LineFeed => b"\n",
+            Self::CarriageReturnLineFeed => b"\r\n",
         }
     }
 
@@ -191,8 +187,8 @@ impl NewLineKind {
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
-            NewLineKind::LineFeed => "\n",
-            NewLineKind::CarriageReturnLineFeed => "\r\n",
+            Self::LineFeed => "\n",
+            Self::CarriageReturnLineFeed => "\r\n",
         }
     }
 }

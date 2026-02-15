@@ -41,7 +41,7 @@ impl FlowGraph {
         let mut nodes = FlowNodeArena::new();
         let unreachable_flow = nodes.alloc(flow_flags::UNREACHABLE);
 
-        FlowGraph {
+        Self {
             nodes,
             node_flow: FxHashMap::default(),
             unreachable_flow,

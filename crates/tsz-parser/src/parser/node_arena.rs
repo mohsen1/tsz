@@ -30,8 +30,8 @@ impl NodeArena {
     /// Maximum pre-allocation to avoid capacity overflow in huge files.
     const MAX_NODE_PREALLOC: usize = 5_000_000;
     #[must_use]
-    pub fn new() -> NodeArena {
-        NodeArena::default()
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Set the interner (called after parsing to transfer ownership from scanner)
@@ -59,10 +59,10 @@ impl NodeArena {
     /// Create an arena with pre-allocated capacity.
     /// Uses heuristic ratios based on typical TypeScript AST composition.
     #[must_use]
-    pub fn with_capacity(capacity: usize) -> NodeArena {
+    pub fn with_capacity(capacity: usize) -> Self {
         let safe_capacity = capacity.min(Self::MAX_NODE_PREALLOC);
         // Use Default for all the new pools, just set capacity for main ones
-        NodeArena {
+        Self {
             nodes: Vec::with_capacity(safe_capacity),
             extended_info: Vec::with_capacity(safe_capacity),
             identifiers: Vec::with_capacity(safe_capacity / 4), // ~25% identifiers

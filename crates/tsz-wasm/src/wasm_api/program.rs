@@ -127,8 +127,8 @@ pub struct TsProgram {
 impl TsProgram {
     /// Create a new empty program
     #[wasm_bindgen(constructor)]
-    pub fn new() -> TsProgram {
-        TsProgram {
+    pub fn new() -> Self {
+        Self {
             files: Vec::new(),
             lib_files: Vec::new(),
             merged: None,

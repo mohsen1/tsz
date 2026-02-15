@@ -93,7 +93,7 @@ pub struct PrinterOptions {
 
 impl Default for PrinterOptions {
     fn default() -> Self {
-        PrinterOptions {
+        Self {
             remove_comments: false,
             target: ScriptTarget::ESNext,
             single_quote: false,
@@ -156,7 +156,7 @@ enum EmitDirective {
     CommonJSExport {
         names: Arc<[IdentifierId]>,
         is_default: bool,
-        inner: Box<EmitDirective>,
+        inner: Box<Self>,
     },
     CommonJSExportDefaultExpr,
     CommonJSExportDefaultClassES5 {
@@ -199,7 +199,7 @@ enum EmitDirective {
         format: crate::transform_context::ModuleFormat,
         dependencies: Arc<[String]>,
     },
-    Chain(Vec<EmitDirective>),
+    Chain(Vec<Self>),
 }
 
 // =============================================================================

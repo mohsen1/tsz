@@ -109,7 +109,7 @@ pub const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "to
 
 impl<'a> TypeEvaluator<'a, NoopResolver> {
     /// Create a new evaluator without a resolver.
-    pub fn new(interner: &'a dyn TypeDatabase) -> TypeEvaluator<'a, NoopResolver> {
+    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         static NOOP: NoopResolver = NoopResolver;
         TypeEvaluator {
             interner,

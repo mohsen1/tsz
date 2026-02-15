@@ -26,14 +26,14 @@ impl Span {
     #[inline]
     #[must_use]
     pub const fn new(start: u32, end: u32) -> Self {
-        Span { start, end }
+        Self { start, end }
     }
 
     /// Create an empty span at the given position.
     #[inline]
     #[must_use]
     pub const fn at(pos: u32) -> Self {
-        Span {
+        Self {
             start: pos,
             end: pos,
         }
@@ -43,7 +43,7 @@ impl Span {
     #[inline]
     #[must_use]
     pub const fn from_len(start: u32, len: u32) -> Self {
-        Span {
+        Self {
             start,
             end: start + len,
         }
@@ -53,7 +53,7 @@ impl Span {
     #[inline]
     #[must_use]
     pub const fn dummy() -> Self {
-        Span {
+        Self {
             start: u32::MAX,
             end: u32::MAX,
         }
@@ -90,21 +90,21 @@ impl Span {
     /// Check if this span contains another span.
     #[inline]
     #[must_use]
-    pub const fn contains_span(&self, other: Span) -> bool {
+    pub const fn contains_span(&self, other: Self) -> bool {
         other.start >= self.start && other.end <= self.end
     }
 
     /// Check if this span overlaps with another span.
     #[inline]
     #[must_use]
-    pub const fn overlaps(&self, other: Span) -> bool {
+    pub const fn overlaps(&self, other: Self) -> bool {
         self.start < other.end && other.start < self.end
     }
 
     /// Merge two spans to create a span covering both.
     #[inline]
     #[must_use]
-    pub const fn merge(&self, other: Span) -> Span {
+    pub const fn merge(&self, other: Self) -> Self {
         let start = if self.start < other.start {
             self.start
         } else {
@@ -115,24 +115,24 @@ impl Span {
         } else {
             other.end
         };
-        Span { start, end }
+        Self { start, end }
     }
 
     /// Get the intersection of two spans, if they overlap.
     #[inline]
     #[must_use]
-    pub fn intersect(&self, other: Span) -> Option<Span> {
+    pub fn intersect(&self, other: Self) -> Option<Self> {
         let start = self.start.max(other.start);
         let end = self.end.min(other.end);
-        (start < end).then_some(Span { start, end })
+        (start < end).then_some(Self { start, end })
     }
 
     /// Shrink this span by removing bytes from the start.
     #[inline]
     #[must_use]
-    pub const fn shrink_start(&self, amount: u32) -> Span {
+    pub const fn shrink_start(&self, amount: u32) -> Self {
         let new_start = self.start + amount;
-        Span {
+        Self {
             start: if new_start > self.end {
                 self.end
             } else {
@@ -145,9 +145,9 @@ impl Span {
     /// Shrink this span by removing bytes from the end.
     #[inline]
     #[must_use]
-    pub const fn shrink_end(&self, amount: u32) -> Span {
+    pub const fn shrink_end(&self, amount: u32) -> Self {
         let new_end = self.end.saturating_sub(amount);
-        Span {
+        Self {
             start: self.start,
             end: if new_end < self.start {
                 self.start
@@ -160,8 +160,8 @@ impl Span {
     /// Create a span for just the first byte.
     #[inline]
     #[must_use]
-    pub const fn first_byte(&self) -> Span {
-        Span {
+    pub const fn first_byte(&self) -> Self {
+        Self {
             start: self.start,
             end: if self.end > self.start {
                 self.start + 1
@@ -174,8 +174,8 @@ impl Span {
     /// Create a span for just the last byte.
     #[inline]
     #[must_use]
-    pub const fn last_byte(&self) -> Span {
-        Span {
+    pub const fn last_byte(&self) -> Self {
+        Self {
             start: if self.end > self.start {
                 self.end - 1
             } else {
@@ -210,7 +210,7 @@ impl Span {
 
 impl From<(u32, u32)> for Span {
     fn from((start, end): (u32, u32)) -> Self {
-        Span::new(start, end)
+        Self::new(start, end)
     }
 }
 
@@ -284,7 +284,7 @@ impl SpanBuilder {
     #[inline]
     #[must_use]
     pub const fn start(pos: u32) -> Self {
-        SpanBuilder { start: pos }
+        Self { start: pos }
     }
 
     /// Finish building the span at the given position.

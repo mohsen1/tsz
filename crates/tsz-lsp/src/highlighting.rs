@@ -651,23 +651,19 @@ impl<'a> DocumentHighlightProvider<'a> {
             if let Some(do_stmt_idx) = self.find_do_while_for_while_keyword(word_start) {
                 // This is the "while" of a do-while loop
                 let do_node = self.arena.get(do_stmt_idx)?;
-                let mut highlights = Vec::new();
-
                 let do_kw_offset = self.skip_whitespace_forward(do_node.pos as usize) as u32;
-                highlights.push(DocumentHighlight::text(self.keyword_range(do_kw_offset, 2)));
-                highlights.push(DocumentHighlight::text(
-                    self.keyword_range(word_start as u32, 5),
-                ));
+                let highlights = vec![
+                    DocumentHighlight::text(self.keyword_range(do_kw_offset, 2)),
+                    DocumentHighlight::text(self.keyword_range(word_start as u32, 5)),
+                ];
 
                 return Some(highlights);
             }
 
             // Standalone while loop - just highlight the "while" keyword
-            let mut highlights = Vec::new();
-            highlights.push(DocumentHighlight::text(
+            return Some(vec![DocumentHighlight::text(
                 self.keyword_range(word_start as u32, 5),
-            ));
-            return Some(highlights);
+            )]);
         }
 
         if word == "do" {
@@ -676,10 +672,9 @@ impl<'a> DocumentHighlightProvider<'a> {
                 if node.kind == syntax_kind_ext::DO_STATEMENT {
                     let kw_start = self.skip_whitespace_forward(node.pos as usize);
                     if kw_start == word_start {
-                        let mut highlights = Vec::new();
-                        highlights.push(DocumentHighlight::text(
+                        let mut highlights = vec![DocumentHighlight::text(
                             self.keyword_range(word_start as u32, 2),
-                        ));
+                        )];
 
                         // Find the matching "while" keyword.
                         // Note: stmt_node.end may include trailing trivia past
@@ -765,11 +760,9 @@ impl<'a> DocumentHighlightProvider<'a> {
         offset: u32,
     ) -> Option<Vec<DocumentHighlight>> {
         let word_start = self.find_word_start(offset as usize);
-        let mut highlights = Vec::new();
-        highlights.push(DocumentHighlight::text(
+        Some(vec![DocumentHighlight::text(
             self.keyword_range(word_start as u32, 6),
-        ));
-        Some(highlights)
+        )])
     }
 
     /// Highlight break/continue keywords.
@@ -783,11 +776,9 @@ impl<'a> DocumentHighlightProvider<'a> {
         let word = &self.source_text[word_start..word_end];
 
         let kw_len = word.len() as u32;
-        let mut highlights = Vec::new();
-        highlights.push(DocumentHighlight::text(
+        Some(vec![DocumentHighlight::text(
             self.keyword_range(word_start as u32, kw_len),
-        ));
-        Some(highlights)
+        )])
     }
 
     /// Highlight async/await keywords within the enclosing function.
@@ -845,11 +836,10 @@ impl<'a> DocumentHighlightProvider<'a> {
         offset: u32,
     ) -> Option<Vec<DocumentHighlight>> {
         let word_start = self.find_word_start(offset as usize);
-        let mut highlights = Vec::new();
-        highlights.push(DocumentHighlight::text(
-            self.keyword_range(word_start as u32, "constructor".len() as u32),
-        ));
-        Some(highlights)
+        Some(vec![DocumentHighlight::text(self.keyword_range(
+            word_start as u32,
+            "constructor".len() as u32,
+        ))])
     }
 
     /// Highlight a modifier keyword (public, private, static, etc.)
@@ -866,11 +856,9 @@ impl<'a> DocumentHighlightProvider<'a> {
         let kw_len = word.len() as u32;
 
         // For now, just highlight the current keyword occurrence
-        let mut highlights = Vec::new();
-        highlights.push(DocumentHighlight::text(
+        Some(vec![DocumentHighlight::text(
             self.keyword_range(word_start as u32, kw_len),
-        ));
-        Some(highlights)
+        )])
     }
 
     /// Find the enclosing function (declaration, expression, or arrow) for async/await.

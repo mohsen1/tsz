@@ -134,7 +134,7 @@ pub struct SoundDiagnostic {
 impl SoundDiagnostic {
     /// Create a new Sound Mode diagnostic.
     pub fn new(code: SoundDiagnosticCode) -> Self {
-        SoundDiagnostic {
+        Self {
             code,
             args: Vec::new(),
             location: None,
@@ -327,7 +327,7 @@ pub struct SoundModeConfig {
 
 impl Default for SoundModeConfig {
     fn default() -> Self {
-        SoundModeConfig {
+        Self {
             sticky_freshness: true,
             strict_any: true,
             strict_array_covariance: true,
@@ -340,12 +340,12 @@ impl Default for SoundModeConfig {
 impl SoundModeConfig {
     /// Create a configuration with all sound checks enabled.
     pub fn all() -> Self {
-        SoundModeConfig::default()
+        Self::default()
     }
 
     /// Create a minimal configuration (for gradual adoption).
     pub fn minimal() -> Self {
-        SoundModeConfig {
+        Self {
             sticky_freshness: true,
             strict_any: false,
             strict_array_covariance: false,

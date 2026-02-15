@@ -155,7 +155,7 @@ impl TypeCache {
 
     /// Merge another TypeCache into this one.
     /// Used to accumulate type information from multiple file checks for declaration emit.
-    pub fn merge(&mut self, other: TypeCache) {
+    pub fn merge(&mut self, other: Self) {
         self.symbol_types.extend(other.symbol_types);
         self.symbol_instance_types
             .extend(other.symbol_instance_types);
@@ -1135,7 +1135,7 @@ impl<'a> CheckerContext<'a> {
         types: &'a dyn QueryDatabase,
         file_name: String,
         compiler_options: CheckerOptions,
-        parent: &CheckerContext<'a>,
+        parent: &Self,
     ) -> Self {
         let compiler_options = compiler_options.apply_strict_defaults();
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));

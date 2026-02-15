@@ -53,21 +53,21 @@ impl DiagnosticSeverity {
     /// Get the severity name for display.
     pub fn name(&self) -> &'static str {
         match self {
-            DiagnosticSeverity::Error => "error",
-            DiagnosticSeverity::Warning => "warning",
-            DiagnosticSeverity::Info => "info",
-            DiagnosticSeverity::Hint => "hint",
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Info => "info",
+            Self::Hint => "hint",
         }
     }
 
     /// Check if this is an error.
     pub fn is_error(&self) -> bool {
-        matches!(self, DiagnosticSeverity::Error)
+        matches!(self, Self::Error)
     }
 
     /// Check if this is a warning.
     pub fn is_warning(&self) -> bool {
-        matches!(self, DiagnosticSeverity::Warning)
+        matches!(self, Self::Warning)
     }
 }
 
@@ -98,7 +98,7 @@ pub struct DiagnosticRelatedInfo {
 impl DiagnosticRelatedInfo {
     /// Create new related information.
     pub fn new(file_name: impl Into<String>, span: Span, message: impl Into<String>) -> Self {
-        DiagnosticRelatedInfo {
+        Self {
             file_name: file_name.into(),
             span,
             message: message.into(),
@@ -140,7 +140,7 @@ impl Diagnostic {
         severity: DiagnosticSeverity,
         code: u32,
     ) -> Self {
-        Diagnostic {
+        Self {
             file_name: file_name.into(),
             span,
             message: message.into(),
@@ -288,7 +288,7 @@ pub struct DiagnosticBag {
 impl DiagnosticBag {
     /// Create a new empty diagnostic bag.
     pub fn new() -> Self {
-        DiagnosticBag {
+        Self {
             diagnostics: Vec::new(),
             default_file: String::new(),
             error_count: 0,
@@ -298,7 +298,7 @@ impl DiagnosticBag {
 
     /// Create a new diagnostic bag with a default file name.
     pub fn with_file(file_name: impl Into<String>) -> Self {
-        DiagnosticBag {
+        Self {
             diagnostics: Vec::new(),
             default_file: file_name.into(),
             error_count: 0,
@@ -463,7 +463,7 @@ impl DiagnosticBag {
     }
 
     /// Merge another DiagnosticBag into this one.
-    pub fn merge(&mut self, other: DiagnosticBag) {
+    pub fn merge(&mut self, other: Self) {
         for diag in other.diagnostics {
             self.add(diag);
         }

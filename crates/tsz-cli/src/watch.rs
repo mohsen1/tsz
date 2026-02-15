@@ -32,8 +32,8 @@ enum WatcherImpl {
 impl WatcherImpl {
     fn watch(&mut self, path: &Path, mode: RecursiveMode) -> notify::Result<()> {
         match self {
-            WatcherImpl::Native(w) => w.watch(path, mode),
-            WatcherImpl::Poll(w) => w.watch(path, mode),
+            Self::Native(w) => w.watch(path, mode),
+            Self::Poll(w) => w.watch(path, mode),
         }
     }
 }
@@ -148,7 +148,7 @@ impl WatchState {
             None
         };
 
-        WatchState {
+        Self {
             base_dir,
             watch_roots,
             filter: WatchFilter::new(explicit_files, ignore_dirs, project_config),
@@ -375,7 +375,7 @@ impl WatchFilter {
         ignore_dirs: Vec<PathBuf>,
         project_config: Option<PathBuf>,
     ) -> Self {
-        WatchFilter {
+        Self {
             explicit_files,
             ignore_dirs,
             last_emitted: FxHashSet::default(),
@@ -434,7 +434,7 @@ pub(crate) struct Debouncer {
 
 impl Debouncer {
     pub(crate) fn new(delay: Duration) -> Self {
-        Debouncer {
+        Self {
             delay,
             pending: FxHashSet::default(),
             last_event_at: None,

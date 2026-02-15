@@ -252,6 +252,6 @@ impl TsTypeChecker {
         _options: &TsCompilerOptions,
         _lib_files: &[Arc<LibFile>],
     ) -> Self {
-        TsTypeChecker { interner }
+        Self { interner }
     }
 }
