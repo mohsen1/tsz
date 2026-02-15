@@ -593,15 +593,16 @@ impl<'a> CheckerState<'a> {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
                 && let Some(name_text) = self.node_text(param.name)
-                && name_text == "static" {
-                    self.ctx.error(
+                && name_text == "static"
+            {
+                self.ctx.error(
                             param_node.pos,
                             param_node.end - param_node.pos,
                             diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO
                                 .replace("{0}", "static"),
                             diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
                         );
-                }
+            }
         }
 
         // Check for required parameters following optional parameters (TS1016)
