@@ -1553,8 +1553,8 @@ impl<'a> CheckerState<'a> {
             match result {
                 PropertyAccessResult::Success {
                     type_id: prop_type,
+                    write_type,
                     from_index_signature,
-                    ..
                 } => {
                     // Check for error 4111: property access from index signature
                     if from_index_signature
@@ -1572,7 +1572,14 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::PROPERTY_COMES_FROM_AN_INDEX_SIGNATURE_SO_IT_MUST_BE_ACCESSED_WITH,
                         );
                     }
-                    self.apply_flow_narrowing(idx, prop_type)
+                    // When in a write context (assignment target), use the setter
+                    // type if the property has divergent getter/setter types.
+                    let effective_type = if self.ctx.skip_flow_narrowing {
+                        write_type.unwrap_or(prop_type)
+                    } else {
+                        prop_type
+                    };
+                    self.apply_flow_narrowing(idx, effective_type)
                 }
 
                 PropertyAccessResult::PropertyNotFound { .. } => {
