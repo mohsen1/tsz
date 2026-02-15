@@ -1,7 +1,5 @@
 //! Parser state - type parsing, JSX, accessors, and `into_parts` methods
 
-#![allow(clippy::too_many_lines)]
-
 use super::state::{ParseDiagnostic, ParserState};
 use crate::parser::{NodeArena, NodeIndex, NodeList, node, syntax_kind_ext};
 use tsz_common::interner::Atom;
@@ -301,6 +299,7 @@ impl ParserState {
     }
 
     /// Parse primary type (keywords, references, parenthesized, tuples, arrays, function types)
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_primary_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
