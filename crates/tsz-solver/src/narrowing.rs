@@ -2010,7 +2010,12 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        false
+        // Fallback: use full structural/nominal subtype check.
+        // This handles class inheritance (Derived extends Base), interface
+        // implementations, and other structural relationships that the
+        // fast-path checks above don't cover.
+        let mut checker = SubtypeChecker::new(self.db.as_type_database());
+        checker.is_subtype_of(source, target)
     }
 
     /// Applies a type guard to narrow a type.
