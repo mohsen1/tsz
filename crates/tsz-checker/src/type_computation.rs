@@ -2389,9 +2389,25 @@ impl<'a> CheckerState<'a> {
                     );
                 } else {
                     // Computed property name that can't be statically resolved (e.g., { [expr]: value })
-                    // Still type-check the computed expression and the value to catch errors like TS2304
+                    // Still type-check the computed expression and the value to catch errors like TS2304.
+                    // For contextual typing, use the index signature type from the contextual type.
+                    // E.g., `var o: { [s: string]: (x: string) => number } = { ["" + 0](y) { ... } }`
+                    // should contextually type `y` as `string` from the string index signature.
                     self.check_computed_property_name(prop.name);
+                    let index_ctx_type = if let Some(ctx_type) = self.ctx.contextual_type {
+                        let ctx_type = self.evaluate_contextual_type(ctx_type);
+                        // Use a synthetic name that won't match any named property,
+                        // causing contextual_property_type to fall back to the index signature.
+                        self.ctx
+                            .types
+                            .contextual_property_type(ctx_type, "__@computed")
+                    } else {
+                        None
+                    };
+                    let prev_context = self.ctx.contextual_type;
+                    self.ctx.contextual_type = index_ctx_type;
                     self.get_type_of_node(prop.initializer);
+                    self.ctx.contextual_type = prev_context;
                 }
             }
             // Shorthand property: { x } - identifier is both name and value
@@ -2571,9 +2587,21 @@ impl<'a> CheckerState<'a> {
                         },
                     );
                 } else {
-                    // Computed method name - still type-check the expression and function body
+                    // Computed method name - still type-check the expression and function body.
+                    // For contextual typing, use the index signature type from the contextual type.
+                    // E.g., `var o: { [s: string]: (x: string) => number } = { ["" + 0](y) { ... } }`
+                    // should contextually type `y` as `string` from the string index signature.
                     self.check_computed_property_name(method.name);
+                    let prev_context = self.ctx.contextual_type;
+                    if let Some(ctx_type) = prev_context {
+                        let ctx_type = self.evaluate_contextual_type(ctx_type);
+                        self.ctx.contextual_type = self
+                            .ctx
+                            .types
+                            .contextual_property_type(ctx_type, "__@computed");
+                    }
                     self.get_type_of_function(elem_idx);
+                    self.ctx.contextual_type = prev_context;
                 }
             }
             // Accessor: { get foo() {} } or { set foo(v) {} }
