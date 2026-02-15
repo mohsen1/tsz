@@ -2527,9 +2527,11 @@ fn test_auto_import_via_reexport() {
         },
     );
 
-    println!("Result: {:?}", result.is_some());
-
     // Verify we get a completion for MyUtil
+    assert!(
+        result.is_some(),
+        "Expected completion result to be present for MyUtil test"
+    );
     let result = result.unwrap();
 
     // Should have MyUtil completions from both direct import (./a) and re-export (./b)

@@ -2125,17 +2125,11 @@ fn invalidate_paths_with_dependents_symbols_handles_import_equals() {
     let args = default_args();
 
     let result = compile_with_cache(&args, base, &mut cache).expect("compile should succeed");
-    if !result.diagnostics.is_empty() {
-        println!("\n=== DIAGNOSTICS FOUND ===");
-        for diag in &result.diagnostics {
-            println!(
-                "  TS{}: {} (at {}:{})",
-                diag.code, diag.message_text, diag.file, diag.start
-            );
-        }
-        println!("=========================\n");
-    }
-    assert!(result.diagnostics.is_empty());
+    assert!(
+        result.diagnostics.is_empty(),
+        "Compilation should have no diagnostics, got: {:?}",
+        result.diagnostics
+    );
     assert_eq!(cache.len(), 2);
 
     let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path.clone());
@@ -3702,21 +3696,9 @@ export function isNonNull<T>(value: T | null | undefined): value is T {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    // Debug: print any diagnostics found
-    if !result.diagnostics.is_empty() {
-        println!("\n=== DIAGNOSTICS FOUND ===");
-        for diag in &result.diagnostics {
-            println!(
-                "  TS{}: {} (at {}:{})",
-                diag.code, diag.message_text, diag.file, diag.start
-            );
-        }
-        println!("=========================\n");
-    }
-
     assert!(
         result.diagnostics.is_empty(),
-        "Should compile without errors {:?}",
+        "Compilation should have no diagnostics, got: {:?}",
         result.diagnostics
     );
     assert!(
