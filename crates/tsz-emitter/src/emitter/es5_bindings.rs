@@ -50,6 +50,9 @@ impl<'a> Printer<'a> {
             };
 
             if self.is_binding_pattern(decl.name) && !decl.initializer.is_none() {
+                if first {
+                    self.write(" ");
+                }
                 self.emit_es5_destructuring(decl_idx, &mut first);
             } else {
                 if first {
