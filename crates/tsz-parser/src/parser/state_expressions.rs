@@ -1506,12 +1506,15 @@ impl ParserState {
                     crate::parser::node::SpreadData { expression },
                 );
                 args.push(spread);
+            } else if self.is_token(SyntaxKind::CommaToken) {
+                // TS1135: missing argument before comma: func(a, , c)
+                self.error_argument_expression_expected();
+                args.push(NodeIndex::NONE);
             } else {
                 let arg = self.parse_assignment_expression();
                 if arg.is_none() {
-                    // Emit TS1135 for missing function argument: func(a, , c)
+                    // TS1135 for missing function argument
                     self.error_argument_expression_expected();
-                    // Continue parsing for error recovery
                 }
                 args.push(arg);
             }
