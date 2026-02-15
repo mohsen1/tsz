@@ -49,6 +49,9 @@ pub const CONTEXT_FLAG_IN_DECORATOR: u32 = 128;
 pub const CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS: u32 = 256;
 /// Context flag: parsing arrow function parameters.
 pub const CONTEXT_FLAG_ARROW_PARAMETERS: u32 = 512;
+/// Context flag: disallow conditional types (used inside `infer T extends X` constraint parsing).
+/// When set, `T extends U ? X : Y` is not parsed as a conditional type.
+pub const CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES: u32 = 1024;
 
 // =============================================================================
 // Parse Diagnostic
