@@ -41,7 +41,9 @@ use crate::parser::node::NodeArena;
 use crate::parser::{ParseDiagnostic, ParserState};
 use anyhow::{Context, Result, bail};
 #[cfg(not(target_arch = "wasm32"))]
-use rayon::prelude::*;
+use rayon::prelude::{
+    IntoParallelIterator, IntoParallelRefIterator, IndexedParallelIterator, ParallelIterator,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -396,7 +398,7 @@ pub fn parse_and_bind_with_stats(files: Vec<(String, String)>) -> (Vec<BindResul
 /// Arc<LibFile> objects for use with `merge_lib_symbols`.
 pub fn load_lib_files_for_binding(lib_files: &[&Path]) -> Vec<Arc<lib_loader::LibFile>> {
     use crate::parser::ParserState;
-    use rayon::prelude::*;
+    use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
     if lib_files.is_empty() {
         return Vec::new();
@@ -449,7 +451,7 @@ pub fn load_lib_files_for_binding_strict(
     lib_files: &[&Path],
 ) -> Result<Vec<Arc<lib_loader::LibFile>>> {
     use crate::parser::ParserState;
-    use rayon::prelude::*;
+    use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
     if lib_files.is_empty() {
         return Ok(Vec::new());

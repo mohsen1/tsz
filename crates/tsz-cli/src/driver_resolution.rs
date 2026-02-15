@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rayon::prelude::*;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -2153,7 +2153,7 @@ fn new_line_str(kind: NewLineKind) -> &'static str {
 pub(crate) fn write_outputs(outputs: &[OutputFile]) -> Result<Vec<PathBuf>> {
     outputs.par_iter().try_for_each(|output| -> Result<()> {
         if let Some(parent) = output.path.parent() {
-            std::fs::create_dir_all(parent)
+            std::fs::create_dir_all::<&Path>(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
         std::fs::write(&output.path, &output.contents)
