@@ -301,15 +301,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check if this symbol is a namespace/module (TS2708)
-        if symbol.flags & symbol_flags::MODULE != 0 {
-            self.error_namespace_used_as_value_at(name, inner);
-            return true;
-        }
-
-        // Check if this symbol is a class, enum, or function (TS2629, TS2628, TS2630)
+        // Check if this symbol is a class, enum, function, or namespace (TS2629, TS2628, TS2630, TS2631)
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        let (msg_template, code) = if symbol.flags & symbol_flags::CLASS != 0 {
+        let (msg_template, code) = if symbol.flags & symbol_flags::MODULE != 0 {
+            (
+                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_NAMESPACE,
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_NAMESPACE,
+            )
+        } else if symbol.flags & symbol_flags::CLASS != 0 {
             (
                 diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS,
                 diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS,
