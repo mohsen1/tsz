@@ -2796,6 +2796,7 @@ impl ParserState {
                     self.next_token(); // look past `;`
                     let should_continue =
                         self.is_property_start() || self.is_token(SyntaxKind::CloseBraceToken);
+                    let follows_eof = self.is_token(SyntaxKind::EndOfFileToken);
                     self.scanner.restore_state(snapshot);
                     self.current_token = saved_token;
 
@@ -2807,8 +2808,12 @@ impl ParserState {
                             diagnostic_codes::EXPECTED,
                         );
                         self.next_token(); // skip `;`
+                    } else if follows_eof {
+                        self.error_comma_expected();
+                        break;
                     } else {
-                        // `;` followed by EOF or non-property → abort the list
+                        // `;` followed by non-property → abort the list
+                        // so the outer parser can handle the rest as statements.
                         break;
                     }
                 } else if self.is_property_start() && !self.is_token(SyntaxKind::CloseBraceToken) {
