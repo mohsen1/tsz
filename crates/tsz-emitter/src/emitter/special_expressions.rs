@@ -35,7 +35,7 @@ impl<'a> Printer<'a> {
                 self.write(" ");
                 return;
             };
-            if !self.is_expression_parenthesized(expr_node) {
+            if !self.is_expression_parenthesized(expr_node) || self.ctx.flags.in_generator {
                 self.write(" ");
             }
             self.emit_expression(unary.expression);
