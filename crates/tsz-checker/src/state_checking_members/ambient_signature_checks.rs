@@ -949,9 +949,17 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(body_idx) = body
                 && !body_idx.is_none()
-                && self.has_only_explicit_any_assertion_returns(body_idx)
             {
-                return;
+                if self.has_only_explicit_any_assertion_returns(body_idx) {
+                    return;
+                }
+                // When the function has a body, the return type was inferred from it.
+                // An inferred `any` (e.g., `return x` where `x: any`) is a valid inference
+                // result, not "implicit any". TSC only emits TS7010 for bodyless
+                // declarations (interfaces, abstract methods) where `any` is the default.
+                if return_type == TypeId::ANY {
+                    return;
+                }
             }
         }
         if !self.should_report_implicit_any_return(return_type) {
