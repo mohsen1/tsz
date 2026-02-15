@@ -18,6 +18,11 @@ use tsz_solver::type_queries_extended::{
     ContextualLiteralAllowKind, classify_for_contextual_literal,
 };
 
+type TypeParamPushResult = (
+    Vec<tsz_solver::TypeParamInfo>,
+    Vec<(String, Option<TypeId>)>,
+);
+
 impl<'a> CheckerState<'a> {
     /// Resolve a qualified name (A.B.C) to its type.
     ///
@@ -549,14 +554,14 @@ impl<'a> CheckerState<'a> {
     /// ```
     /// Get type from a type query node (typeof X).
     ///
-    /// Creates a TypeQuery type that captures the type of a value, enabling type-level
+    /// Creates a `TypeQuery` type that captures the type of a value, enabling type-level
     /// queries and conditional type logic.
     ///
     /// ## Resolution Strategy:
     /// 1. **Value symbol resolved** (typeof value):
     ///    - Without type args: Return the actual type directly
-    ///    - With type args: Create TypeQuery type for deferred resolution
-    ///    - Exception: ANY/ERROR types still create TypeQuery for proper error handling
+    ///    - With type args: Create `TypeQuery` type for deferred resolution
+    ///    - Exception: ANY/ERROR types still create `TypeQuery` for proper error handling
     ///
     /// 2. **Type symbol only**: Emit TS2504 error (type cannot be used as value)
     ///
@@ -944,10 +949,10 @@ impl<'a> CheckerState<'a> {
     /// ## Two-Pass Algorithm:
     /// 1. **First pass**: Adds all type parameters to scope WITHOUT constraints
     ///    - This allows self-referential constraints like `T extends Box<T>`
-    ///    - Creates unconstrained TypeParameter entries
+    ///    - Creates unconstrained `TypeParameter` entries
     /// 2. **Second pass**: Resolves constraints and defaults with all params in scope
     ///    - Now all type parameters are visible for constraint resolution
-    ///    - Updates the scope with constrained TypeParameter entries
+    ///    - Updates the scope with constrained `TypeParameter` entries
     ///
     /// ## Returns:
     /// - `Vec<TypeParamInfo>`: Type parameter info with constraints and defaults
@@ -990,14 +995,10 @@ impl<'a> CheckerState<'a> {
     ///   set(key: K, value: V): void;
     /// }
     /// ```
-    #[allow(clippy::type_complexity)]
     pub(crate) fn push_type_parameters(
         &mut self,
         type_parameters: &Option<tsz_parser::parser::NodeList>,
-    ) -> (
-        Vec<tsz_solver::TypeParamInfo>,
-        Vec<(String, Option<TypeId>)>,
-    ) {
+    ) -> TypeParamPushResult {
         let Some(list) = type_parameters else {
             return (Vec::new(), Vec::new());
         };
@@ -1092,7 +1093,7 @@ impl<'a> CheckerState<'a> {
                     // TS2313: Type parameter 'T' has a circular constraint
                     self.error_at_node(
                         data.constraint,
-                        &format!("Type parameter '{}' has a circular constraint.", name),
+                        &format!("Type parameter '{name}' has a circular constraint."),
                         crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                     );
                     Some(TypeId::UNKNOWN)
@@ -1466,7 +1467,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Check if a symbol is a numeric enum and register it in the TypeEnvironment.
+    /// Check if a symbol is a numeric enum and register it in the `TypeEnvironment`.
     ///
     /// This is used for Rule #7 (Open Numeric Enums) where number types are
     /// assignable to/from numeric enums.
@@ -1558,11 +1559,11 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Get a symbol, preferring the cross-file binder for known cross-file SymbolIds.
+    /// Get a symbol, preferring the cross-file binder for known cross-file `SymbolIds`.
     ///
     /// Unlike `get_symbol_globally` (which checks the local binder first and may find
-    /// a WRONG symbol due to SymbolId collisions), this method checks
-    /// `cross_file_symbol_targets` FIRST. If the SymbolId is known to belong to another
+    /// a WRONG symbol due to `SymbolId` collisions), this method checks
+    /// `cross_file_symbol_targets` FIRST. If the `SymbolId` is known to belong to another
     /// file, the target file's binder is used directly, avoiding the collision.
     ///
     /// Falls back to `get_symbol_globally` for non-cross-file symbols.
@@ -1597,7 +1598,7 @@ impl<'a> CheckerState<'a> {
     /// ## Critical Behavior:
     /// - Removes the "in-progress" ERROR marker from cache before delegation
     /// - Shares the parent's cache via `with_parent_cache` (fixes Cache Isolation Bug)
-    /// - Copies lib_contexts for global symbol resolution (Array, Promise, etc.)
+    /// - Copies `lib_contexts` for global symbol resolution (Array, Promise, etc.)
     /// - Copies resolution sets for cross-file cycle detection
     fn delegate_cross_arena_symbol_resolution(
         &mut self,
@@ -1933,12 +1934,12 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Detect and record cross-file SymbolIds.
+    /// Detect and record cross-file `SymbolIds`.
     ///
-    /// In multi-file mode, the driver copies target file's module_exports into
-    /// the local binder, so SymbolIds may be from another file's binder. We
-    /// detect this by checking if the SymbolId maps to a symbol with the expected
-    /// name in the current binder. If not, we search all_binders to find the
+    /// In multi-file mode, the driver copies target file's `module_exports` into
+    /// the local binder, so `SymbolIds` may be from another file's binder. We
+    /// detect this by checking if the `SymbolId` maps to a symbol with the expected
+    /// name in the current binder. If not, we search `all_binders` to find the
     /// correct source file.
     fn record_cross_file_symbol_if_needed(
         &self,
@@ -2128,7 +2129,7 @@ impl<'a> CheckerState<'a> {
 
     /// Compute the type of an enum member symbol.
     ///
-    /// Returns a TypeData::Enum type with the member's literal type and DefId
+    /// Returns a `TypeData::Enum` type with the member's literal type and `DefId`
     /// for nominal identity (ensures E.A is not assignable to E.B).
     fn compute_enum_member_symbol_type(
         &mut self,
@@ -2159,7 +2160,7 @@ impl<'a> CheckerState<'a> {
 
     /// Compute the type of a namespace or module symbol.
     ///
-    /// Returns a Lazy type with the DefId for deferred resolution.
+    /// Returns a Lazy type with the `DefId` for deferred resolution.
     /// This is skipped for functions (handled separately) and enums (must come first).
     fn compute_namespace_symbol_type(
         &mut self,
@@ -2173,7 +2174,7 @@ impl<'a> CheckerState<'a> {
 
     /// Compute type of a symbol (internal, not cached).
     ///
-    /// Uses TypeLowering to bridge symbol declarations to solver types.
+    /// Uses `TypeLowering` to bridge symbol declarations to solver types.
     /// Returns the computed type and the type parameters used (if any).
     /// IMPORTANT: The type params returned must be the same ones used when lowering
     /// the type body, so that instantiation works correctly.
@@ -2212,7 +2213,7 @@ impl<'a> CheckerState<'a> {
 
         tracing::trace!(
             sym_id = sym_id.0,
-            flags = format!("{:#x}", flags).as_str(),
+            flags = format!("{flags:#x}").as_str(),
             name = escaped_name.as_str(),
             import_module = ?import_module,
             import_name = ?import_name,

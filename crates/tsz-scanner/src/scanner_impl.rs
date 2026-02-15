@@ -5,7 +5,6 @@
 //!
 //! IMPORTANT: All positions are character-based (like JavaScript's string indexing),
 //! NOT byte-based. This ensures compatibility with TypeScript's scanner positions.
-
 use crate::SyntaxKind;
 use crate::char_codes::CharacterCodes;
 use std::sync::Arc;
@@ -142,9 +141,10 @@ impl ScannerState {
     /// ZERO-COPY: No Vec<char> allocation, works directly with UTF-8 bytes.
     #[wasm_bindgen(constructor)]
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(text: String, skip_trivia: bool) -> Self {
-        let end = text.len(); // byte length
         // Common keywords are interned on-demand for faster startup
+        let end = text.len();
         let interner = Interner::new();
         let source: Arc<str> = Arc::from(text.into_boxed_str());
         Self {
@@ -169,12 +169,14 @@ impl ScannerState {
     /// Get the current position (end position of current token).
     #[wasm_bindgen(js_name = getPos)]
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn get_pos(&self) -> usize {
         self.pos
     }
 
     /// Set the current position (used for rescanning compound tokens).
     /// This allows consuming partial tokens like splitting `>>` into `>` + `>`.
+    #[allow(clippy::missing_const_for_fn)]
     pub fn set_pos(&mut self, pos: usize) {
         self.pos = pos;
     }
@@ -182,6 +184,7 @@ impl ScannerState {
     /// Get the full start position (including leading trivia).
     #[wasm_bindgen(js_name = getTokenFullStart)]
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token_full_start(&self) -> usize {
         self.full_start_pos
     }
@@ -189,6 +192,7 @@ impl ScannerState {
     /// Get the start position of the current token (excluding trivia).
     #[wasm_bindgen(js_name = getTokenStart)]
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token_start(&self) -> usize {
         self.token_start
     }
@@ -196,6 +200,7 @@ impl ScannerState {
     /// Get the end position of the current token.
     #[wasm_bindgen(js_name = getTokenEnd)]
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token_end(&self) -> usize {
         self.pos
     }
@@ -203,6 +208,7 @@ impl ScannerState {
     /// Get the current token kind.
     #[wasm_bindgen(js_name = getToken)]
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token(&self) -> SyntaxKind {
         self.token
     }
@@ -225,6 +231,7 @@ impl ScannerState {
     /// Get the token flags.
     #[must_use]
     #[wasm_bindgen(js_name = getTokenFlags)]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn get_token_flags(&self) -> u32 {
         self.token_flags
     }
@@ -232,6 +239,7 @@ impl ScannerState {
     /// Check if there was a preceding line break.
     #[must_use]
     #[wasm_bindgen(js_name = hasPrecedingLineBreak)]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn has_preceding_line_break(&self) -> bool {
         (self.token_flags & TokenFlags::PrecedingLineBreak as u32) != 0
     }
@@ -239,6 +247,7 @@ impl ScannerState {
     /// Check if the token is unterminated.
     #[must_use]
     #[wasm_bindgen(js_name = isUnterminated)]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn is_unterminated(&self) -> bool {
         (self.token_flags & TokenFlags::Unterminated as u32) != 0
     }
@@ -254,6 +263,7 @@ impl ScannerState {
     /// Check if the current token is a reserved word.
     #[must_use]
     #[wasm_bindgen(js_name = isReservedWord)]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn is_reserved_word(&self) -> bool {
         let t = self.token as u16;
         t >= SyntaxKind::BreakKeyword as u16 && t <= SyntaxKind::WithKeyword as u16
@@ -2512,17 +2522,17 @@ impl ScannerState {
     /// Returns `Atom::NONE` if the current token is not an identifier.
     /// This enables O(1) string comparison for identifiers.
     #[must_use]
-    pub fn get_token_atom(&self) -> Atom {
+    pub const fn get_token_atom(&self) -> Atom {
         self.token_atom
     }
 
     #[must_use]
-    pub fn get_invalid_separator_pos(&self) -> Option<usize> {
+    pub const fn get_invalid_separator_pos(&self) -> Option<usize> {
         self.token_invalid_separator_pos
     }
 
     #[must_use]
-    pub fn invalid_separator_is_consecutive(&self) -> bool {
+    pub const fn invalid_separator_is_consecutive(&self) -> bool {
         self.token_invalid_separator_is_consecutive
     }
 
@@ -2613,12 +2623,12 @@ impl ScannerState {
 
     /// Get a reference to the interner for direct use by the parser.
     #[must_use]
-    pub fn interner(&self) -> &Interner {
+    pub const fn interner(&self) -> &Interner {
         &self.interner
     }
 
     /// Get a mutable reference to the interner.
-    pub fn interner_mut(&mut self) -> &mut Interner {
+    pub const fn interner_mut(&mut self) -> &mut Interner {
         &mut self.interner
     }
 
@@ -2711,7 +2721,7 @@ fn is_digit(ch: u32) -> bool {
     (CharacterCodes::_0..=CharacterCodes::_9).contains(&ch)
 }
 
-fn is_binary_digit(ch: u32) -> bool {
+const fn is_binary_digit(ch: u32) -> bool {
     ch == CharacterCodes::_0 || ch == CharacterCodes::_1
 }
 
@@ -2830,7 +2840,7 @@ fn is_unicode_combining_mark(ch: u32) -> bool {
     false
 }
 
-fn is_line_break(ch: u32) -> bool {
+const fn is_line_break(ch: u32) -> bool {
     ch == CharacterCodes::LINE_FEED
         || ch == CharacterCodes::CARRIAGE_RETURN
         || ch == CharacterCodes::LINE_SEPARATOR
@@ -2838,7 +2848,7 @@ fn is_line_break(ch: u32) -> bool {
 }
 
 /// Check if a character is a valid regex flag (g, i, m, s, u, v, y, d)
-fn is_regex_flag(ch: u32) -> bool {
+const fn is_regex_flag(ch: u32) -> bool {
     matches!(
         ch,
         CharacterCodes::LOWER_G  // g - global

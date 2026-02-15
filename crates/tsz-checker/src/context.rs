@@ -26,6 +26,9 @@ pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 
+type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
+type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
+
 /// Represents a failed module resolution with specific error details.
 #[derive(Clone, Debug)]
 pub struct ResolutionError {
@@ -50,7 +53,7 @@ pub struct EnclosingClassInfo {
     pub in_static_property_initializer: bool,
     /// Whether we're in a static method context.
     pub in_static_method: bool,
-    /// Whether any super() call appeared while checking the current constructor body.
+    /// Whether any `super()` call appeared while checking the current constructor body.
     pub has_super_call_in_current_constructor: bool,
     /// Cached instance `this` type for members of this class.
     pub cached_instance_this_type: Option<TypeId>,
@@ -79,7 +82,7 @@ pub struct TypeCache {
     pub symbol_types: FxHashMap<SymbolId, TypeId>,
 
     /// Cached instance types for class symbols (for TYPE position).
-    /// Distinguishes from symbol_types which holds constructor types for VALUE position.
+    /// Distinguishes from `symbol_types` which holds constructor types for VALUE position.
     pub symbol_instance_types: FxHashMap<SymbolId, TypeId>,
 
     /// Cached types for nodes.
@@ -88,21 +91,21 @@ pub struct TypeCache {
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 
-    /// Maps DefIds to SymbolIds for declaration emit usage analysis.
-    /// Populated by CheckerContext during type checking, consumed by UsageAnalyzer.
+    /// Maps `DefIds` to `SymbolIds` for declaration emit usage analysis.
+    /// Populated by `CheckerContext` during type checking, consumed by `UsageAnalyzer`.
     pub def_to_symbol: FxHashMap<tsz_solver::DefId, SymbolId>,
 
     /// Cache for control flow analysis results.
-    /// Key: (FlowNodeId, SymbolId, InitialTypeId) -> NarrowedTypeId
+    /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
     pub flow_analysis_cache:
         FxHashMap<(tsz_binder::FlowNodeId, tsz_binder::SymbolId, TypeId), TypeId>,
 
-    /// Maps class instance TypeIds to their class declaration NodeIndex.
+    /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class
     /// for derived classes that have no private/protected members.
     pub class_instance_type_to_decl: FxHashMap<TypeId, NodeIndex>,
 
-    /// Forward cache: class declaration NodeIndex -> computed instance TypeId.
+    /// Forward cache: class declaration `NodeIndex` -> computed instance `TypeId`.
     /// Avoids recomputing the full class instance type on every member check.
     pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
 
@@ -153,7 +156,7 @@ impl TypeCache {
         affected.len()
     }
 
-    /// Merge another TypeCache into this one.
+    /// Merge another `TypeCache` into this one.
     /// Used to accumulate type information from multiple file checks for declaration emit.
     pub fn merge(&mut self, other: Self) {
         self.symbol_types.extend(other.symbol_types);
@@ -184,7 +187,7 @@ pub struct DestructuredBindingInfo {
     pub source_type: TypeId,
     /// The property name that this symbol corresponds to (for object patterns)
     pub property_name: String,
-    /// The element index for array/tuple patterns (u32::MAX if object pattern)
+    /// The element index for array/tuple patterns (`u32::MAX` if object pattern)
     pub element_index: u32,
     /// The binding group ID — all symbols from the same destructuring share this
     pub group_id: u32,
@@ -194,14 +197,14 @@ pub struct DestructuredBindingInfo {
 
 /// Shared state for type checking.
 pub struct CheckerContext<'a> {
-    /// The NodeArena containing the AST.
+    /// The `NodeArena` containing the AST.
     pub arena: &'a NodeArena,
 
     /// The binder state with symbols.
     pub binder: &'a BinderState,
 
     /// Query database for type interning and memoized type operations.
-    /// Supports both TypeInterner (via trait upcasting) and QueryCache.
+    /// Supports both `TypeInterner` (via trait upcasting) and `QueryCache`.
     pub types: &'a dyn QueryDatabase,
 
     /// Current file name.
@@ -222,7 +225,7 @@ pub struct CheckerContext<'a> {
     pub symbol_types: FxHashMap<SymbolId, TypeId>,
 
     /// Cached instance types for class symbols (for TYPE position).
-    /// Distinguishes from symbol_types which holds constructor types for VALUE position.
+    /// Distinguishes from `symbol_types` which holds constructor types for VALUE position.
     pub symbol_instance_types: FxHashMap<SymbolId, TypeId>,
 
     /// Cached types for variable declarations (used for TS2403 checks).
@@ -241,27 +244,27 @@ pub struct CheckerContext<'a> {
     pub mapped_eval_set: FxHashSet<TypeId>,
 
     /// Cache for control flow analysis results.
-    /// Key: (FlowNodeId, SymbolId, InitialTypeId) -> NarrowedTypeId
+    /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
     /// Prevents re-traversing the flow graph for the same symbol/flow combination.
     /// Fixes performance regression on binaryArithmeticControlFlowGraphNotTooLarge.ts
     /// where each operand in a + b + c was triggering fresh graph traversals.
     pub flow_analysis_cache:
         RefCell<FxHashMap<(tsz_binder::FlowNodeId, tsz_binder::SymbolId, TypeId), TypeId>>,
 
-    /// TypeIds whose application/lazy symbol references are fully resolved in `type_env`.
+    /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.
     pub application_symbols_resolved: FxHashSet<TypeId>,
 
     /// Recursion guard for application symbol resolution traversal.
     pub application_symbols_resolution_set: FxHashSet<TypeId>,
 
-    /// Maps class instance TypeIds to their class declaration NodeIndex.
+    /// Maps class instance `TypeIds` to their class declaration `NodeIndex`.
     /// Used by `get_class_decl_from_type` to correctly identify the class
     /// for derived classes that have no private/protected members (and thus no brand).
     /// Populated by `get_class_instance_type_inner` when creating class instance types.
     pub class_instance_type_to_decl: FxHashMap<TypeId, NodeIndex>,
 
-    /// Forward cache: class declaration NodeIndex -> computed instance TypeId.
+    /// Forward cache: class declaration `NodeIndex` -> computed instance `TypeId`.
     /// Avoids recomputing the full class instance type on every member check.
     pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
 
@@ -272,7 +275,7 @@ pub struct CheckerContext<'a> {
     pub symbol_dependency_stack: Vec<SymbolId>,
 
     /// Set of symbols that have been referenced (used for TS6133 unused checking).
-    /// Uses RefCell to allow tracking from &self methods (e.g., resolve_identifier_symbol).
+    /// Uses `RefCell` to allow tracking from &self methods (e.g., `resolve_identifier_symbol`).
     pub referenced_symbols: std::cell::RefCell<FxHashSet<SymbolId>>,
 
     /// Set of symbols written to (assignment targets).
@@ -331,7 +334,7 @@ pub struct CheckerContext<'a> {
     pub contextual_type: Option<TypeId>,
 
     /// Whether we're in the statement checking phase (vs type environment building).
-    /// During build_type_environment, closure parameter types may not have contextual types
+    /// During `build_type_environment`, closure parameter types may not have contextual types
     /// yet, so TS7006 should be deferred until the checking phase.
     pub is_checking_statements: bool,
 
@@ -375,61 +378,60 @@ pub struct CheckerContext<'a> {
 
     // --- DefId Migration Infrastructure ---
     /// Storage for type definitions (interfaces, classes, type aliases).
-    /// Part of the DefId migration to decouple Solver from Binder.
+    /// Part of the `DefId` migration to decouple Solver from Binder.
     pub definition_store: Arc<DefinitionStore>,
 
-    /// Mapping from Binder SymbolId to Solver DefId.
-    /// Used during migration to avoid creating duplicate DefIds for the same symbol.
-    /// Wrapped in RefCell to allow mutation through shared references (for use in Fn closures).
+    /// Mapping from Binder `SymbolId` to Solver `DefId`.
+    /// Used during migration to avoid creating duplicate `DefIds` for the same symbol.
+    /// Wrapped in `RefCell` to allow mutation through shared references (for use in Fn closures).
     pub symbol_to_def: RefCell<FxHashMap<SymbolId, DefId>>,
 
-    /// Reverse mapping from Solver DefId to Binder SymbolId.
+    /// Reverse mapping from Solver `DefId` to Binder `SymbolId`.
     /// Used to look up binder symbols from DefId-based types (e.g., namespace exports).
-    /// Wrapped in RefCell to allow mutation through shared references (for use in Fn closures).
+    /// Wrapped in `RefCell` to allow mutation through shared references (for use in Fn closures).
     pub def_to_symbol: RefCell<FxHashMap<DefId, SymbolId>>,
 
-    /// Type parameters for DefIds (used for type aliases, classes, interfaces).
+    /// Type parameters for `DefIds` (used for type aliases, classes, interfaces).
     /// Enables the Solver to expand Application(Lazy(DefId), Args) by providing
     /// the type parameters needed for generic substitution.
-    /// Wrapped in RefCell to allow mutation through shared references.
+    /// Wrapped in `RefCell` to allow mutation through shared references.
     pub def_type_params: RefCell<FxHashMap<DefId, Vec<tsz_solver::TypeParamInfo>>>,
 
-    /// DefIds known to have no type parameters.
+    /// `DefIds` known to have no type parameters.
     /// This avoids repeated cross-arena lookups for non-generic symbols.
     pub def_no_type_params: RefCell<FxHashSet<DefId>>,
 
-    /// Abstract constructor types (TypeIds) produced for abstract classes.
+    /// Abstract constructor types (`TypeIds`) produced for abstract classes.
     pub abstract_constructor_types: FxHashSet<TypeId>,
 
-    /// Protected constructor types (TypeIds) produced for protected constructors.
+    /// Protected constructor types (`TypeIds`) produced for protected constructors.
     pub protected_constructor_types: FxHashSet<TypeId>,
 
-    /// Private constructor types (TypeIds) produced for private constructors.
+    /// Private constructor types (`TypeIds`) produced for private constructors.
     pub private_constructor_types: FxHashSet<TypeId>,
 
-    /// Maps cross-file SymbolIds to their source file index.
-    /// Populated by resolve_cross_file_export/resolve_cross_file_namespace_exports
-    /// so delegate_cross_arena_symbol_resolution can find the correct arena.
+    /// Maps cross-file `SymbolIds` to their source file index.
+    /// Populated by `resolve_cross_file_export/resolve_cross_file_namespace_exports`
+    /// so `delegate_cross_arena_symbol_resolution` can find the correct arena.
     pub cross_file_symbol_targets: RefCell<FxHashMap<SymbolId, usize>>,
 
-    /// All arenas for cross-file resolution (indexed by file_idx from Symbol.decl_file_idx).
+    /// All arenas for cross-file resolution (indexed by `file_idx` from `Symbol.decl_file_idx`).
     /// Set during multi-file type checking to allow resolving declarations across files.
     pub all_arenas: Option<Arc<Vec<Arc<NodeArena>>>>,
 
-    /// All binders for cross-file resolution (indexed by file_idx).
+    /// All binders for cross-file resolution (indexed by `file_idx`).
     /// Enables looking up exported symbols from other files during import resolution.
     pub all_binders: Option<Arc<Vec<Arc<BinderState>>>>,
 
-    /// Resolved module paths map: (source_file_idx, specifier) -> target_file_idx.
-    /// Used by get_type_of_symbol to resolve imports to their target file and symbol.
+    /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
+    /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
     ///
     /// Key invariant: all specifier lookups should use
     /// `module_resolution::module_specifier_candidates` for canonical variants.
-    #[allow(clippy::type_complexity)]
-    pub resolved_module_paths: Option<Arc<FxHashMap<(usize, String), usize>>>,
+    pub resolved_module_paths: Option<Arc<ResolvedModulePathMap>>,
 
-    /// Current file index in multi-file mode (index into all_arenas/all_binders).
-    /// Used with resolved_module_paths to look up cross-file imports.
+    /// Current file index in multi-file mode (index into `all_arenas/all_binders`).
+    /// Used with `resolved_module_paths` to look up cross-file imports.
     pub current_file_idx: usize,
 
     /// Resolved module specifiers for this file (multi-file CLI mode).
@@ -439,19 +441,18 @@ pub struct CheckerContext<'a> {
     /// Keyed by a canonical module key (resolved file index or specifier).
     pub module_augmentation_value_decls: FxHashMap<String, FxHashMap<String, NodeIndex>>,
 
-    /// Per-file cache of is_external_module values to preserve state across files.
+    /// Per-file cache of `is_external_module` values to preserve state across files.
     /// Maps file path -> whether that file is an external module (has imports/exports).
     /// This prevents state corruption when binding multiple files sequentially.
     pub is_external_module_by_file: Option<Arc<FxHashMap<String, bool>>>,
 
-    /// Map of resolution errors: (source_file_idx, specifier) -> Error details.
-    /// Populated by the driver when ModuleResolver returns a specific error.
+    /// Map of resolution errors: (`source_file_idx`, specifier) -> Error details.
+    /// Populated by the driver when `ModuleResolver` returns a specific error.
     /// Contains structured error information (code, message) for TS2834, TS2835, TS2792, etc.
     ///
     /// Diagnostic-source invariant: module-not-found-family code/message selection
     /// should come from resolver outcomes when present.
-    #[allow(clippy::type_complexity)]
-    pub resolved_module_errors: Option<Arc<FxHashMap<(usize, String), ResolutionError>>>,
+    pub resolved_module_errors: Option<Arc<ResolvedModuleErrorMap>>,
 
     /// Import resolution stack for circular import detection.
     /// Tracks the chain of modules being resolved to detect circular dependencies.
@@ -463,7 +464,7 @@ pub struct CheckerContext<'a> {
     pub type_only_nodes: FxHashSet<NodeIndex>,
 
     /// Symbol resolution depth counter for preventing stack overflow.
-    /// Tracks how many nested get_type_of_symbol calls we've made.
+    /// Tracks how many nested `get_type_of_symbol` calls we've made.
     pub symbol_resolution_depth: Cell<u32>,
 
     /// Maximum symbol resolution depth before we give up (prevents stack overflow).
@@ -475,8 +476,8 @@ pub struct CheckerContext<'a> {
     pub lib_contexts: Vec<LibContext>,
 
     /// Number of actual lib files loaded (not including user files).
-    /// Used by has_lib_loaded() to correctly determine if standard library is available.
-    /// This is separate from lib_contexts.len() because lib_contexts may also include
+    /// Used by `has_lib_loaded()` to correctly determine if standard library is available.
+    /// This is separate from `lib_contexts.len()` because `lib_contexts` may also include
     /// user file contexts for cross-file type resolution in multi-file tests.
     pub actual_lib_file_count: usize,
 
@@ -515,7 +516,7 @@ pub struct CheckerContext<'a> {
     pub function_depth: u32,
 
     /// Stack of labels in scope.
-    /// Each entry contains (label_name, is_iteration, function_depth_when_defined).
+    /// Each entry contains (`label_name`, `is_iteration`, `function_depth_when_defined`).
     /// Used for labeled break/continue validation.
     pub label_stack: Vec<LabelInfo>,
 
@@ -540,7 +541,7 @@ pub struct CheckerContext<'a> {
 
     /// Track which (node, symbol) pairs have already emitted TS2454 errors
     /// to avoid duplicate errors when the same usage is checked multiple times.
-    /// Key: (node_position, symbol_id)
+    /// Key: (`node_position`, `symbol_id`)
     pub emitted_ts2454_errors: FxHashSet<(u32, SymbolId)>,
 
     /// Fuel counter for type resolution operations.
@@ -577,7 +578,7 @@ impl<'a> CheckerContext<'a> {
         compiler_options
     }
 
-    /// Create a new CheckerContext.
+    /// Create a new `CheckerContext`.
     pub fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -686,14 +687,14 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Create a new CheckerContext with a shared DefinitionStore.
+    /// Create a new `CheckerContext` with a shared `DefinitionStore`.
     ///
     /// This allows multiple contexts (e.g., main file + lib files) to share the same
-    /// DefId namespace, preventing DefId collisions where different symbols would
-    /// otherwise get the same DefId from independent stores.
+    /// `DefId` namespace, preventing `DefId` collisions where different symbols would
+    /// otherwise get the same `DefId` from independent stores.
     ///
     /// # Arguments
-    /// * `definition_store` - Shared DefinitionStore (wrapped in Arc for thread-safety)
+    /// * `definition_store` - Shared `DefinitionStore` (wrapped in Arc for thread-safety)
     /// * Other args same as `new()`
     pub fn new_with_shared_def_store(
         arena: &'a NodeArena,
@@ -804,7 +805,7 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Create a new CheckerContext with explicit compiler options.
+    /// Create a new `CheckerContext` with explicit compiler options.
     pub fn with_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -913,7 +914,7 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Create a new CheckerContext with a persistent cache.
+    /// Create a new `CheckerContext` with a persistent cache.
     /// This allows reusing type checking results from previous queries.
     pub fn with_cache(
         arena: &'a NodeArena,
@@ -1024,7 +1025,7 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Create a new CheckerContext with explicit compiler options and a persistent cache.
+    /// Create a new `CheckerContext` with explicit compiler options and a persistent cache.
     pub fn with_cache_and_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -1134,10 +1135,10 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Create a child CheckerContext for temporary cross-file checks.
+    /// Create a child `CheckerContext` for temporary cross-file checks.
     ///
-    /// Important: only caches keyed by globally stable ids (e.g. TypeId, RelationCacheKey)
-    /// are copied from the parent. Arena/binder-local ids (SymbolId, NodeIndex, FlowNodeId)
+    /// Important: only caches keyed by globally stable ids (e.g. `TypeId`, `RelationCacheKey`)
+    /// are copied from the parent. Arena/binder-local ids (`SymbolId`, `NodeIndex`, `FlowNodeId`)
     /// must be reset to avoid cross-arena cache poisoning.
     pub fn with_parent_cache(
         arena: &'a NodeArena,
@@ -1271,15 +1272,15 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set lib contexts for global type resolution.
-    /// Note: lib_contexts may include both actual lib files AND user files for cross-file
-    /// resolution. Use set_actual_lib_file_count() to track how many are actual lib files.
+    /// Note: `lib_contexts` may include both actual lib files AND user files for cross-file
+    /// resolution. Use `set_actual_lib_file_count()` to track how many are actual lib files.
     pub fn set_lib_contexts(&mut self, lib_contexts: Vec<LibContext>) {
         self.lib_contexts = lib_contexts;
     }
 
     /// Set the count of actual lib files loaded (not including user files).
-    /// This is used by has_lib_loaded() to correctly determine if standard library is available.
-    pub fn set_actual_lib_file_count(&mut self, count: usize) {
+    /// This is used by `has_lib_loaded()` to correctly determine if standard library is available.
+    pub const fn set_actual_lib_file_count(&mut self, count: usize) {
         self.actual_lib_file_count = count;
     }
 
@@ -1305,7 +1306,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set resolved module errors map for cross-file import resolution.
-    /// Populated by the driver when ModuleResolver returns specific errors (TS2834, TS2835, TS2792, etc.).
+    /// Populated by the driver when `ModuleResolver` returns specific errors (TS2834, TS2835, TS2792, etc.).
     pub fn set_resolved_module_errors(
         &mut self,
         errors: Arc<FxHashMap<(usize, String), ResolutionError>>,
@@ -1327,12 +1328,12 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set the current file index.
-    pub fn set_current_file_idx(&mut self, idx: usize) {
+    pub const fn set_current_file_idx(&mut self, idx: usize) {
         self.current_file_idx = idx;
     }
 
     /// Get the arena for a specific file index.
-    /// Returns the current arena if file_idx is u32::MAX (single-file mode).
+    /// Returns the current arena if `file_idx` is `u32::MAX` (single-file mode).
     pub fn get_arena_for_file(&self, file_idx: u32) -> &NodeArena {
         if file_idx == u32::MAX {
             return self.arena;
@@ -1346,7 +1347,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Get the binder for a specific file index.
-    /// Returns None if file_idx is out of bounds or all_binders is not set.
+    /// Returns None if `file_idx` is out of bounds or `all_binders` is not set.
     pub fn get_binder_for_file(&self, file_idx: usize) -> Option<&BinderState> {
         self.all_binders
             .as_ref()
@@ -1355,14 +1356,14 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Resolve an import specifier to its target file index.
-    /// Uses the resolved_module_paths map populated by the driver.
+    /// Uses the `resolved_module_paths` map populated by the driver.
     /// Returns None if the import cannot be resolved (e.g., external module).
     pub fn resolve_import_target(&self, specifier: &str) -> Option<usize> {
         self.resolve_import_target_from_file(self.current_file_idx, specifier)
     }
 
     /// Resolve an import specifier from a specific file to its target file index.
-    /// Like resolve_import_target but for any source file, not just the current one.
+    /// Like `resolve_import_target` but for any source file, not just the current one.
     pub fn resolve_import_target_from_file(
         &self,
         source_file_idx: usize,
@@ -1873,13 +1874,13 @@ impl<'a> CheckerContext<'a> {
     // DefId Migration Helpers
     // =========================================================================
 
-    /// Get or create a DefId for a symbol.
+    /// Get or create a `DefId` for a symbol.
     ///
-    /// If the symbol already has a DefId, return it.
-    /// Otherwise, create a new DefId and store the mapping.
+    /// If the symbol already has a `DefId`, return it.
+    /// Otherwise, create a new `DefId` and store the mapping.
     ///
-    /// This is used during the migration from SymbolRef to DefId.
-    /// Eventually, all type references will use DefId directly.
+    /// This is used during the migration from `SymbolRef` to `DefId`.
+    /// Eventually, all type references will use `DefId` directly.
     pub fn get_or_create_def_id(&self, sym_id: SymbolId) -> DefId {
         use tsz_solver::def::DefinitionInfo;
 
@@ -2005,7 +2006,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Create a Lazy type reference from a symbol.
     ///
-    /// This returns `TypeData::Lazy(DefId)` for use in the new DefId system.
+    /// This returns `TypeData::Lazy(DefId)` for use in the new `DefId` system.
     /// During migration, this is called alongside or instead of creating
     /// `TypeData::Ref(SymbolRef)`.
     pub fn create_lazy_type_ref(&mut self, sym_id: SymbolId) -> TypeId {
@@ -2013,26 +2014,26 @@ impl<'a> CheckerContext<'a> {
         self.types.lazy(def_id)
     }
 
-    /// Convert TypeData::Ref to TypeData::Lazy(DefId) if needed (Phase 1 migration).
+    /// Convert `TypeData::Ref` to `TypeData::Lazy(DefId)` if needed (Phase 1 migration).
     ///
-    /// This post-processes a TypeId created by TypeLowering. If the type is
-    /// TypeData::Ref(SymbolRef), this creates a corresponding TypeData::Lazy(DefId)
-    /// for the same symbol. This enables gradual migration from SymbolRef to DefId.
+    /// This post-processes a `TypeId` created by `TypeLowering`. If the type is
+    /// `TypeData::Ref(SymbolRef)`, this creates a corresponding `TypeData::Lazy(DefId)`
+    /// for the same symbol. This enables gradual migration from `SymbolRef` to `DefId`.
     ///
-    /// **Pattern:** TypeLowering creates Ref → post-process → returns Lazy
+    /// **Pattern:** `TypeLowering` creates Ref → post-process → returns Lazy
     ///
-    /// PHASE 4.2: TypeData::Ref removed, all types are now Lazy(DefId).
+    /// PHASE 4.2: `TypeData::Ref` removed, all types are now Lazy(DefId).
     /// This function is now a no-op since all types are already Lazy.
-    pub fn maybe_create_lazy_from_resolved(&mut self, type_id: TypeId) -> TypeId {
+    pub const fn maybe_create_lazy_from_resolved(&mut self, type_id: TypeId) -> TypeId {
         type_id
     }
 
-    /// Look up the SymbolId for a DefId (reverse mapping).
+    /// Look up the `SymbolId` for a `DefId` (reverse mapping).
     pub fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
         self.def_to_symbol.borrow().get(&def_id).copied()
     }
 
-    /// Insert type parameters for a DefId (Phase 4.2.1: generic type alias support).
+    /// Insert type parameters for a `DefId` (Phase 4.2.1: generic type alias support).
     ///
     /// This enables the Solver to expand Application(Lazy(DefId), Args) by providing
     /// the type parameters needed for generic substitution.
@@ -2050,17 +2051,17 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Get type parameters for a DefId.
+    /// Get type parameters for a `DefId`.
     ///
-    /// Returns None if the DefId has no type parameters or hasn't been registered yet.
+    /// Returns None if the `DefId` has no type parameters or hasn't been registered yet.
     pub fn get_def_type_params(&self, def_id: DefId) -> Option<Vec<tsz_solver::TypeParamInfo>> {
         self.def_type_params.borrow().get(&def_id).cloned()
     }
 
-    /// Resolve a TypeId to its underlying SymbolId if it is a reference type.
+    /// Resolve a `TypeId` to its underlying `SymbolId` if it is a reference type.
     ///
     /// This helper bridges the DefId-based Solver and SymbolId-based Binder.
-    /// It handles the indirection automatically: TypeId → DefId → SymbolId.
+    /// It handles the indirection automatically: `TypeId` → `DefId` → `SymbolId`.
     ///
     /// # Example
     /// ```ignore
@@ -2090,19 +2091,19 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
-    /// Look up an existing DefId for a symbol without creating a new one.
+    /// Look up an existing `DefId` for a symbol without creating a new one.
     ///
-    /// Returns None if the symbol doesn't have a DefId yet.
-    /// This is used by the DefId resolver in TypeLowering to prefer
-    /// DefId when available but fall back to SymbolRef otherwise.
+    /// Returns None if the symbol doesn't have a `DefId` yet.
+    /// This is used by the `DefId` resolver in `TypeLowering` to prefer
+    /// `DefId` when available but fall back to `SymbolRef` otherwise.
     pub fn get_existing_def_id(&self, sym_id: SymbolId) -> Option<DefId> {
         self.symbol_to_def.borrow().get(&sym_id).copied()
     }
 
-    /// Create a TypeFormatter with full context for displaying types (Phase 4.2.1).
+    /// Create a `TypeFormatter` with full context for displaying types (Phase 4.2.1).
     ///
     /// This includes symbol arena and definition store, which allows the formatter
-    /// to display type names for Lazy(DefId) types instead of the internal "Lazy(def_id)"
+    /// to display type names for Lazy(DefId) types instead of the internal "`Lazy(def_id)`"
     /// representation.
     ///
     /// # Example
@@ -2117,7 +2118,7 @@ impl<'a> CheckerContext<'a> {
             .with_def_store(&self.definition_store)
     }
 
-    /// Register a resolved type in the TypeEnvironment for both SymbolRef and DefId.
+    /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.
     ///
     /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`
     /// paths can resolve the type during evaluation.
@@ -2250,19 +2251,19 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Enter an async context (increment async depth).
-    pub fn enter_async_context(&mut self) {
+    pub const fn enter_async_context(&mut self) {
         self.async_depth += 1;
     }
 
     /// Exit an async context (decrement async depth).
-    pub fn exit_async_context(&mut self) {
+    pub const fn exit_async_context(&mut self) {
         if self.async_depth > 0 {
             self.async_depth -= 1;
         }
     }
 
     /// Check if we're currently inside an async function.
-    pub fn in_async_context(&self) -> bool {
+    pub const fn in_async_context(&self) -> bool {
         self.async_depth > 0
     }
 
@@ -2393,7 +2394,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Check if a named symbol is available in lib files or global scope.
     /// Returns true if the symbol is declared in lib contexts, globals, or current scope.
-    /// This is a generalized version of has_symbol_in_lib for any symbol name.
+    /// This is a generalized version of `has_symbol_in_lib` for any symbol name.
     pub fn has_name_in_lib(&self, name: &str) -> bool {
         // Check lib contexts first
         for lib_ctx in &self.lib_contexts {
@@ -2535,7 +2536,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Get a reference to the flow graph.
-    pub fn flow_graph(&self) -> Option<&FlowGraph<'a>> {
+    pub const fn flow_graph(&self) -> Option<&FlowGraph<'a>> {
         self.flow_graph.as_ref()
     }
 
@@ -2544,7 +2545,7 @@ impl<'a> CheckerContext<'a> {
     // =========================================================================
 
     /// Check if strict mode is enabled.
-    pub fn is_strict_mode(&self) -> bool {
+    pub const fn is_strict_mode(&self) -> bool {
         self.compiler_options.strict
     }
 
@@ -2570,67 +2571,67 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Check if noImplicitReturns is enabled.
-    pub fn no_implicit_returns(&self) -> bool {
+    pub const fn no_implicit_returns(&self) -> bool {
         self.compiler_options.no_implicit_returns
     }
 
     /// Check if noImplicitThis is enabled.
-    pub fn no_implicit_this(&self) -> bool {
+    pub const fn no_implicit_this(&self) -> bool {
         self.compiler_options.no_implicit_this
     }
 
     /// Check if strictNullChecks is enabled.
-    pub fn strict_null_checks(&self) -> bool {
+    pub const fn strict_null_checks(&self) -> bool {
         self.compiler_options.strict_null_checks
     }
 
     /// Check if strictFunctionTypes is enabled.
-    pub fn strict_function_types(&self) -> bool {
+    pub const fn strict_function_types(&self) -> bool {
         self.compiler_options.strict_function_types
     }
 
     /// Check if strictPropertyInitialization is enabled.
-    pub fn strict_property_initialization(&self) -> bool {
+    pub const fn strict_property_initialization(&self) -> bool {
         self.compiler_options.strict_property_initialization
     }
 
     /// Check if useUnknownInCatchVariables is enabled.
-    pub fn use_unknown_in_catch_variables(&self) -> bool {
+    pub const fn use_unknown_in_catch_variables(&self) -> bool {
         self.compiler_options.use_unknown_in_catch_variables
     }
 
     /// Check if isolatedModules is enabled.
-    pub fn isolated_modules(&self) -> bool {
+    pub const fn isolated_modules(&self) -> bool {
         self.compiler_options.isolated_modules
     }
 
     /// Check if noUncheckedIndexedAccess is enabled.
     /// When enabled, index signature access adds `| undefined` to the result type.
-    pub fn no_unchecked_indexed_access(&self) -> bool {
+    pub const fn no_unchecked_indexed_access(&self) -> bool {
         self.compiler_options.no_unchecked_indexed_access
     }
 
     /// Check if strictBindCallApply is enabled.
     /// When enabled, bind/call/apply use strict function signatures.
-    pub fn strict_bind_call_apply(&self) -> bool {
+    pub const fn strict_bind_call_apply(&self) -> bool {
         self.compiler_options.strict_bind_call_apply
     }
 
     /// Check if exactOptionalPropertyTypes is enabled.
     /// When enabled, optional properties are `T | undefined` not `T | undefined | missing`.
-    pub fn exact_optional_property_types(&self) -> bool {
+    pub const fn exact_optional_property_types(&self) -> bool {
         self.compiler_options.exact_optional_property_types
     }
 
     /// Check if sound mode is enabled.
-    pub fn sound_mode(&self) -> bool {
+    pub const fn sound_mode(&self) -> bool {
         self.compiler_options.sound_mode
     }
 
     /// Pack the checker's compiler options into a `u16` bitmask for use as a
     /// `RelationCacheKey` flags field. This is the single source of truth for
     /// flag packing — call this instead of manually constructing the bitmask.
-    pub fn pack_relation_flags(&self) -> u16 {
+    pub const fn pack_relation_flags(&self) -> u16 {
         use tsz_solver::RelationCacheKey;
         let mut flags: u16 = 0;
         if self.strict_null_checks() {
@@ -2648,8 +2649,8 @@ impl<'a> CheckerContext<'a> {
         flags
     }
 
-    /// Convert CheckerOptions to JudgeConfig for the CompatChecker.
-    fn as_judge_config(&self) -> JudgeConfig {
+    /// Convert `CheckerOptions` to `JudgeConfig` for the `CompatChecker`.
+    const fn as_judge_config(&self) -> JudgeConfig {
         JudgeConfig {
             strict_function_types: self.strict_function_types(),
             strict_null_checks: self.strict_null_checks(),
@@ -2658,8 +2659,8 @@ impl<'a> CheckerContext<'a> {
         }
     }
 
-    /// Apply standard compiler options to a CompatChecker, including query_db.
-    /// This wires the CompilerOptions (via JudgeConfig) and the QueryDatabase.
+    /// Apply standard compiler options to a `CompatChecker`, including `query_db`.
+    /// This wires the `CompilerOptions` (via `JudgeConfig`) and the `QueryDatabase`.
     pub fn configure_compat_checker<'b, R: tsz_solver::TypeResolver>(
         &'b self,
         checker: &mut tsz_solver::CompatChecker<'b, R>,
@@ -2681,41 +2682,41 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Check if noUnusedLocals is enabled.
-    pub fn no_unused_locals(&self) -> bool {
+    pub const fn no_unused_locals(&self) -> bool {
         self.compiler_options.no_unused_locals
     }
 
     /// Check if noUnusedParameters is enabled.
-    pub fn no_unused_parameters(&self) -> bool {
+    pub const fn no_unused_parameters(&self) -> bool {
         self.compiler_options.no_unused_parameters
     }
 
     /// Check if noLib is enabled.
     /// When enabled, no library files (including lib.d.ts) are included.
     /// TS2318 errors are emitted when referencing global types with this option enabled.
-    pub fn no_lib(&self) -> bool {
+    pub const fn no_lib(&self) -> bool {
         self.compiler_options.no_lib
     }
 
     /// Check if lib files are loaded (lib.d.ts, etc.).
     /// Returns false when noLib is enabled or when no actual lib files are loaded.
-    /// Uses actual_lib_file_count instead of lib_contexts.is_empty() because lib_contexts
+    /// Uses `actual_lib_file_count` instead of `lib_contexts.is_empty()` because `lib_contexts`
     /// may also contain user file contexts for cross-file resolution in multi-file tests.
     /// Used to determine whether to emit TS2304/TS2318/TS2583 for missing global types.
-    pub fn has_lib_loaded(&self) -> bool {
+    pub const fn has_lib_loaded(&self) -> bool {
         !self.compiler_options.no_lib && self.actual_lib_file_count > 0
     }
 
     /// Check if esModuleInterop is enabled.
-    /// When enabled, synthesizes default exports for CommonJS modules.
-    pub fn es_module_interop(&self) -> bool {
+    /// When enabled, synthesizes default exports for `CommonJS` modules.
+    pub const fn es_module_interop(&self) -> bool {
         self.compiler_options.es_module_interop
     }
 
     /// Check if allowSyntheticDefaultImports is enabled.
     /// When enabled, allows `import x from 'y'` when module doesn't have default export.
     /// This is implied by esModuleInterop.
-    pub fn allow_synthetic_default_imports(&self) -> bool {
+    pub const fn allow_synthetic_default_imports(&self) -> bool {
         self.compiler_options.allow_synthetic_default_imports
     }
 }
@@ -2724,21 +2725,21 @@ impl<'a> CheckerContext<'a> {
 // TypeResolver Implementation for Lazy Type Resolution
 // =============================================================================
 
-/// Implement TypeResolver for CheckerContext to support Lazy type resolution.
+/// Implement `TypeResolver` for `CheckerContext` to support Lazy type resolution.
 ///
-/// This enables ApplicationEvaluator to resolve TypeData::Lazy(DefId) references
+/// This enables `ApplicationEvaluator` to resolve `TypeData::Lazy(DefId)` references
 /// by looking up the cached type for a symbol. The cache is populated during
-/// type checking when get_type_of_symbol() is called.
+/// type checking when `get_type_of_symbol()` is called.
 ///
 /// **Architecture Note:**
-/// - resolve_lazy() is read-only (looks up from cache)
-/// - Cache is populated by CheckerState::get_type_of_symbol() before Application evaluation
-/// - This separation keeps the solver layer (ApplicationEvaluator) independent of checker logic
+/// - `resolve_lazy()` is read-only (looks up from cache)
+/// - Cache is populated by `CheckerState::get_type_of_symbol()` before Application evaluation
+/// - This separation keeps the solver layer (`ApplicationEvaluator`) independent of checker logic
 impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// Resolve a symbol reference to its cached type (deprecated).
     ///
-    /// Phase 4.2: TypeData::Ref is removed, but we keep this for compatibility.
-    /// Converts SymbolRef to SymbolId and looks up in cache.
+    /// Phase 4.2: `TypeData::Ref` is removed, but we keep this for compatibility.
+    /// Converts `SymbolRef` to `SymbolId` and looks up in cache.
     fn resolve_ref(
         &self,
         symbol: tsz_solver::SymbolRef,
@@ -2748,13 +2749,13 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.symbol_types.get(&sym_id).copied()
     }
 
-    /// Resolve a DefId to its cached type.
+    /// Resolve a `DefId` to its cached type.
     ///
-    /// This looks up the type from the symbol_types cache, which is populated
+    /// This looks up the type from the `symbol_types` cache, which is populated
     /// during type checking. Returns None if the symbol hasn't been resolved yet.
     ///
-    /// **Callers should ensure get_type_of_symbol() is called first** to populate
-    /// the cache before calling resolve_lazy().
+    /// **Callers should ensure `get_type_of_symbol()` is called first** to populate
+    /// the cache before calling `resolve_lazy()`.
     fn resolve_lazy(
         &self,
         def_id: tsz_solver::DefId,
@@ -2821,11 +2822,11 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
     /// Get type parameters for a Lazy type.
     ///
-    /// Phase 4.2.1: For type aliases, type parameters are stored in def_type_params
+    /// Phase 4.2.1: For type aliases, type parameters are stored in `def_type_params`
     /// and used by the Solver to expand Application(Lazy(DefId), Args).
     ///
     /// For classes/interfaces, type parameters are embedded in the resolved type's shape
-    /// (Callable.type_params, Interface.type_params, etc.) rather than stored separately.
+    /// (`Callable.type_params`, `Interface.type_params`, etc.) rather than stored separately.
     fn get_lazy_type_params(
         &self,
         def_id: tsz_solver::DefId,
@@ -2872,19 +2873,19 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
     /// Get the base class type for a class/interface type.
     ///
-    /// This implements the TypeResolver trait method for Best Common Type (BCT) algorithm.
+    /// This implements the `TypeResolver` trait method for Best Common Type (BCT) algorithm.
     /// For example, given Dog that extends Animal, this returns the type for Animal.
     ///
     /// **Architecture**: Bridges Solver (BCT computation) to Binder (extends clauses) via:
-    /// 1. TypeId -> DefId (from Lazy type)
-    /// 2. DefId -> SymbolId (via def_to_symbol mapping)
-    /// 3. SymbolId -> Parent SymbolId (via InheritanceGraph)
-    /// 4. Parent SymbolId -> TypeId (via symbol_types cache)
+    /// 1. `TypeId` -> `DefId` (from Lazy type)
+    /// 2. `DefId` -> `SymbolId` (via `def_to_symbol` mapping)
+    /// 3. `SymbolId` -> Parent `SymbolId` (via `InheritanceGraph`)
+    /// 4. Parent `SymbolId` -> `TypeId` (via `symbol_types` cache)
     ///
     /// Returns None if:
     /// - The type is not a Lazy type (not a class/interface)
-    /// - The DefId has no corresponding SymbolId
-    /// - The class has no base class (no parents in InheritanceGraph)
+    /// - The `DefId` has no corresponding `SymbolId`
+    /// - The class has no base class (no parents in `InheritanceGraph`)
     fn get_base_type(
         &self,
         type_id: tsz_solver::TypeId,
@@ -2959,7 +2960,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         None
     }
 
-    /// Check if a DefId corresponds to a numeric enum (not a string enum).
+    /// Check if a `DefId` corresponds to a numeric enum (not a string enum).
     ///
     /// This determines whether an enum allows bidirectional number assignability (Rule #7).
     /// Numeric enums like `enum E { A = 0 }` allow `number <-> E` assignments.
@@ -3032,14 +3033,14 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         !has_string_member
     }
 
-    /// Get the DefKind for a DefId (Task #32: Graph Isomorphism).
+    /// Get the `DefKind` for a `DefId` (Task #32: Graph Isomorphism).
     ///
     /// This enables the Canonicalizer to distinguish between structural types
-    /// (TypeAlias) and nominal types (Interface/Class/Enum).
+    /// (`TypeAlias`) and nominal types (Interface/Class/Enum).
     ///
     /// ## Structural vs Nominal
     ///
-    /// - **TypeAlias**: Structural - `type A = { x: A }` and `type B = { x: B }`
+    /// - **`TypeAlias`**: Structural - `type A = { x: A }` and `type B = { x: B }`
     ///   should canonicalize to the same type with Recursive(0)
     /// - **Interface/Class**: Nominal - Different interfaces are incompatible even
     ///   if structurally identical, so they must keep their Lazy(DefId) reference
@@ -3047,12 +3048,12 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.definition_store.get_kind(def_id)
     }
 
-    /// Get the DefId for a SymbolRef (Phase 4.2: Ref -> Lazy migration).
+    /// Get the `DefId` for a `SymbolRef` (Phase 4.2: Ref -> Lazy migration).
     ///
-    /// This enables converting SymbolRef to DefId by looking up the symbol_to_def mapping.
-    /// This is the reverse of def_to_symbol_id.
+    /// This enables converting `SymbolRef` to `DefId` by looking up the `symbol_to_def` mapping.
+    /// This is the reverse of `def_to_symbol_id`.
     ///
-    /// Returns None if the SymbolRef doesn't have a corresponding DefId.
+    /// Returns None if the `SymbolRef` doesn't have a corresponding `DefId`.
     fn symbol_to_def_id(&self, symbol: tsz_solver::SymbolRef) -> Option<tsz_solver::DefId> {
         use tsz_binder::SymbolId;
 
@@ -3063,18 +3064,18 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         self.symbol_to_def.borrow().get(&sym_id).copied()
     }
 
-    /// Check if a TypeId represents a full Enum type (not a specific member).
+    /// Check if a `TypeId` represents a full Enum type (not a specific member).
     ///
     /// Used to distinguish between:
     /// - `enum E` (the enum TYPE - allows `let x: E = 1`)
     /// - `enum E.A` (an enum MEMBER - rejects `let x: E.A = 1`)
     ///
     /// Returns true if:
-    /// - TypeId is TypeData::Enum where Symbol has ENUM flag but not ENUM_MEMBER flag
-    /// - TypeId is a Union of TypeData::Enum members from the same parent enum
+    /// - `TypeId` is `TypeData::Enum` where Symbol has ENUM flag but not `ENUM_MEMBER` flag
+    /// - `TypeId` is a Union of `TypeData::Enum` members from the same parent enum
     ///
     /// Returns false for:
-    /// - Enum members (symbols with ENUM_MEMBER flag)
+    /// - Enum members (symbols with `ENUM_MEMBER` flag)
     /// - Non-enum types
     fn is_enum_type(
         &self,
@@ -3152,7 +3153,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         }
     }
 
-    /// Get the parent Enum's DefId for an Enum Member's DefId.
+    /// Get the parent Enum's `DefId` for an Enum Member's `DefId`.
     ///
     /// This enables the Solver to check nominal relationships between enum members
     /// and their parent types (e.g., E.A -> E) without directly accessing Binder symbols.
