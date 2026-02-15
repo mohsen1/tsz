@@ -522,13 +522,6 @@ pub fn resolve_compiler_options(
     }
 
     if let Some(paths) = options.paths.as_ref() {
-        let has_base_url = options
-            .base_url
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty());
-        if !has_base_url {
-            bail!("compilerOptions.paths requires compilerOptions.baseUrl");
-        }
         if !paths.is_empty() {
             resolved.paths = Some(build_path_mappings(paths));
         }
