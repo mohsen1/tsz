@@ -706,26 +706,27 @@ impl<'a> CheckerState<'a> {
                 // IMPORTANT: Use class_instance_type_from_symbol for class symbols to get the
                 // instance type (properties, methods), NOT the constructor type which is what
                 // get_type_of_symbol returns for classes.
-                let base_instance_type =
-                    if let Some(base_sym) = self.ctx.binder.get_node_symbol(base_class_idx) {
-                        // For class symbols, get the instance type directly
-                        if let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym) {
-                            if base_symbol.flags & symbol_flags::CLASS != 0 {
-                                // Use class_instance_type_from_symbol to get the instance type
-                                self.class_instance_type_from_symbol(base_sym)
-                                    .unwrap_or(TypeId::ANY)
-                            } else {
-                                // For non-class symbols (interfaces, etc.), use get_type_of_symbol
-                                self.get_type_of_symbol(base_sym)
-                            }
+                //
+                // NOTE: We use `base_sym_id` (resolved from heritage clause via
+                // `resolve_heritage_symbol`) rather than `get_node_symbol(base_class_idx)`
+                // because `export default class` overwrites the node-symbol mapping to
+                // point at the "default" alias symbol instead of the class symbol.
+                // Using `base_sym_id` ensures we always get the actual class symbol.
+                let base_instance_type = {
+                    let base_sym = base_sym_id;
+                    if let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym) {
+                        if base_symbol.flags & symbol_flags::CLASS != 0 {
+                            // Use class_instance_type_from_symbol to get the instance type
+                            self.class_instance_type_from_symbol(base_sym)
+                                .unwrap_or(TypeId::ANY)
                         } else {
-                            TypeId::ANY
+                            // For non-class symbols (interfaces, etc.), use get_type_of_symbol
+                            self.get_type_of_symbol(base_sym)
                         }
                     } else {
-                        // Forward reference - symbol not bound yet
-                        // Return ANY to avoid infinite recursion
                         TypeId::ANY
-                    };
+                    }
+                };
                 let substitution =
                     TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                 let base_instance_type =
