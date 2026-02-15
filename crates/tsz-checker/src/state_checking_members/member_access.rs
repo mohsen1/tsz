@@ -823,7 +823,6 @@ impl<'a> CheckerState<'a> {
 
     /// Get property information needed for index signature checking.
     /// Returns (property_name, property_type, name_node_index).
-
     /// Get the name text from a member name node (identifier, string literal, or computed).
     fn get_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
         use tsz_scanner::SyntaxKind;

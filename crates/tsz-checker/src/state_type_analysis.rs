@@ -733,8 +733,7 @@ impl<'a> CheckerState<'a> {
         callee.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
     }
 
-    /// Get type of a JSX opening element.
-    ///
+    // Get type of a JSX opening element.
     // NOTE: get_type_of_jsx_opening_element, get_jsx_namespace_type,
     // get_intrinsic_elements_type, get_jsx_element_type moved to jsx_checker.rs
 
@@ -3238,22 +3237,19 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// Resolve a typeof type reference to its structural type.
-    ///
-    /// This function resolves `typeof X` type queries to the actual type of `X`.
-    /// This is useful for type operations where we need the structural type rather
-    /// than the type query itself.
-    ///
-    /// **TypeQuery Resolution:**
-    /// - **TypeQuery**: `typeof X` → get the type of symbol X
-    /// - **Other types**: Return unchanged (not a typeof query)
-    ///
-    /// **Use Cases:**
-    /// - Assignability checking (need actual type, not typeof reference)
-    /// - Type comparison (typeof X should be compared to X's type)
-    /// - Generic constraint evaluation
-    ///
-
+    // Resolve a typeof type reference to its structural type.
+    //
+    // This function resolves `typeof X` type queries to the actual type of `X`.
+    // This is useful for type operations where we need the structural type rather
+    // than the type query itself.
+    // **TypeQuery Resolution:**
+    // - **TypeQuery**: `typeof X` → get the type of symbol X
+    // - **Other types**: Return unchanged (not a typeof query)
+    //
+    // **Use Cases:**
+    // - Assignability checking (need actual type, not typeof reference)
+    // - Type comparison (typeof X should be compared to X's type)
+    // - Generic constraint evaluation
     // NOTE: refine_mixin_call_return_type, mixin_base_param_index, instance_type_from_constructor_type,
     // instance_type_from_constructor_type_inner, merge_base_instance_into_constructor_return,
     // merge_base_constructor_properties_into_constructor_return moved to constructor_checker.rs

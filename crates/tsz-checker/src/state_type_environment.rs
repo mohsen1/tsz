@@ -18,7 +18,7 @@ use tsz_solver::visitor::{
 };
 
 impl<'a> CheckerState<'a> {
-    /// Get type of object literal.
+    // Get type of object literal.
     // =========================================================================
     // Type Relations (uses solver::CompatChecker for assignability)
     // =========================================================================
@@ -1653,15 +1653,14 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    /// Report a type not assignable error using solver diagnostics with source tracking.
-    ///
-    /// This is the basic error that just says "Type X is not assignable to Y".
-    /// For detailed errors with elaboration (e.g., "property 'x' is missing"),
-    /// use `error_type_not_assignable_with_reason_at` instead.
+    // Report a type not assignable error using solver diagnostics with source tracking.
+    // This is the basic error that just says "Type X is not assignable to Y".
+    // For detailed errors with elaboration (e.g., "property 'x' is missing"),
+    // use `error_type_not_assignable_with_reason_at` instead.
 
-    /// Report a cannot find name error using solver diagnostics with source tracking.
-    /// Enhanced to provide suggestions for similar names, import suggestions, and
-    /// library change suggestions for ES2015+ types.
+    // Report a cannot find name error using solver diagnostics with source tracking.
+    // Enhanced to provide suggestions for similar names, import suggestions, and
+    // library change suggestions for ES2015+ types.
 
     // Note: can_merge_symbols is in type_checking.rs
 
