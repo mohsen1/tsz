@@ -210,13 +210,9 @@ impl<'a> Printer<'a> {
             // Emit comments between the previous node/comma and this node.
             // This handles comments like: func(a, /*comment*/ b, c) or func(/*c*/ a)
             if let Some(node) = self.arena.get(idx) {
-                let _range_start = prev_end.unwrap_or(node.pos); // For first node, this won't emit anything
-                if prev_end.is_some() {
+                if let Some(prev_end) = prev_end {
                     // For non-first nodes, emit comments between previous node end and current node start
-                    self.emit_unemitted_comments_between(
-                        prev_end.expect("prev_end is Some, checked by if condition"),
-                        node.pos,
-                    );
+                    self.emit_unemitted_comments_between(prev_end, node.pos);
                 }
             }
             first = false;
