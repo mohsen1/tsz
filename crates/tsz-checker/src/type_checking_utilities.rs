@@ -2064,7 +2064,7 @@ impl<'a> CheckerState<'a> {
             if end <= check
                 && source_text
                     .get(end..check)
-                    .is_some_and(|gap| gap.chars().all(|c| c.is_whitespace()))
+                    .is_some_and(|gap| gap.chars().all(char::is_whitespace))
                 && is_jsdoc_comment(comment, source_text)
             {
                 return Some(get_jsdoc_content(comment, source_text));

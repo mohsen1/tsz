@@ -192,8 +192,10 @@ fn check_with_resolved_modules(
     setup_lib_contexts(&mut checker);
 
     checker.ctx.report_unresolved_imports = true;
-    let modules: rustc_hash::FxHashSet<String> =
-        resolved_modules.iter().map(|s| s.to_string()).collect();
+    let modules: rustc_hash::FxHashSet<String> = resolved_modules
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     checker.ctx.set_resolved_modules(modules);
 
     checker.check_source_file(root);

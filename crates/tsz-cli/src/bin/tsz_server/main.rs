@@ -874,15 +874,21 @@ impl Server {
         let file = args.get("file").and_then(|v| v.as_str());
 
         if let Some(file_path) = file {
-            let line = args.get("line").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
-            let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+            let line = args
+                .get("line")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1) as u32;
+            let offset = args
+                .get("offset")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(1) as u32;
             let end_line = args
                 .get("endLine")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(line as u64) as u32;
             let end_offset = args
                 .get("endOffset")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(offset as u64) as u32;
             let insert_string = args
                 .get("insertString")
@@ -1000,7 +1006,7 @@ impl Server {
         let include_line_position = request
             .arguments
             .get("includeLinePosition")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = self.open_files.get(file_path).cloned() {
@@ -1048,7 +1054,7 @@ impl Server {
         let include_line_position = request
             .arguments
             .get("includeLinePosition")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = self.open_files.get(file_path).cloned() {
@@ -1385,7 +1391,9 @@ impl Server {
                 let ref_offset = line_map.position_to_offset(position, &source_text)?;
                 let node_idx = tsz::lsp::utils::find_node_at_offset(&arena, ref_offset);
                 if !node_idx.is_none() {
-                    arena.get_identifier_text(node_idx).map(|s| s.to_string())
+                    arena
+                        .get_identifier_text(node_idx)
+                        .map(std::string::ToString::to_string)
                 } else {
                     None
                 }
@@ -2220,7 +2228,7 @@ impl Server {
 
             // Compute the end span based on source text length
             let total_lines = source_text.lines().count();
-            let last_line_len = source_text.lines().last().map_or(0, |l| l.len());
+            let last_line_len = source_text.lines().last().map_or(0, str::len);
             Some(serde_json::json!({
                 "text": "<global>",
                 "kind": "script",
@@ -2318,7 +2326,7 @@ impl Server {
             let mut items = Vec::new();
             // Root item
             let total_lines = source_text.lines().count();
-            let last_line_len = source_text.lines().last().map_or(0, |l| l.len());
+            let last_line_len = source_text.lines().last().map_or(0, str::len);
             let child_items: Vec<serde_json::Value> = symbols
                 .iter()
                 .map(|sym| {
@@ -3048,7 +3056,7 @@ impl Server {
     ) -> TsServerResponse {
         let codes: Vec<String> = tsz::lsp::code_actions::CodeFixRegistry::supported_error_codes()
             .iter()
-            .map(|c| c.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         self.stub_response(seq, request, Some(serde_json::json!(codes)))
     }
@@ -3115,13 +3123,13 @@ impl Server {
                     .arguments
                     .get("options")
                     .and_then(|o| o.get("tabSize"))
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(4) as u32,
                 insert_spaces: request
                     .arguments
                     .get("options")
                     .and_then(|o| o.get("insertSpaces"))
-                    .and_then(|v| v.as_bool())
+                    .and_then(serde_json::Value::as_bool)
                     .unwrap_or(true),
                 ..Default::default()
             };
@@ -3163,13 +3171,13 @@ impl Server {
                     .arguments
                     .get("options")
                     .and_then(|o| o.get("tabSize"))
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                     .unwrap_or(4) as u32,
                 insert_spaces: request
                     .arguments
                     .get("options")
                     .and_then(|o| o.get("insertSpaces"))
-                    .and_then(|v| v.as_bool())
+                    .and_then(serde_json::Value::as_bool)
                     .unwrap_or(true),
                 ..Default::default()
             };
@@ -3272,33 +3280,41 @@ impl Server {
             );
 
             // Extract the range from arguments, default to entire file
-            let start = match request.arguments.get("start").and_then(|v| v.as_u64()) {
+            let start = match request
+                .arguments
+                .get("start")
+                .and_then(serde_json::Value::as_u64)
+            {
                 Some(_) => {
                     let line = request
                         .arguments
                         .get("startLine")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .unwrap_or(1) as u32;
                     let offset = request
                         .arguments
                         .get("startOffset")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .unwrap_or(1) as u32;
                     Self::tsserver_to_lsp_position(line, offset)
                 }
                 None => Position::new(0, 0),
             };
-            let end = match request.arguments.get("end").and_then(|v| v.as_u64()) {
+            let end = match request
+                .arguments
+                .get("end")
+                .and_then(serde_json::Value::as_u64)
+            {
                 Some(_) => {
                     let line = request
                         .arguments
                         .get("endLine")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .unwrap_or(u32::MAX as u64) as u32;
                     let offset = request
                         .arguments
                         .get("endOffset")
-                        .and_then(|v| v.as_u64())
+                        .and_then(serde_json::Value::as_u64)
                         .unwrap_or(u32::MAX as u64) as u32;
                     Self::tsserver_to_lsp_position(line, offset)
                 }
@@ -3839,14 +3855,14 @@ impl Server {
                 .arguments
                 .get("file")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .or_else(|| self.open_files.keys().next().cloned())?;
 
             let content = request
                 .arguments
                 .get("fileContent")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .or_else(|| self.open_files.get(&file).cloned())
                 .or_else(|| std::fs::read_to_string(&file).ok())?;
 

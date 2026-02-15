@@ -306,7 +306,7 @@ impl<'a> CheckerState<'a> {
                         let source_is_external_module = self
                             .ctx
                             .get_binder_for_file(symbol.decl_file_idx as usize)
-                            .is_some_and(|binder| binder.is_external_module());
+                            .is_some_and(tsz_binder::BinderState::is_external_module);
 
                         self.ctx.binder.is_external_module()
                             && symbol.decl_file_idx != self.ctx.current_file_idx as u32
@@ -1120,7 +1120,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Report errors for duplicates
-        for (_key, info) in &seen_names {
+        for info in seen_names.values() {
             if info.indices.len() <= 1 {
                 continue;
             }
@@ -1227,7 +1227,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Report TS2300 for duplicate accessors (e.g., two getters or two setters with same name)
-        for (_key, indices) in &seen_accessors {
+        for indices in seen_accessors.values() {
             if indices.len() <= 1 {
                 continue;
             }

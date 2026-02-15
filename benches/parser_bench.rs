@@ -170,9 +170,9 @@ fn generate_large_source(classes: usize, methods_per_class: usize) -> String {
 
     for c in 0..classes {
         source.push_str(&format!("interface I{} {{\n", c));
-        source.push_str(&format!("    id: number;\n"));
-        source.push_str(&format!("    name: string;\n"));
-        source.push_str(&format!("}}\n\n"));
+        source.push_str(&"    id: number;\n".to_string());
+        source.push_str(&"    name: string;\n".to_string());
+        source.push_str(&"}\n\n".to_string());
 
         source.push_str(&format!("class Class{} implements I{} {{\n", c, c));
         source.push_str(&format!("    id: number = {};\n", c));
@@ -184,12 +184,12 @@ fn generate_large_source(classes: usize, methods_per_class: usize) -> String {
                 m
             ));
             source.push_str(&format!("        const result = x * {};\n", m));
-            source.push_str(&format!("        console.log(y);\n"));
-            source.push_str(&format!("        return result;\n"));
-            source.push_str(&format!("    }}\n\n"));
+            source.push_str(&"        console.log(y);\n".to_string());
+            source.push_str(&"        return result;\n".to_string());
+            source.push_str(&"    }\n\n".to_string());
         }
 
-        source.push_str(&format!("}}\n\n"));
+        source.push_str(&"}\n\n".to_string());
     }
 
     source

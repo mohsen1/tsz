@@ -775,7 +775,7 @@ impl<'a> CodeActionProvider<'a> {
         };
         self.arena
             .get_identifier_text(local_ident)
-            .map(|name| name.to_string())
+            .map(std::string::ToString::to_string)
     }
 
     fn build_import_removal_edit(
@@ -795,7 +795,7 @@ impl<'a> CodeActionProvider<'a> {
         let mut default_name = if !clause.name.is_none() {
             self.arena
                 .get_identifier_text(clause.name)
-                .map(|name| name.to_string())
+                .map(std::string::ToString::to_string)
         } else {
             None
         };
@@ -809,7 +809,7 @@ impl<'a> CodeActionProvider<'a> {
                 namespace_name = self
                     .arena
                     .get_identifier_text(clause.named_bindings)
-                    .map(|name| name.to_string());
+                    .map(std::string::ToString::to_string);
             } else if let Some(named) = self.arena.get_named_imports(bindings_node) {
                 for &spec_idx in &named.elements.nodes {
                     let spec_node = self.arena.get(spec_idx)?;

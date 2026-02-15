@@ -2704,7 +2704,10 @@ impl<'a> AstToIr<'a> {
                     ..
                 }) = transforms.get(idx)
                 {
-                    (*captures_this, class_alias.as_ref().map(|s| s.to_string()))
+                    (
+                        *captures_this,
+                        class_alias.as_ref().map(std::string::ToString::to_string),
+                    )
                 } else {
                     // No directive, fall back to local analysis
                     (contains_this_reference(self.arena, idx), None)

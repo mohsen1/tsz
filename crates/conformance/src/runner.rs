@@ -253,11 +253,11 @@ impl Runner {
                                             "extra_codes": extra,
                                             "missing_fingerprints": missing_fingerprints
                                                 .iter()
-                                                .map(|f| f.display_key())
+                                                .map(super::tsc_results::DiagnosticFingerprint::display_key)
                                                 .collect::<Vec<_>>(),
                                             "extra_fingerprints": extra_fingerprints
                                                 .iter()
-                                                .map(|f| f.display_key())
+                                                .map(super::tsc_results::DiagnosticFingerprint::display_key)
                                                 .collect::<Vec<_>>(),
                                             "options": options,
                                         });
@@ -395,7 +395,7 @@ impl Runner {
         for entry in WalkDir::new(test_dir)
             .follow_links(true)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             let path = entry.path();
 
@@ -509,7 +509,7 @@ impl Runner {
                     let original_ext = path
                         .extension()
                         .and_then(|e| e.to_str())
-                        .map(|s| s.to_string());
+                        .map(std::string::ToString::to_string);
 
                     for variant in option_variants {
                         let content_clone = content.clone();

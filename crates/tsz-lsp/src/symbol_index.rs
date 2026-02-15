@@ -249,7 +249,7 @@ impl SymbolIndex {
             .filter(|name| {
                 self.definitions
                     .get(name.as_str())
-                    .is_none_or(|defs| defs.is_empty())
+                    .is_none_or(std::vec::Vec::is_empty)
             })
             .cloned()
             .collect();
@@ -609,12 +609,16 @@ impl SymbolIndex {
                 .symbol_refs
                 .values()
                 .flat_map(|file_refs| file_refs.values())
-                .map(|v| v.len())
+                .map(std::vec::Vec::len)
                 .sum(),
-            total_definitions: self.definitions.values().map(|v| v.len()).sum(),
+            total_definitions: self.definitions.values().map(std::vec::Vec::len).sum(),
             files_with_exports: self.exports.len(),
             files_with_imports: self.imports.len(),
-            total_import_relationships: self.importers.values().map(|v| v.len()).sum(),
+            total_import_relationships: self
+                .importers
+                .values()
+                .map(std::collections::HashSet::len)
+                .sum(),
             indexed_files: self.file_symbols.len(),
         }
     }
@@ -624,7 +628,7 @@ impl SymbolIndex {
     /// Returns an iterator of symbol names that have at least one definition.
     /// Useful for workspace symbol search across the entire project.
     pub fn all_definition_names(&self) -> impl Iterator<Item = &str> {
-        self.definitions.keys().map(|s| s.as_str())
+        self.definitions.keys().map(std::string::String::as_str)
     }
 
     /// Clear all data from the index.
@@ -712,7 +716,9 @@ impl SymbolIndex {
 
         // Case 1: Simple identifier (e.g., `extends A`)
         if node.kind == scanner::SyntaxKind::Identifier as u16 {
-            return arena.get_identifier_text(node_idx).map(|s| s.to_string());
+            return arena
+                .get_identifier_text(node_idx)
+                .map(std::string::ToString::to_string);
         }
 
         // Case 2: Property access expression (e.g., `implements ns.I`)
@@ -722,7 +728,7 @@ impl SymbolIndex {
                 // The name_or_argument field contains the member name
                 return arena
                     .get_identifier_text(access_expr.name_or_argument)
-                    .map(|s| s.to_string());
+                    .map(std::string::ToString::to_string);
             }
         }
 

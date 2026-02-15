@@ -2365,19 +2365,19 @@ impl<'a> Completions<'a> {
                 let prop = self.arena.get_property_assignment(node)?;
                 self.arena
                     .get_identifier_text(prop.name)
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 let prop = self.arena.get_shorthand_property(node)?;
                 self.arena
                     .get_identifier_text(prop.name)
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let method = self.arena.get_method_decl(node)?;
                 self.arena
                     .get_identifier_text(method.name)
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
             }
             _ => None,
         }

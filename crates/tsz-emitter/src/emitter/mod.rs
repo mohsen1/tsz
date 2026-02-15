@@ -432,7 +432,9 @@ impl<'a> Printer<'a> {
     /// Enable source map generation and register the current source file.
     pub fn enable_source_map(&mut self, output_name: &str, source_name: &str) {
         self.writer.enable_source_map(output_name.to_string());
-        let content = self.source_text_for_map().map(|text| text.to_string());
+        let content = self
+            .source_text_for_map()
+            .map(std::string::ToString::to_string);
         self.writer.add_source(source_name.to_string(), content);
     }
 
@@ -2388,7 +2390,7 @@ impl<'a> Printer<'a> {
         if let Some(capture_name) = self
             .transforms
             .this_capture_name(source_idx)
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
         {
             self.write("var ");
             self.write(&capture_name);

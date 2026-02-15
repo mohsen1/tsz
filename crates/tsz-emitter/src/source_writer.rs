@@ -337,7 +337,9 @@ impl SourceWriter {
 
     /// Generate source map JSON (if source mapping is enabled)
     pub fn generate_source_map_json(&mut self) -> Option<String> {
-        self.source_map.as_mut().map(|sm| sm.generate_json())
+        self.source_map
+            .as_mut()
+            .map(tsz_common::source_map::SourceMapGenerator::generate_json)
     }
 
     /// Add mappings with a base line/column offset. Column offset applies only to the first line.

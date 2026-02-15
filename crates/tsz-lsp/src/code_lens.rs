@@ -217,7 +217,7 @@ impl<'a> CodeLensProvider<'a> {
         );
 
         let references = finder.find_references(root, data.position);
-        let count = references.as_ref().map_or(0, |r| r.len());
+        let count = references.as_ref().map_or(0, std::vec::Vec::len);
 
         // Subtract 1 for the declaration itself (if it's included in references)
         let ref_count = if count > 0 { count - 1 } else { 0 };

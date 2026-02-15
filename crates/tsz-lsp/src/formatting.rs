@@ -352,7 +352,10 @@ impl DocumentFormattingProvider {
 
         // Trim final empty lines if requested
         if options.trim_final_newlines.unwrap_or(true) {
-            while formatted_lines.last().is_some_and(|l| l.is_empty()) {
+            while formatted_lines
+                .last()
+                .is_some_and(std::string::String::is_empty)
+            {
                 formatted_lines.pop();
             }
         }

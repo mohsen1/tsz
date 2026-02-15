@@ -447,7 +447,7 @@ impl LspServer {
                 params
                     .get("textDocument")
                     .and_then(|td| td.get("version"))
-                    .and_then(|v| v.as_i64()),
+                    .and_then(serde_json::Value::as_i64),
             ) {
                 self.documents.insert(
                     uri.to_string(),
@@ -468,7 +468,7 @@ impl LspServer {
                 params
                     .get("textDocument")
                     .and_then(|td| td.get("version"))
-                    .and_then(|v| v.as_i64()),
+                    .and_then(serde_json::Value::as_i64),
             ) {
                 // Full sync mode - take the last change
                 if let Some(change) = changes.last() {
@@ -839,14 +839,14 @@ impl LspServer {
             .as_ref()
             .and_then(|p| p.get("position"))
             .and_then(|pos| pos.get("line"))
-            .and_then(|l| l.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| anyhow::anyhow!("Missing line"))? as u32;
 
         let character = params
             .as_ref()
             .and_then(|p| p.get("position"))
             .and_then(|pos| pos.get("character"))
-            .and_then(|c| c.as_u64())
+            .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| anyhow::anyhow!("Missing character"))? as u32;
 
         Ok((uri, line, character))

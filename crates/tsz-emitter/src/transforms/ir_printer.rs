@@ -1077,7 +1077,7 @@ impl<'a> IRPrinter<'a> {
                                             captures_arguments,
                                             class_alias,
                                             ..
-                                        } => (*captures_this, *captures_arguments, class_alias.as_deref().map(|s| s.to_string())),
+                                        } => (*captures_this, *captures_arguments, class_alias.as_deref().map(std::string::ToString::to_string)),
                                         _ => (false, false, None),
                                     };
 
