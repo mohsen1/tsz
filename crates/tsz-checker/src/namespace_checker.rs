@@ -166,9 +166,35 @@ impl<'a> CheckerState<'a> {
         let Some(exports) = symbol.exports.as_ref() else {
             return (function_type, Vec::new());
         };
-        let Some(shape) = query::callable_shape_for_type(self.ctx.types, function_type) else {
-            return (function_type, Vec::new());
-        };
+
+        // Get the callable shape from the function type.
+        // Handle both TypeData::Callable (overloaded functions) and TypeData::Function
+        // (simple single-signature functions) by converting Function to a CallableShape.
+        let shape: std::sync::Arc<CallableShape> =
+            if let Some(s) = query::callable_shape_for_type(self.ctx.types, function_type) {
+                s
+            } else if let Some(func_shape_id) =
+                tsz_solver::visitor::function_shape_id(self.ctx.types, function_type)
+            {
+                let func_shape = self.ctx.types.function_shape(func_shape_id);
+                std::sync::Arc::new(CallableShape {
+                    call_signatures: vec![tsz_solver::CallSignature {
+                        type_params: func_shape.type_params.clone(),
+                        params: func_shape.params.clone(),
+                        this_type: func_shape.this_type,
+                        return_type: func_shape.return_type,
+                        type_predicate: func_shape.type_predicate.clone(),
+                        is_method: func_shape.is_method,
+                    }],
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                })
+            } else {
+                return (function_type, Vec::new());
+            };
 
         let mut props: FxHashMap<Atom, PropertyInfo> = shape
             .properties
