@@ -616,7 +616,7 @@ impl<'a> DocumentHighlightProvider<'a> {
         // For case/default, find the enclosing switch statement
         if word == "case" || word == "default" {
             // Find the case/default clause at this offset
-            for node in self.arena.nodes.iter() {
+            for node in &self.arena.nodes {
                 if (node.kind == syntax_kind_ext::CASE_CLAUSE
                     || node.kind == syntax_kind_ext::DEFAULT_CLAUSE)
                     && node.pos <= offset
@@ -672,7 +672,7 @@ impl<'a> DocumentHighlightProvider<'a> {
 
         if word == "do" {
             // Find the do-while statement
-            for node in self.arena.nodes.iter() {
+            for node in &self.arena.nodes {
                 if node.kind == syntax_kind_ext::DO_STATEMENT {
                     let kw_start = self.skip_whitespace_forward(node.pos as usize);
                     if kw_start == word_start {

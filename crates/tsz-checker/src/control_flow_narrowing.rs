@@ -175,7 +175,7 @@ impl<'a> FlowAnalyzer<'a> {
             || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
             && let Some(lit) = self.arena.get_literal_expr(node)
         {
-            for &elem in lit.elements.nodes.iter() {
+            for &elem in &lit.elements.nodes {
                 if elem.is_none() {
                     continue;
                 }

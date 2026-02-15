@@ -1232,7 +1232,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             // Emit errors for ALL duplicate declarations (matching tsc behavior)
-            for &idx in indices.iter() {
+            for &idx in indices {
                 self.report_duplicate_class_member_ts2300(idx);
             }
         }

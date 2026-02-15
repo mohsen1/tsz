@@ -734,7 +734,7 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(base_shape) = object_shape_for_type(self.ctx.types, base_instance_type)
                 {
-                    for base_prop in base_shape.properties.iter() {
+                    for base_prop in &base_shape.properties {
                         properties
                             .entry(base_prop.name)
                             .or_insert_with(|| base_prop.clone());
@@ -823,7 +823,7 @@ impl<'a> CheckerState<'a> {
                     interface_type = self.resolve_lazy_type(interface_type);
 
                     if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
-                        for prop in shape.properties.iter() {
+                        for prop in &shape.properties {
                             properties.entry(prop.name).or_insert_with(|| prop.clone());
                         }
                         if let Some(ref idx) = shape.string_index {
@@ -835,7 +835,7 @@ impl<'a> CheckerState<'a> {
                     } else if let Some(shape) =
                         callable_shape_for_type(self.ctx.types, interface_type)
                     {
-                        for prop in shape.properties.iter() {
+                        for prop in &shape.properties {
                             properties.entry(prop.name).or_insert_with(|| prop.clone());
                         }
                     }
@@ -878,7 +878,7 @@ impl<'a> CheckerState<'a> {
                     self.merge_interface_heritage_types(&interface_decls, interface_type);
 
                 if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
-                    for prop in shape.properties.iter() {
+                    for prop in &shape.properties {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
                     }
                     if let Some(ref idx) = shape.string_index {
@@ -889,7 +889,7 @@ impl<'a> CheckerState<'a> {
                     }
                 } else if let Some(shape) = callable_shape_for_type(self.ctx.types, interface_type)
                 {
-                    for prop in shape.properties.iter() {
+                    for prop in &shape.properties {
                         properties.entry(prop.name).or_insert_with(|| prop.clone());
                     }
                 }
@@ -1506,7 +1506,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(base_shape) =
                     callable_shape_for_type(self.ctx.types, instantiated_base_constructor_type)
                 {
-                    for base_prop in base_shape.properties.iter() {
+                    for base_prop in &base_shape.properties {
                         properties
                             .entry(base_prop.name)
                             .or_insert_with(|| base_prop.clone());

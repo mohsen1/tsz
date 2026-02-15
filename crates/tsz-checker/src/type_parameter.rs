@@ -208,14 +208,14 @@ impl<'a> CheckerState<'a> {
                 // Already added above if is_type_parameter
             }
             TypeParameterKind::Union(members) | TypeParameterKind::Intersection(members) => {
-                for &member in members.iter() {
+                for &member in &members {
                     params.extend(self.get_referenced_type_parameters(member));
                 }
             }
             TypeParameterKind::Application(app_id) => {
                 let app = self.ctx.types.type_application(app_id);
                 params.extend(self.get_referenced_type_parameters(app.base));
-                for &arg in app.args.iter() {
+                for &arg in &app.args {
                     params.extend(self.get_referenced_type_parameters(arg));
                 }
             }

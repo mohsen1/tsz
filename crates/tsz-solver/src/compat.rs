@@ -1413,7 +1413,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             let union_members = type_queries::get_union_members(self.interner, source)?;
 
             // Check if any union member is an enum with a different DefId
-            for &member in union_members.iter() {
+            for &member in &union_members {
                 if let Some((member_def, _)) = visitor::enum_components(self.interner, member)
                     && member_def != t_def
                 {

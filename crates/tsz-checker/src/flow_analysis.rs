@@ -1476,7 +1476,7 @@ impl<'a> CheckerState<'a> {
         for member in &remaining_members {
             if is_object {
                 if let Some(shape) = object_shape_for_type(self.ctx.types, *member) {
-                    for prop in shape.properties.iter() {
+                    for prop in &shape.properties {
                         if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == info.property_name
                         {
                             result_types.push(prop.type_id);

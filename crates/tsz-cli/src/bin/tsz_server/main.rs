@@ -4659,7 +4659,7 @@ fn find_angle_bracket_match(arena: &NodeArena, source: &str, pos: usize) -> Opti
     }
 
     // Type assertions: <type>expr
-    for node in arena.nodes.iter() {
+    for node in &arena.nodes {
         if node.kind == tsz::parser::syntax_kind_ext::TYPE_ASSERTION {
             if let Some(ta) = arena.type_assertions.get(node.data_index as usize) {
                 let open_pos = node.pos as usize;

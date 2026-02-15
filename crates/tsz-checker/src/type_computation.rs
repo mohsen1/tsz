@@ -263,7 +263,7 @@ impl<'a> CheckerState<'a> {
                 {
                     if let Some(ref _expected) = tuple_context {
                         // For tuple context, add each element with spread flag
-                        for elem in elems.iter() {
+                        for elem in &elems {
                             let (name, optional) =
                                 match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                                     Some(el) => (el.name, el.optional),
@@ -279,7 +279,7 @@ impl<'a> CheckerState<'a> {
                         }
                     } else {
                         // For array context, add element types
-                        for elem in elems.iter() {
+                        for elem in &elems {
                             element_types.push(elem.type_id);
                         }
                     }

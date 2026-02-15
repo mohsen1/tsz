@@ -2104,7 +2104,7 @@ impl<'a> Completions<'a> {
             .or_else(|| visitor::object_with_index_shape_id(interner, type_id))
         {
             let shape = interner.object_shape(shape_id);
-            for prop in shape.properties.iter() {
+            for prop in &shape.properties {
                 let name = interner.resolve_atom(prop.name);
                 self.add_property_completion(props, interner, name, prop.type_id, prop.is_method);
             }

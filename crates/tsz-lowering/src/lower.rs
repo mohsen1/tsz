@@ -2036,7 +2036,7 @@ impl<'a> TypeLowering<'a> {
             }
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.collect_infer_bindings(prop.type_id, visited);
                 }
             }

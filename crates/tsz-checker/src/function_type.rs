@@ -258,7 +258,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|name| jsdoc_type_param_types.get(&name).copied());
 
         let mut contextual_index = 0;
-        for &param_idx in parameters.nodes.iter() {
+        for &param_idx in &parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
             {
@@ -905,7 +905,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let mut candidate: Option<Vec<TypeParamInfo>> = None;
-            for &member in members.iter() {
+            for &member in &members {
                 let params = self.contextual_type_params_from_expected(member)?;
                 if let Some(existing) = &candidate {
                     if existing.len() != params.len()
