@@ -144,33 +144,43 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Extract JSDoc for function declarations to suppress TS7006/TS7010 in JS files
         let func_decl_jsdoc = self.get_jsdoc_for_function(func_idx);
 
-        for &param_idx in &func.parameters.nodes {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-            // Check if JSDoc provides a @param type for this parameter,
-            // or if the parameter has an inline /** @type {T} */ annotation,
-            // or if the function has a @type tag declaring its full type.
-            let has_jsdoc_param = if param.type_annotation.is_none() {
-                let from_func_jsdoc = if let Some(ref jsdoc) = func_decl_jsdoc {
-                    let pname = self.parameter_name_for_error(param.name);
-                    Self::jsdoc_has_param_type(jsdoc, &pname)
-                        || Self::jsdoc_has_type_tag(jsdoc)
-                        || self.ctx.arena.get(param.name).is_some_and(|n| {
-                            n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                        }) && Self::jsdoc_has_type_annotations(jsdoc)
+        // TS7006: Check parameters for implicit any.
+        // For closures (function expressions and arrow functions), TS7006 is already
+        // handled by get_type_of_function which has contextual type information.
+        // Only check here for actual function declarations.
+        let is_closure = matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
+        );
+        if !is_closure {
+            for &param_idx in &func.parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                // Check if JSDoc provides a @param type for this parameter,
+                // or if the parameter has an inline /** @type {T} */ annotation,
+                // or if the function has a @type tag declaring its full type.
+                let has_jsdoc_param = if param.type_annotation.is_none() {
+                    let from_func_jsdoc = if let Some(ref jsdoc) = func_decl_jsdoc {
+                        let pname = self.parameter_name_for_error(param.name);
+                        Self::jsdoc_has_param_type(jsdoc, &pname)
+                            || Self::jsdoc_has_type_tag(jsdoc)
+                            || self.ctx.arena.get(param.name).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            }) && Self::jsdoc_has_type_annotations(jsdoc)
+                    } else {
+                        false
+                    };
+                    from_func_jsdoc || self.param_has_inline_jsdoc_type(param_idx)
                 } else {
                     false
                 };
-                from_func_jsdoc || self.param_has_inline_jsdoc_type(param_idx)
-            } else {
-                false
-            };
-            self.maybe_report_implicit_any_parameter(param, has_jsdoc_param);
+                self.maybe_report_implicit_any_parameter(param, has_jsdoc_param);
+            }
         }
 
         // Check parameter initializer placement for implementation vs signature (TS2371)
