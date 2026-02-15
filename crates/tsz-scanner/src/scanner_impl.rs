@@ -10,7 +10,7 @@ use crate::SyntaxKind;
 use crate::char_codes::CharacterCodes;
 use std::sync::Arc;
 use tsz_common::interner::{Atom, Interner};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 // =============================================================================
 // Token Flags

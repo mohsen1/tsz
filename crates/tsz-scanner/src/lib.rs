@@ -10,7 +10,7 @@ pub mod scanner_impl;
 pub mod char_codes;
 
 use serde::Serialize;
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 // =============================================================================
 // SyntaxKind Enum - Token Types (Scanner Output)
