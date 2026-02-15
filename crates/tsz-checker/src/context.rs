@@ -571,7 +571,10 @@ impl<'a> CheckerContext<'a> {
         compiler_options: CheckerOptions,
         configure_no_unchecked_indexed_access: bool,
     ) -> CheckerOptions {
-        let compiler_options = compiler_options.apply_strict_defaults();
+        // Note: apply_strict_defaults() is intentionally NOT called here.
+        // The driver/config layer already handles strict expansion with proper
+        // individual overrides (e.g., strict: true + strictPropertyInitialization: false).
+        // Calling apply_strict_defaults() here would clobber those overrides.
         if configure_no_unchecked_indexed_access {
             types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
         }
