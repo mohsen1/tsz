@@ -1149,8 +1149,8 @@ impl ScannerState {
                 return;
             }
             if ch == CharacterCodes::BACKSLASH {
-                // Don't advance here — scan_template_escape_sequence handles
-                // skipping the backslash and the escaped character.
+                // Scan escaped character after the backslash.
+                self.pos += 1;
                 let escaped = self.scan_template_escape_sequence();
                 result.push_str(&escaped);
             } else {
