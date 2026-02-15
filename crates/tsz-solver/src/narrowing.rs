@@ -434,9 +434,8 @@ impl<'a> NarrowingContext<'a> {
                     return None;
                 } else if prop_types.len() == 1 {
                     return Some(prop_types[0]);
-                } else {
-                    return Some(self.db.union(prop_types));
                 }
+                return Some(self.db.union(prop_types));
             }
 
             // Use resolve_property_access for proper optional property handling
@@ -899,10 +898,9 @@ impl<'a> NarrowingContext<'a> {
                 // Follow type parameter constraint
                 if let Some(constraint) = constraint {
                     return self.narrow_by_instanceof(source_type, constraint, sense);
-                } else {
-                    trace!("Type parameter has no constraint");
-                    return source_type;
                 }
+                trace!("Type parameter has no constraint");
+                return source_type;
             }
             InstanceTypeKind::SymbolRef(_) | InstanceTypeKind::NeedsEvaluation => {
                 // Complex cases that need further evaluation
@@ -1177,10 +1175,9 @@ impl<'a> NarrowingContext<'a> {
                     matching_non_never[0].0
                 );
                 return matching_non_never[0];
-            } else {
-                trace!("Created union with {} members", matching_non_never.len());
-                return self.db.union(matching_non_never);
             }
+            trace!("Created union with {} members", matching_non_never.len());
+            return self.db.union(matching_non_never);
         }
 
         // For non-union types, check if the property exists
@@ -1436,13 +1433,12 @@ impl<'a> NarrowingContext<'a> {
             } else if matching.len() == 1 {
                 trace!("Found single matching member, returning {}", matching[0].0);
                 return matching[0];
-            } else {
-                trace!(
-                    "Found {} matching members, creating new union",
-                    matching.len()
-                );
-                return self.db.union(matching);
             }
+            trace!(
+                "Found {} matching members, creating new union",
+                matching.len()
+            );
+            return self.db.union(matching);
         }
 
         // Check if this is a type parameter that needs narrowing
@@ -1548,9 +1544,8 @@ impl<'a> NarrowingContext<'a> {
                 return TypeId::NEVER;
             } else if remaining.len() == 1 {
                 return remaining[0];
-            } else {
-                return self.db.union(remaining);
             }
+            return self.db.union(remaining);
         }
 
         if let Some(narrowed) = self.narrow_type_param_excluding(source_type, excluded_type) {
@@ -1686,9 +1681,8 @@ impl<'a> NarrowingContext<'a> {
                 return TypeId::NEVER;
             } else if remaining.len() == 1 {
                 return remaining[0];
-            } else {
-                return self.db.union(remaining);
             }
+            return self.db.union(remaining);
         }
 
         // Handle single type (not a union)
@@ -2429,9 +2423,8 @@ impl<'a> NarrowingContext<'a> {
 
             if narrowed_members.len() == 1 {
                 return narrowed_members[0];
-            } else {
-                return self.db.intersection(narrowed_members);
             }
+            return self.db.intersection(narrowed_members);
         }
 
         // Handle Unions (filter out falsy members)
@@ -2453,9 +2446,8 @@ impl<'a> NarrowingContext<'a> {
                 return TypeId::NEVER;
             } else if remaining.len() == 1 {
                 return remaining[0];
-            } else {
-                return self.db.union(remaining);
             }
+            return self.db.union(remaining);
         }
 
         // Base Case: Check if definitely falsy
@@ -2559,9 +2551,8 @@ impl<'a> NarrowingContext<'a> {
                 return TypeId::NEVER;
             } else if array_like.len() == 1 {
                 return array_like[0];
-            } else {
-                return self.db.union(array_like);
             }
+            return self.db.union(array_like);
         }
 
         // Handle Intersections: if ANY member is array-like, the whole intersection is array-like
@@ -2632,9 +2623,8 @@ impl<'a> NarrowingContext<'a> {
                 return TypeId::NEVER;
             } else if non_array.len() == 1 {
                 return non_array[0];
-            } else {
-                return self.db.union(non_array);
             }
+            return self.db.union(non_array);
         }
 
         // Handle Type Parameters: check if constraint is definitely an array

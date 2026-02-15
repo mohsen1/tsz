@@ -2868,11 +2868,10 @@ impl<'a> CheckerState<'a> {
                                     value_decl,
                                 );
                                 return (TypeId::ERROR, Vec::new());
-                            } else {
-                                tracing::debug!(
-                                    "NOT a true default import but allowSyntheticDefaultImports is true, allowing it"
-                                );
                             }
+                            tracing::debug!(
+                                "NOT a true default import but allowSyntheticDefaultImports is true, allowing it"
+                            );
                         } else {
                             tracing::debug!(
                                 "IS a true default import, will emit TS1192 later if needed"
