@@ -1932,6 +1932,29 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report TS2542: Index signature in type '{0}' only permits reading.
+    pub fn error_readonly_index_signature_at(
+        &mut self,
+        object_type: tsz_solver::TypeId,
+        idx: NodeIndex,
+    ) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let type_name = self.format_type(object_type);
+            let message = format_message(
+                diagnostic_messages::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
+                &[&type_name],
+            );
+            let diag = Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::INDEX_SIGNATURE_IN_TYPE_ONLY_PERMITS_READING,
+            );
+            self.ctx.diagnostics.push(diag);
+        }
+    }
+
     /// Report TS2803: Cannot assign to private method. Private methods are not writable.
     pub fn error_private_method_not_writable(&mut self, prop_name: &str, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {

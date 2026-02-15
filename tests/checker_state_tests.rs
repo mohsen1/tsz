@@ -5039,7 +5039,7 @@ config["name"] = "error";
 
 #[test]
 fn test_readonly_array_element_assignment_2540() {
-    // Error 2540: Cannot assign to '0' because it is a read-only property.
+    // Error 2542: Index signature in type 'readonly number[]' only permits reading.
     use crate::parser::ParserState;
 
     let source = r#"
@@ -5069,11 +5069,12 @@ xs[0] = 3;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
 
-    let count_2540 = codes.iter().filter(|&&c| c == 2540).count();
+    // TS2542 for readonly index signatures (tsc emits 2542, not 2540, for arrays)
+    let count = codes.iter().filter(|&&c| c == 2542 || c == 2540).count();
     assert!(
-        count_2540 >= 1,
-        "Expected at least 1 error 2540 for readonly array element assignment, got {} in: {:?}",
-        count_2540,
+        count >= 1,
+        "Expected at least 1 error 2540/2542 for readonly array element assignment, got {} in: {:?}",
+        count,
         codes
     );
 }
@@ -5124,8 +5125,8 @@ svc.run = () => {};
 }
 
 #[test]
-fn test_readonly_index_signature_element_access_assignment_2540() {
-    // Error 2540: Cannot assign to 'a' because it is a read-only property.
+fn test_readonly_index_signature_element_access_assignment_2542() {
+    // Error 2542: Index signature in type 'MyReadonlyMap' only permits reading.
     use crate::parser::ParserState;
 
     let source = r#"
@@ -5158,18 +5159,18 @@ map["a"] = 2;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
 
-    let count_2540 = codes.iter().filter(|&&c| c == 2540).count();
+    let count_2542 = codes.iter().filter(|&&c| c == 2542).count();
     assert!(
-        count_2540 >= 1,
-        "Expected at least 1 error 2540 for readonly index signature assignment, got {} in: {:?}",
-        count_2540,
+        count_2542 >= 1,
+        "Expected at least 1 error 2542 for readonly index signature assignment, got {} in: {:?}",
+        count_2542,
         codes
     );
 }
 
 #[test]
-fn test_readonly_index_signature_variable_access_assignment_2540() {
-    // Error 2540: Cannot assign via readonly index signature.
+fn test_readonly_index_signature_variable_access_assignment_2542() {
+    // Error 2542: Index signature in type 'ReadonlyMap' only permits reading.
     use crate::parser::ParserState;
 
     let source = r#"
@@ -5201,11 +5202,11 @@ map[key] = 2;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
 
-    let count_2540 = codes.iter().filter(|&&c| c == 2540).count();
+    let count_2542 = codes.iter().filter(|&&c| c == 2542).count();
     assert!(
-        count_2540 >= 1,
-        "Expected at least 1 error 2540 for readonly index signature assignment, got {} in: {:?}",
-        count_2540,
+        count_2542 >= 1,
+        "Expected at least 1 error 2542 for readonly index signature assignment, got {} in: {:?}",
+        count_2542,
         codes
     );
 }
