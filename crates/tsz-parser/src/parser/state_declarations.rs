@@ -255,6 +255,7 @@ impl ParserState {
             SyntaxKind::PrivateKeyword
                 | SyntaxKind::ProtectedKeyword
                 | SyntaxKind::PublicKeyword
+                | SyntaxKind::StaticKeyword
                 | SyntaxKind::AccessorKeyword
         ) && !self.look_ahead_is_property_name_after_keyword()
             && !self.look_ahead_has_line_break_after_keyword()
@@ -266,6 +267,10 @@ impl ParserState {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
             self.next_token();
+            // Skip past `readonly` if present (e.g., `static readonly [s: string]: number`)
+            if self.is_token(SyntaxKind::ReadonlyKeyword) {
+                self.next_token();
+            }
             let is_index_signature =
                 self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_index_signature();
             self.scanner.restore_state(snapshot);
@@ -285,6 +290,10 @@ impl ParserState {
 
             self.next_token();
             if is_index_signature {
+                // Skip `readonly` if present (e.g., `static readonly [s: string]: number`)
+                if self.is_token(SyntaxKind::ReadonlyKeyword) {
+                    self.next_token();
+                }
                 return Some(self.parse_index_signature_with_modifiers(None, start_pos));
             }
         }
@@ -616,9 +625,11 @@ impl ParserState {
         }
 
         // Parse colon and parameter type.
-        // If the next token is already `]`, skip — the signature is malformed
-        // (e.g., `[...a]` or `[a?]`) and we've already emitted the primary error.
-        let (param_type_token, param_type) = if self.is_token(SyntaxKind::CloseBracketToken) {
+        // If the next token is `]` or `,`, skip — the signature is malformed
+        // (e.g., `[...a]`, `[a?]`, or `[a, b]`) and other errors will be reported.
+        let (param_type_token, param_type) = if self.is_token(SyntaxKind::CloseBracketToken)
+            || self.is_token(SyntaxKind::CommaToken)
+        {
             (self.token(), NodeIndex::NONE)
         } else {
             self.parse_expected(SyntaxKind::ColonToken);
