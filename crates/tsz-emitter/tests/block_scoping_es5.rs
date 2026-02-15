@@ -132,6 +132,20 @@ fn test_var_declaration_parent_scope_conflict() {
 }
 
 #[test]
+fn test_var_declaration_parent_scope_conflict_without_reserved_name() {
+    let mut state = BlockScopeState::new();
+
+    state.enter_scope();
+    state.register_variable("a");
+
+    state.enter_scope();
+    assert_eq!(state.register_var_declaration("a"), "a_1");
+
+    state.exit_scope();
+    state.exit_scope();
+}
+
+#[test]
 fn test_var_declaration_no_parent_conflict() {
     let mut state = BlockScopeState::new();
 

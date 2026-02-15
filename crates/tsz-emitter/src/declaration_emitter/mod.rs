@@ -3530,9 +3530,9 @@ impl<'a> DeclarationEmitter<'a> {
                         if let Some(clause_node) = self.arena.get(export_decl.export_clause)
                             && (clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                                 || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
-                            {
-                                continue;
-                            }
+                        {
+                            continue;
+                        }
 
                         return true;
                     }
