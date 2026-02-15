@@ -374,20 +374,8 @@ impl<'a> EnumES5Transformer<'a> {
                     o if o == SyntaxKind::PlusToken as u16 => left.checked_add(right),
                     o if o == SyntaxKind::MinusToken as u16 => left.checked_sub(right),
                     o if o == SyntaxKind::AsteriskToken as u16 => left.checked_mul(right),
-                    o if o == SyntaxKind::SlashToken as u16 => {
-                        if right != 0 {
-                            Some(left / right)
-                        } else {
-                            None
-                        }
-                    }
-                    o if o == SyntaxKind::PercentToken as u16 => {
-                        if right != 0 {
-                            Some(left % right)
-                        } else {
-                            None
-                        }
-                    }
+                    o if o == SyntaxKind::SlashToken as u16 => (right != 0).then(|| left / right),
+                    o if o == SyntaxKind::PercentToken as u16 => (right != 0).then(|| left % right),
                     o if o == SyntaxKind::LessThanLessThanToken as u16 => {
                         Some(left.wrapping_shl(right as u32))
                     }

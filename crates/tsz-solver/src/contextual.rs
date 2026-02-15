@@ -343,7 +343,7 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
         if self.index < elements.len() {
             Some(elements[self.index].type_id)
         } else if let Some(last) = elements.last() {
-            if last.rest { Some(last.type_id) } else { None }
+            last.rest.then_some(last.type_id)
         } else {
             None
         }
@@ -515,11 +515,7 @@ fn extract_param_type_at(
     }
 
     // Index within non-rest params
-    if index < params.len() {
-        Some(params[index].type_id)
-    } else {
-        None
-    }
+    (index < params.len()).then(|| params[index].type_id)
 }
 
 /// Visitor to extract parameter type from callable types.
@@ -576,11 +572,7 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
             // Multiple different parameter types
             // If noImplicitAny is false, fall back to `any` (return None)
             // If noImplicitAny is true, create a union type
-            if self.no_implicit_any {
-                Some(self.db.union(param_types))
-            } else {
-                None // Falls back to `any` in the checker
-            }
+            self.no_implicit_any.then(|| self.db.union(param_types))
         }
     }
 

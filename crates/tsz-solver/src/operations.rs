@@ -3235,11 +3235,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if target_sig.type_params.is_empty() {
                 let source_sig = if source_signatures.len() == 1 {
                     let sig = &source_signatures[0];
-                    if sig.type_params.is_empty() {
-                        Some(sig)
-                    } else {
-                        None
-                    }
+                    sig.type_params.is_empty().then_some(sig)
                 } else {
                     let target_fn = self.function_type_from_signature(target_sig, is_constructor);
                     self.select_signature_for_target(

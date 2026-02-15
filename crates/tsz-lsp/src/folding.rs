@@ -637,7 +637,7 @@ impl<'a> FoldingRangeProvider<'a> {
                 tsz_common::position::Position::new(line, 0),
                 self.source_text,
             )
-            .unwrap_or(0) as u32
+            .unwrap_or(0)
     }
 
     /// Get a byte offset corresponding to the end of a given line (after newline).

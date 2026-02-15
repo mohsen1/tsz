@@ -1573,11 +1573,9 @@ struct SourceReadResult {
 
 pub(crate) fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
     let candidate = cwd.join("tsconfig.json");
-    if candidate.is_file() {
-        Some(canonicalize_or_owned(&candidate))
-    } else {
-        None
-    }
+    candidate
+        .is_file()
+        .then(|| canonicalize_or_owned(&candidate))
 }
 
 pub(crate) fn resolve_tsconfig_path(cwd: &Path, project: Option<&Path>) -> Result<Option<PathBuf>> {

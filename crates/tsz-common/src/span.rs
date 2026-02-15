@@ -124,11 +124,7 @@ impl Span {
     pub fn intersect(&self, other: Span) -> Option<Span> {
         let start = self.start.max(other.start);
         let end = self.end.min(other.end);
-        if start < end {
-            Some(Span { start, end })
-        } else {
-            None
-        }
+        (start < end).then_some(Span { start, end })
     }
 
     /// Shrink this span by removing bytes from the start.

@@ -1389,7 +1389,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        if has_private_brands { Some(true) } else { None }
+        has_private_brands.then_some(true)
     }
 
     /// Enum member assignability override.

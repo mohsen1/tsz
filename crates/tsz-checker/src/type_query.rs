@@ -34,7 +34,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .arena
             .get(idx)
-            .map(|node| node.kind == TYPE_QUERY as u16)
+            .map(|node| node.kind == TYPE_QUERY)
             .unwrap_or(false)
     }
 

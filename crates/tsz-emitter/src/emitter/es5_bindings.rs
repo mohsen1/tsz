@@ -1500,11 +1500,7 @@ impl<'a> Printer<'a> {
     ) {
         let rest_target = elem.name;
         let is_pattern = self.is_binding_pattern(rest_target);
-        let rest_temp = if is_pattern {
-            Some(self.get_temp_var_name())
-        } else {
-            None
-        };
+        let rest_temp = is_pattern.then(|| self.get_temp_var_name());
 
         self.emit_param_assignment_prefix(started);
         if let Some(ref name) = rest_temp {
@@ -1531,11 +1527,7 @@ impl<'a> Printer<'a> {
         started: &mut bool,
     ) {
         let is_pattern = self.is_binding_pattern(rest_target);
-        let rest_temp = if is_pattern {
-            Some(self.get_temp_var_name())
-        } else {
-            None
-        };
+        let rest_temp = is_pattern.then(|| self.get_temp_var_name());
 
         self.emit_param_assignment_prefix(started);
         if let Some(ref name) = rest_temp {
@@ -1574,11 +1566,7 @@ impl<'a> Printer<'a> {
     ) {
         let rest_target = elem.name;
         let is_pattern = self.is_binding_pattern(rest_target);
-        let rest_temp = if is_pattern {
-            Some(self.get_temp_var_name())
-        } else {
-            None
-        };
+        let rest_temp = is_pattern.then(|| self.get_temp_var_name());
 
         self.write(", ");
         if let Some(ref name) = rest_temp {
@@ -1604,11 +1592,7 @@ impl<'a> Printer<'a> {
         index: usize,
     ) {
         let is_pattern = self.is_binding_pattern(rest_target);
-        let rest_temp = if is_pattern {
-            Some(self.get_temp_var_name())
-        } else {
-            None
-        };
+        let rest_temp = is_pattern.then(|| self.get_temp_var_name());
 
         self.write(", ");
         if let Some(ref name) = rest_temp {
@@ -2636,11 +2620,7 @@ impl<'a> Printer<'a> {
                         &lit.elements.nodes,
                         &source_name,
                         &mut first,
-                        if use_inline_source {
-                            Some(right_idx)
-                        } else {
-                            None
-                        },
+                        use_inline_source.then_some(right_idx),
                     );
                 }
             }

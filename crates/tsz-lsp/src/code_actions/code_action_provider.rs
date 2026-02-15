@@ -2536,11 +2536,7 @@ impl<'a> CodeActionProvider<'a> {
             current = ext.parent;
         }
 
-        if !self.binder.scopes.is_empty() {
-            Some(ScopeId(0))
-        } else {
-            None
-        }
+        (!self.binder.scopes.is_empty()).then_some(ScopeId(0))
     }
 
     fn collect_scope_names(&self, mut scope_id: ScopeId, names: &mut FxHashSet<String>) {

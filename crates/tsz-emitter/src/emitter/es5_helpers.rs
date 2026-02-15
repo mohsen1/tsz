@@ -1332,11 +1332,7 @@ impl<'a> Printer<'a> {
                 if !rest_name.is_empty() {
                     plan.rest = Some(RestParamTransform {
                         name: rest_name,
-                        pattern: if rest_is_pattern {
-                            Some(rest_target)
-                        } else {
-                            None
-                        },
+                        pattern: rest_is_pattern.then_some(rest_target),
                         index,
                     });
                 }

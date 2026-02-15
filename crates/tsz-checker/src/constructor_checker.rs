@@ -789,11 +789,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         // Verify it's a class
-        if symbol.flags & symbol_flags::CLASS != 0 {
-            Some(sym_id)
-        } else {
-            None
-        }
+        (symbol.flags & symbol_flags::CLASS != 0).then_some(sym_id)
     }
 
     /// Find the enclosing class symbol by walking up the AST parent chain.

@@ -474,13 +474,8 @@ impl<'a> InferenceContext<'a> {
     fn type_param_names_for_root(&mut self, root: InferenceVar) -> Vec<Atom> {
         self.type_params
             .iter()
-            .filter_map(|(name, var, _)| {
-                if self.table.find(*var) == root {
-                    Some(*name)
-                } else {
-                    None
-                }
-            })
+            .filter(|&(_name, var, _)| self.table.find(*var) == root)
+            .map(|(name, _var, _)| *name)
             .collect()
     }
 
@@ -1580,11 +1575,7 @@ impl<'a> InferenceContext<'a> {
         }
 
         // Must have consumed the entire source string
-        if pos == source.len() {
-            Some(bindings)
-        } else {
-            None
-        }
+        (pos == source.len()).then_some(bindings)
     }
 
     /// Find the next text span after a given index to use as a matching anchor.

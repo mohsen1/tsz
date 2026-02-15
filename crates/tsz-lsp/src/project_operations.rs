@@ -248,11 +248,7 @@ impl Project {
                 } else {
                     spec.property_name
                 };
-                let property_name = if !spec.property_name.is_none() {
-                    Some(spec.property_name)
-                } else {
-                    None
-                };
+                let property_name = (!spec.property_name.is_none()).then(|| spec.property_name);
 
                 targets.push(ImportSpecifierTarget {
                     local_ident,

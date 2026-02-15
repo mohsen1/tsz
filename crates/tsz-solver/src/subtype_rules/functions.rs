@@ -398,7 +398,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for tp in &source.type_params {
             let inferred_ty = inferred
                 .iter()
-                .find_map(|(name, ty)| if *name == tp.name { Some(*ty) } else { None });
+                .find_map(|(name, ty)| (*name == tp.name).then(|| *ty));
             let fallback = if self.strict_function_types {
                 TypeId::UNKNOWN
             } else {
@@ -556,7 +556,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for tp in &target.type_params {
             let inferred_ty = inferred
                 .iter()
-                .find_map(|(name, ty)| if *name == tp.name { Some(*ty) } else { None });
+                .find_map(|(name, ty)| (*name == tp.name).then(|| *ty));
             substitution.insert(tp.name, inferred_ty.unwrap_or(TypeId::ANY));
         }
         substitution

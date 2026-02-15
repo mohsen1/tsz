@@ -972,10 +972,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
-        let body_source_range = self
-            .arena
-            .get(func_data.body)
-            .map(|n| (n.pos as u32, n.end as u32));
+        let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
 
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
@@ -1164,11 +1161,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
             should_declare_var,
-            parent_name: if is_exported {
-                Some(parent_ns.to_string())
-            } else {
-                None
-            },
+            parent_name: is_exported.then(|| parent_ns.to_string()),
             param_name,
             skip_sequence_indent: true, // Nested namespace IIFEs need to skip indent when in sequence
         })
@@ -1497,10 +1490,7 @@ impl<'a> NamespaceTransformContext<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
-        let body_source_range = self
-            .arena
-            .get(func_data.body)
-            .map(|n| (n.pos as u32, n.end as u32));
+        let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
 
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {
@@ -1695,11 +1685,7 @@ impl<'a> NamespaceTransformContext<'a> {
             is_exported,
             attach_to_exports: self.is_commonjs,
             should_declare_var: true,
-            parent_name: if is_exported {
-                Some(parent_ns.to_string())
-            } else {
-                None
-            },
+            parent_name: is_exported.then(|| parent_ns.to_string()),
             param_name,
             skip_sequence_indent: true,
         })
@@ -1895,13 +1881,8 @@ fn convert_function_parameters(arena: &NodeArena, params: &NodeList) -> Vec<IRPa
             let name = get_identifier_text(arena, param.name)?;
             let rest = param.dot_dot_dot_token;
             // Convert default value if present
-            let default_value = if !param.initializer.is_none() {
-                Some(Box::new(
-                    AstToIr::new(arena).convert_expression(param.initializer),
-                ))
-            } else {
-                None
-            };
+            let default_value = (!param.initializer.is_none())
+                .then(|| Box::new(AstToIr::new(arena).convert_expression(param.initializer)));
             Some(IRParam {
                 name,
                 rest,
@@ -2087,13 +2068,9 @@ fn convert_variable_declarations(
                 {
                     // Use AstToIr for eager lowering of initializers
                     // This converts expressions to proper IR (NumericLiteral, CallExpr, etc.)
-                    let initializer = if !decl.initializer.is_none() {
-                        Some(Box::new(
-                            AstToIr::new(arena).convert_expression(decl.initializer),
-                        ))
-                    } else {
-                        None
-                    };
+                    let initializer = (!decl.initializer.is_none()).then(|| {
+                        Box::new(AstToIr::new(arena).convert_expression(decl.initializer))
+                    });
 
                     result.push(IRNode::VarDecl { name, initializer });
                     emitted_any = true;
@@ -2234,13 +2211,11 @@ fn rename_namespace_refs_in_node(node: &mut IRNode, old_name: &str, new_name: &s
 /// and if found, rename the body's namespace references and return the new parameter name.
 fn detect_and_apply_param_rename(body: &mut [IRNode], ns_name: &str) -> Option<String> {
     let member_names = collect_body_member_names(body);
-    if member_names.contains(ns_name) {
+    member_names.contains(ns_name).then(|| {
         let renamed = generate_unique_param_name(ns_name, &member_names);
         rename_namespace_refs_in_body(body, ns_name, &renamed);
-        Some(renamed)
-    } else {
-        None
-    }
+        renamed
+    })
 }
 
 fn rewrite_exported_var_refs(

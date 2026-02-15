@@ -179,16 +179,12 @@ impl SourceMapGenerator {
         let mappings_str = self.encode_mappings();
 
         // Build sources content if any are present
-        let sources_content = if self.sources_content.iter().any(Option::is_some) {
-            Some(
-                self.sources_content
-                    .iter()
-                    .map(|c| c.clone().unwrap_or_default())
-                    .collect(),
-            )
-        } else {
-            None
-        };
+        let sources_content = self.sources_content.iter().any(Option::is_some).then(|| {
+            self.sources_content
+                .iter()
+                .map(|c| c.clone().unwrap_or_default())
+                .collect()
+        });
 
         SourceMap {
             version: 3,
