@@ -10,7 +10,12 @@
 //! to infer types for parts of the expression that would otherwise be unknown.
 
 use crate::TypeDatabase;
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    CallableShapeId, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId, ParamInfo,
+    TupleListId, TypeApplicationId, TypeData, TypeId, TypeListId,
+};
 use crate::visitor::TypeVisitor;
 
 // =============================================================================

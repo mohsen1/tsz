@@ -56,40 +56,55 @@ mod utils;
 pub mod variance;
 pub mod visitor;
 pub mod widening;
+pub use intern::TypeInterner;
+pub use operations::infer_generic_function;
 pub use visitor::*;
 
-pub use apparent::*;
+pub use apparent::{
+    ApparentMemberKind, apparent_object_member_kind, apparent_primitive_member_kind,
+    apparent_primitive_members,
+};
 pub use application::*;
 pub use binary_ops::*;
 pub use canonicalize::*;
 pub use class_hierarchy::*;
 pub use compat::*;
-pub use contextual::*;
-pub use db::*;
+pub use contextual::{ContextualTypeContext, apply_contextual_type};
+pub use db::{QueryCache, QueryDatabase, RelationCacheProbe, RelationCacheStats, TypeDatabase};
 pub use def::*;
-pub use diagnostics::*;
+pub use diagnostics::SubtypeFailureReason;
 pub use element_access::*;
 pub use evaluate::*;
 pub use flow_analysis::*;
-pub use format::*;
+pub use format::TypeFormatter;
 pub use freshness::*;
 pub use index_signatures::*;
 pub use infer::*;
 pub use inheritance::*;
-pub use instantiate::*;
-pub use intern::*;
+pub use instantiate::{TypeSubstitution, instantiate_type};
 pub use judge::*;
-pub use lawyer::*;
+pub use lawyer::AnyPropagationRules;
 pub use narrowing::*;
-pub use object_literal::*;
+pub use object_literal::ObjectLiteralBuilder;
 pub use objects::*;
-pub use operations::*;
+pub use operations::AssignabilityChecker;
 pub use relation_queries::*;
 pub use sound::*;
-pub use subtype::*;
+pub use subtype::{
+    AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
+    are_types_structurally_identical, is_subtype_of,
+};
 pub use type_factory::*;
 pub use types::Visibility;
-pub use types::*;
+pub use types::{
+    CallSignature, IntrinsicKind, LiteralValue, MappedModifier, PropertyInfo, SymbolRef, TypeData,
+    TypeId,
+};
+pub use types::{
+    CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType, ObjectFlags,
+    ObjectShape, OrderedFloat, ParamInfo, RelationCacheKey, TemplateSpan, TupleElement,
+    TypeParamInfo, TypePredicate, TypePredicateTarget,
+};
 pub use unsoundness_audit::*;
 pub use variance::*;
 pub use widening::*;

@@ -5,7 +5,7 @@
 //! - Distributive conditional types
 //! - Branch compatibility checking
 
-use crate::types::*;
+use crate::types::{ConditionalType, TypeId};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 

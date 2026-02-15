@@ -4,7 +4,12 @@
 //! while handling Lazy/Ref resolution and avoiding infinite recursion.
 
 use crate::subtype::TypeResolver;
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    IndexSignature, IntrinsicKind, ObjectShape, PropertyInfo, TypeData, TypeId, TypeListId,
+    Visibility,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 

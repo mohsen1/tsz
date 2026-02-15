@@ -52,7 +52,11 @@ use crate::TypeDatabase;
 use crate::evaluate::TypeEvaluator;
 use crate::index_signatures::IndexKind;
 use crate::subtype::{SubtypeChecker, TypeEnvironment};
-use crate::types::*;
+use crate::types::{
+    CallSignature, IntrinsicKind, LiteralValue, ParamInfo, TypeData, TypeId, TypeParamInfo,
+};
+#[cfg(test)]
+use crate::types::{FunctionShape, PropertyInfo, Visibility};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::sync::Arc;

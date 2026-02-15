@@ -12,7 +12,11 @@
 
 use crate::infer::InferenceContext;
 use crate::instantiate::{TypeSubstitution, instantiate_type};
-use crate::types::*;
+use crate::types::{
+    CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId,
+    InferencePriority, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypePredicate,
+    Visibility,
+};
 use crate::visitor::contains_this_type;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};

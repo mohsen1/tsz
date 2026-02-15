@@ -3,7 +3,7 @@
 //! Handles TypeScript's template literal types: `\`hello ${T}\``
 
 use crate::subtype::TypeResolver;
-use crate::types::*;
+use crate::types::{LiteralValue, TemplateLiteralId, TemplateSpan, TypeData, TypeId};
 
 use super::super::evaluate::TypeEvaluator;
 
@@ -14,7 +14,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// For example: `get${K}` where K = "a" | "b" evaluates to "geta" | "getb"
     /// Multiple unions compute a Cartesian product: `${"a"|"b"}-${"x"|"y"}` => "a-x"|"a-y"|"b-x"|"b-y"
     pub fn evaluate_template_literal(&mut self, spans: TemplateLiteralId) -> TypeId {
-        use crate::TEMPLATE_LITERAL_EXPANSION_LIMIT;
+        use crate::intern::TEMPLATE_LITERAL_EXPANSION_LIMIT;
 
         let span_list = self.interner().template_list(spans);
 

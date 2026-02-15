@@ -9,7 +9,11 @@ use crate::db::QueryDatabase;
 use crate::evaluate::evaluate_type;
 use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::subtype::TypeResolver;
-use crate::types::*;
+use crate::types::{
+    FunctionShape, IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectShapeId, ParamInfo,
+    PropertyInfo, PropertyLookup, TupleElement, TupleListId, TypeApplicationId, TypeData, TypeId,
+    TypeListId,
+};
 use crate::utils;
 use crate::visitor::TypeVisitor;
 use crate::{

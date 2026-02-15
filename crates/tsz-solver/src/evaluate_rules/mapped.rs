@@ -7,7 +7,10 @@ use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::subtype::TypeResolver;
 use crate::types::Visibility;
-use crate::types::*;
+use crate::types::{
+    IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType, ObjectFlags,
+    ObjectShape, PropertyInfo, TupleListId, TypeData, TypeId,
+};
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;

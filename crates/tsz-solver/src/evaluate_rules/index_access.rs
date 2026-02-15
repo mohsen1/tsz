@@ -4,7 +4,10 @@
 //! Including property access, array indexing, and tuple indexing.
 
 use crate::subtype::TypeResolver;
-use crate::types::*;
+use crate::types::{
+    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TupleElement,
+    TupleListId, TypeData, TypeId, TypeListId, TypeParamInfo,
+};
 use crate::utils;
 use crate::visitor::{
     TypeVisitor, array_element_type, literal_number, literal_string, tuple_list_id, union_list_id,

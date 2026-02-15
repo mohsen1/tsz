@@ -34,7 +34,11 @@
 use crate::TypeVisitor;
 use crate::db::QueryDatabase;
 use crate::def::DefId;
-use crate::types::*;
+use crate::types::{
+    CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
+    ObjectShapeId, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleListId,
+    TypeApplicationId, TypeId, TypeListId, TypeParamInfo, Variance,
+};
 use crate::visitor::{lazy_def_id, ref_symbol};
 
 use std::sync::Arc;

@@ -5,7 +5,7 @@
 
 use crate::instantiate::{TypeSubstitution, instantiate_type_with_infer};
 use crate::subtype::{SubtypeChecker, TypeResolver};
-use crate::types::*;
+use crate::types::{ConditionalType, ObjectShapeId, TupleElement, TypeData, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 

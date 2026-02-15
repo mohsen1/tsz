@@ -30,7 +30,13 @@ pub use crate::binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
 use crate::diagnostics::PendingDiagnostic;
 use crate::infer::{InferenceContext, InferenceError};
 use crate::instantiate::{TypeSubstitution, instantiate_type};
+#[cfg(test)]
 use crate::types::*;
+use crate::types::{
+    CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind,
+    LiteralValue, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
+    TypeData, TypeId, TypeListId, TypeParamInfo, TypePredicate,
+};
 use crate::utils;
 use crate::visitor::TypeVisitor;
 use crate::{QueryDatabase, TypeDatabase};
