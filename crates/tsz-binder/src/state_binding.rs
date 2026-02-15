@@ -2425,52 +2425,6 @@ impl BinderState {
     }
 
     // Avoid deep recursion on large left-associative binary expression chains.
-    pub(crate) fn bind_binary_expression_iterative(&mut self, arena: &NodeArena, root: NodeIndex) {
-        enum WorkItem {
-            Visit(NodeIndex),
-            PostAssign(NodeIndex),
-        }
-
-        let mut stack = vec![WorkItem::Visit(root)];
-        while let Some(item) = stack.pop() {
-            match item {
-                WorkItem::Visit(idx) => {
-                    let Some(node) = arena.get(idx) else {
-                        continue;
-                    };
-
-                    if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                        if let Some(bin) = arena.get_binary_expr(node) {
-                            if Self::is_assignment_operator(bin.operator_token) {
-                                stack.push(WorkItem::PostAssign(idx));
-                                if !bin.right.is_none() {
-                                    stack.push(WorkItem::Visit(bin.right));
-                                }
-                                if !bin.left.is_none() {
-                                    stack.push(WorkItem::Visit(bin.left));
-                                }
-                                continue;
-                            }
-                            if !bin.right.is_none() {
-                                stack.push(WorkItem::Visit(bin.right));
-                            }
-                            if !bin.left.is_none() {
-                                stack.push(WorkItem::Visit(bin.left));
-                            }
-                        }
-                        continue;
-                    }
-
-                    self.bind_node(arena, idx);
-                }
-                WorkItem::PostAssign(idx) => {
-                    let flow = self.create_flow_assignment(idx);
-                    self.current_flow = flow;
-                }
-            }
-        }
-    }
-
     /// Bind a short-circuit binary expression (&&, ||, ??) with intermediate
     /// flow condition nodes.
     ///

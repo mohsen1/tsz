@@ -2896,18 +2896,11 @@ impl BinderState {
 
             // Binary expressions - traverse into operands
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                if let Some(bin) = arena.get_binary_expr(node)
-                    && Self::is_assignment_operator(bin.operator_token)
-                {
-                    self.bind_node(arena, bin.left);
-                    self.bind_node(arena, bin.right);
-                    let flow = self.create_flow_assignment(idx);
-                    self.current_flow = flow;
-                    return;
-                }
-                // Record flow for binary expressions to support flow analysis in closures
-                self.bind_binary_expression_iterative(arena, idx);
-                self.record_flow(idx);
+                // Delegate to bind_expression which handles short-circuit operators
+                // (&&, ||, ??) with proper TRUE_CONDITION/FALSE_CONDITION flow nodes.
+                // This ensures narrowing works in all expression contexts (return
+                // statements, variable initializers, etc.), not just conditions.
+                self.bind_expression(arena, idx);
             }
 
             // Conditional expressions - build flow graph for type narrowing
