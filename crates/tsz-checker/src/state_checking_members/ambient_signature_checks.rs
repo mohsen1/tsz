@@ -768,7 +768,7 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::SET_ACCESSOR {
             // Check if a paired getter exists — if so, setter parameter type is
             // inferred from the getter return type (contextually typed, no TS7006)
-            let has_paired_getter = self.setter_has_paired_getter(member_idx, &accessor);
+            let has_paired_getter = self.setter_has_paired_getter(member_idx, accessor);
             self.check_setter_parameter(
                 &accessor.parameters.nodes,
                 has_paired_getter || skip_implicit_any_accessor,

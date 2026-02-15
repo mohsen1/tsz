@@ -107,7 +107,7 @@ fn actual_main() -> Result<()> {
     let elapsed = start_time.elapsed();
 
     // Write trace file if requested
-    if let (Some(ref trace_path), Some(mut tracer)) = (args.generate_trace.as_ref(), tracer) {
+    if let (Some(trace_path), Some(mut tracer)) = (args.generate_trace.as_ref(), tracer) {
         use tsz_cli::trace::categories;
 
         // Record compilation summary events
