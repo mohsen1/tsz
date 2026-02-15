@@ -1,9 +1,9 @@
 //! Node flags and modifier flags for AST nodes.
 
 /// Node flags indicating various properties of AST nodes.
-/// Matches TypeScript's NodeFlags enum exactly.
-/// NOTE: wasm_bindgen doesn't support bit-shift expressions, so these are
-/// stored as a u32 bitfield in NodeBase. Use the constants below for flag operations.
+/// Matches TypeScript's `NodeFlags` enum exactly.
+/// NOTE: `wasm_bindgen` doesn't support bit-shift expressions, so these are
+/// stored as a `u32` bitfield in `NodeBase`. Use the constants below for flag operations.
 pub mod node_flags {
     pub const NONE: u32 = 0;
     pub const LET: u32 = 1; // 1 << 0
@@ -24,26 +24,26 @@ pub mod node_flags {
     pub const YIELD_CONTEXT: u32 = 16384; // 1 << 14
     pub const DECORATOR_CONTEXT: u32 = 32768; // 1 << 15
     pub const AWAIT_CONTEXT: u32 = 65536; // 1 << 16
-    pub const DISALLOW_CONDITIONAL_TYPES_CONTEXT: u32 = 131072; // 1 << 17
-    pub const THIS_NODE_HAS_ERROR: u32 = 262144; // 1 << 18
-    pub const JAVASCRIPT_FILE: u32 = 524288; // 1 << 19
-    pub const THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR: u32 = 1048576; // 1 << 20
-    pub const HAS_AGGREGATED_CHILD_DATA: u32 = 2097152; // 1 << 21
-    pub const POSSIBLY_CONTAINS_DYNAMIC_IMPORT: u32 = 4194304; // 1 << 22
-    pub const POSSIBLY_CONTAINS_IMPORT_META: u32 = 8388608; // 1 << 23
-    pub const JSDOC: u32 = 16777216; // 1 << 24
-    pub const AMBIENT: u32 = 33554432; // 1 << 25
-    pub const IN_WITH_STATEMENT: u32 = 67108864; // 1 << 26
-    pub const JSON_FILE: u32 = 134217728; // 1 << 27
-    pub const TYPE_CACHED: u32 = 268435456; // 1 << 28
-    pub const DEPRECATED: u32 = 536870912; // 1 << 29
+    pub const DISALLOW_CONDITIONAL_TYPES_CONTEXT: u32 = 131_072; // 1 << 17
+    pub const THIS_NODE_HAS_ERROR: u32 = 262_144; // 1 << 18
+    pub const JAVASCRIPT_FILE: u32 = 524_288; // 1 << 19
+    pub const THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR: u32 = 1_048_576; // 1 << 20
+    pub const HAS_AGGREGATED_CHILD_DATA: u32 = 2_097_152; // 1 << 21
+    pub const POSSIBLY_CONTAINS_DYNAMIC_IMPORT: u32 = 4_194_304; // 1 << 22
+    pub const POSSIBLY_CONTAINS_IMPORT_META: u32 = 8_388_608; // 1 << 23
+    pub const JSDOC: u32 = 16_777_216; // 1 << 24
+    pub const AMBIENT: u32 = 33_554_432; // 1 << 25
+    pub const IN_WITH_STATEMENT: u32 = 67_108_864; // 1 << 26
+    pub const JSON_FILE: u32 = 134_217_728; // 1 << 27
+    pub const TYPE_CACHED: u32 = 268_435_456; // 1 << 28
+    pub const DEPRECATED: u32 = 536_870_912; // 1 << 29
 
     // Type-only imports/exports
-    pub const TYPE_ONLY: u32 = 1073741824; // 1 << 30
+    pub const TYPE_ONLY: u32 = 1_073_741_824; // 1 << 30
 }
 
 /// Modifier flags for declarations.
-/// Matches TypeScript's ModifierFlags enum exactly.
+/// Matches TypeScript's `ModifierFlags` enum exactly.
 pub mod modifier_flags {
     pub const NONE: u32 = 0;
 
@@ -72,7 +72,7 @@ pub mod modifier_flags {
 }
 
 /// Transform flags indicate which transformations are needed for emit.
-/// Matches TypeScript's TransformFlags enum.
+/// Matches TypeScript's `TransformFlags` enum.
 pub mod transform_flags {
     pub const NONE: u32 = 0;
 
@@ -96,19 +96,19 @@ pub mod transform_flags {
     pub const CONTAINS_LEXICAL_THIS: u32 = 16384; // 1 << 14
     pub const CONTAINS_REST_OR_SPREAD: u32 = 32768; // 1 << 15
     pub const CONTAINS_OBJECT_REST_OR_SPREAD: u32 = 65536; // 1 << 16
-    pub const CONTAINS_COMPUTED_PROPERTY_NAME: u32 = 131072; // 1 << 17
-    pub const CONTAINS_BLOCK_SCOPED_BINDING: u32 = 262144; // 1 << 18
-    pub const CONTAINS_BINDING_PATTERN: u32 = 524288; // 1 << 19
-    pub const CONTAINS_YIELD: u32 = 1048576; // 1 << 20
-    pub const CONTAINS_AWAIT: u32 = 2097152; // 1 << 21
-    pub const CONTAINS_HOISTED_DECLARATION_OR_COMPLETION: u32 = 4194304; // 1 << 22
-    pub const CONTAINS_DYNAMIC_IMPORT: u32 = 8388608; // 1 << 23
-    pub const CONTAINS_CLASS_FIELDS: u32 = 16777216; // 1 << 24
-    pub const CONTAINS_DECORATORS: u32 = 33554432; // 1 << 25
-    pub const CONTAINS_POSSIBLE_TOP_LEVEL_AWAIT: u32 = 67108864; // 1 << 26
-    pub const CONTAINS_LEXICAL_SUPER: u32 = 134217728; // 1 << 27
-    pub const CONTAINS_UPDATE_EXPRESSION_FOR_IDENTIFIER: u32 = 268435456; // 1 << 28
-    pub const CONTAINS_PRIVATE_IDENTIFIER_IN_EXPRESSION: u32 = 536870912; // 1 << 29
+    pub const CONTAINS_COMPUTED_PROPERTY_NAME: u32 = 131_072; // 1 << 17
+    pub const CONTAINS_BLOCK_SCOPED_BINDING: u32 = 262_144; // 1 << 18
+    pub const CONTAINS_BINDING_PATTERN: u32 = 524_288; // 1 << 19
+    pub const CONTAINS_YIELD: u32 = 1_048_576; // 1 << 20
+    pub const CONTAINS_AWAIT: u32 = 2_097_152; // 1 << 21
+    pub const CONTAINS_HOISTED_DECLARATION_OR_COMPLETION: u32 = 4_194_304; // 1 << 22
+    pub const CONTAINS_DYNAMIC_IMPORT: u32 = 8_388_608; // 1 << 23
+    pub const CONTAINS_CLASS_FIELDS: u32 = 16_777_216; // 1 << 24
+    pub const CONTAINS_DECORATORS: u32 = 33_554_432; // 1 << 25
+    pub const CONTAINS_POSSIBLE_TOP_LEVEL_AWAIT: u32 = 67_108_864; // 1 << 26
+    pub const CONTAINS_LEXICAL_SUPER: u32 = 134_217_728; // 1 << 27
+    pub const CONTAINS_UPDATE_EXPRESSION_FOR_IDENTIFIER: u32 = 268_435_456; // 1 << 28
+    pub const CONTAINS_PRIVATE_IDENTIFIER_IN_EXPRESSION: u32 = 536_870_912; // 1 << 29
 
-    pub const HAS_COMPUTED_FLAGS: u32 = 2147483648; // 1 << 31
+    pub const HAS_COMPUTED_FLAGS: u32 = 2_147_483_648; // 1 << 31
 }

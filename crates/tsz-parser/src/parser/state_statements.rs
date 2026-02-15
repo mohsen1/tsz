@@ -1,11 +1,27 @@
 //! Parser state - statement and declaration parsing methods
 
+#![allow(clippy::too_many_lines)]
+
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC,
     CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT,
     CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
 };
-use crate::parser::{NodeIndex, NodeList, node::*, parse_rules::*, syntax_kind_ext};
+use crate::parser::{
+    NodeIndex, NodeList,
+    node::{
+        BlockData, ClassData, FunctionData, ImportDeclData, LabeledData, QualifiedNameData,
+        SourceFileData, VariableData, VariableDeclarationData,
+    },
+    parse_rules::{
+        is_identifier_or_keyword, look_ahead_is, look_ahead_is_abstract_declaration,
+        look_ahead_is_async_declaration, look_ahead_is_const_enum, look_ahead_is_import_call,
+        look_ahead_is_import_equals, look_ahead_is_module_declaration,
+        look_ahead_is_type_alias_declaration,
+    },
+    syntax_kind_ext,
+};
+use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -35,8 +51,8 @@ impl ParserState {
         // parse diagnostics so they appear in the final diagnostic output.
         for diag in self.scanner.get_scanner_diagnostics() {
             self.parse_diagnostics.push(super::state::ParseDiagnostic {
-                start: diag.pos as u32,
-                length: diag.length as u32,
+                start: self.u32_from_usize(diag.pos),
+                length: self.u32_from_usize(diag.length),
                 message: diag.message.to_string(),
                 code: diag.code,
             });
@@ -84,7 +100,7 @@ impl ParserState {
         start: u32,
     ) -> IncrementalParseResult {
         let start = usize::min(start as usize, source_text.len());
-        let reparse_start = start as u32;
+        let reparse_start = self.u32_from_usize(start);
 
         self.file_name = file_name;
         self.scanner.set_text(source_text, Some(start), None);
@@ -145,9 +161,7 @@ impl ParserState {
             }
 
             let stmt = self.parse_statement();
-            if !stmt.is_none() {
-                statements.push(stmt);
-            } else {
+            if stmt.is_none() {
                 // Statement parsing failed, resync to recover
                 // Suppress cascading errors when a recent error was within 3 chars
                 let current = self.token_pos();
@@ -162,6 +176,8 @@ impl ParserState {
                 }
                 // Resync to next statement boundary to continue parsing
                 self.resync_after_error();
+            } else {
+                statements.push(stmt);
             }
 
             // Safety: if position didn't advance, force-skip the current token
@@ -198,9 +214,7 @@ impl ParserState {
             }
 
             let stmt = self.parse_statement();
-            if !stmt.is_none() {
-                statements.push(stmt);
-            } else {
+            if stmt.is_none() {
                 // Statement parsing failed, resync to recover
                 // Emit error if we haven't already at the exact same position
                 // Suppress cascading errors when a recent error was within 3 chars
@@ -216,6 +230,8 @@ impl ParserState {
                 }
                 // Resync to next statement boundary to continue parsing
                 self.resync_after_error();
+            } else {
+                statements.push(stmt);
             }
 
             // Safety: if position didn't advance, force-skip the current token
@@ -542,7 +558,7 @@ impl ParserState {
 
     /// Check if the next token is an identifier or keyword on the same line.
     /// Matches tsc's `nextTokenIsIdentifierOrKeywordOnSameLine`.
-    /// Used by isStartOfStatement() for modifier keywords (static, public, etc.)
+    /// Used by `isStartOfStatement()` for modifier keywords (static, public, etc.)
     /// to distinguish class-member-like context from standalone expressions.
     pub(super) fn look_ahead_next_is_identifier_or_keyword_on_same_line(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
@@ -930,21 +946,21 @@ impl ParserState {
         let flags: u16 = match self.token() {
             SyntaxKind::LetKeyword => {
                 self.consume_keyword();
-                node_flags::LET as u16
+                self.u16_from_node_flags(node_flags::LET)
             }
             SyntaxKind::ConstKeyword => {
                 self.consume_keyword();
-                node_flags::CONST as u16
+                self.u16_from_node_flags(node_flags::CONST)
             }
             SyntaxKind::UsingKeyword => {
                 self.consume_keyword();
-                node_flags::USING as u16
+                self.u16_from_node_flags(node_flags::USING)
             }
             SyntaxKind::AwaitKeyword => {
                 // await using declaration
                 self.consume_keyword(); // consume 'await'
                 self.parse_expected(SyntaxKind::UsingKeyword); // consume 'using'
-                node_flags::AWAIT_USING as u16
+                self.u16_from_node_flags(node_flags::AWAIT_USING)
             }
             _ => {
                 self.consume_keyword(); // var
@@ -1057,7 +1073,7 @@ impl ParserState {
         // Only check the USING bit (bit 2). AWAIT_USING = CONST | USING = 6,
         // so checking USING bit matches both USING (4) and AWAIT_USING (6)
         // but NOT CONST (2) which only has bit 1 set.
-        let is_using = (flags & node_flags::USING as u16) != 0;
+        let is_using = (flags & self.u16_from_node_flags(node_flags::USING)) != 0;
 
         // Check TS1375: 'using' declarations do not support destructuring patterns
         if is_using
@@ -1078,7 +1094,6 @@ impl ParserState {
         if self.is_token(SyntaxKind::PrivateIdentifier) {
             let start = self.token_pos();
             let length = self.token_end() - start;
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
                 start,
                 length,
@@ -1133,8 +1148,7 @@ impl ParserState {
             let (pos, len) = self
                 .arena
                 .get(initializer)
-                .map(|n| (n.pos, n.end - n.pos))
-                .unwrap_or((start_pos, 0));
+                .map_or((start_pos, 0), |n| (n.pos, n.end - n.pos));
             self.parse_error_at(
                 pos,
                 len,
@@ -1161,18 +1175,13 @@ impl ParserState {
         let end_pos = if !initializer.is_none() {
             self.arena
                 .get(initializer)
-                .map(|n| n.end)
-                .unwrap_or(self.token_pos())
+                .map_or(self.token_pos(), |n| n.end)
         } else if !type_annotation.is_none() {
             self.arena
                 .get(type_annotation)
-                .map(|n| n.end)
-                .unwrap_or(self.token_pos())
+                .map_or(self.token_pos(), |n| n.end)
         } else {
-            self.arena
-                .get(name)
-                .map(|n| n.end)
-                .unwrap_or(self.token_pos())
+            self.arena.get(name).map_or(self.token_pos(), |n| n.end)
         };
 
         self.arena.add_variable_declaration(
@@ -1242,7 +1251,6 @@ impl ParserState {
         // function body. `async function * await() {}` and `function * yield() {}` are valid.
         // Only check for static block context (where await is always illegal as an identifier)
         if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
@@ -1312,7 +1320,7 @@ impl ParserState {
 
     /// Parse function declaration for export default context (name is optional).
     /// Unlike regular function declarations, `export default function() {}` allows anonymous functions.
-    /// Unlike function expressions, this creates a FUNCTION_DECLARATION node and supports
+    /// Unlike function expressions, this creates a `FUNCTION_DECLARATION` node and supports
     /// overload signatures (missing body).
     pub(crate) fn parse_function_declaration_with_async_optional_name(
         &mut self,
@@ -1395,14 +1403,14 @@ impl ParserState {
         )
     }
 
-    /// Parse function expression: function() {} or function name() {}
+    /// Parse function expression: `function()` {} or function `name()` {}
     ///
     /// Unlike function declarations, function expressions can be anonymous.
     pub(crate) fn parse_function_expression(&mut self) -> NodeIndex {
         self.parse_function_expression_with_async(false)
     }
 
-    /// Parse async function expression: async function() {} or async function name() {}
+    /// Parse async function expression: async `function()` {} or async function `name()` {}
     pub(crate) fn parse_async_function_expression(&mut self) -> NodeIndex {
         self.parse_function_expression_with_async(true)
     }
@@ -1802,7 +1810,6 @@ impl ParserState {
         if (self.context_flags & CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS) != 0
             && self.is_token(SyntaxKind::StaticKeyword)
         {
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Identifier expected. 'static' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
@@ -1813,7 +1820,6 @@ impl ParserState {
         if self.is_token(SyntaxKind::PrivateIdentifier) {
             let start = self.token_pos();
             let length = self.token_end() - start;
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
                 start,
                 length,
@@ -3108,7 +3114,6 @@ impl ParserState {
                         false
                     };
 
-                    use tsz_common::diagnostics::diagnostic_codes;
                     if is_followed_by_constructor {
                         self.parse_error_at_current_token(
                             "Unexpected token. A constructor, method, accessor, or property was expected.",
@@ -3232,7 +3237,7 @@ impl ParserState {
             );
             // Consume the type annotation for recovery
             let _ = self.parse_type();
-        };
+        }
 
         // Push a new label scope for the constructor body
         self.push_label_scope();
@@ -3257,7 +3262,7 @@ impl ParserState {
         )
     }
 
-    /// Parse get accessor with modifiers: static get foo() { }
+    /// Parse get accessor with modifiers: static get `foo()` { }
     pub(crate) fn parse_get_accessor_with_modifiers(
         &mut self,
         modifiers: Option<NodeList>,
@@ -3692,10 +3697,10 @@ impl ParserState {
 
         // Parse optional ? or ! after property name
         let question_token = self.parse_optional(SyntaxKind::QuestionToken);
-        let exclamation_token = if !question_token {
-            self.parse_optional(SyntaxKind::ExclamationToken)
-        } else {
+        let exclamation_token = if question_token {
             false
+        } else {
+            self.parse_optional(SyntaxKind::ExclamationToken)
         };
 
         // Check if it's a method or property
@@ -3920,7 +3925,7 @@ impl ParserState {
         )
     }
 
-    /// Look ahead to see if this is an index signature: [key: Type]: ValueType
+    /// Look ahead to see if this is an index signature: [key: Type]: `ValueType`
     /// vs a computed property: [expr]: Type or [computed]()
     pub(crate) fn look_ahead_is_index_signature(&mut self) -> bool {
         let snapshot = self.scanner.save_state();

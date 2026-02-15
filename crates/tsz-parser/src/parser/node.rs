@@ -1,4 +1,4 @@
-//! Thin Node Architecture for Cache-Efficient AST
+//! Thin `Node` Architecture for Cache-Efficient AST
 //!
 //! This module implements a cache-optimized AST representation where each node
 //! is exactly 16 bytes (4 nodes per 64-byte cache line), compared to the
@@ -33,23 +33,23 @@ use tsz_common::interner::{Atom, Interner};
 /// A thin 16-byte node header for cache-efficient AST storage.
 ///
 /// Layout (16 bytes total):
-/// - `kind`: 2 bytes (SyntaxKind value, supports 0-65535)
-/// - `flags`: 2 bytes (packed NodeFlags)
+/// - `kind`: 2 bytes (`SyntaxKind` value, supports 0-65535)
+/// - `flags`: 2 bytes (packed `NodeFlags`)
 /// - `pos`: 4 bytes (start position in source)
 /// - `end`: 4 bytes (end position in source)
-/// - `data_index`: 4 bytes (index into type-specific pool, u32::MAX = no data)
+/// - `data_index`: 4 bytes (index into type-specific pool, `u32::MAX` = no data)
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Node {
-    /// SyntaxKind value (u16 to support extended kinds up to 400+)
+    /// `SyntaxKind` value (u16 to support extended kinds up to 400+)
     pub kind: u16,
-    /// Packed node flags (subset of NodeFlags that fits in u16)
+    /// Packed node flags (subset of `NodeFlags` that fits in u16)
     pub flags: u16,
     /// Start position in source (character index)
     pub pos: u32,
     /// End position in source (character index)
     pub end: u32,
-    /// Index into the type-specific storage pool (u32::MAX = no data)
+    /// Index into the type-specific storage pool (`u32::MAX` = no data)
     pub data_index: u32,
 }
 
@@ -58,6 +58,7 @@ impl Node {
 
     /// Create a new thin node with no associated data
     #[inline]
+    #[must_use]
     pub fn new(kind: u16, pos: u32, end: u32) -> Node {
         Node {
             kind,
@@ -70,6 +71,7 @@ impl Node {
 
     /// Create a new thin node with data index
     #[inline]
+    #[must_use]
     pub fn with_data(kind: u16, pos: u32, end: u32, data_index: u32) -> Node {
         Node {
             kind,
@@ -82,6 +84,7 @@ impl Node {
 
     /// Create a new thin node with data index and flags
     #[inline]
+    #[must_use]
     pub fn with_data_and_flags(kind: u16, pos: u32, end: u32, data_index: u32, flags: u16) -> Node {
         Node {
             kind,
@@ -94,6 +97,7 @@ impl Node {
 
     /// Check if this node has associated data
     #[inline]
+    #[must_use]
     pub fn has_data(&self) -> bool {
         self.data_index != Self::NO_DATA
     }
@@ -121,7 +125,7 @@ pub enum NodeCategory {
     Class,
     /// Statements (if, for, while, etc.)
     Statement,
-    /// Type nodes (TypeReference, UnionType, etc.)
+    /// Type nodes (`TypeReference`, `UnionType`, etc.)
     TypeNode,
     /// Import/export declarations
     Module,
@@ -135,10 +139,10 @@ pub enum NodeCategory {
 // Typed Data Pools
 // =============================================================================
 
-/// Data for identifier nodes (Identifier, PrivateIdentifier)
+/// Data for identifier nodes (`Identifier`, `PrivateIdentifier`)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IdentifierData {
-    /// Interned atom for O(1) comparison (OPTIMIZATION: use this instead of escaped_text)
+    /// Interned atom for O(1) comparison (`OPTIMIZATION`: use this instead of `escaped_text`)
     #[serde(skip, default = "Atom::none")]
     pub atom: Atom,
     /// The identifier text (DEPRECATED: kept for backward compatibility during migration)
@@ -147,7 +151,7 @@ pub struct IdentifierData {
     pub type_arguments: Option<NodeList>,
 }
 
-/// Data for string literals (StringLiteral, template parts)
+/// Data for string literals (`StringLiteral`, template parts)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LiteralData {
     pub text: String,

@@ -83,13 +83,14 @@ pub const VIABLE_KEYWORD_SUGGESTIONS: &[&str] = &[
 /// Find a spelling suggestion for a word among the given candidates.
 ///
 /// Matches TypeScript's `getSpellingSuggestion` algorithm:
-/// - Candidates whose length differs by more than 0.34 * name.len() are skipped.
+/// - Candidates whose length differs by more than `name.len() * 34 / 100` are skipped.
 /// - Candidates shorter than 3 chars only match on case-insensitive equality.
 /// - Returns the candidate with the smallest Levenshtein distance that is
-///   within 0.4 * name.len() + 1.
+///   within `name.len() * 4 / 10 + 1`.
 pub fn get_spelling_suggestion<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
-    let max_length_diff = (name.len() as f64 * 0.34).floor().max(2.0) as usize;
-    let mut best_distance = (name.len() as f64 * 0.4).floor() + 1.0;
+    let name_len = name.len();
+    let max_length_diff = (name_len * 34 / 100).max(2);
+    let mut best_distance = name_len * 4 + 10;
     let mut best_candidate: Option<&str> = None;
 
     for &candidate in candidates {
@@ -106,7 +107,7 @@ pub fn get_spelling_suggestion<'a>(name: &str, candidates: &[&'a str]) -> Option
             continue;
         }
 
-        if let Some(distance) = levenshtein_with_max(name, candidate, best_distance - 0.1) {
+        if let Some(distance) = levenshtein_with_max(name, candidate, best_distance - 1) {
             best_distance = distance;
             best_candidate = Some(candidate);
         }
@@ -147,64 +148,64 @@ pub fn suggest_keyword(text: &str) -> Option<String> {
 /// - Case-only difference: cost 0.1
 /// - Other substitution: cost 2.0
 /// - Insertion / deletion: cost 1.0
-fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
+fn levenshtein_with_max(s1: &str, s2: &str, max: usize) -> Option<usize> {
     let s1_chars: Vec<char> = s1.chars().collect();
     let s2_chars: Vec<char> = s2.chars().collect();
     let s1_len = s1_chars.len();
     let s2_len = s2_chars.len();
-    let big = max + 0.01;
+    let big = max + 1;
 
-    let mut previous = vec![0.0_f64; s2_len + 1];
-    let mut current = vec![0.0_f64; s2_len + 1];
+    let mut previous = vec![0_usize; s2_len + 1];
+    let mut current = vec![0_usize; s2_len + 1];
 
     for (i, prev) in previous.iter_mut().enumerate().take(s2_len + 1) {
-        *prev = i as f64;
+        *prev = i * 10;
     }
 
     for i in 1..=s1_len {
         let c1 = s1_chars[i - 1];
-        let min_j = if (i as f64) > max {
-            (i as f64 - max).ceil() as usize
+        let scaled_i = i * 10;
+        let min_j = if scaled_i > max {
+            (scaled_i.saturating_sub(max) + 9) / 10
         } else {
             1
         };
-        let max_j = if (s2_len as f64) > max + i as f64 {
-            (max + i as f64).floor() as usize
+        let max_j = if s2_len * 10 > max + scaled_i {
+            (max + scaled_i) / 10
         } else {
             s2_len
         };
 
-        current[0] = i as f64;
-        let mut col_min = i as f64;
+        let scaled_i_for_cost = i * 10;
+        current[0] = scaled_i_for_cost;
+        let mut col_min = scaled_i_for_cost;
 
         for (_, current_j) in current.iter_mut().take(min_j).enumerate().skip(1) {
             *current_j = big;
         }
 
         for j in min_j..=max_j {
-            let substitution_distance = if s1_chars[i - 1]
-                .to_lowercase()
-                .eq(s2_chars[j - 1].to_lowercase())
-            {
-                previous[j - 1] + 0.1
+            let c2 = s2_chars[j - 1];
+            let substitution_distance = if c1.eq_ignore_ascii_case(&c2) {
+                previous[j - 1] + 1
             } else {
-                previous[j - 1] + 2.0
+                previous[j - 1] + 20
             };
 
             let dist = if c1 == s2_chars[j - 1] {
                 previous[j - 1]
             } else {
-                f64::min(
-                    f64::min(
-                        previous[j] + 1.0,    // delete
-                        current[j - 1] + 1.0, // insert
+                usize::min(
+                    usize::min(
+                        previous[j] + 10,    // delete
+                        current[j - 1] + 10, // insert
                     ),
                     substitution_distance, // substitute
                 )
             };
 
             current[j] = dist;
-            col_min = f64::min(col_min, dist);
+            col_min = usize::min(col_min, dist);
         }
 
         for (_, current_j) in current
