@@ -123,6 +123,7 @@ struct TempScopeState {
     generated_temp_names: FxHashSet<String>,
     first_for_of_emitted: bool,
     preallocated_temp_names: VecDeque<String>,
+    preallocated_assignment_temps: VecDeque<String>,
     preallocated_logical_assignment_value_temps: VecDeque<String>,
     hoisted_assignment_value_temps: Vec<String>,
     hoisted_assignment_temps: Vec<String>,
@@ -304,6 +305,10 @@ pub struct Printer<'a> {
     /// These are used by `make_unique_name_hoisted_value`.
     pub(super) preallocated_logical_assignment_value_temps: VecDeque<String>,
 
+    /// Temp names for assignment target values that must be reserved before references.
+    /// These are used by `make_unique_name_hoisted_assignment`.
+    pub(super) preallocated_assignment_temps: VecDeque<String>,
+
     /// Temp variable names that need to be hoisted to the top of the current scope
     /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(super) hoisted_assignment_temps: Vec<String>,
@@ -379,6 +384,7 @@ impl<'a> Printer<'a> {
             pending_class_field_inits: Vec::new(),
             hoisted_assignment_value_temps: Vec::new(),
             preallocated_logical_assignment_value_temps: VecDeque::new(),
+            preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
             preallocated_temp_names: VecDeque::new(),
             hoisted_for_of_temps: Vec::new(),
@@ -2178,9 +2184,9 @@ impl<'a> Printer<'a> {
         self.generated_temp_names.clear();
         self.first_for_of_emitted = false;
 
-        // Enter root scope for block-scoped variable tracking
-        // This ensures variables declared throughout the file are tracked for renaming
-        self.ctx.block_scope_state.enter_scope();
+        // Enter root scope for block-scoped variable tracking and `var` scope boundaries.
+        // This ensures variables declared throughout the file are tracked for renaming.
+        self.ctx.block_scope_state.enter_function_scope();
 
         // Extract comments. Triple-slash references (/// <reference ...>) are
         // preserved in output (TypeScript keeps them in JS emit).
@@ -2420,6 +2426,8 @@ impl<'a> Printer<'a> {
             self.write(&capture_name);
             self.write(" = this;");
             self.write_line();
+        } else if std::env::var("TSZ_LOWERING_DEBUG").is_ok() {
+            eprintln!("[emit] no top-level this capture for source {:?}", source_idx);
         }
 
         // Save position for hoisted temp var declarations (assignment destructuring).
@@ -2427,6 +2435,7 @@ impl<'a> Printer<'a> {
         self.hoisted_assignment_temps.clear();
         self.hoisted_assignment_value_temps.clear();
         self.preallocated_logical_assignment_value_temps.clear();
+        self.preallocated_assignment_temps.clear();
         self.hoisted_for_of_temps.clear();
         self.preallocated_temp_names.clear();
         self.reserved_iterator_return_temps.clear();

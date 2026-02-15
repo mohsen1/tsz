@@ -805,6 +805,10 @@ impl<'a> Printer<'a> {
                 // Check if it's a simple single-return block
                 if let Some(block_node) = self.arena.get(func.body) {
                     if let Some(block) = self.arena.get_block(block_node) {
+                        if block.statements.nodes.is_empty() {
+                            self.write("{ }");
+                            return;
+                        }
                         if !needs_param_prologue
                             && block.statements.nodes.len() == 1
                             && self.is_simple_return_statement(block.statements.nodes[0])

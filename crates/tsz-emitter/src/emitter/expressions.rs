@@ -19,8 +19,13 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5
             && binary.operator_token == SyntaxKind::EqualsToken as u16
             && let Some(left_node) = self.arena.get(binary.left)
-            && (left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                || left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            && matches!(
+                left_node.kind,
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    | syntax_kind_ext::OBJECT_BINDING_PATTERN
+            )
         {
             self.emit_assignment_destructuring_es5(left_node, binary.right);
             return;
@@ -1049,6 +1054,7 @@ impl<'a> Printer<'a> {
                 }
                 false
             });
+        let has_trailing_comma = self.has_trailing_comma_in_source(node, &array.elements.nodes);
 
         if !is_multiline {
             self.write("[");
@@ -1056,9 +1062,7 @@ impl<'a> Printer<'a> {
             self.emit_comma_separated(&array.elements.nodes);
             // Preserve trailing comma for elisions: [,,] must keep both commas
             // Elided elements are represented as NodeIndex::NONE, not OMITTED_EXPRESSION nodes
-            if let Some(&last_idx) = array.elements.nodes.last()
-                && last_idx.is_none()
-            {
+            if has_trailing_comma || array.elements.nodes.last().is_some_and(|idx| idx.is_none()) {
                 self.write(",");
             }
             self.decrease_indent();
@@ -1096,8 +1100,8 @@ impl<'a> Printer<'a> {
                     self.emit(elem);
                 }
                 // Trailing comma for elisions
-                if let Some(&last_idx) = array.elements.nodes.last()
-                    && last_idx.is_none()
+                if has_trailing_comma
+                    || array.elements.nodes.last().is_some_and(|idx| idx.is_none())
                 {
                     self.write(",");
                 }
@@ -1115,8 +1119,8 @@ impl<'a> Printer<'a> {
                     self.emit(elem);
                 }
                 // Trailing comma for elisions
-                if let Some(&last_idx) = array.elements.nodes.last()
-                    && last_idx.is_none()
+                if has_trailing_comma
+                    || array.elements.nodes.last().is_some_and(|idx| idx.is_none())
                 {
                     self.write(",");
                 }

@@ -2140,6 +2140,7 @@ impl ParserState {
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
         let text = self.scanner.get_token_value_ref().to_string();
+        let raw_text = self.scanner.get_token_text_ref().to_string();
         self.report_invalid_string_or_template_escape_errors();
         self.next_token();
 
@@ -2149,7 +2150,7 @@ impl ParserState {
             end_pos,
             LiteralData {
                 text,
-                raw_text: None,
+                raw_text: Some(raw_text),
                 value: None,
             },
         )

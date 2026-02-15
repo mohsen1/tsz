@@ -91,10 +91,10 @@ pub use compat::*;
 pub use contextual::{ContextualTypeContext, apply_contextual_type};
 pub use db::{QueryCache, QueryDatabase, RelationCacheProbe, RelationCacheStats, TypeDatabase};
 pub use def::*;
+pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::{
-    DiagnosticBuilder, DiagnosticCollector, DiagnosticSeverity, PendingDiagnostic,
+    DiagnosticArg, DiagnosticBuilder, DiagnosticCollector, DiagnosticSeverity, PendingDiagnostic,
     PendingDiagnosticBuilder, SourceLocation, SourceSpan, SpannedDiagnosticBuilder,
-    SubtypeFailureReason,
 };
 pub use element_access::*;
 pub use evaluate::*;

@@ -123,6 +123,8 @@ impl<'a> Printer<'a> {
         let saved_names = std::mem::take(&mut self.generated_temp_names);
         let saved_for_of = self.first_for_of_emitted;
         let saved_preallocated = std::mem::take(&mut self.preallocated_temp_names);
+        let saved_preallocated_assignment_temps =
+            std::mem::take(&mut self.preallocated_assignment_temps);
         let saved_preallocated_logical_value_temps =
             std::mem::take(&mut self.preallocated_logical_assignment_value_temps);
         let saved_hoisted = std::mem::take(&mut self.hoisted_assignment_temps);
@@ -132,6 +134,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: saved_names,
             first_for_of_emitted: saved_for_of,
             preallocated_temp_names: saved_preallocated,
+            preallocated_assignment_temps: saved_preallocated_assignment_temps,
             preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
             hoisted_assignment_value_temps: saved_value_temps,
             hoisted_assignment_temps: saved_hoisted,
@@ -147,6 +150,7 @@ impl<'a> Printer<'a> {
             self.generated_temp_names = state.generated_temp_names;
             self.first_for_of_emitted = state.first_for_of_emitted;
             self.preallocated_temp_names = state.preallocated_temp_names;
+            self.preallocated_assignment_temps = state.preallocated_assignment_temps;
             self.preallocated_logical_assignment_value_temps =
                 state.preallocated_logical_assignment_value_temps;
             self.hoisted_assignment_value_temps = state.hoisted_assignment_value_temps;
@@ -202,6 +206,23 @@ impl<'a> Printer<'a> {
             let name = self.generate_fresh_temp_name();
             self.preallocated_temp_names.push_back(name);
         }
+    }
+
+    pub(super) fn preallocate_assignment_temps(&mut self, count: usize) {
+        for _ in 0..count {
+            let name = self.generate_fresh_temp_name();
+            self.preallocated_assignment_temps.push_back(name);
+        }
+    }
+
+    pub(super) fn make_unique_name_hoisted_assignment(&mut self) -> String {
+        let name = if let Some(name) = self.preallocated_assignment_temps.pop_front() {
+            name
+        } else {
+            self.make_unique_name()
+        };
+        self.hoisted_assignment_temps.push(name.clone());
+        name
     }
 
     pub(super) fn preallocate_logical_assignment_value_temps(&mut self, count: usize) {

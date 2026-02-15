@@ -1772,7 +1772,7 @@ fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
                 return true;
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                // Recursively check if nested namespace is itself instantiated
+                // Recursively check nested namespaces when they contain runtime members.
                 if let Some(ns_data) = arena.get_module(stmt_node)
                     && body_has_value_declarations(arena, ns_data.body)
                 {

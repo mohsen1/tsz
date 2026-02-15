@@ -378,14 +378,21 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_import_equals_declaration(&mut self, node: &Node) {
+        let before_len = self.writer.len();
         self.emit_import_equals_declaration_inner(node);
-        self.write_semicolon();
+        if self.writer.len() > before_len {
+            self.write_semicolon();
+        }
     }
 
     pub(super) fn emit_import_equals_declaration_inner(&mut self, node: &Node) {
         let Some(import) = self.arena.get_import_decl(node) else {
             return;
         };
+
+        if !self.import_decl_has_runtime_value(import) {
+            return;
+        }
 
         if import.import_clause.is_none() {
             return;

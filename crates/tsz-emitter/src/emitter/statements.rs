@@ -68,7 +68,11 @@ impl<'a> Printer<'a> {
                     && self.hoisted_for_of_temps.is_empty()));
 
         if should_emit_single_line {
-            self.ctx.block_scope_state.enter_scope();
+            if is_function_body_block {
+                self.ctx.block_scope_state.enter_function_scope();
+            } else {
+                self.ctx.block_scope_state.enter_scope();
+            }
             self.write("{ ");
             self.emit(block.statements.nodes[0]);
             self.write(" }");
@@ -77,7 +81,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.ctx.block_scope_state.enter_scope();
+        if is_function_body_block {
+            self.ctx.block_scope_state.enter_function_scope();
+        } else {
+            self.ctx.block_scope_state.enter_scope();
+        }
         self.write("{");
         self.write_line();
         self.increase_indent();

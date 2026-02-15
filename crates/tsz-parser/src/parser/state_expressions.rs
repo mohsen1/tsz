@@ -2321,6 +2321,7 @@ impl ParserState {
 
         // Get the regex text (including slashes and flags)
         let text = self.scanner.get_token_value_ref().to_string();
+        let raw_text = self.scanner.get_token_text_ref().to_string();
 
         // Capture regex flag errors BEFORE calling parse_expected (which clears them via next_token)
         let flag_errors: Vec<_> = self.scanner.get_regex_flag_errors().to_vec();
@@ -2352,7 +2353,7 @@ impl ParserState {
             end_pos,
             LiteralData {
                 text,
-                raw_text: None,
+                raw_text: Some(raw_text),
                 value: None,
             },
         )
